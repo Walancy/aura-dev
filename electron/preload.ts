@@ -70,6 +70,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ai: {
     prompt: (prompt: string, model: string, cwd?: string) =>
       ipcRenderer.invoke('ai:prompt', { prompt, model, cwd }),
+    checkClis: () => ipcRenderer.invoke('ai:checkClis'),
   },
 
   // Native Menu Listeners

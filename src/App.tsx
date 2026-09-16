@@ -41,6 +41,8 @@ import {
   AlertTriangle,
   Sparkles,
   Download,
+  Layers,
+  MessageSquare,
 } from 'lucide-react';
 import avatarImg from './avatar.png';
 import claudeLogo from './assets/logos/claude-color.svg';
@@ -128,6 +130,64 @@ const CodexIcon: React.FC<{ size?: number; style?: React.CSSProperties }> = ({ s
       ...style,
     }}
   />
+);
+
+// Helper to render AI icon by provider ID
+const renderAiIcon = (providerId: string, size = 16, style?: React.CSSProperties) => {
+  switch (providerId) {
+    case 'claude':
+      return <ClaudeIcon size={size} style={style} />;
+    case 'antigravity':
+      return <AntigravityIcon size={size} style={style} />;
+    case 'codex':
+      return <CodexIcon size={size} style={style} />;
+    case 'gemini':
+      return <GeminiIcon size={size} style={style} />;
+    case 'ollama':
+      return <OllamaIcon size={size} style={style} />;
+    default:
+      return <ClaudeIcon size={size} style={style} />;
+  }
+};
+
+// Mini Toggle Switch for Orchestration
+const MiniSwitch: React.FC<{
+  checked: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+}> = ({ checked, onChange, disabled }) => (
+  <div
+    onClick={(e) => {
+      e.stopPropagation();
+      if (!disabled) onChange();
+    }}
+    style={{
+      width: 26,
+      height: 15,
+      borderRadius: 10,
+      background: checked ? '#FF6A00' : 'rgba(255, 255, 255, 0.18)',
+      position: 'relative',
+      cursor: disabled ? 'not-allowed' : 'pointer',
+      transition: 'background 0.15s ease',
+      flexShrink: 0,
+      opacity: disabled ? 0.35 : 1,
+    }}
+    title={checked ? 'Incluído no Orquestrador' : 'Desativado no Orquestrador'}
+  >
+    <div
+      style={{
+        width: 11,
+        height: 11,
+        borderRadius: '50%',
+        background: '#ffffff',
+        position: 'absolute',
+        top: 2,
+        left: checked ? 13 : 2,
+        transition: 'left 0.15s ease',
+        boxShadow: '0 1px 2px rgba(0,0,0,0.3)',
+      }}
+    />
+  </div>
 );
 
 interface AiProviderConfig {
@@ -430,6 +490,56 @@ export const App: React.FC = () => {
     url: string;
     guide: string;
   } | null>(null);
+
+  // Orchestrator States
+  const [isOrchestratorActive, setIsOrchestratorActive] = useState<boolean>(false);
+  const [orchestratedProviders, setOrchestratedProviders] = useState<Record<string, boolean>>({
+    claude: true,
+    antigravity: true,
+    codex: false,
+    gemini: false,
+    ollama: false,
+  });
+  const [orchestratorIndex, setOrchestratorIndex] = useState<number>(0);
+
+  // Installed CLIs state (detected via native shell)
+  const [installedClis, setInstalledClis] = useState<Record<string, boolean>>({
+    claude: true,
+    antigravity: false,
+    codex: false,
+    gemini: false,
+    ollama: false,
+  });
+
+  // Chat Sessions & History Popup
+  interface ChatSessionItem {
+    id: string;
+    title: string;
+    provider: string;
+    updatedAt: number;
+    history: Array<{ type: 'user' | 'assistant' | 'system' | 'error'; text: string; downloadUrl?: string; command?: string }>;
+  }
+
+  const [chatSessions, setChatSessions] = useState<ChatSessionItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('ide_ai_chat_sessions');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [
+      {
+        id: 'session-1',
+        title: 'Chat Inicial',
+        provider: 'claude',
+        updatedAt: Date.now() - 1000 * 60 * 10,
+        history: [],
+      },
+    ];
+  });
+  const [activeChatSessionId, setActiveChatSessionId] = useState<string>('session-1');
+  const [chatHistoryPopupOpen, setChatHistoryPopupOpen] = useState<boolean>(false);
+  const chatHistoryPopupRef = useRef<HTMLDivElement>(null);
+  const providerDropdownRef = useRef<HTMLDivElement>(null);
+
   const aiTerminalScrollRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isHoveringTrafficLightArea, setIsHoveringTrafficLightArea] = useState(false);
@@ -944,6 +1054,22 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleSaveActiveFile]);
 
+  // Check installed CLIs on native machine on startup
+  useEffect(() => {
+    if (window.electronAPI?.ai?.checkClis) {
+      window.electronAPI.ai.checkClis().then((res) => {
+        if (res) setInstalledClis(res);
+      }).catch(console.error);
+    }
+  }, []);
+
+  // Save chat sessions to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('ide_ai_chat_sessions', JSON.stringify(chatSessions));
+    } catch {}
+  }, [chatSessions]);
+
   // Click outside listener for Explorer 3-dots popup
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -956,6 +1082,32 @@ export const App: React.FC = () => {
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
   }, [explorerMenuOpen]);
+
+  // Click outside listener for Chat History popup
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (chatHistoryPopupRef.current && !chatHistoryPopupRef.current.contains(e.target as Node)) {
+        setChatHistoryPopupOpen(false);
+      }
+    };
+    if (chatHistoryPopupOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [chatHistoryPopupOpen]);
+
+  // Click outside listener for Provider Dropdown popup
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (providerDropdownRef.current && !providerDropdownRef.current.contains(e.target as Node)) {
+        setProviderDropdown(false);
+      }
+    };
+    if (providerDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [providerDropdown]);
 
   // Dialog Handlers (3 Dots Menu)
   const handleOpenFolderDialog = async () => {
@@ -1042,7 +1194,7 @@ export const App: React.FC = () => {
     setTerminalHistory([promptPrefix]);
   };
 
-  // Real Terminal Command Submission
+  // Real Terminal Command Submission using native macOS zsh login shell
   const handleTerminalSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!terminalCommand.trim()) return;
@@ -1052,7 +1204,7 @@ export const App: React.FC = () => {
     setHistoryPointer(-1);
     setTerminalCommand('');
 
-    const folderShort = terminalCwd.split('/').pop() || 'codes';
+    const folderShort = terminalCwd.split('/').filter(Boolean).pop() || 'workspace';
     const promptPrefix = `walancy@MacBook-Pro ${folderShort} % `;
     const cmdLine = `${promptPrefix}${cmd}`;
 
@@ -1061,87 +1213,47 @@ export const App: React.FC = () => {
       return;
     }
 
-    if (cmd.startsWith('cd ') || cmd === 'cd') {
-      const targetDir = cmd.substring(3).trim();
-      let newPath = targetDir;
-      if (!targetDir || targetDir === '~') {
-        newPath = '/Users/walancy';
-      } else if (targetDir === '..') {
-        const parts = terminalCwd.split('/').filter(Boolean);
-        parts.pop();
-        newPath = '/' + parts.join('/');
-      } else if (!targetDir.startsWith('/')) {
-        newPath = `${terminalCwd}/${targetDir}`;
-      }
-
-      if (window.electronAPI?.fs?.getTree) {
-        try {
-          await window.electronAPI.fs.getTree(newPath, 1);
-          setTerminalCwd(newPath);
-          localStorage.setItem('ide_terminal_cwd', newPath);
-          setTerminalHistory((prev) => [
-            ...prev,
-            cmdLine,
-            `walancy@MacBook-Pro ${newPath.split('/').pop() || 'codes'} % `,
-          ]);
-        } catch {
-          setTerminalHistory((prev) => [
-            ...prev,
-            cmdLine,
-            `cd: no such file or directory: ${targetDir}`,
-            promptPrefix,
-          ]);
-        }
-      } else {
-        setTerminalCwd(newPath);
-        setTerminalHistory((prev) => [...prev, cmdLine]);
-      }
-      return;
-    }
-
-    // Execute real command in macOS via Electron
+    // Execute real command in macOS via Electron native shell
     if (window.electronAPI?.shell?.exec) {
       setTerminalHistory((prev) => [...prev, cmdLine]);
       try {
         const res = await window.electronAPI.shell.exec(cmd, terminalCwd);
+
+        // Update working directory if cd changed it
+        let nextCwd = terminalCwd;
+        if (res.newCwd) {
+          nextCwd = res.newCwd;
+          setTerminalCwd(res.newCwd);
+          localStorage.setItem('ide_terminal_cwd', res.newCwd);
+        }
+
+        const nextFolderShort = nextCwd.split('/').filter(Boolean).pop() || 'workspace';
+        const nextPromptPrefix = `walancy@MacBook-Pro ${nextFolderShort} % `;
+
         const output = (res.stdout || '') + (res.stderr ? (res.stdout ? '\n' : '') + res.stderr : '');
         if (output.trim()) {
           setTerminalHistory((prev) => [
             ...prev,
             output.trimEnd(),
-            promptPrefix,
+            nextPromptPrefix,
           ]);
         } else if (res.exitCode !== 0 && res.error) {
           setTerminalHistory((prev) => [
             ...prev,
             res.error,
-            promptPrefix,
+            nextPromptPrefix,
           ]);
         } else {
-          setTerminalHistory((prev) => [...prev, promptPrefix]);
+          setTerminalHistory((prev) => [...prev, nextPromptPrefix]);
         }
       } catch (err: any) {
         setTerminalHistory((prev) => [...prev, `Erro: ${err.message}`, promptPrefix]);
       }
     } else {
-      let response = '';
-      if (cmd === 'ls' || cmd === 'ls -la') {
-        response = 'apps  packages  docker-compose.yml  package.json  README.md  tsconfig.json';
-      } else if (cmd === 'git status') {
-        response = "On branch main\nYour branch is up to date with 'origin/main'.\nChanges not staged for commit:\n  modified:   apps/ainaobra-api/src/app.service.ts";
-      } else if (cmd === 'pwd') {
-        response = terminalCwd;
-      } else if (cmd === 'claude' || cmd.startsWith('claude ')) {
-        response = '[Claude Code CLI v2.1.273]\nConectado ao modelo Claude 3.7 Sonnet (Thinking).\nDigite sua pergunta ou instrução de código.';
-      } else if (cmd === 'agy' || cmd.startsWith('agy ')) {
-        response = '[Google Antigravity CLI v2.4]\nModo Agente ativado. Orquestrando tarefas e verificação em background.';
-      } else {
-        response = `[Terminal Output]: ${cmd}`;
-      }
       setTerminalHistory((prev) => [
         ...prev,
         cmdLine,
-        response,
+        'Erro: Shell nativo não disponível no navegador web. Execute o app Desktop no Electron para executar comandos da máquina.',
         promptPrefix,
       ]);
     }
@@ -1198,27 +1310,74 @@ export const App: React.FC = () => {
     const prompt = askPrompt.trim();
     if (!prompt || isAiExecuting) return;
 
-    // Find the config for the selected AI provider
-    const currentProvider = AI_PROVIDERS.find((p) => p.id === selectedAiProvider) || AI_PROVIDERS[0];
+    // Determine target provider: alternate if orchestrator active, or use selected
+    let currentProvider = AI_PROVIDERS.find((p) => p.id === selectedAiProvider) || AI_PROVIDERS[0];
+    let isDelegatedByOrchestrator = false;
+
+    if (isOrchestratorActive) {
+      const activeOrchestrated = AI_PROVIDERS.filter((p) => orchestratedProviders[p.id]);
+      if (activeOrchestrated.length > 0) {
+        currentProvider = activeOrchestrated[orchestratorIndex % activeOrchestrated.length];
+        setOrchestratorIndex((prev) => prev + 1);
+        isDelegatedByOrchestrator = true;
+      }
+    }
+
     const cliCmd = currentProvider.cliCommand;
 
-    // Add user message to AI history
-    setAiHistory((prev) => [
-      ...prev,
-      { type: 'user', text: prompt, command: `${cliCmd}` },
-    ]);
+    // Helper to append message to aiHistory and sync with current chatSession
+    const pushAiMessage = (msg: { type: 'user' | 'assistant' | 'system' | 'error'; text: string; downloadUrl?: string; command?: string }) => {
+      setAiHistory((prev) => {
+        const next = [...prev, msg];
+        setChatSessions((allSessions) => {
+          const idx = allSessions.findIndex((s) => s.id === activeChatSessionId);
+          if (idx >= 0) {
+            const updated = [...allSessions];
+            const curr = updated[idx];
+            updated[idx] = {
+              ...curr,
+              provider: currentProvider.id,
+              title: curr.title === 'Chat Inicial' || curr.title === 'Nova Conversa' ? prompt.slice(0, 36) : curr.title,
+              updatedAt: Date.now(),
+              history: next,
+            };
+            return updated;
+          } else {
+            const newSession: ChatSessionItem = {
+              id: activeChatSessionId,
+              title: prompt.slice(0, 36),
+              provider: currentProvider.id,
+              updatedAt: Date.now(),
+              history: next,
+            };
+            return [newSession, ...allSessions];
+          }
+        });
+        return next;
+      });
+    };
+
+    // Add user message to AI history & session
+    pushAiMessage({ type: 'user', text: prompt, command: `${cliCmd}` });
+
+    if (isDelegatedByOrchestrator) {
+      pushAiMessage({
+        type: 'system',
+        text: `⚡ [Orquestrador: Tarefa alternada para ${currentProvider.name}]`,
+      });
+    }
+
     setAskPrompt('');
     setIsAiExecuting(true);
     setAiNotInstalledAlert(null);
 
-    // 1. Check if the CLI is installed using `which <cli>`
+    // 1. Check if the CLI is installed using `which <cli>` via login shell
     if (window.electronAPI?.shell?.exec) {
       try {
         const checkRes = await window.electronAPI.shell.exec(`which ${cliCmd}`, terminalCwd);
         const isInstalled = checkRes.exitCode === 0 && checkRes.stdout.trim().length > 0;
 
         if (!isInstalled) {
-          // Alert user: IA não instalada neste dispositivo
           const alertData = {
             modelName: currentProvider.name,
             command: cliCmd,
@@ -1226,91 +1385,56 @@ export const App: React.FC = () => {
             guide: currentProvider.installGuide,
           };
           setAiNotInstalledAlert(alertData);
-          setAiHistory((prev) => [
-            ...prev,
-            {
-              type: 'error',
-              text: `⚠️ IA não instalada neste dispositivo!\nO CLI "${cliCmd}" não foi encontrado no seu PATH.\nInstale clicando no link abaixo para começar a usar.`,
-              downloadUrl: currentProvider.installUrl,
-              command: currentProvider.installGuide,
-            },
-          ]);
+          pushAiMessage({
+            type: 'error',
+            text: `⚠️ IA não instalada neste dispositivo!\nO CLI "${cliCmd}" não foi encontrado no seu PATH.\nInstale clicando no link abaixo para começar a usar.`,
+            downloadUrl: currentProvider.installUrl,
+            command: currentProvider.installGuide,
+          });
           setIsAiExecuting(false);
           return;
         }
 
         // 2. CLI is installed! Execute command directly through the CLI
-        // The user can interact and change models using the CLI's native commands (e.g. /model, /cost, /plan)
         let fullCommand = `${cliCmd} "${prompt.replace(/"/g, '\\"')}"`;
         if (cliCmd === 'claude') {
           fullCommand = `claude -p "${prompt.replace(/"/g, '\\"')}"`;
         }
 
-        setAiHistory((prev) => [
-          ...prev,
-          {
-            type: 'system',
-            text: `[Executando ${cliCmd} em ${terminalCwd.split('/').filter(Boolean).pop()}...]`,
-          },
-        ]);
+        pushAiMessage({
+          type: 'system',
+          text: `[Executando ${cliCmd} em ${terminalCwd.split('/').filter(Boolean).pop()}...]`,
+        });
 
         const execRes = await window.electronAPI.shell.exec(fullCommand, terminalCwd);
 
         if (execRes.exitCode === 0 && execRes.stdout) {
-          setAiHistory((prev) => [
-            ...prev,
-            { type: 'assistant', text: execRes.stdout.trim() },
-          ]);
+          pushAiMessage({ type: 'assistant', text: execRes.stdout.trim() });
         } else if (execRes.stderr || execRes.error) {
-          setAiHistory((prev) => [
-            ...prev,
-            {
-              type: 'assistant',
-              text: (execRes.stdout ? execRes.stdout + '\n' : '') + (execRes.stderr || execRes.error || ''),
-            },
-          ]);
+          pushAiMessage({
+            type: 'assistant',
+            text: (execRes.stdout ? execRes.stdout + '\n' : '') + (execRes.stderr || execRes.error || ''),
+          });
         } else {
-          setAiHistory((prev) => [
-            ...prev,
-            { type: 'assistant', text: `Comando concluído com status ${execRes.exitCode}` },
-          ]);
+          pushAiMessage({
+            type: 'assistant',
+            text: `Comando concluído com status ${execRes.exitCode}`,
+          });
         }
       } catch (err: any) {
-        setAiHistory((prev) => [
-          ...prev,
-          { type: 'error', text: `Erro na execução do terminal de IA: ${err.message}` },
-        ]);
+        pushAiMessage({
+          type: 'error',
+          text: `Erro na execução do terminal de IA: ${err.message}`,
+        });
       } finally {
         setIsAiExecuting(false);
       }
     } else {
-      // Browser fallback simulation if running outside Electron
       setTimeout(() => {
-        if (cliCmd === 'claude') {
-          setAiHistory((prev) => [
-            ...prev,
-            {
-              type: 'assistant',
-              text: `[Claude Code CLI]: Análise concluída para: "${prompt}". Todas as verificações do workspace ainaobra passaram.`,
-            },
-          ]);
-        } else {
-          setAiNotInstalledAlert({
-            modelName: currentModel.name,
-            command: cliCmd,
-            url: currentModel.installUrl,
-            guide: currentModel.installGuide,
-          });
-          setAiHistory((prev) => [
-            ...prev,
-            {
-              type: 'error',
-              text: `⚠️ IA não instalada neste dispositivo!\nO CLI "${cliCmd}" não foi encontrado.`,
-              downloadUrl: currentModel.installUrl,
-              command: currentModel.installGuide,
-            },
-          ]);
-        }
+        pushAiMessage({
+          type: 'assistant',
+          text: `[Resposta simulada]: Análise concluída para: "${prompt}".`,
+        });
         setIsAiExecuting(false);
       }, 600);
     }
@@ -3288,21 +3412,94 @@ export const App: React.FC = () => {
                   overflow: 'hidden',
                 }}
               >
-                {/* Header: AI Logo + Provider Name + Clear History (only when history exists) */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, padding: '2px 4px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    {selectedAiProvider === 'claude' && <ClaudeIcon size={17} />}
-                    {selectedAiProvider === 'antigravity' && <AntigravityIcon size={17} />}
-                    {selectedAiProvider === 'codex' && <CodexIcon size={17} />}
-                    {selectedAiProvider === 'gemini' && <GeminiIcon size={17} />}
-                    {selectedAiProvider === 'ollama' && <OllamaIcon size={17} />}
-                    <div style={{ color: 'white', fontSize: 13, fontFamily: 'Poppins, sans-serif', fontWeight: '400' }}>
-                      {AI_PROVIDERS.find((p) => p.id === selectedAiProvider)?.name || 'Claude'}
+                {/* Header: Stacked Icons + AI Logo + Provider Name + Clear History */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, padding: '2px 4px', position: 'relative' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    {/* Stacked icons of other AIs used in orchestrator or with active chats */}
+                    {(() => {
+                      const otherProviders = AI_PROVIDERS.filter((p) => {
+                        if (p.id === selectedAiProvider) return false;
+                        const isOrchestrated = isOrchestratorActive && orchestratedProviders[p.id];
+                        const hasChat = chatSessions.some((s) => s.provider === p.id && s.history.length > 0);
+                        return isOrchestrated || hasChat;
+                      });
+
+                      return (
+                        <div
+                          onClick={() => setChatHistoryPopupOpen(!chatHistoryPopupOpen)}
+                          title="Sessões & Histórico de Chats"
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            cursor: 'pointer',
+                            padding: '2px 3px',
+                            borderRadius: 6,
+                            background: chatHistoryPopupOpen ? 'rgba(255, 255, 255, 0.12)' : 'transparent',
+                            transition: 'background 0.15s ease',
+                          }}
+                        >
+                          {otherProviders.length > 0 ? (
+                            <div style={{ display: 'flex', alignItems: 'center' }}>
+                              {otherProviders.slice(0, 4).map((p, idx) => (
+                                <div
+                                  key={p.id}
+                                  style={{
+                                    width: 19,
+                                    height: 19,
+                                    borderRadius: '50%',
+                                    background: '#1c1c1c',
+                                    border: '1.5px solid #101010',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    marginLeft: idx === 0 ? 0 : -7,
+                                    zIndex: 10 - idx,
+                                    boxShadow: '0 1px 3px rgba(0,0,0,0.5)',
+                                    overflow: 'hidden',
+                                  }}
+                                  title={`${p.name} (Ativo no Orquestrador / Histórico)`}
+                                >
+                                  {renderAiIcon(p.id, 12)}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div
+                              style={{
+                                width: 20,
+                                height: 20,
+                                borderRadius: 5,
+                                background: 'rgba(255, 255, 255, 0.05)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
+                              title="Histórico de Chats"
+                            >
+                              <MessageSquare size={11} color="#888" />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Active AI Logo & Name */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {renderAiIcon(selectedAiProvider, 17)}
+                      <div style={{ color: 'white', fontSize: 13, fontFamily: 'Poppins, sans-serif', fontWeight: '400' }}>
+                        {AI_PROVIDERS.find((p) => p.id === selectedAiProvider)?.name || 'Claude'}
+                      </div>
                     </div>
                   </div>
+
                   {aiHistory.length > 0 && (
                     <button
-                      onClick={() => setAiHistory([])}
+                      onClick={() => {
+                        setAiHistory([]);
+                        setChatSessions((prev) =>
+                          prev.map((s) => (s.id === activeChatSessionId ? { ...s, history: [] } : s))
+                        );
+                      }}
                       title="Limpar histórico"
                       style={{
                         background: 'transparent',
@@ -3324,6 +3521,145 @@ export const App: React.FC = () => {
                       <Trash2 size={12} />
                       <span>Limpar</span>
                     </button>
+                  )}
+
+                  {/* Chat History & Sessions Popup */}
+                  {chatHistoryPopupOpen && (
+                    <div
+                      ref={chatHistoryPopupRef}
+                      style={{
+                        position: 'absolute',
+                        top: 34,
+                        left: 0,
+                        width: 270,
+                        background: '#181818',
+                        borderRadius: 10,
+                        border: 'none',
+                        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.7)',
+                        padding: '10px 12px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
+                        zIndex: 9999,
+                      }}
+                    >
+                      {/* Popup Header */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#ffffff', fontSize: 12, fontWeight: '500' }}>
+                          <MessageSquare size={13} color="#FF6A00" />
+                          <span>Chats Iniciados</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newId = 'session-' + Date.now();
+                            const newSession: ChatSessionItem = {
+                              id: newId,
+                              title: 'Nova Conversa',
+                              provider: selectedAiProvider,
+                              updatedAt: Date.now(),
+                              history: [],
+                            };
+                            setChatSessions((prev) => [newSession, ...prev]);
+                            setActiveChatSessionId(newId);
+                            setAiHistory([]);
+                            setChatHistoryPopupOpen(false);
+                          }}
+                          style={{
+                            background: '#FF6A00',
+                            border: 'none',
+                            color: '#ffffff',
+                            borderRadius: 4,
+                            padding: '3px 8px',
+                            fontSize: 10.5,
+                            fontWeight: '500',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 3,
+                          }}
+                        >
+                          <Plus size={11} />
+                          <span>Novo Chat</span>
+                        </button>
+                      </div>
+
+                      {/* Chats List */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflowY: 'auto' }}>
+                        {chatSessions.length === 0 ? (
+                          <div style={{ color: '#777', fontSize: 11, textAlign: 'center', padding: '12px 0' }}>
+                            Nenhum chat anterior. Inicie uma nova conversa!
+                          </div>
+                        ) : (
+                          chatSessions.map((s) => (
+                            <div
+                              key={s.id}
+                              onClick={() => {
+                                setActiveChatSessionId(s.id);
+                                setAiHistory(s.history);
+                                setSelectedAiProvider(s.provider);
+                                setChatHistoryPopupOpen(false);
+                              }}
+                              style={{
+                                padding: '6px 8px',
+                                borderRadius: 6,
+                                background: s.id === activeChatSessionId ? 'rgba(255, 106, 0, 0.15)' : 'rgba(255, 255, 255, 0.04)',
+                                border: s.id === activeChatSessionId ? '1px solid rgba(255, 106, 0, 0.4)' : '1px solid transparent',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 8,
+                                transition: 'background 0.15s ease',
+                              }}
+                              onMouseEnter={(e) => {
+                                if (s.id !== activeChatSessionId) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.07)';
+                              }}
+                              onMouseLeave={(e) => {
+                                if (s.id !== activeChatSessionId) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                                {renderAiIcon(s.provider, 14)}
+                                <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+                                  <div style={{ color: '#ffffff', fontSize: 11.5, fontWeight: s.id === activeChatSessionId ? '600' : '400', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {s.title || 'Conversa'}
+                                  </div>
+                                  <div style={{ color: '#777', fontSize: 9.5 }}>
+                                    {new Date(s.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {AI_PROVIDERS.find((p) => p.id === s.provider)?.name}
+                                  </div>
+                                </div>
+                              </div>
+                              <div
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setChatSessions((prev) => {
+                                    const filtered = prev.filter((item) => item.id !== s.id);
+                                    return filtered;
+                                  });
+                                  if (s.id === activeChatSessionId) {
+                                    setAiHistory([]);
+                                  }
+                                }}
+                                style={{
+                                  color: '#666',
+                                  cursor: 'pointer',
+                                  padding: 2,
+                                  borderRadius: 3,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                }}
+                                title="Excluir chat"
+                                onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = '#ff5555')}
+                                onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = '#666')}
+                              >
+                                <Trash2 size={11} />
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
                   )}
                 </div>
 
@@ -3566,10 +3902,44 @@ export const App: React.FC = () => {
                       gap: 6,
                     }}
                   >
-                    {/* Left Dropdown Trigger: IA Selector */}
+                    {/* Left Dropdown Trigger: Orchestrator + IA Selector */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+                      {/* Orchestrator Toggle Button */}
+                      <div
+                        onClick={() => setIsOrchestratorActive(!isOrchestratorActive)}
+                        title={
+                          isOrchestratorActive
+                            ? 'Orquestrador Ativo (Alternando tarefas entre as IAs selecionadas)'
+                            : 'Ativar Orquestrador de Tarefas'
+                        }
+                        style={{
+                          height: 26,
+                          paddingLeft: 8,
+                          paddingRight: 8,
+                          borderRadius: 5,
+                          background: isOrchestratorActive ? '#FF6A00' : 'rgba(255, 255, 255, 0.06)',
+                          color: isOrchestratorActive ? '#ffffff' : '#999999',
+                          boxShadow: isOrchestratorActive ? '0 0 10px rgba(255, 106, 0, 0.4)' : 'none',
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                          gap: 5,
+                          display: 'flex',
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                          transition: 'all 0.15s ease',
+                          fontSize: 11.5,
+                          fontFamily: 'Poppins, sans-serif',
+                          fontWeight: isOrchestratorActive ? '500' : '400',
+                          flexShrink: 0,
+                          userSelect: 'none',
+                        }}
+                      >
+                        <Layers size={13} color={isOrchestratorActive ? '#ffffff' : '#999999'} />
+                        <span>Orquestrador</span>
+                      </div>
+
                       {/* Select AI (Provider) Button with Logo */}
-                      <div style={{ position: 'relative' }}>
+                      <div style={{ position: 'relative' }} ref={providerDropdownRef}>
                         <div
                           onClick={() => setProviderDropdown(!providerDropdown)}
                           style={{
@@ -3587,11 +3957,7 @@ export const App: React.FC = () => {
                             transition: 'background 0.15s ease',
                           }}
                         >
-                          {selectedAiProvider === 'claude' && <ClaudeIcon size={14} />}
-                          {selectedAiProvider === 'antigravity' && <AntigravityIcon size={14} />}
-                          {selectedAiProvider === 'codex' && <CodexIcon size={14} />}
-                          {selectedAiProvider === 'gemini' && <GeminiIcon size={14} />}
-                          {selectedAiProvider === 'ollama' && <OllamaIcon size={14} />}
+                          {renderAiIcon(selectedAiProvider, 14)}
                           <div style={{ color: 'white', fontSize: 11.5, fontFamily: 'Poppins, sans-serif', fontWeight: '400', whiteSpace: 'nowrap' }}>
                             {AI_PROVIDERS.find((p) => p.id === selectedAiProvider)?.name || 'Claude'}
                           </div>
@@ -3608,58 +3974,110 @@ export const App: React.FC = () => {
                               background: '#181818',
                               borderRadius: 10,
                               border: 'none',
-                              boxShadow: 'none',
+                              boxShadow: '0 8px 24px rgba(0, 0, 0, 0.7)',
                               padding: 6,
                               display: 'flex',
                               flexDirection: 'column',
                               gap: 2,
                               zIndex: 9999,
                               whiteSpace: 'nowrap',
-                              minWidth: 200,
+                              minWidth: isOrchestratorActive ? 230 : 190,
                             }}
                           >
-                            {AI_PROVIDERS.map((p) => (
-                              <div
-                                key={p.id}
-                                onClick={() => {
-                                  setSelectedAiProvider(p.id);
-                                  setProviderDropdown(false);
-                                  setAiNotInstalledAlert(null);
-                                }}
-                                style={{
-                                  padding: '8px 10px',
-                                  color: '#ffffff',
-                                  fontSize: 12,
-                                  fontFamily: 'Poppins, sans-serif',
-                                  fontWeight: selectedAiProvider === p.id ? '600' : '400',
-                                  cursor: 'pointer',
-                                  borderRadius: 6,
-                                  whiteSpace: 'nowrap',
-                                  background: selectedAiProvider === p.id ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 8,
-                                  transition: 'background 0.15s ease',
-                                }}
-                                onMouseEnter={(e) => {
-                                  if (selectedAiProvider !== p.id) {
-                                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                            {AI_PROVIDERS.map((p) => {
+                              const isInstalled = installedClis[p.id] ?? true;
+                              const isSelected = selectedAiProvider === p.id;
+                              const isOrchestrated = !!orchestratedProviders[p.id];
+
+                              return (
+                                <div
+                                  key={p.id}
+                                  onClick={() => {
+                                    if (!isInstalled) {
+                                      // If CLI not installed, clicking opens the official download URL
+                                      if (window.electronAPI?.shell?.openExternal) {
+                                        window.electronAPI.shell.openExternal(p.installUrl);
+                                      } else {
+                                        window.open(p.installUrl, '_blank');
+                                      }
+                                      return;
+                                    }
+                                    setSelectedAiProvider(p.id);
+                                    setProviderDropdown(false);
+                                    setAiNotInstalledAlert(null);
+                                  }}
+                                  title={
+                                    !isInstalled
+                                      ? `CLI "${p.cliCommand}" não instalado. Clique para acessar a página de download.`
+                                      : undefined
                                   }
-                                }}
-                                onMouseLeave={(e) => {
-                                  if (selectedAiProvider !== p.id) {
-                                    e.currentTarget.style.background = 'transparent';
-                                  }
-                                }}
-                              >
-                                {p.id === 'claude' && <ClaudeIcon size={15} />}
-                                {p.id === 'antigravity' && <AntigravityIcon size={15} />}
-                                {p.id === 'codex' && <CodexIcon size={15} />}
-                                {p.id === 'gemini' && <GeminiIcon size={15} />}
-                                {p.id === 'ollama' && <OllamaIcon size={15} />}
-                                <span>{p.name}</span>
-                              </div>
-                            ))}
+                                  style={{
+                                    padding: '7px 10px',
+                                    color: '#ffffff',
+                                    fontSize: 12,
+                                    fontFamily: 'Poppins, sans-serif',
+                                    fontWeight: isSelected ? '600' : '400',
+                                    cursor: 'pointer',
+                                    borderRadius: 6,
+                                    whiteSpace: 'nowrap',
+                                    background: isSelected ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    gap: 8,
+                                    opacity: isInstalled ? 1 : 0.45,
+                                    transition: 'background 0.15s ease, opacity 0.15s ease',
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    if (!isSelected) {
+                                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                                    }
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    if (!isSelected) {
+                                      e.currentTarget.style.background = 'transparent';
+                                    }
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                                    {renderAiIcon(p.id, 15)}
+                                    <span>{p.name}</span>
+                                    {!isInstalled && (
+                                      <span
+                                        style={{
+                                          fontSize: 9,
+                                          padding: '1px 5px',
+                                          borderRadius: 3,
+                                          background: 'rgba(255, 255, 255, 0.08)',
+                                          color: '#ccc',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: 3,
+                                          fontWeight: '400',
+                                        }}
+                                      >
+                                        <Download size={9} />
+                                        <span>Baixar</span>
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Small Switch for Orchestrator Selection */}
+                                  {isOrchestratorActive && (
+                                    <MiniSwitch
+                                      checked={isOrchestrated}
+                                      disabled={!isInstalled}
+                                      onChange={() => {
+                                        setOrchestratedProviders((prev) => ({
+                                          ...prev,
+                                          [p.id]: !prev[p.id],
+                                        }));
+                                      }}
+                                    />
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>

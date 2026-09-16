@@ -194,6 +194,48 @@ ipcMain.handle('ai:prompt', async (_event, { prompt, model, cwd }) => {
   };
 });
 
+// Check Installed AI CLIs on the system
+ipcMain.handle('ai:checkClis', async () => {
+  const { execSync } = require('node:child_process');
+  const userHome = process.env.HOME || '';
+  const customPaths = [
+    path.join(userHome, '.local/bin'),
+    path.join(userHome, '.bun/bin'),
+    path.join(userHome, '.cargo/bin'),
+    '/opt/homebrew/bin',
+    '/opt/homebrew/sbin',
+    '/usr/local/bin',
+    '/usr/local/sbin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+  ];
+  const envPath = `${customPaths.join(':')}:${process.env.PATH || ''}`;
+
+  const check = (bin: string): boolean => {
+    try {
+      execSync(`which ${bin}`, {
+        env: { ...process.env, PATH: envPath },
+        stdio: 'pipe',
+        timeout: 3000,
+        shell: '/bin/zsh',
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  return {
+    claude: check('claude'),
+    antigravity: check('agy') || check('antigravity'),
+    codex: check('codex'),
+    gemini: check('gemini'),
+    ollama: check('ollama'),
+  };
+});
+
 // Native macOS Dialogs (Abrir Arquivo / Pasta)
 ipcMain.handle('dialog:openFile', async () => {
   if (!mainWindow) return null;
@@ -227,34 +269,70 @@ ipcMain.handle('dialog:openFolder', async () => {
   return null;
 });
 
-// Real Shell Execution on macOS
+// Real Shell Execution on macOS using Login Shell (/bin/zsh -l)
 ipcMain.handle('shell:exec', async (_event, { command, cwd }: { command: string; cwd?: string }) => {
   const { exec } = require('node:child_process');
-  const targetCwd = cwd && require('node:fs').existsSync(cwd) ? cwd : process.cwd();
+  const fs = require('node:fs');
+  const userHome = process.env.HOME || '';
+  const targetCwd = cwd && fs.existsSync(cwd) ? cwd : (userHome || process.cwd());
+  const shellPath = process.env.SHELL || '/bin/zsh';
+
+  const customPaths = [
+    path.join(userHome, '.local/bin'),
+    path.join(userHome, '.bun/bin'),
+    path.join(userHome, '.cargo/bin'),
+    '/opt/homebrew/bin',
+    '/opt/homebrew/sbin',
+    '/usr/local/bin',
+    '/usr/local/sbin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+  ];
+  const envPath = `${customPaths.join(':')}:${process.env.PATH || ''}`;
 
   return new Promise((resolve) => {
+    const trimmed = (command || '').trim();
+    const isCd = trimmed === 'cd' || trimmed.startsWith('cd ');
+    // If cd, execute command and then print the resulting working directory
+    const cmdToRun = isCd ? `${trimmed} && pwd` : trimmed;
+
     const env = {
       ...process.env,
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
-      PATH: `${path.join(process.env.HOME || '', '.local/bin')}:/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+      PATH: envPath,
+      HOME: userHome,
     };
 
     exec(
-      command,
+      `${shellPath} -l -c ${JSON.stringify(cmdToRun)}`,
       {
         cwd: targetCwd,
         env,
-        timeout: 30000,
-        maxBuffer: 10 * 1024 * 1024,
-        shell: '/bin/zsh',
+        timeout: 60000,
+        maxBuffer: 20 * 1024 * 1024,
       },
       (error: any, stdout: string, stderr: string) => {
+        if (isCd && !error) {
+          const lines = (stdout || '').trim().split('\n');
+          const newCwd = lines[lines.length - 1]?.trim();
+          resolve({
+            stdout: '',
+            stderr: stderr || '',
+            error: null,
+            exitCode: 0,
+            newCwd: newCwd && fs.existsSync(newCwd) ? newCwd : null,
+          });
+          return;
+        }
+
         resolve({
           stdout: stdout || '',
           stderr: stderr || '',
-          error: error ? error.message : null,
-          exitCode: error ? error.code || 1 : 0,
+          error: error ? (error.message || 'Command failed') : null,
+          exitCode: error ? (error.code || 1) : 0,
         });
       }
     );

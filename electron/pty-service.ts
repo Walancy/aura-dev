@@ -63,12 +63,26 @@ export class NativePtyService {
 
     const cleanCwd = fs.existsSync(cwd) ? cwd : process.cwd();
 
+    const userHome = process.env.HOME || '';
+    const customPaths = [
+      path.join(userHome, '.local/bin'),
+      path.join(userHome, '.bun/bin'),
+      path.join(userHome, '.cargo/bin'),
+      '/opt/homebrew/bin',
+      '/opt/homebrew/sbin',
+      '/usr/local/bin',
+      '/usr/local/sbin',
+      '/usr/bin',
+      '/bin',
+      '/usr/sbin',
+      '/sbin',
+    ];
     const env = {
       ...process.env,
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       LANG: 'en_US.UTF-8',
-      PATH: `${path.join(process.env.HOME || '', '.local/bin')}:/opt/homebrew/bin:/usr/local/bin:${process.env.PATH}`,
+      PATH: `${customPaths.join(':')}:${process.env.PATH || ''}`,
     };
 
     if (type === 'claude') {

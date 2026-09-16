@@ -32,6 +32,7 @@ export interface ElectronAPI {
   };
   ai: {
     prompt: (prompt: string, model: string, cwd?: string) => Promise<{ response: string }>;
+    checkClis?: () => Promise<Record<string, boolean>>;
   };
   menu: {
     onAction: (callback: (action: string) => void) => () => void;
@@ -43,7 +44,7 @@ export interface ElectronAPI {
     openFolder: () => Promise<{ folderPath: string; name: string; tree: any[] } | null>;
   };
   shell: {
-    exec: (command: string, cwd?: string) => Promise<{ stdout: string; stderr: string; error: string | null; exitCode: number }>;
+    exec: (command: string, cwd?: string) => Promise<{ stdout: string; stderr: string; error: string | null; exitCode: number; newCwd?: string | null }>;
     openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
   };
 }
