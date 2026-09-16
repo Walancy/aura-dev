@@ -10,6 +10,11 @@ import {
   Zap,
 } from 'lucide-react';
 import { TerminalTab } from '../../types';
+import claudeLogo from '../../assets/logos/claude-color.svg';
+import antigravityLogo from '../../assets/logos/google-antigravity-icon.svg';
+import codexLogo from '../../assets/logos/codex-color.svg';
+import geminiLogo from '../../assets/logos/gemini-icon-seeklogo.svg';
+import ollamaLogo from '../../assets/logos/ollama-icon.svg';
 
 interface TerminalPanelProps {
   projectCwd: string;
@@ -244,35 +249,35 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
               >
                 {tab.type === 'claude' && (
                   <img
-                    src="/logos/claude-color.svg"
+                    src={claudeLogo}
                     alt="Claude"
                     style={{ width: '13px', height: '13px', objectFit: 'contain' }}
                   />
                 )}
                 {tab.type === 'agy' && (
                   <img
-                    src="/logos/google-antigravity-icon.svg"
+                    src={antigravityLogo}
                     alt="AGY"
                     style={{ width: '13px', height: '13px', objectFit: 'contain', borderRadius: '2px' }}
                   />
                 )}
                 {tab.type === 'codex' && (
                   <img
-                    src="/logos/codex-color.svg"
+                    src={codexLogo}
                     alt="Codex"
                     style={{ width: '13px', height: '13px', objectFit: 'contain' }}
                   />
                 )}
                 {tab.type === 'gemini' && (
                   <img
-                    src="/logos/gemini-icon-seeklogo.svg"
+                    src={geminiLogo}
                     alt="Gemini"
                     style={{ width: '12px', height: '12px', objectFit: 'contain' }}
                   />
                 )}
                 {tab.type === 'ollama' && (
                   <img
-                    src="/logos/ollama-icon.svg"
+                    src={ollamaLogo}
                     alt="Ollama"
                     style={{ width: '12px', height: '12px', objectFit: 'contain' }}
                   />
@@ -309,7 +314,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
             }}
             title="Abrir terminal nativo com Claude Code CLI"
           >
-            <img src="/logos/claude-color.svg" alt="" style={{ width: '13px', height: '13px', objectFit: 'contain' }} />
+            <img src={claudeLogo} alt="" style={{ width: '13px', height: '13px', objectFit: 'contain' }} />
             <span>+ Claude</span>
           </button>
 
@@ -327,7 +332,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
             }}
             title="Abrir terminal nativo com Antigravity CLI"
           >
-            <img src="/logos/google-antigravity-icon.svg" alt="" style={{ width: '13px', height: '13px', objectFit: 'contain', borderRadius: '2px' }} />
+            <img src={antigravityLogo} alt="" style={{ width: '13px', height: '13px', objectFit: 'contain', borderRadius: '2px' }} />
             <span>+ AGY</span>
           </button>
 
@@ -345,7 +350,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
             }}
             title="Abrir terminal nativo com Codex"
           >
-            <img src="/logos/codex-color.svg" alt="" style={{ width: '13px', height: '13px', objectFit: 'contain' }} />
+            <img src={codexLogo} alt="" style={{ width: '13px', height: '13px', objectFit: 'contain' }} />
             <span>+ Codex</span>
           </button>
 
@@ -363,7 +368,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
             }}
             title="Abrir terminal nativo com Ollama"
           >
-            <img src="/logos/ollama-icon.svg" alt="" style={{ width: '13px', height: '13px', objectFit: 'contain' }} />
+            <img src={ollamaLogo} alt="" style={{ width: '13px', height: '13px', objectFit: 'contain' }} />
             <span>+ Ollama</span>
           </button>
 

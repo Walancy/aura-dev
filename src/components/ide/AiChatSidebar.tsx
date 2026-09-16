@@ -9,6 +9,11 @@ import {
 } from 'lucide-react';
 import { ChatMessage } from '../../types';
 import { api } from '../../services/api';
+import claudeLogo from '../../assets/logos/claude-color.svg';
+import antigravityLogo from '../../assets/logos/google-antigravity-icon.svg';
+import codexLogo from '../../assets/logos/codex-color.svg';
+import geminiLogo from '../../assets/logos/gemini-icon-seeklogo.svg';
+import ollamaLogo from '../../assets/logos/ollama-icon.svg';
 
 interface AiChatSidebarProps {
   projectCwd: string;
@@ -31,7 +36,7 @@ const AI_MODELS: AiModelOption[] = [
     label: 'Claude Code CLI (Oficial)',
     shortName: 'Claude Code',
     tag: 'CLI',
-    icon: '/logos/claude-color.svg',
+    icon: claudeLogo,
     accentColor: '#f97316',
   },
   {
@@ -39,7 +44,7 @@ const AI_MODELS: AiModelOption[] = [
     label: 'Antigravity Agent (AGY)',
     shortName: 'Antigravity AGY',
     tag: 'AGY',
-    icon: '/logos/google-antigravity-icon.svg',
+    icon: antigravityLogo,
     accentColor: '#00d2ff',
   },
   {
@@ -47,7 +52,7 @@ const AI_MODELS: AiModelOption[] = [
     label: 'OpenAI Codex (GPT-5 / 4o)',
     shortName: 'OpenAI Codex',
     tag: 'API',
-    icon: '/logos/codex-color.svg',
+    icon: codexLogo,
     accentColor: '#10a37f',
   },
   {
@@ -55,7 +60,7 @@ const AI_MODELS: AiModelOption[] = [
     label: 'Gemini 3.8 Flash (Google)',
     shortName: 'Gemini Flash',
     tag: 'API',
-    icon: '/logos/gemini-icon-seeklogo.svg',
+    icon: geminiLogo,
     accentColor: '#4285f4',
   },
   {
@@ -63,7 +68,7 @@ const AI_MODELS: AiModelOption[] = [
     label: 'Ollama (Modelos Locais)',
     shortName: 'Ollama',
     tag: 'LOCAL',
-    icon: '/logos/ollama-icon.svg',
+    icon: ollamaLogo,
     accentColor: '#10b981',
   },
 ];
@@ -198,27 +203,27 @@ export const AiChatSidebar: React.FC<AiChatSidebarProps> = ({
             }}
           >
             <img
-              src="/logos/claude-color.svg"
+              src={claudeLogo}
               alt="Claude"
               style={{ width: '15px', height: '15px', objectFit: 'contain' }}
             />
             <img
-              src="/logos/google-antigravity-icon.svg"
+              src={antigravityLogo}
               alt="Antigravity"
               style={{ width: '15px', height: '15px', objectFit: 'contain', borderRadius: '3px' }}
             />
             <img
-              src="/logos/codex-color.svg"
+              src={codexLogo}
               alt="Codex"
               style={{ width: '14px', height: '14px', objectFit: 'contain' }}
             />
             <img
-              src="/logos/gemini-icon-seeklogo.svg"
+              src={geminiLogo}
               alt="Gemini"
               style={{ width: '14px', height: '14px', objectFit: 'contain' }}
             />
             <img
-              src="/logos/ollama-icon.svg"
+              src={ollamaLogo}
               alt="Ollama"
               style={{ width: '14px', height: '14px', objectFit: 'contain' }}
             />
