@@ -3606,14 +3606,14 @@ export const App: React.FC = () => {
                               bottom: 34,
                               left: 0,
                               background: '#181818',
-                              borderRadius: 8,
-                              border: '1px solid #333',
+                              borderRadius: 10,
+                              border: 'none',
+                              boxShadow: 'none',
                               padding: 6,
                               display: 'flex',
                               flexDirection: 'column',
-                              gap: 4,
+                              gap: 2,
                               zIndex: 9999,
-                              boxShadow: '0 8px 30px rgba(0,0,0,0.85)',
                               whiteSpace: 'nowrap',
                               minWidth: 200,
                             }}
@@ -3628,17 +3628,28 @@ export const App: React.FC = () => {
                                 }}
                                 style={{
                                   padding: '8px 10px',
-                                  color: selectedAiProvider === p.id ? '#FF6A00' : 'white',
-                                  fontSize: 11.5,
+                                  color: '#ffffff',
+                                  fontSize: 12,
                                   fontFamily: 'Poppins, sans-serif',
-                                  fontWeight: '400',
+                                  fontWeight: selectedAiProvider === p.id ? '600' : '400',
                                   cursor: 'pointer',
-                                  borderRadius: 4,
+                                  borderRadius: 6,
                                   whiteSpace: 'nowrap',
-                                  background: selectedAiProvider === p.id ? 'rgba(255,106,0,0.12)' : 'transparent',
+                                  background: selectedAiProvider === p.id ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
                                   display: 'flex',
                                   alignItems: 'center',
                                   gap: 8,
+                                  transition: 'background 0.15s ease',
+                                }}
+                                onMouseEnter={(e) => {
+                                  if (selectedAiProvider !== p.id) {
+                                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                                  }
+                                }}
+                                onMouseLeave={(e) => {
+                                  if (selectedAiProvider !== p.id) {
+                                    e.currentTarget.style.background = 'transparent';
+                                  }
                                 }}
                               >
                                 {p.id === 'claude' && <ClaudeIcon size={15} />}
