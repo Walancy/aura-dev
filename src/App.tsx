@@ -208,6 +208,52 @@ const AI_PROVIDERS: AiProviderConfig[] = [
   },
 ];
 
+interface AiQuotaConfig {
+  dailyPercent: number;
+  weeklyPercent: number;
+  dailyResetTime: string;
+  weeklyResetDay: string;
+  weeklyResetTime: string;
+}
+
+const AI_QUOTAS: Record<string, AiQuotaConfig> = {
+  claude: {
+    dailyPercent: 88,
+    weeklyPercent: 98,
+    dailyResetTime: '04:00',
+    weeklyResetDay: 'Segunda-feira',
+    weeklyResetTime: '04:00',
+  },
+  antigravity: {
+    dailyPercent: 94,
+    weeklyPercent: 99,
+    dailyResetTime: '00:00',
+    weeklyResetDay: 'Domingo',
+    weeklyResetTime: '00:00',
+  },
+  codex: {
+    dailyPercent: 82,
+    weeklyPercent: 91,
+    dailyResetTime: '03:00',
+    weeklyResetDay: 'Quinta-feira',
+    weeklyResetTime: '03:00',
+  },
+  gemini: {
+    dailyPercent: 95,
+    weeklyPercent: 100,
+    dailyResetTime: '05:00',
+    weeklyResetDay: 'Terça-feira',
+    weeklyResetTime: '05:00',
+  },
+  ollama: {
+    dailyPercent: 100,
+    weeklyPercent: 100,
+    dailyResetTime: 'Ilimitado (Local)',
+    weeklyResetDay: 'Ilimitado',
+    weeklyResetTime: 'Sem limites',
+  },
+};
+
 interface TerminalSessionItem {
   id: string;
   name: string;
@@ -373,6 +419,7 @@ export const App: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState<string>('Claude 3.7 Sonnet (Thinking)');
   const [providerDropdown, setProviderDropdown] = useState(false);
   const [modelDropdown, setModelDropdown] = useState(false);
+  const [quotaTooltipOpen, setQuotaTooltipOpen] = useState(false);
   const [aiHistory, setAiHistory] = useState<
     Array<{ type: 'user' | 'assistant' | 'system' | 'error'; text: string; downloadUrl?: string; command?: string }>
   >([]);
@@ -3605,6 +3652,183 @@ export const App: React.FC = () => {
                           </div>
                         )}
                       </div>
+
+                      {/* AI Usage Quota Badge (Diário em cima, Semanal em baixo) */}
+                      {(() => {
+                        const currentQuota = AI_QUOTAS[selectedAiProvider] || AI_QUOTAS.claude;
+                        return (
+                          <div
+                            onMouseEnter={() => setQuotaTooltipOpen(true)}
+                            onMouseLeave={() => setQuotaTooltipOpen(false)}
+                            style={{
+                              position: 'relative',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 5,
+                              height: 26,
+                              padding: '0 6px',
+                              borderRadius: 5,
+                              background: quotaTooltipOpen ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.06)',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease',
+                              userSelect: 'none',
+                              flexShrink: 0,
+                            }}
+                          >
+                            {/* Arch / Speedometer Gauge Icon matching screenshot */}
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 16 16"
+                              fill="white"
+                              style={{ opacity: 0.95, flexShrink: 0 }}
+                            >
+                              <path d="M8 1.5C5.2 1.5 3.2 3.8 2.2 7c-.5 1.7-1 4.3-1.4 6.2-.2.9.5 1.6 1.3 1.4 1.1-.3 2.5-1.7 3.4-3.1.9-1.4 1.6-1.9 2.5-1.9s1.6.5 2.5 1.9c.9 1.4 2.3 2.8 3.4 3.1.8.2 1.5-.5 1.3-1.4-.4-1.9-.9-4.5-1.4-6.2-1-3.2-3-5.5-5.8-5.5z" />
+                            </svg>
+
+                            {/* Stacked percentages: Diário em cima, Semanal em baixo */}
+                            <div
+                              style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                justifyContent: 'center',
+                                alignItems: 'flex-start',
+                                lineHeight: 1.05,
+                              }}
+                            >
+                              <span
+                                style={{
+                                  fontSize: 9,
+                                  fontWeight: 700,
+                                  color: 'white',
+                                  fontFamily: 'Poppins, -apple-system, sans-serif',
+                                  letterSpacing: '-0.02em',
+                                }}
+                              >
+                                {currentQuota.dailyPercent}%
+                              </span>
+                              <span
+                                style={{
+                                  fontSize: 9,
+                                  fontWeight: 700,
+                                  color: 'white',
+                                  fontFamily: 'Poppins, -apple-system, sans-serif',
+                                  letterSpacing: '-0.02em',
+                                }}
+                              >
+                                {currentQuota.weeklyPercent}%
+                              </span>
+                            </div>
+
+                            {/* Hover Tooltip showing detailed usage & reset times */}
+                            {quotaTooltipOpen && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  bottom: 34,
+                                  left: 0,
+                                  background: '#16171d',
+                                  border: '1px solid #2e3240',
+                                  borderRadius: 8,
+                                  padding: '10px 12px',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: 8,
+                                  zIndex: 10000,
+                                  boxShadow: '0 12px 36px rgba(0, 0, 0, 0.9)',
+                                  minWidth: 235,
+                                  pointerEvents: 'none',
+                                }}
+                              >
+                                {/* Header */}
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                                    paddingBottom: 6,
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    {selectedAiProvider === 'claude' && <ClaudeIcon size={14} />}
+                                    {selectedAiProvider === 'antigravity' && <AntigravityIcon size={14} />}
+                                    {selectedAiProvider === 'codex' && <CodexIcon size={14} />}
+                                    {selectedAiProvider === 'gemini' && <GeminiIcon size={14} />}
+                                    {selectedAiProvider === 'ollama' && <OllamaIcon size={14} />}
+                                    <span style={{ fontSize: 11.5, fontWeight: 600, color: '#fff', fontFamily: 'Poppins, sans-serif' }}>
+                                      {AI_PROVIDERS.find((p) => p.id === selectedAiProvider)?.name || 'IA'}
+                                    </span>
+                                  </div>
+                                  <span
+                                    style={{
+                                      fontSize: 9.5,
+                                      color: '#10b981',
+                                      background: 'rgba(16, 185, 129, 0.15)',
+                                      padding: '1px 6px',
+                                      borderRadius: 4,
+                                      fontWeight: 600,
+                                      fontFamily: 'Poppins, sans-serif',
+                                    }}
+                                  >
+                                    Quota Restante
+                                  </span>
+                                </div>
+
+                                {/* Daily Quota */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, fontFamily: 'Poppins, sans-serif' }}>
+                                    <span style={{ color: '#aaa' }}>Uso diário:</span>
+                                    <span style={{ color: '#FF8833', fontWeight: 700 }}>
+                                      {currentQuota.dailyPercent}% diário
+                                    </span>
+                                  </div>
+                                  {/* Mini progress bar */}
+                                  <div style={{ width: '100%', height: 4, background: '#252733', borderRadius: 2, overflow: 'hidden' }}>
+                                    <div
+                                      style={{
+                                        width: `${currentQuota.dailyPercent}%`,
+                                        height: '100%',
+                                        background: 'linear-gradient(90deg, #FF6A00, #FFA149)',
+                                        borderRadius: 2,
+                                      }}
+                                    />
+                                  </div>
+                                  <div style={{ fontSize: 10, color: '#888ea2', display: 'flex', alignItems: 'center', gap: 4, marginTop: 1, fontFamily: 'Poppins, sans-serif' }}>
+                                    <span>🕒</span>
+                                    <span>Reset diário: às {currentQuota.dailyResetTime}</span>
+                                  </div>
+                                </div>
+
+                                {/* Weekly Quota */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, fontFamily: 'Poppins, sans-serif' }}>
+                                    <span style={{ color: '#aaa' }}>Uso semanal:</span>
+                                    <span style={{ color: '#38BDF8', fontWeight: 700 }}>
+                                      {currentQuota.weeklyPercent}% semanal
+                                    </span>
+                                  </div>
+                                  {/* Mini progress bar */}
+                                  <div style={{ width: '100%', height: 4, background: '#252733', borderRadius: 2, overflow: 'hidden' }}>
+                                    <div
+                                      style={{
+                                        width: `${currentQuota.weeklyPercent}%`,
+                                        height: '100%',
+                                        background: 'linear-gradient(90deg, #0284c7, #38bdf8)',
+                                        borderRadius: 2,
+                                      }}
+                                    />
+                                  </div>
+                                  <div style={{ fontSize: 10, color: '#888ea2', display: 'flex', alignItems: 'center', gap: 4, marginTop: 1, fontFamily: 'Poppins, sans-serif' }}>
+                                    <span>📅</span>
+                                    <span>Reset semanal: {currentQuota.weeklyResetDay} às {currentQuota.weeklyResetTime}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {/* Hint for CLI commands */}
                       <div style={{ color: '#555', fontSize: 10.5, fontFamily: 'Poppins, sans-serif', fontWeight: '400', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
