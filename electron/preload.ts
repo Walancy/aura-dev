@@ -1,0 +1,107 @@
+import { contextBridge, ipcRenderer } from 'electron';
+
+contextBridge.exposeInMainWorld('electronAPI', {
+  // Window State Methods
+  windowState: {
+    isFullscreen: () => ipcRenderer.invoke('window:isFullscreen'),
+    onFullscreenChange: (callback: (isFullscreen: boolean) => void) => {
+      const handler = (_event: any, isFs: boolean) => callback(isFs);
+      ipcRenderer.on('window:fullscreen-change', handler);
+      return () => ipcRenderer.removeListener('window:fullscreen-change', handler);
+    },
+  },
+
+  // PTY Methods
+  pty: {
+    create: (id: string, type: string, cwd: string, cols: number, rows: number) =>
+      ipcRenderer.invoke('pty:create', { id, type, cwd, cols, rows }),
+    write: (id: string, data: string) =>
+      ipcRenderer.send('pty:write', { id, data }),
+    resize: (id: string, cols: number, rows: number) =>
+      ipcRenderer.send('pty:resize', { id, cols, rows }),
+    kill: (id: string) =>
+      ipcRenderer.send('pty:kill', { id }),
+    getHistory: (id: string) =>
+      ipcRenderer.invoke('pty:getHistory', { id }),
+    onData: (callback: (payload: { id: string; data: string }) => void) => {
+      const handler = (_event: any, payload: any) => callback(payload);
+      ipcRenderer.on('pty:data', handler);
+      return () => ipcRenderer.removeListener('pty:data', handler);
+    },
+    onExit: (callback: (payload: { id: string; exitCode: number }) => void) => {
+      const handler = (_event: any, payload: any) => callback(payload);
+      ipcRenderer.on('pty:exit', handler);
+      return () => ipcRenderer.removeListener('pty:exit', handler);
+    },
+  },
+
+  // File System Methods
+  fs: {
+    getTree: (dirPath: string, depth?: number) =>
+      ipcRenderer.invoke('fs:getTree', { dirPath, depth }),
+    readFile: (filePath: string) =>
+      ipcRenderer.invoke('fs:readFile', { filePath }),
+    writeFile: (filePath: string, content: string) =>
+      ipcRenderer.invoke('fs:writeFile', { filePath, content }),
+    createItem: (itemPath: string, isDirectory: boolean) =>
+      ipcRenderer.invoke('fs:createItem', { itemPath, isDirectory }),
+    deleteItem: (itemPath: string) =>
+      ipcRenderer.invoke('fs:deleteItem', { itemPath }),
+  },
+
+  // Projects & Tasks Methods
+  projects: {
+    getProjects: () => ipcRenderer.invoke('projects:getProjects'),
+    getActiveProject: () => ipcRenderer.invoke('projects:getActiveProject'),
+    selectProject: (id: string) => ipcRenderer.invoke('projects:selectProject', { id }),
+    addProject: (name: string, path: string, description?: string) =>
+      ipcRenderer.invoke('projects:addProject', { name, path, description }),
+    getTasks: () => ipcRenderer.invoke('projects:getTasks'),
+    updateTaskStatus: (id: string, status: string) =>
+      ipcRenderer.invoke('projects:updateTaskStatus', { id, status }),
+  },
+
+  // Ports Methods
+  ports: {
+    scan: () => ipcRenderer.invoke('ports:scan'),
+  },
+
+  // AI Agent Methods
+  ai: {
+    prompt: (prompt: string, model: string, cwd?: string) =>
+      ipcRenderer.invoke('ai:prompt', { prompt, model, cwd }),
+  },
+
+  // Native Menu Listeners
+  menu: {
+    onAction: (callback: (action: string) => void) => {
+      const handler = (_event: any, action: string) => callback(action);
+      ipcRenderer.on('menu:action', handler);
+      return () => ipcRenderer.removeListener('menu:action', handler);
+    },
+    onOpenFile: (callback: (filePath: string) => void) => {
+      const handler = (_event: any, filePath: string) => callback(filePath);
+      ipcRenderer.on('menu:open-file', handler);
+      return () => ipcRenderer.removeListener('menu:open-file', handler);
+    },
+    onOpenFolder: (callback: (folderPath: string) => void) => {
+      const handler = (_event: any, folderPath: string) => callback(folderPath);
+      ipcRenderer.on('menu:open-folder', handler);
+      return () => ipcRenderer.removeListener('menu:open-folder', handler);
+    },
+  },
+
+  // Native File/Folder Dialogs
+  dialog: {
+    openFile: () => ipcRenderer.invoke('dialog:openFile'),
+    openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
+  },
+
+  // Shell execution
+  shell: {
+    exec: (command: string, cwd?: string) =>
+      ipcRenderer.invoke('shell:exec', { command, cwd }),
+    openExternal: (url: string) =>
+      ipcRenderer.invoke('shell:openExternal', { url }),
+  },
+});
