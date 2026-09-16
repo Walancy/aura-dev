@@ -47,14 +47,23 @@ function createWindow() {
     mainWindow?.webContents.send('window:fullscreen-change', false);
   });
 
-  // In development, load from Vite dev server if running, or load local index.html
-  const isDev = process.env.NODE_ENV !== 'production';
-  if (isDev) {
-    mainWindow.loadURL('http://localhost:5185');
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
-  }
+  // Load from Vite dev server if active, otherwise load compiled dist/index.html
+  const indexPath = path.join(__dirname, '../dist/index.html');
+  const http = require('http');
+  const req = http.get('http://localhost:5185', (res: any) => {
+    if (res.statusCode === 200 || res.statusCode === 304) {
+      mainWindow?.loadURL('http://localhost:5185');
+    } else {
+      mainWindow?.loadFile(indexPath);
+    }
+  });
+  req.on('error', () => {
+    mainWindow?.loadFile(indexPath);
+  });
+  req.setTimeout(500, () => {
+    req.destroy();
+    mainWindow?.loadFile(indexPath);
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
