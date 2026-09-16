@@ -92,6 +92,10 @@ export class NativePtyService {
       file = '/bin/zsh';
       args = ['-l', '-c', 'ollama run llama3'];
       title = 'Ollama CLI';
+    } else if (type === 'codex') {
+      file = '/bin/zsh';
+      args = ['-l'];
+      title = 'OpenAI Codex CLI';
     }
 
     const term = pty.spawn(file, args, {

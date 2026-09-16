@@ -158,11 +158,13 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
     }
   }, [activeTabId, isCollapsed, projectCwd]);
 
-  const addTab = (type: 'zsh' | 'claude' | 'agy') => {
+  const addTab = (type: 'zsh' | 'claude' | 'agy' | 'gemini' | 'ollama') => {
     const id = `term-${type}-${Date.now()}`;
     let title = 'zsh';
     if (type === 'claude') title = 'Claude Code CLI';
     if (type === 'agy') title = 'AGY CLI (Agent)';
+    if (type === 'gemini') title = 'Gemini CLI';
+    if (type === 'ollama') title = 'Ollama CLI';
 
     const newTab: TerminalTab = { id, title, type };
     setTabs((prev) => [...prev, newTab]);
@@ -240,8 +242,41 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
                   cursor: 'pointer',
                 }}
               >
-                {tab.type === 'claude' && <Sparkles size={11} color="var(--accent-orange)" />}
-                {tab.type === 'agy' && <Zap size={11} color="var(--accent-cyan)" />}
+                {tab.type === 'claude' && (
+                  <img
+                    src="/logos/claude-color.svg"
+                    alt="Claude"
+                    style={{ width: '13px', height: '13px', objectFit: 'contain' }}
+                  />
+                )}
+                {tab.type === 'agy' && (
+                  <img
+                    src="/logos/google-antigravity-icon.svg"
+                    alt="AGY"
+                    style={{ width: '13px', height: '13px', objectFit: 'contain', borderRadius: '2px' }}
+                  />
+                )}
+                {tab.type === 'codex' && (
+                  <img
+                    src="/logos/codex-color.svg"
+                    alt="Codex"
+                    style={{ width: '13px', height: '13px', objectFit: 'contain' }}
+                  />
+                )}
+                {tab.type === 'gemini' && (
+                  <img
+                    src="/logos/gemini-icon-seeklogo.svg"
+                    alt="Gemini"
+                    style={{ width: '12px', height: '12px', objectFit: 'contain' }}
+                  />
+                )}
+                {tab.type === 'ollama' && (
+                  <img
+                    src="/logos/ollama-icon.svg"
+                    alt="Ollama"
+                    style={{ width: '12px', height: '12px', objectFit: 'contain' }}
+                  />
+                )}
                 <span>{tab.title}</span>
                 {tabs.length > 1 && (
                   <span
@@ -267,12 +302,15 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
               padding: '2px 8px',
               fontSize: '0.72rem',
               borderColor: 'rgba(255, 102, 0, 0.4)',
-              color: 'var(--accent-orange)',
+              color: '#ff8833',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
             }}
             title="Abrir terminal nativo com Claude Code CLI"
           >
-            <Sparkles size={12} />
-            <span>+ Claude Code</span>
+            <img src="/logos/claude-color.svg" alt="" style={{ width: '13px', height: '13px', objectFit: 'contain' }} />
+            <span>+ Claude</span>
           </button>
 
           <button
@@ -283,11 +321,50 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
               fontSize: '0.72rem',
               borderColor: 'rgba(0, 210, 255, 0.4)',
               color: 'var(--accent-cyan)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
             }}
             title="Abrir terminal nativo com Antigravity CLI"
           >
-            <Zap size={12} />
-            <span>+ AGY CLI</span>
+            <img src="/logos/google-antigravity-icon.svg" alt="" style={{ width: '13px', height: '13px', objectFit: 'contain', borderRadius: '2px' }} />
+            <span>+ AGY</span>
+          </button>
+
+          <button
+            onClick={() => addTab('codex')}
+            className="btn-secondary"
+            style={{
+              padding: '2px 8px',
+              fontSize: '0.72rem',
+              borderColor: 'rgba(16, 163, 127, 0.4)',
+              color: '#10a37f',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+            }}
+            title="Abrir terminal nativo com Codex"
+          >
+            <img src="/logos/codex-color.svg" alt="" style={{ width: '13px', height: '13px', objectFit: 'contain' }} />
+            <span>+ Codex</span>
+          </button>
+
+          <button
+            onClick={() => addTab('ollama')}
+            className="btn-secondary"
+            style={{
+              padding: '2px 8px',
+              fontSize: '0.72rem',
+              borderColor: 'rgba(16, 185, 129, 0.4)',
+              color: '#34d399',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '5px',
+            }}
+            title="Abrir terminal nativo com Ollama"
+          >
+            <img src="/logos/ollama-icon.svg" alt="" style={{ width: '13px', height: '13px', objectFit: 'contain' }} />
+            <span>+ Ollama</span>
           </button>
 
           <button onClick={() => addTab('zsh')} className="btn-icon" title="Novo Terminal zsh">

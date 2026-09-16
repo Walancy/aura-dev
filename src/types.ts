@@ -40,7 +40,7 @@ export interface EditorTab {
 export interface TerminalTab {
   id: string;
   title: string;
-  type: 'zsh' | 'claude' | 'agy' | 'custom';
+  type: 'zsh' | 'claude' | 'agy' | 'gemini' | 'ollama' | 'codex' | 'custom';
 }
 
 export interface OpenPort {
@@ -60,4 +60,5 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
   model?: string;
+  modelId?: 'claude-headless' | 'agy-agent' | 'gemini-flash' | 'ollama-local' | 'openai-codex' | string;
 }
