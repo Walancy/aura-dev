@@ -53,6 +53,7 @@ import antigravityLogo from './assets/logos/google-antigravity-icon.svg';
 import codexLogo from './assets/logos/codex-color.svg';
 import geminiLogo from './assets/logos/gemini-icon-seeklogo.svg';
 import ollamaLogo from './assets/logos/ollama-icon.svg';
+import { FileIcon, FolderIcon } from './components/FileIcon';
 
 // Claude Color Official SVG Icon
 const ClaudeIcon: React.FC<{ size?: number; style?: React.CSSProperties }> = ({ size = 16, style }) => (
@@ -2116,23 +2117,15 @@ export const App: React.FC = () => {
                                   <div style={{ width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#707070', flexShrink: 0 }}>
                                     {isExpanded ? <ChevronDown size={13} color="#FF6A00" /> : <ChevronRight size={13} />}
                                   </div>
-                                  {isExpanded ? <FolderOpen size={14} color="#FF6A00" /> : <Folder size={14} color="#707070" />}
+                                  <FolderIcon folderName={item.name} isOpen={isExpanded} size={15} />
                                   <span style={{ color: isExpanded ? '#ffffff' : '#d0d0d0', fontSize: 12, fontFamily: 'Poppins', fontWeight: 400 }}>
                                     {item.name}
                                   </span>
                                 </>
                               ) : (
                                 <>
-                                  <div style={{ width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: 2 }}>
-                                    {ext === 'ts' || ext === 'tsx' ? (
-                                      <span style={{ color: '#3159DD', fontSize: 10, fontWeight: 700 }}>TS</span>
-                                    ) : ext === 'js' || ext === 'jsx' ? (
-                                      <span style={{ color: '#f7df1e', fontSize: 10, fontWeight: 700 }}>JS</span>
-                                    ) : ext === 'json' ? (
-                                      <span style={{ color: '#cbcb41', fontSize: 10, fontWeight: 700 }}>{}</span>
-                                    ) : (
-                                      <FileText size={13} color="#858585" />
-                                    )}
+                                  <div style={{ width: 15, height: 15, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: 2 }}>
+                                    <FileIcon fileName={item.name} size={15} />
                                   </div>
                                   <span
                                     style={{
@@ -2259,25 +2252,6 @@ export const App: React.FC = () => {
                 ) : (
                   openFiles.map((file, idx) => {
                     const isActive = activeFileId === file.id;
-                    const ext = file.name.split('.').pop()?.toLowerCase();
-                    let iconColor = '#747474';
-                    let iconLabel = '📄';
-                    if (ext === 'ts' || ext === 'tsx') {
-                      iconColor = '#3159DD';
-                      iconLabel = 'TS';
-                    } else if (ext === 'js' || ext === 'jsx') {
-                      iconColor = '#E8B923';
-                      iconLabel = 'JS';
-                    } else if (ext === 'json') {
-                      iconColor = '#CBCB41';
-                      iconLabel = '{}';
-                    } else if (file.name.toLowerCase().includes('docker')) {
-                      iconColor = '#2496ED';
-                      iconLabel = '🐳';
-                    } else if (ext === 'c' || ext === 'cpp') {
-                      iconColor = '#3190DD';
-                      iconLabel = 'C';
-                    }
 
                     return (
                       <React.Fragment key={file.id}>
@@ -2301,7 +2275,7 @@ export const App: React.FC = () => {
                             transition: 'background 0.15s ease',
                           }}
                         >
-                          <span style={{ fontSize: 11, fontWeight: '700', color: iconColor }}>{iconLabel}</span>
+                          <FileIcon fileName={file.name} size={14} />
                           <div
                             style={{
                               color: isActive ? 'white' : '#747474',

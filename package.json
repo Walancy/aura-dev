@@ -18,7 +18,8 @@
     "lucide-react": "^1.46.0",
     "node-pty": "^1.1.0",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "vscode-symbols": "^0.0.20"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

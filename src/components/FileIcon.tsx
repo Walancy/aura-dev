@@ -1,0 +1,307 @@
+import React from 'react';
+
+// Eagerly import all file and folder SVG icons from assets
+const fileIconsMap = import.meta.glob<string>('../assets/file-icons/files/*.svg', {
+  eager: true,
+  import: 'default',
+});
+
+const folderIconsMap = import.meta.glob<string>('../assets/file-icons/folders/*.svg', {
+  eager: true,
+  import: 'default',
+});
+
+// Helper to look up an icon URL by icon base name
+function getFileSvgUrl(iconName: string): string {
+  const key = `../assets/file-icons/files/${iconName}.svg`;
+  return fileIconsMap[key] || fileIconsMap['../assets/file-icons/files/document.svg'] || '';
+}
+
+function getFolderSvgUrl(iconName: string, isOpen: boolean): string {
+  if (iconName === 'folder') {
+    const key = isOpen
+      ? '../assets/file-icons/folders/folder-open.svg'
+      : '../assets/file-icons/folders/folder.svg';
+    return folderIconsMap[key] || folderIconsMap['../assets/file-icons/folders/folder.svg'] || '';
+  }
+  const key = `../assets/file-icons/folders/${iconName}.svg`;
+  return folderIconsMap[key] || folderIconsMap['../assets/file-icons/folders/folder.svg'] || '';
+}
+
+// Special exact file name mappings
+const EXACT_FILE_MAP: Record<string, string> = {
+  'package.json': 'npm',
+  'package-lock.json': 'npm',
+  'bun.lock': 'bun',
+  'bun.lockb': 'bun',
+  'bunfig.toml': 'bun',
+  'yarn.lock': 'yarn',
+  'pnpm-lock.yaml': 'pnpm',
+  '.gitignore': 'git',
+  '.gitmodules': 'git',
+  '.gitattributes': 'git',
+  '.gitkeep': 'git',
+  'dockerfile': 'docker',
+  'docker-compose.yml': 'docker',
+  'docker-compose.yaml': 'docker',
+  'captain-definition': 'docker',
+  'tsconfig.json': 'tsconfig',
+  'tsconfig.node.json': 'tsconfig',
+  'tsconfig.electron.json': 'tsconfig',
+  'vite.config.ts': 'vite',
+  'vite.config.js': 'vite',
+  'vite.config.mjs': 'vite',
+  'vitest.config.ts': 'vitest',
+  'vitest.config.js': 'vitest',
+  'next.config.js': 'next',
+  'next.config.mjs': 'next',
+  'next.config.ts': 'next',
+  'tailwind.config.js': 'tailwind',
+  'tailwind.config.ts': 'tailwind',
+  'tailwind.config.cjs': 'tailwind',
+  'postcss.config.js': 'postcss',
+  '.eslintrc': 'eslint',
+  '.eslintrc.js': 'eslint',
+  '.eslintrc.json': 'eslint',
+  '.eslintrc.yml': 'eslint',
+  'eslint.config.js': 'eslint',
+  'eslint.config.mjs': 'eslint',
+  'eslint.config.ts': 'eslint',
+  '.prettierrc': 'prettier',
+  '.prettierrc.json': 'prettier',
+  'prettier.config.js': 'prettier',
+  'turbo.json': 'turborepo',
+  'readme.md': 'markdown',
+  'changelog.md': 'markdown',
+  'license': 'license',
+  'license.md': 'license',
+  'license.txt': 'license',
+  'supabase.config.toml': 'supabase',
+  'skills-lock.json': 'brackets-yellow',
+};
+
+// Extension mappings
+const EXTENSION_MAP: Record<string, string> = {
+  ts: 'ts',
+  tsx: 'react-ts',
+  js: 'js',
+  jsx: 'react',
+  mjs: 'js',
+  cjs: 'js',
+  json: 'brackets-yellow',
+  jsonc: 'brackets-yellow',
+  md: 'markdown',
+  mdx: 'mdx',
+  html: 'code-orange',
+  htm: 'code-orange',
+  css: 'code-sky',
+  scss: 'sass',
+  sass: 'sass',
+  less: 'code-blue',
+  py: 'python',
+  rs: 'rust',
+  go: 'go',
+  java: 'java',
+  c: 'c',
+  cpp: 'cplus',
+  h: 'h',
+  hpp: 'h',
+  cs: 'csharp',
+  php: 'php',
+  rb: 'ruby',
+  sql: 'database',
+  prisma: 'prisma',
+  sh: 'shell',
+  bash: 'shell',
+  zsh: 'shell',
+  yaml: 'yaml',
+  yml: 'yaml',
+  xml: 'xml',
+  svg: 'svg',
+  png: 'image',
+  jpg: 'image',
+  jpeg: 'image',
+  webp: 'image',
+  gif: 'gif',
+  ico: 'image',
+  pdf: 'pdf',
+  env: 'gear',
+  toml: 'gear',
+  lock: 'lock',
+  vue: 'vue',
+  svelte: 'svelte',
+  astro: 'astro',
+  graphql: 'graphql',
+  gql: 'graphql',
+  wasm: 'code-purple',
+  lua: 'lua',
+  dart: 'dart',
+  swift: 'swift',
+  kt: 'kotlin',
+  kotlin: 'kotlin',
+};
+
+// Special folder name mappings
+const FOLDER_MAP: Record<string, string> = {
+  '.github': 'folder-github',
+  '.git': 'folder-red',
+  'supabase': 'folder-supabase',
+  '.supabase': 'folder-supabase',
+  'app': 'folder-app',
+  'apps': 'folder-app',
+  'packages': 'folder-modules',
+  'modules': 'folder-modules',
+  'src': 'folder-src',
+  'source': 'folder-src',
+  'dist': 'folder-purple-outline',
+  'build': 'folder-purple-outline',
+  'out': 'folder-purple-outline',
+  'public': 'folder-purple-outline',
+  'static': 'folder-assets',
+  'assets': 'folder-assets',
+  'images': 'folder-assets',
+  'img': 'folder-assets',
+  'components': 'folder-green-code',
+  'docs': 'folder-blue',
+  'doc': 'folder-blue',
+  'documentation': 'folder-blue',
+  'node_modules': 'folder-green',
+  'config': 'folder-config',
+  '.config': 'folder-config',
+  'server': 'folder-orange',
+  'client': 'folder-blue',
+  'api': 'folder-red',
+  'database': 'folder-database',
+  'db': 'folder-database',
+  'prisma': 'folder-prisma',
+  'drizzle': 'folder-drizzle',
+  '.drizzle': 'folder-drizzle',
+  'utils': 'folder-utils',
+  'util': 'folder-utils',
+  'lib': 'folder-utils',
+  'helpers': 'folder-helpers',
+  'routes': 'folder-router',
+  'router': 'folder-router',
+  'models': 'folder-models',
+  'types': 'folder-blue-code',
+  'styles': 'folder-sky-code',
+  'css': 'folder-sky-code',
+  'scripts': 'folder-red-code',
+  '.vscode': 'folder-blue',
+  '.claude': 'folder-orange',
+  '.agents': 'folder-purple',
+  '.windsurf': 'folder-sky',
+  'bot': 'folder-blue-code',
+  'fluxos de telas': 'folder-layout',
+  'layout': 'folder-layout',
+  'layouts': 'folder-layout',
+};
+
+export interface FileIconProps {
+  fileName: string;
+  size?: number;
+  className?: string;
+  style?: React.CSSProperties;
+}
+
+export const FileIcon: React.FC<FileIconProps> = ({ fileName, size = 15, className, style }) => {
+  const lowerName = fileName.toLowerCase();
+
+  let iconName = 'document';
+
+  // 1. Check exact file names
+  if (EXACT_FILE_MAP[lowerName]) {
+    iconName = EXACT_FILE_MAP[lowerName];
+  } else if (lowerName.startsWith('.env')) {
+    iconName = 'gear';
+  } else if (lowerName.endsWith('.test.ts') || lowerName.endsWith('.spec.ts')) {
+    iconName = 'ts-test';
+  } else if (lowerName.endsWith('.test.js') || lowerName.endsWith('.spec.js')) {
+    iconName = 'js-test';
+  } else {
+    // 2. Check extension
+    const ext = lowerName.split('.').pop() || '';
+    if (EXTENSION_MAP[ext]) {
+      iconName = EXTENSION_MAP[ext];
+    }
+  }
+
+  const iconUrl = getFileSvgUrl(iconName);
+
+  if (!iconUrl) {
+    return (
+      <div
+        style={{
+          width: size,
+          height: size,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 10,
+          color: '#888',
+          ...style,
+        }}
+      >
+        📄
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={iconUrl}
+      alt={fileName}
+      className={className}
+      style={{
+        width: size,
+        height: size,
+        objectFit: 'contain',
+        flexShrink: 0,
+        display: 'inline-block',
+        verticalAlign: 'middle',
+        userSelect: 'none',
+        ...style,
+      }}
+      draggable={false}
+    />
+  );
+};
+
+export interface FolderIconProps {
+  folderName: string;
+  isOpen: boolean;
+  size?: number;
+  className?: string;
+  style?: React.CSSProperties;
+}
+
+export const FolderIcon: React.FC<FolderIconProps> = ({
+  folderName,
+  isOpen,
+  size = 15,
+  className,
+  style,
+}) => {
+  const lowerName = folderName.toLowerCase();
+  const matchedFolder = FOLDER_MAP[lowerName] || 'folder';
+  const iconUrl = getFolderSvgUrl(matchedFolder, isOpen);
+
+  return (
+    <img
+      src={iconUrl}
+      alt={folderName}
+      className={className}
+      style={{
+        width: size,
+        height: size,
+        objectFit: 'contain',
+        flexShrink: 0,
+        display: 'inline-block',
+        verticalAlign: 'middle',
+        userSelect: 'none',
+        ...style,
+      }}
+      draggable={false}
+    />
+  );
+};
