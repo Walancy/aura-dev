@@ -376,7 +376,7 @@ const AI_PROVIDERS: AiProviderConfig[] = [
     name: 'Google Antigravity',
     cliCommand: 'agy',
     installUrl: 'https://antigravity.google/product/antigravity-cli?authuser=31',
-    installGuide: 'curl -fsSL https://antigravity.google.com/install.sh | bash',
+    installGuide: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
     models: [
       'AGY 2.0 Autonomous Agent',
       'AGY Agentic Pair Programmer',
