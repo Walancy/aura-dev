@@ -81,6 +81,7 @@ import codexLogo from './assets/logos/codex-color.svg';
 import geminiLogo from './assets/logos/gemini-icon-seeklogo.svg';
 import ollamaLogo from './assets/logos/ollama-icon.svg';
 import { FileIcon, FolderIcon } from './components/FileIcon';
+import { SidebarPanels } from './components/ide/SidebarPanels';
 
 // Customize Layout Official VS Code / Antigravity Icon
 const CustomizeLayoutIcon: React.FC<{ size?: number; color?: string }> = ({ size = 18, color = 'currentColor' }) => (
@@ -2015,6 +2016,7 @@ export const App: React.FC = () => {
 
   // Panel & Layout Visibility Controls (Antigravity & VS Code Customize Layout)
   const [showExplorer, setShowExplorer] = useState(true);
+  const [activeActivityTab, setActiveActivityTab] = useState<'explorer' | 'search' | 'git' | 'debug' | 'preview' | 'extensions'>('explorer');
   const [showAiPanel, setShowAiPanel] = useState(true);
   const [showActivityBar, setShowActivityBar] = useState(true);
   const [showStatusBar, setShowStatusBar] = useState(true);
@@ -3841,12 +3843,55 @@ export const App: React.FC = () => {
         setIsSettingsModalOpen((prev) => !prev);
         setIsSettingsMenuOpen(false);
       }
-      // Cmd/Ctrl + Shift + X: Extensions
+      // Cmd/Ctrl + Shift + E: Explorer
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
+        e.preventDefault();
+        if (showExplorer && activeActivityTab === 'explorer') {
+          setShowExplorer(false);
+        } else {
+          setActiveActivityTab('explorer');
+          setShowExplorer(true);
+        }
+      }
+      // Cmd/Ctrl + Shift + F: Search in files
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        if (showExplorer && activeActivityTab === 'search') {
+          setShowExplorer(false);
+        } else {
+          setActiveActivityTab('search');
+          setShowExplorer(true);
+        }
+      }
+      // Ctrl + Shift + G: Source Control / Git
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'g') {
+        e.preventDefault();
+        if (showExplorer && activeActivityTab === 'git') {
+          setShowExplorer(false);
+        } else {
+          setActiveActivityTab('git');
+          setShowExplorer(true);
+        }
+      }
+      // Cmd/Ctrl + Shift + D: Run and Debug
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        if (showExplorer && activeActivityTab === 'debug') {
+          setShowExplorer(false);
+        } else {
+          setActiveActivityTab('debug');
+          setShowExplorer(true);
+        }
+      }
+      // Cmd/Ctrl + Shift + X: Extensions Marketplace
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'x') {
         e.preventDefault();
-        setSettingsActiveTab('extensions');
-        setIsSettingsModalOpen(true);
-        setIsSettingsMenuOpen(false);
+        if (showExplorer && activeActivityTab === 'extensions') {
+          setShowExplorer(false);
+        } else {
+          setActiveActivityTab('extensions');
+          setShowExplorer(true);
+        }
       }
       // Cmd/Ctrl + P: Quick Open / Search files
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'p') {
@@ -6017,45 +6062,147 @@ ${prompt}`;
                   transition: 'background 0.2s ease',
                 }}
               >
+                {/* 1. Files / Explorer */}
                 <div
                   style={{
                     width: 24,
                     height: 24,
-                    color: showExplorer ? accentColor : themeTokens.textSecondary,
+                    color: (showExplorer && activeActivityTab === 'explorer') ? accentColor : themeTokens.textSecondary,
                     cursor: 'pointer',
                     transition: 'color 0.15s ease',
                   }}
-                  title={showExplorer ? 'Ocultar Explorer' : 'Mostrar Explorer'}
-                  onClick={() => setShowExplorer(!showExplorer)}
+                  title="Explorador de Arquivos (⌘⇧E)"
+                  onClick={() => {
+                    if (showExplorer && activeActivityTab === 'explorer') {
+                      setShowExplorer(false);
+                    } else {
+                      setActiveActivityTab('explorer');
+                      setShowExplorer(true);
+                    }
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'explorer') ? accentColor : themeTokens.textPrimary)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'explorer') ? accentColor : themeTokens.textSecondary)}
                 >
                   <Files size={20} />
                 </div>
+
+                {/* 2. Global Search & Replace */}
                 <div
-                  style={{ width: 24, height: 24, color: isQuickOpenOpen ? accentColor : themeTokens.textSecondary, cursor: 'pointer', transition: 'color 0.15s ease' }}
-                  title="Search files or commands (⌘P)"
-                  onClick={() => {
-                    setIsQuickOpenOpen(true);
-                    setQuickOpenQuery('');
-                    setQuickOpenSelectedIndex(0);
+                  style={{
+                    width: 24,
+                    height: 24,
+                    color: (showExplorer && activeActivityTab === 'search') ? accentColor : themeTokens.textSecondary,
+                    cursor: 'pointer',
+                    transition: 'color 0.15s ease',
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = themeTokens.textPrimary)}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = isQuickOpenOpen ? accentColor : themeTokens.textSecondary)}
+                  title="Buscar em Arquivos (⌘⇧F)"
+                  onClick={() => {
+                    if (showExplorer && activeActivityTab === 'search') {
+                      setShowExplorer(false);
+                    } else {
+                      setActiveActivityTab('search');
+                      setShowExplorer(true);
+                    }
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'search') ? accentColor : themeTokens.textPrimary)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'search') ? accentColor : themeTokens.textSecondary)}
                 >
                   <Search size={19} />
                 </div>
-                <div style={{ width: 24, height: 24, color: themeTokens.textSecondary, cursor: 'pointer' }} title="Source Control">
+
+                {/* 3. Source Control / Git */}
+                <div
+                  style={{
+                    width: 24,
+                    height: 24,
+                    color: (showExplorer && activeActivityTab === 'git') ? accentColor : themeTokens.textSecondary,
+                    cursor: 'pointer',
+                    transition: 'color 0.15s ease',
+                  }}
+                  title="Controle de Versão / Git (⌃⇧G)"
+                  onClick={() => {
+                    if (showExplorer && activeActivityTab === 'git') {
+                      setShowExplorer(false);
+                    } else {
+                      setActiveActivityTab('git');
+                      setShowExplorer(true);
+                    }
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'git') ? accentColor : themeTokens.textPrimary)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'git') ? accentColor : themeTokens.textSecondary)}
+                >
                   <GitBranch size={20} />
                 </div>
-                <div style={{ width: 24, height: 24, color: themeTokens.textSecondary, cursor: 'pointer' }} title="Run and Debug">
+
+                {/* 4. Run and Debug */}
+                <div
+                  style={{
+                    width: 24,
+                    height: 24,
+                    color: (showExplorer && activeActivityTab === 'debug') ? accentColor : themeTokens.textSecondary,
+                    cursor: 'pointer',
+                    transition: 'color 0.15s ease',
+                  }}
+                  title="Executar e Depurar (⌘⇧D)"
+                  onClick={() => {
+                    if (showExplorer && activeActivityTab === 'debug') {
+                      setShowExplorer(false);
+                    } else {
+                      setActiveActivityTab('debug');
+                      setShowExplorer(true);
+                    }
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'debug') ? accentColor : themeTokens.textPrimary)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'debug') ? accentColor : themeTokens.textSecondary)}
+                >
                   <Play size={19} />
                 </div>
-                <div style={{ width: 24, height: 24, color: themeTokens.textSecondary, cursor: 'pointer' }} title="Remote / Containers">
+
+                {/* 5. Web Preview & Ports */}
+                <div
+                  style={{
+                    width: 24,
+                    height: 24,
+                    color: (showExplorer && activeActivityTab === 'preview') ? accentColor : themeTokens.textSecondary,
+                    cursor: 'pointer',
+                    transition: 'color 0.15s ease',
+                  }}
+                  title="Web Preview & Portas Ativas"
+                  onClick={() => {
+                    if (showExplorer && activeActivityTab === 'preview') {
+                      setShowExplorer(false);
+                    } else {
+                      setActiveActivityTab('preview');
+                      setShowExplorer(true);
+                    }
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'preview') ? accentColor : themeTokens.textPrimary)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'preview') ? accentColor : themeTokens.textSecondary)}
+                >
                   <Monitor size={19} />
                 </div>
-                <div style={{ width: 24, height: 24, color: themeTokens.textSecondary, cursor: 'pointer' }} title="Extensions" onClick={() => {
-                  setSettingsActiveTab('extensions');
-                  setIsSettingsModalOpen(true);
-                }}>
+
+                {/* 6. Extensions Marketplace (Open VSX) */}
+                <div
+                  style={{
+                    width: 24,
+                    height: 24,
+                    color: (showExplorer && activeActivityTab === 'extensions') ? accentColor : themeTokens.textSecondary,
+                    cursor: 'pointer',
+                    transition: 'color 0.15s ease',
+                  }}
+                  title="Extensões do VS Code (Open VSX Marketplace) (⌘⇧X)"
+                  onClick={() => {
+                    if (showExplorer && activeActivityTab === 'extensions') {
+                      setShowExplorer(false);
+                    } else {
+                      setActiveActivityTab('extensions');
+                      setShowExplorer(true);
+                    }
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'extensions') ? accentColor : themeTokens.textPrimary)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'extensions') ? accentColor : themeTokens.textSecondary)}
+                >
                   <Blocks size={20} />
                 </div>
                 <div
@@ -6094,6 +6241,40 @@ ${prompt}`;
                   order: sidebarPosition === 'right' ? 5 : 2,
                 }}
               >
+                {activeActivityTab !== 'explorer' ? (
+                  <SidebarPanels
+                    activeTab={activeActivityTab}
+                    workspacePath={workspacePath}
+                    themeTokens={themeTokens}
+                    isEffectiveDark={isEffectiveDark}
+                    accentColor={accentColor}
+                    accentTextColor={getContrastTextColor(accentColor)}
+                    activeFile={activeTab ? { path: activeTab.path, name: activeTab.name, language: activeTab.language } : null}
+                    onOpenFile={(filePath, fileName) => {
+                      handleOpenFile(filePath, fileName || filePath.split('/').pop() || 'Arquivo');
+                    }}
+                    onJumpToLine={(filePath, line) => {
+                      handleOpenFile(filePath, filePath.split('/').pop() || 'Arquivo');
+                      setTimeout(() => {
+                        editorInstanceRef.current?.revealLineInCenter(line);
+                        editorInstanceRef.current?.setPosition({ lineNumber: line, column: 1 });
+                        editorInstanceRef.current?.focus();
+                      }, 150);
+                    }}
+                    onStartReview={(files, index) => {
+                      if (files && files.length > 0) {
+                        startReview(files, index || 0);
+                      }
+                    }}
+                    onRunTerminalCommand={(name, cmd) => {
+                      handleNewTerminalSession('zsh', name, cmd);
+                    }}
+                    onToast={(msg) => setToastMessage(msg)}
+                    onOpenBranchModal={() => setIsBranchModalOpen(true)}
+                    currentBranch={currentBranch}
+                  />
+                ) : (
+                  <>
                 {/* Top Explorer Card */}
                 <div
                   style={{
@@ -6632,6 +6813,8 @@ ${prompt}`;
                     </div>
                   )}
                 </div>
+                  </>
+                )}
               </div>
 
               {/* VS Code Style Vertical Resizer for Explorer */}
