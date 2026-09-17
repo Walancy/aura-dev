@@ -46,6 +46,7 @@ export interface SidebarPanelsProps {
   onToast: (msg: string) => void;
   onOpenBranchModal?: () => void;
   currentBranch?: string;
+  onSelectExtension?: (ext: any) => void;
 }
 
 export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
@@ -63,6 +64,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
   onToast,
   onOpenBranchModal,
   currentBranch = 'main',
+  onSelectExtension,
 }) => {
   const hexToRgba = (hex: string, alpha: number) => {
     const cleanHex = hex.replace('#', '');
@@ -459,7 +461,26 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
     [extensionSearchQuery, selectedExtensionCategory]
   );
 
-  const handleInstallExtension = (ext: any) => {
+  const handleInstallExtension = async (ext: any) => {
+    onToast(`Baixando e instalando "${ext.displayName || ext.name}"...`);
+    try {
+      if (window.electronAPI?.extensions?.install) {
+        const res = await window.electronAPI.extensions.install(ext.namespace, ext.name, ext.version);
+        if (res?.success && res.record) {
+          setInstalledExtensions((prev) => {
+            const filtered = prev.filter((i) => !((i.namespace === ext.namespace) && i.name === ext.name));
+            const updated = [res.record, ...filtered];
+            localStorage.setItem('devflow_installed_extensions', JSON.stringify(updated));
+            return updated;
+          });
+          onToast(`Extensão "${ext.displayName || ext.name}" instalada e pronta para uso!`);
+          return;
+        }
+      }
+    } catch (err: any) {
+      console.warn('Backend install failed, fallback to local registry:', err);
+    }
+
     setInstalledExtensions((prev) => {
       const exists = prev.some(
         (item) => (item.namespace || '') + '.' + item.name === (ext.namespace || '') + '.' + ext.name
@@ -1751,6 +1772,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                 return (
                   <div
                     key={(ext.namespace || '') + '.' + ext.name}
+                    onClick={() => onSelectExtension?.(ext)}
                     style={{
                       display: 'flex',
                       flexDirection: 'column',

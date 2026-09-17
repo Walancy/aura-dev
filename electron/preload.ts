@@ -76,8 +76,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Extensions Methods
   extensions: {
-    search: (query = '', size = 30, category = '') =>
+    search: (query = '', size = 35, category = '') =>
       ipcRenderer.invoke('extensions:search', { query, size, category }),
+    getDetails: (namespace: string, name: string) =>
+      ipcRenderer.invoke('extensions:getDetails', { namespace, name }),
+    install: (namespace: string, name: string, version?: string) =>
+      ipcRenderer.invoke('extensions:install', { namespace, name, version }),
+    uninstall: (namespace: string, name: string) =>
+      ipcRenderer.invoke('extensions:uninstall', { namespace, name }),
+    toggleEnabled: (namespace: string, name: string) =>
+      ipcRenderer.invoke('extensions:toggleEnabled', { namespace, name }),
+    getInstalled: () =>
+      ipcRenderer.invoke('extensions:getInstalled'),
   },
 
   // AI Agent Methods

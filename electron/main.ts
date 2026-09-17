@@ -10,6 +10,7 @@ import { NativeCommandsService } from './commands-service';
 import { quotaService } from './quota-service';
 import { modelService } from './model-service';
 import { gitService } from './git-service';
+import { extensionsService } from './extensions-service';
 
 // Set macOS application name
 app.name = 'Ainaobra IDE';
@@ -284,31 +285,29 @@ ipcMain.handle('ports:scan', async () => {
   return { ports };
 });
 
-// Extensions search via Open VSX Registry
-ipcMain.handle('extensions:search', async (_event, { query = '', size = 30, category = '' }) => {
-  try {
-    let url = `https://open-vsx.org/api/-/search?size=${size}`;
-    if (query && query.trim()) {
-      url += `&query=${encodeURIComponent(query.trim())}`;
-    } else {
-      url += `&sortBy=downloadCount&sortOrder=desc`;
-    }
-    if (category && category.trim()) {
-      url += `&category=${encodeURIComponent(category.trim())}`;
-    }
-    const resp = await fetch(url, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'DevFlow-Desktop/1.0',
-      },
-    });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.json();
-    return { success: true, extensions: data.extensions || [], totalSize: data.totalSize || 0 };
-  } catch (err: any) {
-    console.warn('[Extensions] Search failed:', err.message);
-    return { success: false, error: err.message, extensions: [] };
-  }
+// Extensions Management via Open VSX Registry & Local Engine
+ipcMain.handle('extensions:search', async (_event, { query = '', size = 35, category = '' }) => {
+  return extensionsService.search(query, size, category);
+});
+
+ipcMain.handle('extensions:getDetails', async (_event, { namespace, name }: { namespace: string; name: string }) => {
+  return extensionsService.getDetails(namespace, name);
+});
+
+ipcMain.handle('extensions:install', async (_event, { namespace, name, version }: { namespace: string; name: string; version?: string }) => {
+  return extensionsService.install(namespace, name, version);
+});
+
+ipcMain.handle('extensions:uninstall', async (_event, { namespace, name }: { namespace: string; name: string }) => {
+  return extensionsService.uninstall(namespace, name);
+});
+
+ipcMain.handle('extensions:toggleEnabled', async (_event, { namespace, name }: { namespace: string; name: string }) => {
+  return extensionsService.toggleEnabled(namespace, name);
+});
+
+ipcMain.handle('extensions:getInstalled', async () => {
+  return extensionsService.getInstalled();
 });
 
 // AI Agent

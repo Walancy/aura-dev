@@ -34,6 +34,11 @@ export interface ElectronAPI {
   };
   extensions?: {
     search?: (query?: string, size?: number, category?: string) => Promise<{ success: boolean; extensions: any[]; totalSize?: number; error?: string }>;
+    getDetails?: (namespace: string, name: string) => Promise<{ success: boolean; details: any; error?: string }>;
+    install?: (namespace: string, name: string, version?: string) => Promise<{ success: boolean; record?: any; error?: string }>;
+    uninstall?: (namespace: string, name: string) => Promise<{ success: boolean; error?: string }>;
+    toggleEnabled?: (namespace: string, name: string) => Promise<{ success: boolean; error?: string }>;
+    getInstalled?: () => Promise<{ success: boolean; extensions: any[] }>;
   };
   ai: {
     prompt: (prompt: string, model: string, cwd?: string) => Promise<{ response: string }>;

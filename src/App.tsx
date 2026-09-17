@@ -84,6 +84,7 @@ import geminiLogo from './assets/logos/gemini-icon-seeklogo.svg';
 import ollamaLogo from './assets/logos/ollama-icon.svg';
 import { FileIcon, FolderIcon } from './components/FileIcon';
 import { SidebarPanels } from './components/ide/SidebarPanels';
+import { ExtensionDetailsView } from './components/ide/ExtensionDetailsView';
 
 // Customize Layout Official VS Code / Antigravity Icon
 const CustomizeLayoutIcon: React.FC<{ size?: number; color?: string }> = ({ size = 18, color = 'currentColor' }) => (
@@ -2019,6 +2020,7 @@ export const App: React.FC = () => {
   // Panel & Layout Visibility Controls (Antigravity & VS Code Customize Layout)
   const [showExplorer, setShowExplorer] = useState(true);
   const [activeActivityTab, setActiveActivityTab] = useState<'explorer' | 'search' | 'git' | 'debug' | 'preview' | 'extensions'>('explorer');
+  const [activeExtensionDetails, setActiveExtensionDetails] = useState<any | null>(null);
   const [showAiPanel, setShowAiPanel] = useState(true);
   const [showActivityBar, setShowActivityBar] = useState(true);
   const [showStatusBar, setShowStatusBar] = useState(true);
@@ -3080,6 +3082,49 @@ export const App: React.FC = () => {
       setTimeout(() => setToastMessage(null), 2500);
     }
   }, [openFiles, activeFileId]);
+
+  // Apply VS Code Theme to Monaco Editor & System UI
+  const handleApplyVscodeTheme = (themeData: any, themeLabel: string) => {
+    if (!themeData) return;
+    try {
+      const rules: any[] = [];
+      for (const tc of themeData.tokenColors || []) {
+        const scopes = Array.isArray(tc.scope) ? tc.scope : typeof tc.scope === 'string' ? tc.scope.split(',').map((s: string) => s.trim()) : [];
+        for (const s of scopes) {
+          if (s && tc.settings) {
+            rules.push({
+              token: s,
+              foreground: tc.settings.foreground ? tc.settings.foreground.replace('#', '') : undefined,
+              fontStyle: tc.settings.fontStyle,
+              background: tc.settings.background ? tc.settings.background.replace('#', '') : undefined,
+            });
+          }
+        }
+      }
+
+      const base = themeData.type === 'light' ? 'vs' : 'vs-dark';
+      const sanitizedName = `vscode-${themeLabel.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
+
+      if ((window as any).monaco?.editor) {
+        (window as any).monaco.editor.defineTheme(sanitizedName, {
+          base,
+          inherit: true,
+          rules,
+          colors: themeData.colors || {},
+        });
+        (window as any).monaco.editor.setTheme(sanitizedName);
+      }
+
+      if (themeData.colors?.['activityBar.activeBackground'] || themeData.colors?.['accentColor'] || themeData.colors?.['focusBorder']) {
+        const newAccent = themeData.colors['focusBorder'] || themeData.colors['activityBar.activeBackground'] || accentColor;
+        setAccentColor(newAccent);
+      }
+
+      setToastMessage(`🎨 Tema "${themeLabel}" ativado no Monaco Editor!`);
+    } catch (err: any) {
+      setToastMessage(`Erro ao aplicar tema: ${err?.message || err}`);
+    }
+  };
 
   // Helper to detect authentication / OAuth expired errors in AI output
   const isAuthErrorText = (text?: string): boolean => {
@@ -6319,6 +6364,7 @@ ${prompt}`;
                     onToast={(msg) => setToastMessage(msg)}
                     onOpenBranchModal={() => setIsBranchModalOpen(true)}
                     currentBranch={currentBranch}
+                    onSelectExtension={(ext) => setActiveExtensionDetails(ext)}
                   />
                 ) : (
                   <>
@@ -6912,6 +6958,43 @@ ${prompt}`;
                   transition: 'background 0.2s ease',
                 }}
               >
+                {/* Active Extension Details Tab (VS Code Style) */}
+                {activeExtensionDetails && (
+                  <div
+                    onClick={() => {}}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 7,
+                      padding: '5px 12px',
+                      background: hexToRgba(accentColor, 0.16),
+                      borderBottom: `2px solid ${accentColor}`,
+                      color: themeTokens.textPrimary,
+                      fontSize: 12,
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      userSelect: 'none',
+                      flexShrink: 0,
+                      borderRadius: '4px 4px 0 0',
+                    }}
+                  >
+                    <Blocks size={13} color={accentColor} />
+                    <span>Extensão: {activeExtensionDetails.displayName || activeExtensionDetails.name}</span>
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveExtensionDetails(null);
+                      }}
+                      style={{ padding: 2, borderRadius: 3, display: 'flex', alignItems: 'center' }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.15)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                      title="Fechar Aba da Extensão"
+                    >
+                      <X size={12} />
+                    </div>
+                  </div>
+                )}
+
                 {openFiles.length === 0 ? (
                   <div style={{ padding: '0 10px', color: themeTokens.textSecondary, fontSize: 12 }}>Nenhum arquivo aberto</div>
                 ) : (
@@ -7275,7 +7358,7 @@ ${prompt}`;
                 width: '100%',
                 flex: '1 1 0',
                 minHeight: 0,
-                padding: 10,
+                padding: activeExtensionDetails ? 0 : 10,
                 background: themeTokens.bgCard,
                 borderRadius: 10,
                 border: '1px solid ' + themeTokens.border,
@@ -7284,7 +7367,42 @@ ${prompt}`;
                 transition: 'max-width 0.2s ease, background 0.2s ease',
               }}
             >
-              {activeReview ? (
+              {activeExtensionDetails ? (
+                <ExtensionDetailsView
+                  extension={activeExtensionDetails}
+                  isInstalled={installedExtensions.some((i: any) => i.namespace === activeExtensionDetails.namespace && i.name === activeExtensionDetails.name)}
+                  themeTokens={themeTokens}
+                  isEffectiveDark={isEffectiveDark}
+                  accentColor={accentColor}
+                  onClose={() => setActiveExtensionDetails(null)}
+                  onInstall={async (ext) => {
+                    if (window.electronAPI?.extensions?.install) {
+                      const res = await window.electronAPI.extensions.install(ext.namespace, ext.name, ext.version);
+                      if (res?.success && res.record) {
+                        setInstalledExtensions((prev: any) => [res.record, ...prev.filter((i: any) => !(i.namespace === ext.namespace && i.name === ext.name))]);
+                        if (res.record.themes && res.record.themes.length > 0) {
+                          handleApplyVscodeTheme(res.record.themes[0].data, res.record.themes[0].label);
+                        }
+                      }
+                    }
+                  }}
+                  onUninstall={async (ext) => {
+                    if (window.electronAPI?.extensions?.uninstall) {
+                      await window.electronAPI.extensions.uninstall(ext.namespace, ext.name);
+                      setInstalledExtensions((prev: any) => prev.filter((i: any) => !(i.namespace === ext.namespace && i.name === ext.name)));
+                      setToastMessage(`Extensão "${ext.displayName || ext.name}" desinstalada.`);
+                    }
+                  }}
+                  onToggleEnabled={async (ext) => {
+                    if (window.electronAPI?.extensions?.toggleEnabled) {
+                      await window.electronAPI.extensions.toggleEnabled(ext.namespace, ext.name);
+                      setInstalledExtensions((prev: any) => prev.map((i: any) => i.namespace === ext.namespace && i.name === ext.name ? { ...i, enabled: !i.enabled } : i));
+                    }
+                  }}
+                  onApplyTheme={(themeData, themeLabel) => handleApplyVscodeTheme(themeData, themeLabel)}
+                  onToast={(msg) => setToastMessage(msg)}
+                />
+              ) : activeReview ? (
                 <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%' }}>
                   {/* Review Toolbar */}
                   <div
