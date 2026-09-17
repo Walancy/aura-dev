@@ -70,6 +70,7 @@ import {
   BookOpen,
   ChevronUp,
   Copy,
+  FileCode,
   ThumbsUp,
   ThumbsDown,
 } from 'lucide-react';
@@ -7305,8 +7306,9 @@ ${prompt}`;
                               {secFile.isDirty && <span style={{ width: 6, height: 6, borderRadius: '50%', background: accentColor }} />}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <span style={{ fontSize: 10, color: accentColor }}>Painel 2</span>
-                              <X size={12} style={{ cursor: 'pointer' }} onClick={() => setIsEditorSplit(false)} title="Fechar Painel Dividido" />
+                              <span style={{ display: 'inline-flex', cursor: 'pointer' }} onClick={() => setIsEditorSplit(false)} title="Fechar Painel Dividido">
+                                <X size={12} />
+                              </span>
                             </div>
                           </div>
                           <div style={{ flex: '1 1 0', minHeight: 0 }}>
@@ -7605,7 +7607,7 @@ ${prompt}`;
 
                       {/* New Terminal Session (+) */}
                       <div
-                        onClick={handleNewTerminalSession}
+                        onClick={() => handleNewTerminalSession()}
                         style={{
                           width: 26,
                           height: 26,
@@ -9741,6 +9743,7 @@ ${prompt}`;
                           c.description.toLowerCase().includes(slashQuery)
                       )
                     : [];
+                  const safeSelectedIndex = filteredSlashCommands.length > 0 ? Math.min(Math.max(0, selectedSlashIndex), filteredSlashCommands.length - 1) : 0;
 
                   const handleSelectSlashCommand = (cmd: AiSlashCommand) => {
                     setAskPrompt(`${cmd.command} `);
