@@ -3253,7 +3253,13 @@ export const App: React.FC = () => {
       if (res.exitCode === 0 && res.stdout.trim()) {
         const parsed = JSON.parse(res.stdout.trim());
         if (Array.isArray(parsed)) {
-          setGitIssues(parsed);
+          const normalized = parsed.map((item: any) => ({
+            ...item,
+            author: typeof item.author === 'object' && item.author !== null
+              ? (item.author.login || item.author.name || 'walancy')
+              : (String(item.author || 'walancy')),
+          }));
+          setGitIssues(normalized);
         }
       }
     } catch (e) {
@@ -12177,7 +12183,7 @@ ${prompt}`;
               <div
                 onClick={() => {
                   if (terminalHeight === 0) setTerminalHeight(260);
-                  setActiveTerminalTab('output');
+                  setActiveTermTab('output');
                 }}
                 title={`Erros: ${editorErrors} | Avisos: ${editorWarnings} (Clique para ver no terminal)`}
                 style={{
@@ -13964,7 +13970,7 @@ ${prompt}`;
                     return (
                       issue.title.toLowerCase().includes(q) ||
                       String(issue.number).includes(q) ||
-                      (issue.author && issue.author.toLowerCase().includes(q))
+                      (issue.author && (typeof issue.author === 'string' ? issue.author : ((issue.author as any)?.login || '')).toLowerCase().includes(q))
                     );
                   })
                   .map((issue) => (
@@ -13998,7 +14004,7 @@ ${prompt}`;
                               #{issue.number}
                             </span>
                             <div style={{ fontSize: 11, color: themeTokens.textSecondary, marginTop: 2 }}>
-                              aberta por {issue.author || 'walancy'}
+                              aberta por {typeof issue.author === 'string' ? issue.author : ((issue.author as any)?.login || (issue.author as any)?.name || 'walancy')}
                             </div>
                           </div>
                         </div>
