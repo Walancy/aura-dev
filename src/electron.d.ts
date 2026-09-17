@@ -47,6 +47,11 @@ export interface ElectronAPI {
     getQuotas?: () => Promise<Record<string, { dailyPercent: number; weeklyPercent: number; dailyResetTime: string; weeklyResetDay: string; weeklyResetTime: string }>>;
     getModels?: (providerId: string) => Promise<{ providerId: string; currentModel: string; currentModelId: string; models: Array<{ id: string; label: string; tag?: string; description?: string }> }>;
     setModel?: (providerId: string, modelId: string) => Promise<{ success: boolean; currentModel: string; message: string }>;
+    saveChatLocally?: (session: any) => Promise<{ success: boolean; jsonPath: string; mdPath: string; error?: string }>;
+    exportChatDialog?: (session: any, format: 'markdown' | 'json') => Promise<{ success: boolean; canceled?: boolean; filePath?: string; error?: string }>;
+    getSavedChats?: () => Promise<Array<{ id: string; title: string; provider: string; updatedAt: number; messageCount: number; path: string }>>;
+    loadSavedChat?: (sessionId: string) => Promise<any>;
+    deleteSavedChat?: (sessionId: string) => Promise<{ success: boolean }>;
   };
   menu: {
     onAction: (callback: (action: string) => void) => () => void;

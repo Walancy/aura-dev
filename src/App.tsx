@@ -1068,6 +1068,58 @@ export const AI_BRAND_COLORS: Record<string, string> = {
   ollama: '#ECECEC',
 };
 
+// AI Execution Modes (Auto Mode, Plan Mode, Code Agent, Ask Only)
+export type AiMode = 'auto' | 'plan' | 'agent' | 'ask';
+
+export interface AiModeConfig {
+  id: AiMode;
+  name: string;
+  shortName: string;
+  badge: string;
+  iconName: string;
+  description: string;
+  guide: string;
+}
+
+export const AI_MODES: AiModeConfig[] = [
+  {
+    id: 'auto',
+    name: 'Auto Mode',
+    shortName: 'Auto',
+    badge: '⚡',
+    iconName: 'Zap',
+    description: 'Execução autônoma contínua. Aplica alterações e roda comandos sem confirmação manual.',
+    guide: 'Ideal para tarefas rápidas, automações completas e refatorações diretas.',
+  },
+  {
+    id: 'plan',
+    name: 'Planejamento (Architect)',
+    shortName: 'Plano',
+    badge: '📋',
+    iconName: 'ListChecks',
+    description: 'Modo Architect. Cria uma estratégia passo a passo antes de alterar qualquer código.',
+    guide: 'Essencial para tarefas complexas, novas arquiteturas e sistemas de larga escala.',
+  },
+  {
+    id: 'agent',
+    name: 'Agente Código',
+    shortName: 'Agente',
+    badge: '🤖',
+    iconName: 'Bot',
+    description: 'Modo padrão assistente. Escreve, testa e depura código de forma interativa.',
+    guide: 'Ideal para desenvolvimento padrão do dia a dia com confirmação e diffs.',
+  },
+  {
+    id: 'ask',
+    name: 'Perguntar (Chat Only)',
+    shortName: 'Ask',
+    badge: '💬',
+    iconName: 'MessageSquare',
+    description: 'Apenas explicações e respostas conceituais. Não modifica nenhum arquivo no disco.',
+    guide: 'Ideal para tirar dúvidas conceituais, documentação e análise de código.',
+  },
+];
+
 const AI_PROVIDERS: AiProviderConfig[] = [
   {
     id: 'claude',
@@ -1812,6 +1864,71 @@ export const App: React.FC = () => {
   const [selectedSlashIndex, setSelectedSlashIndex] = useState<number>(0);
   const [isSlashDismissed, setIsSlashDismissed] = useState<boolean>(false);
   const [aiCommands, setAiCommands] = useState<Record<string, AiSlashCommand[]>>({});
+  // AI Mode State (Auto Mode, Plan Mode, Agent, Ask)
+  const [aiMode, setAiMode] = useState<AiMode>(() => {
+    try {
+      return (localStorage.getItem('ide_ai_selected_mode') as AiMode) || 'auto';
+    } catch {
+      return 'auto';
+    }
+  });
+  const [aiModeDropdown, setAiModeDropdown] = useState<boolean>(false);
+  const aiModeDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Bottom Status Bar Dynamic Integration States
+  const [cursorPosition, setCursorPosition] = useState<{ line: number; col: number }>({ line: 1, col: 1 });
+  const [editorErrors, setEditorErrors] = useState<number>(0);
+  const [editorWarnings, setEditorWarnings] = useState<number>(0);
+  const [indentationSize, setIndentationSize] = useState<number>(2);
+  const [lineEnding, setLineEnding] = useState<'LF' | 'CRLF'>('LF');
+  const [workspaceGitInfo, setWorkspaceGitInfo] = useState<{
+    isGit?: boolean;
+    branch?: string;
+    repoName?: string;
+    authorBlame?: string;
+    activeFileBlame?: string;
+    issuesCount?: number;
+    sprintTitle?: string;
+    sprintRemaining?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('ide_ai_selected_mode', aiMode);
+    } catch {}
+  }, [aiMode]);
+
+  // Click outside listener for AI Mode Dropdown
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (aiModeDropdownRef.current && !aiModeDropdownRef.current.contains(e.target as Node)) {
+        setAiModeDropdown(false);
+      }
+    };
+    if (aiModeDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [aiModeDropdown]);
+
+  // Fetch real Git info and blame for the workspace & active file
+  const refreshWorkspaceGitInfo = useCallback(async () => {
+    if (window.electronAPI?.git?.getWorkspaceGitInfo && workspacePath) {
+      try {
+        const info = await window.electronAPI.git.getWorkspaceGitInfo(workspacePath, activeFile?.path);
+        if (info) {
+          setWorkspaceGitInfo(info);
+        }
+      } catch {}
+    }
+  }, [workspacePath, activeFile?.path]);
+
+  useEffect(() => {
+    refreshWorkspaceGitInfo();
+    const timer = setInterval(refreshWorkspaceGitInfo, 10000);
+    return () => clearInterval(timer);
+  }, [refreshWorkspaceGitInfo]);
+
   const [selectedAiProvider, setSelectedAiProvider] = useState<string>('claude');
   const [useAiChatThemeColor, setUseAiChatThemeColor] = useState<boolean>(() => {
     const saved = localStorage.getItem('ide_use_ai_chat_color');
@@ -2054,6 +2171,107 @@ export const App: React.FC = () => {
     setEditingChatSessionId(null);
     setEditingChatTitle('');
   };
+
+  // Save chat session locally on disk with rich context (project, files, branch, provider, model)
+  const handleSaveCurrentChatLocally = useCallback(async (sessionId?: string) => {
+    const targetId = sessionId || activeChatSessionId;
+    const session = chatSessions.find((s) => s.id === targetId);
+    if (!session) return;
+
+    const msgs = targetId === activeChatSessionId && aiHistory.length > 0 ? aiHistory : (session.history || []);
+    if (msgs.length === 0) {
+      setToastMessage('Nenhuma mensagem na conversa para salvar.');
+      return;
+    }
+
+    const payload = {
+      id: session.id,
+      title: session.title || 'Conversa',
+      provider: session.provider || selectedAiProvider,
+      model: activeModels[selectedAiProvider]?.currentModel || selectedAiProvider,
+      createdAt: session.updatedAt || Date.now(),
+      updatedAt: Date.now(),
+      context: {
+        workspacePath,
+        projectName: workspacePath ? workspacePath.split('/').filter(Boolean).pop() : 'Projeto',
+        currentBranch: currentBranch || 'main',
+        activeFilePath: activeFile?.path || activeFile?.name || '',
+        openTabs: openFiles.map((t) => t.name || t.path),
+        provider: session.provider || selectedAiProvider,
+        model: activeModels[selectedAiProvider]?.currentModel || selectedAiProvider,
+      },
+      history: msgs,
+    };
+
+    if (window.electronAPI?.ai?.saveChatLocally) {
+      const res = await window.electronAPI.ai.saveChatLocally(payload);
+      if (res && res.success) {
+        setToastMessage('Conversa salva em ~/.devflow/chats/!');
+      } else {
+        setToastMessage(res?.error ? 'Erro: ' + res.error : 'Erro ao salvar histórico localmente.');
+      }
+    } else {
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'Chat-' + payload.provider + '-' + payload.id + '.json';
+      a.click();
+      URL.revokeObjectURL(url);
+      setToastMessage('Conversa baixada localmente!');
+    }
+  }, [activeChatSessionId, chatSessions, aiHistory, selectedAiProvider, activeModels, selectedModel, workspacePath, currentBranch, activeFile, openFiles]);
+
+  // Export chat session dialog (Markdown or JSON)
+  const handleExportChat = useCallback(async (sessionId?: string, format: 'markdown' | 'json' = 'markdown') => {
+    const targetId = sessionId || activeChatSessionId;
+    const session = chatSessions.find((s) => s.id === targetId);
+    if (!session) return;
+
+    const msgs = targetId === activeChatSessionId && aiHistory.length > 0 ? aiHistory : (session.history || []);
+    if (msgs.length === 0) {
+      setToastMessage('Nenhuma mensagem na conversa para exportar.');
+      return;
+    }
+
+    const payload = {
+      id: session.id,
+      title: session.title || 'Conversa',
+      provider: session.provider || selectedAiProvider,
+      model: activeModels[selectedAiProvider]?.currentModel || selectedAiProvider,
+      createdAt: session.updatedAt || Date.now(),
+      updatedAt: Date.now(),
+      context: {
+        workspacePath,
+        projectName: workspacePath ? workspacePath.split('/').filter(Boolean).pop() : 'Projeto',
+        currentBranch: currentBranch || 'main',
+        activeFilePath: activeFile?.path || activeFile?.name || '',
+        openTabs: openFiles.map((t) => t.name || t.path),
+        provider: session.provider || selectedAiProvider,
+        model: activeModels[selectedAiProvider]?.currentModel || selectedAiProvider,
+      },
+      history: msgs,
+    };
+
+    if (window.electronAPI?.ai?.exportChatDialog) {
+      const res = await window.electronAPI.ai.exportChatDialog(payload, format);
+      if (res && res.success && res.filePath) {
+        setToastMessage('Conversa exportada para: ' + res.filePath.split('/').pop());
+      }
+    } else {
+      const content = format === 'markdown'
+        ? `# ${payload.title}\n\nData: ${new Date().toLocaleString()}\nProjeto: ${payload.context.projectName}\n\n` + msgs.map((m: any) => `### ${m.role === 'user' ? 'Usuário' : 'Assistente'}\n\n${m.text}`).join('\n\n---\n\n')
+        : JSON.stringify(payload, null, 2);
+      const blob = new Blob([content], { type: format === 'markdown' ? 'text/markdown' : 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'Chat-' + payload.title.replace(/[^a-zA-Z0-9_-]/g, '_') + '.' + (format === 'markdown' ? 'md' : 'json');
+      a.click();
+      URL.revokeObjectURL(url);
+      setToastMessage('Conversa exportada!');
+    }
+  }, [activeChatSessionId, chatSessions, aiHistory, selectedAiProvider, activeModels, selectedModel, workspacePath, currentBranch, activeFile, openFiles]);
 
   const [expandedWorkedMap, setExpandedWorkedMap] = useState<Record<number, boolean>>({});
   const [collapsedDiffMap, setCollapsedDiffMap] = useState<Record<number, boolean>>({});
@@ -2551,6 +2769,25 @@ export const App: React.FC = () => {
 
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorInstanceRef.current = editor;
+
+    // Track real cursor position (Ln, Col)
+    editor.onDidChangeCursorPosition((e) => {
+      setCursorPosition({ line: e.position.lineNumber, col: e.position.column });
+    });
+
+    // Track real markers (Errors and Warnings)
+    const updateMarkers = () => {
+      const model = editor.getModel();
+      if (model) {
+        const markers = monaco.editor.getModelMarkers({ resource: model.uri });
+        const errs = markers.filter((m) => m.severity === 8).length;
+        const warns = markers.filter((m) => m.severity === 4).length;
+        setEditorErrors(errs);
+        setEditorWarnings(warns);
+      }
+    };
+    monaco.editor.onDidChangeMarkers(updateMarkers);
+    updateMarkers();
     monaco.editor.defineTheme('figma-ainaobra', {
       base: 'vs-dark',
       inherit: true,
@@ -4205,12 +4442,38 @@ export const App: React.FC = () => {
     }
   }, [selectedAiProvider]);
 
-  // Save chat sessions to localStorage
+  // Save chat sessions to localStorage and debounced auto-save to disk (~/.devflow/chats/)
   useEffect(() => {
     try {
       localStorage.setItem('ide_ai_chat_sessions', JSON.stringify(chatSessions));
     } catch {}
-  }, [chatSessions]);
+
+    // Auto-save active chat session to local disk with full context
+    const activeSession = chatSessions.find((s) => s.id === activeChatSessionId);
+    if (activeSession && activeSession.history && activeSession.history.length > 0 && window.electronAPI?.ai?.saveChatLocally) {
+      const timer = setTimeout(() => {
+        window.electronAPI.ai.saveChatLocally({
+          id: activeSession.id,
+          title: activeSession.title || 'Conversa',
+          provider: activeSession.provider || selectedAiProvider,
+          model: activeModels[selectedAiProvider]?.currentModel || selectedAiProvider,
+          createdAt: activeSession.updatedAt || Date.now(),
+          updatedAt: Date.now(),
+          context: {
+            workspacePath,
+            projectName: workspacePath ? workspacePath.split('/').filter(Boolean).pop() : 'Projeto',
+            currentBranch: currentBranch || 'main',
+            activeFilePath: activeFile?.path || activeFile?.name || '',
+            openTabs: openFiles.map((t) => t.name || t.path),
+            provider: activeSession.provider || selectedAiProvider,
+            model: activeModels[selectedAiProvider]?.currentModel || selectedAiProvider,
+          },
+          history: activeSession.history,
+        }).catch(() => {});
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [chatSessions, activeChatSessionId, selectedAiProvider, activeModels, selectedModel, workspacePath, currentBranch, activeFile, openFiles]);
 
   // Click outside listener for Explorer 3-dots popup
   useEffect(() => {
@@ -4779,9 +5042,22 @@ export const App: React.FC = () => {
         }
 
         // 2. Build full project context for the AI CLI
+        let modeInstruction = '';
+        if (aiMode === 'auto') {
+          modeInstruction = '⚡ MODO ATIVO: AUTO MODE (Execução Autônoma Contínua). Execute todas as alterações necessárias, crie ou modifique arquivos e rode comandos necessários diretamente sem parar para perguntar confirmações a cada passo.';
+        } else if (aiMode === 'plan') {
+          modeInstruction = '📋 MODO ATIVO: PLANEJAMENTO (Architect / Plan Mode). Antes de modificar qualquer arquivo, analise detalhadamente a arquitetura e apresente um plano de implementação estruturado passo a passo, identificando arquivos a serem alterados, novos arquivos e potenciais riscos.';
+        } else if (aiMode === 'ask') {
+          modeInstruction = '💬 MODO ATIVO: CONVERSAÇÃO / ASK ONLY. Apenas responda a dúvida ou explique o código solicitado. NÃO altere arquivos e NÃO proponha comandos modificadores sem o usuário pedir explicitamente.';
+        } else {
+          modeInstruction = '🤖 MODO ATIVO: AGENTE CÓDIGO (Padrão). Implemente a solução de código de forma interativa, testando e validando cada passo com excelência técnica.';
+        }
+
         let promptWithContext = prompt;
         if (!prompt.startsWith('/')) {
           promptWithContext = `[Contexto do Projeto Aberto no DevFlow]:
+${modeInstruction}
+
 - Diretório Raiz do Projeto: ${effectiveCwd}
 ${appSubDir ? `- Módulo/Subaplicação em Edição: ${appSubDir}` : ''}
 ${activeFile?.path ? `- Arquivo Aberto no Editor: ${activeFile.path}` : ''}
@@ -6731,23 +7007,23 @@ ${prompt}`;
                         ({workspacePath.split('/').pop() || 'Workspace'})
                       </span>
                     </div>
-                    <div
-                      onClick={() => setExplorerMenuOpen(!explorerMenuOpen)}
-                      title="Opções do Explorador (Abrir pasta/arquivo...)"
-                      style={{ color: explorerMenuOpen ? accentColor : themeTokens.textSecondary, cursor: 'pointer', padding: 2, borderRadius: 3 }}
-                    >
-                      <MoreHorizontal size={16} />
-                    </div>
-                  </div>
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                      <div
+                        onClick={() => setExplorerMenuOpen(!explorerMenuOpen)}
+                        title="Opções do Explorador (Abrir pasta/arquivo...)"
+                        style={{ color: explorerMenuOpen ? accentColor : themeTokens.textSecondary, cursor: 'pointer', padding: 2, borderRadius: 3, display: 'flex', alignItems: 'center' }}
+                      >
+                        <MoreHorizontal size={16} />
+                      </div>
 
-                  {/* 3 Dots Popup Menu */}
-                  {explorerMenuOpen && (
-                    <div
-                      ref={explorerMenuRef}
-                      style={{
-                        position: 'absolute',
-                        top: 36,
-                        right: 10,
+                      {/* 3 Dots Popup Menu */}
+                      {explorerMenuOpen && (
+                        <div
+                          ref={explorerMenuRef}
+                          style={{
+                            position: 'absolute',
+                            top: 'calc(100% + 4px)',
+                            right: 0,
                         width: 195,
                         background: themeTokens.bgCardSecondary,
                         border: '1px solid ' + themeTokens.border,
@@ -6811,6 +7087,8 @@ ${prompt}`;
                       </div>
                     </div>
                   )}
+                    </div>
+                  </div>
 
                   {/* Dynamic Recursive File Tree */}
                   <div style={{ alignSelf: 'stretch', flexDirection: 'column', justifyContent: 'flex-start', alignItems: 'flex-start', display: 'flex', gap: 1 }}>
@@ -9401,16 +9679,67 @@ ${prompt}`;
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     {aiHistory.length > 0 && (
-                      <button
-                        onClick={() => {
-                          setAiHistory([]);
-                          setChatSessions((prev) =>
-                            prev.map((s) => (s.id === activeChatSessionId ? { ...s, history: [] } : s))
-                          );
-                        }}
-                        title="Limpar histórico"
+                      <>
+                        <button
+                          onClick={() => handleSaveCurrentChatLocally()}
+                          title="Salvar conversa localmente com contexto em ~/.devflow/chats/"
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: themeTokens.textSecondary,
+                            cursor: 'pointer',
+                            padding: '3px 6px',
+                            fontSize: 11,
+                            fontFamily: 'Poppins, sans-serif',
+                            fontWeight: '400',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            borderRadius: 4,
+                            transition: 'color 0.15s ease',
+                          }}
+                          onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary)}
+                          onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary)}
+                        >
+                          <Save size={12} />
+                          <span>Salvar</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleExportChat(undefined, 'markdown')}
+                          title="Exportar conversa formatada como Markdown (.md)"
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: themeTokens.textSecondary,
+                            cursor: 'pointer',
+                            padding: '3px 6px',
+                            fontSize: 11,
+                            fontFamily: 'Poppins, sans-serif',
+                            fontWeight: '400',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            borderRadius: 4,
+                            transition: 'color 0.15s ease',
+                          }}
+                          onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary)}
+                          onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary)}
+                        >
+                          <Download size={12} />
+                          <span>Exportar</span>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setAiHistory([]);
+                            setChatSessions((prev) =>
+                              prev.map((s) => (s.id === activeChatSessionId ? { ...s, history: [] } : s))
+                            );
+                          }}
+                          title="Limpar histórico"
                         style={{
                           background: 'transparent',
                           border: 'none',
@@ -9431,6 +9760,7 @@ ${prompt}`;
                         <Trash2 size={12} />
                         <span>Limpar</span>
                       </button>
+                      </>
                     )}
                   </div>
 
@@ -9631,6 +9961,28 @@ ${prompt}`;
                                     </button>
                                   )}
                                   <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleExportChat(s.id, 'markdown');
+                                    }}
+                                    title="Exportar conversa (.md)"
+                                    style={{
+                                      background: 'transparent',
+                                      border: 'none',
+                                      color: themeTokens.textSecondary,
+                                      cursor: 'pointer',
+                                      padding: 2,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      borderRadius: 3,
+                                      transition: 'color 0.15s ease',
+                                    }}
+                                    onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary)}
+                                    onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary)}
+                                  >
+                                    <Download size={11} />
+                                  </button>
+                                  <button
                                     onClick={(e) => handleDeleteChatSession(s.id, e)}
                                     title="Excluir conversa"
                                     style={{
@@ -9654,6 +10006,43 @@ ${prompt}`;
                             );
                           })
                         )}
+                      </div>
+
+                      {/* Popup Footer */}
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          paddingTop: 4,
+                          borderTop: 'none',
+                          fontSize: 10,
+                          color: themeTokens.textSecondary,
+                        }}
+                      >
+                        <span style={{ opacity: 0.65 }}>Salvo em ~/.devflow/chats/</span>
+                        <button
+                          type="button"
+                          onClick={() => handleSaveCurrentChatLocally()}
+                          title="Salvar sessão ativa no disco agora"
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: accentColor,
+                            cursor: 'pointer',
+                            padding: '2px 4px',
+                            fontSize: 10,
+                            fontFamily: 'Poppins, sans-serif',
+                            fontWeight: '500',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 3,
+                            borderRadius: 3,
+                          }}
+                        >
+                          <Save size={10} />
+                          <span>Salvar Agora</span>
+                        </button>
                       </div>
                     </div>
                   )}
@@ -11183,6 +11572,119 @@ ${prompt}`;
                         )}
                       </div>
 
+                      {/* Select AI Mode (Auto, Plan, Agent, Ask) Pill & Dropdown */}
+                      <div style={{ position: 'relative', flexShrink: 0 }} ref={aiModeDropdownRef}>
+                        <div
+                          onClick={() => setAiModeDropdown(!aiModeDropdown)}
+                          title="Alternar Modo da IA (Auto Mode, Planejamento, Agente, Perguntar)"
+                          style={{
+                            height: 26,
+                            paddingLeft: 7,
+                            paddingRight: 7,
+                            borderRadius: 5,
+                            background: aiMode === 'auto'
+                              ? (isEffectiveDark ? 'rgba(59, 130, 246, 0.18)' : 'rgba(59, 130, 246, 0.12)')
+                              : aiMode === 'plan'
+                              ? (isEffectiveDark ? 'rgba(234, 179, 8, 0.18)' : 'rgba(234, 179, 8, 0.12)')
+                              : (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : '#e2e8f0'),
+                            border: 'none',
+                            color: aiMode === 'auto' ? '#60a5fa' : aiMode === 'plan' ? '#facc15' : themeTokens.textPrimary,
+                            justifyContent: 'flex-start',
+                            alignItems: 'center',
+                            gap: 4,
+                            display: 'flex',
+                            cursor: 'pointer',
+                            whiteSpace: 'nowrap',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
+                          <span style={{ fontSize: 11 }}>
+                            {AI_MODES.find((m) => m.id === aiMode)?.badge || '⚡'}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              fontFamily: 'Poppins, sans-serif',
+                              fontWeight: 500,
+                            }}
+                          >
+                            {AI_MODES.find((m) => m.id === aiMode)?.shortName || 'Auto'}
+                          </span>
+                          <ChevronUp
+                            size={10}
+                            style={{
+                              transform: aiModeDropdown ? 'rotate(0deg)' : 'rotate(180deg)',
+                              transition: 'transform 0.15s ease',
+                              opacity: 0.7,
+                            }}
+                          />
+                        </div>
+
+                        {/* AI Mode Dropdown Menu */}
+                        {aiModeDropdown && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              bottom: 'calc(100% + 8px)',
+                              left: 0,
+                              background: themeTokens.bgCardSecondary,
+                              border: `1px solid ${themeTokens.border}`,
+                              borderRadius: 8,
+                              padding: 6,
+                              minWidth: 260,
+                              zIndex: 100000,
+                              boxShadow: '0 8px 24px rgba(0, 0, 0, 0.6)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 4,
+                            }}
+                          >
+                            <div style={{ padding: '3px 8px', fontSize: 10, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                              Modo de Execução da IA
+                            </div>
+                            {AI_MODES.map((m) => {
+                              const isSelected = aiMode === m.id;
+                              return (
+                                <div
+                                  key={m.id}
+                                  onClick={() => {
+                                    setAiMode(m.id);
+                                    setAiModeDropdown(false);
+                                    setToastMessage(`Modo alterado para ${m.name}`);
+                                  }}
+                                  style={{
+                                    padding: '7px 9px',
+                                    borderRadius: 6,
+                                    cursor: 'pointer',
+                                    background: isSelected ? hexToRgba(accentColor, 0.15) : 'transparent',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: 2,
+                                    transition: 'background 0.15s ease',
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    if (!isSelected) e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    if (!isSelected) e.currentTarget.style.background = 'transparent';
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 500, color: themeTokens.textPrimary }}>
+                                      <span>{m.badge}</span>
+                                      <span>{m.name}</span>
+                                    </div>
+                                    {isSelected && <Check size={12} color={accentColor} />}
+                                  </div>
+                                  <div style={{ fontSize: 10.5, color: themeTokens.textSecondary, lineHeight: '14px', paddingLeft: 22 }}>
+                                    {m.description}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                       {/* Select AI Model Button with Pill & Dropdown */}
                       <div style={{ position: 'relative', flexShrink: 1, minWidth: 0 }} ref={modelDropdownRef}>
                         <div
@@ -11567,8 +12069,16 @@ ${prompt}`;
         {/* Left Segment: Branch + Status + Sprint + Issues */}
         <div style={{ justifyContent: 'flex-start', alignItems: 'center', gap: 5, display: 'flex', flexShrink: 0, whiteSpace: 'nowrap' }}>
           <div style={{ justifyContent: 'flex-start', alignItems: 'flex-start', display: 'flex', flexShrink: 0 }}>
-            {/* Accent Left Indicator Block */}
+            {/* Accent Left Indicator Block (Toggles Terminal) */}
             <div
+              onClick={() => {
+                if (terminalHeight === 0) {
+                  setTerminalHeight(260);
+                } else {
+                  setTerminalHeight(0);
+                }
+              }}
+              title={terminalHeight === 0 ? "Abrir Terminal Integrado" : "Minimizar Terminal"}
               style={{
                 width: 38,
                 alignSelf: 'stretch',
@@ -11580,7 +12090,11 @@ ${prompt}`;
                 alignItems: 'center',
                 display: 'flex',
                 flexShrink: 0,
+                cursor: 'pointer',
+                transition: 'opacity 0.15s ease',
               }}
+              onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.opacity = '0.9')}
+              onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.opacity = '1')}
             >
               <TerminalIcon size={16} color={accentTextColor} />
             </div>
@@ -11661,6 +12175,11 @@ ${prompt}`;
               <div style={{ width: 1, height: 16, background: themeTokens.border, flexShrink: 0 }} />
 
               <div
+                onClick={() => {
+                  if (terminalHeight === 0) setTerminalHeight(260);
+                  setActiveTerminalTab('output');
+                }}
+                title={`Erros: ${editorErrors} | Avisos: ${editorWarnings} (Clique para ver no terminal)`}
                 style={{
                   paddingLeft: 10,
                   paddingRight: 10,
@@ -11674,11 +12193,20 @@ ${prompt}`;
                   display: 'flex',
                   whiteSpace: 'nowrap',
                   flexShrink: 0,
+                  cursor: 'pointer',
+                  transition: 'background 0.15s ease',
                 }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
               >
-                <XCircle size={13} color={themeTokens.textSecondary} />
-                <div style={{ color: themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400' }}>0</div>
-                <span style={{ color: themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400' }}>0</span>
+                <XCircle size={13} color={editorErrors > 0 ? '#ef4444' : themeTokens.textSecondary} />
+                <div style={{ color: editorErrors > 0 ? '#ef4444' : themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: editorErrors > 0 ? '500' : '400' }}>
+                  {editorErrors}
+                </div>
+                <AlertTriangle size={12} color={editorWarnings > 0 ? '#f59e0b' : themeTokens.textSecondary} />
+                <span style={{ color: editorWarnings > 0 ? '#f59e0b' : themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: editorWarnings > 0 ? '500' : '400' }}>
+                  {editorWarnings}
+                </span>
               </div>
             </div>
           </div>
@@ -11715,8 +12243,8 @@ ${prompt}`;
                   flexShrink: 0,
                 }}
               >
-                <div style={{ color: themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap' }}>Sprint 2 -</div>
-                <div style={{ color: accentColor, fontSize: 12, fontFamily: 'Poppins', fontWeight: '500', whiteSpace: 'nowrap' }}>7 days</div>
+                <div style={{ color: themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap' }}>{workspaceGitInfo?.sprintTitle || 'Sprint 2'} -</div>
+                <div style={{ color: accentColor, fontSize: 12, fontFamily: 'Poppins', fontWeight: '500', whiteSpace: 'nowrap' }}>{workspaceGitInfo?.sprintRemaining || '7 days'}</div>
               </div>
 
               <div style={{ width: 1, height: 16, background: themeTokens.border, flexShrink: 0 }} />
@@ -11748,7 +12276,7 @@ ${prompt}`;
               >
                 <div style={{ color: themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap' }}>Issues</div>
                 <div style={{ color: accentColor, fontSize: 12, fontFamily: 'Poppins', fontWeight: '500', whiteSpace: 'nowrap' }}>
-                  {gitIssues.length > 0 ? `${gitIssues.length} abertas` : '12 remming'}
+                  {workspaceGitInfo?.issuesCount !== undefined && workspaceGitInfo.issuesCount > 0 ? `${workspaceGitInfo.issuesCount} abertas` : gitIssues.length > 0 ? `${gitIssues.length} abertas` : '0 abertas'}
                 </div>
               </div>
             </div>
@@ -11784,18 +12312,142 @@ ${prompt}`;
               whiteSpace: 'nowrap',
             }}
           >
-            <div style={{ color: themeTokens.textSecondary, fontSize: 11.5, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap' }}>
-              Walancy (3 months ago)
+            {/* Git Blame / Author */}
+            <div
+              onClick={() => {
+                if (workspaceGitInfo?.activeFileBlame) {
+                  navigator.clipboard.writeText(workspaceGitInfo.activeFileBlame);
+                  setToastMessage(`Git Blame copiado: ${workspaceGitInfo.activeFileBlame}`);
+                }
+              }}
+              title="Git Blame do arquivo atual (Clique para copiar)"
+              style={{
+                color: themeTokens.textSecondary,
+                fontSize: 11.5,
+                fontFamily: 'Poppins',
+                fontWeight: '400',
+                whiteSpace: 'nowrap',
+                cursor: 'pointer',
+              }}
+            >
+              {workspaceGitInfo?.activeFileBlame || workspaceGitInfo?.authorBlame || 'Walancy (recently)'}
             </div>
-            <div style={{ color: isEffectiveDark ? '#666666' : '#999999', fontSize: 11.5, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap' }}>Ln 21, Col 13</div>
-            <div style={{ color: isEffectiveDark ? '#666666' : '#999999', fontSize: 11.5, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap' }}>Spaces: 2</div>
-            <div style={{ color: isEffectiveDark ? '#666666' : '#999999', fontSize: 11.5, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap' }}>UTF-8</div>
-            <div style={{ color: isEffectiveDark ? '#666666' : '#999999', fontSize: 11.5, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap' }}>LF</div>
-            <div style={{ color: isEffectiveDark ? '#666666' : '#999999', fontSize: 11.5, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap' }}>TypeScript</div>
+
+            {/* Monaco Cursor Position: Ln, Col */}
+            <div
+              onClick={() => {
+                if (editorInstanceRef.current) {
+                  editorInstanceRef.current.focus();
+                  editorInstanceRef.current.trigger('keyboard', 'editor.action.gotoLine', null);
+                }
+              }}
+              title="Ir para Linha/Coluna (Clique para navegar)"
+              style={{
+                color: isEffectiveDark ? '#888888' : '#666666',
+                fontSize: 11.5,
+                fontFamily: 'Poppins',
+                fontWeight: '400',
+                whiteSpace: 'nowrap',
+                cursor: 'pointer',
+              }}
+            >
+              Ln {cursorPosition.line}, Col {cursorPosition.col}
+            </div>
+
+            {/* Indentation (Spaces / Tabs) */}
+            <div
+              onClick={() => {
+                const nextSize = indentationSize === 2 ? 4 : indentationSize === 4 ? 8 : 2;
+                setIndentationSize(nextSize);
+                if (editorInstanceRef.current) {
+                  editorInstanceRef.current.getModel()?.updateOptions({ tabSize: nextSize, insertSpaces: true });
+                }
+                setToastMessage(`Tabulação alterada para Spaces: ${nextSize}`);
+              }}
+              title="Configurar Indentação (Clique para alternar 2 / 4 / 8)"
+              style={{
+                color: isEffectiveDark ? '#888888' : '#666666',
+                fontSize: 11.5,
+                fontFamily: 'Poppins',
+                fontWeight: '400',
+                whiteSpace: 'nowrap',
+                cursor: 'pointer',
+              }}
+            >
+              Spaces: {indentationSize}
+            </div>
+
+            {/* File Encoding */}
+            <div
+              title="Codificação de Caracteres: UTF-8"
+              style={{
+                color: isEffectiveDark ? '#888888' : '#666666',
+                fontSize: 11.5,
+                fontFamily: 'Poppins',
+                fontWeight: '400',
+                whiteSpace: 'nowrap',
+                cursor: 'default',
+              }}
+            >
+              UTF-8
+            </div>
+
+            {/* Line Ending LF/CRLF */}
+            <div
+              onClick={() => {
+                const nextEol = lineEnding === 'LF' ? 'CRLF' : 'LF';
+                setLineEnding(nextEol);
+                if (editorInstanceRef.current) {
+                  editorInstanceRef.current.getModel()?.setEOL(nextEol === 'LF' ? 0 : 1);
+                }
+                setToastMessage(`Fim de linha alterado para ${nextEol}`);
+              }}
+              title="Fim de Linha (Clique para alternar LF / CRLF)"
+              style={{
+                color: isEffectiveDark ? '#888888' : '#666666',
+                fontSize: 11.5,
+                fontFamily: 'Poppins',
+                fontWeight: '400',
+                whiteSpace: 'nowrap',
+                cursor: 'pointer',
+              }}
+            >
+              {lineEnding}
+            </div>
+
+            {/* Active Language */}
+            <div
+              onClick={() => {
+                if (editorInstanceRef.current) {
+                  editorInstanceRef.current.focus();
+                  editorInstanceRef.current.trigger('keyboard', 'editor.action.changeLanguageMode', null);
+                }
+              }}
+              title="Linguagem do Arquivo (Clique para alterar)"
+              style={{
+                color: isEffectiveDark ? '#888888' : '#666666',
+                fontSize: 11.5,
+                fontFamily: 'Poppins',
+                fontWeight: '400',
+                whiteSpace: 'nowrap',
+                cursor: 'pointer',
+              }}
+            >
+              {activeFile?.language ? (activeFile.language.charAt(0).toUpperCase() + activeFile.language.slice(1)) : 'TypeScript'}
+            </div>
           </div>
 
-          {/* Solid Accent Block "Ai na obra" */}
+          {/* Solid Accent Block "Ai na obra" (Toggles AI Chat & Focuses Input) */}
           <div
+            onClick={() => {
+              if (activeTab !== 'ai') {
+                setActiveTab('ai');
+              }
+              if (inputRef.current) {
+                inputRef.current.focus();
+              }
+            }}
+            title="Abrir Assistente AI na Obra"
             style={{
               alignSelf: 'stretch',
               paddingLeft: 14,
@@ -11809,7 +12461,10 @@ ${prompt}`;
               cursor: 'pointer',
               whiteSpace: 'nowrap',
               flexShrink: 0,
+              transition: 'opacity 0.15s ease',
             }}
+            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.opacity = '0.9')}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.opacity = '1')}
           >
             <div style={{ color: accentTextColor, fontSize: 12, fontFamily: 'Poppins', fontWeight: '600', whiteSpace: 'nowrap' }}>Ai na obra</div>
             <TerminalIcon size={14} color={accentTextColor} />

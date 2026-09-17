@@ -11,6 +11,7 @@ import { quotaService } from './quota-service';
 import { modelService } from './model-service';
 import { gitService } from './git-service';
 import { extensionsService } from './extensions-service';
+import { chatHistoryService } from './chat-history-service';
 
 // Set macOS application name
 app.name = 'Ainaobra IDE';
@@ -407,6 +408,27 @@ ipcMain.handle('ai:getModels', async (_event, { providerId }: { providerId: stri
 
 ipcMain.handle('ai:setModel', async (_event, { providerId, modelId }: { providerId: string; modelId: string }) => {
   return modelService.setModel(providerId, modelId);
+});
+
+// Local AI Chat History Persistence & Export with Context
+ipcMain.handle('ai:saveChatLocally', async (_event, session: any) => {
+  return chatHistoryService.saveSessionLocally(session);
+});
+
+ipcMain.handle('ai:exportChatDialog', async (_event, { session, format }: { session: any; format: 'markdown' | 'json' }) => {
+  return chatHistoryService.exportSessionDialog(session, format, mainWindow);
+});
+
+ipcMain.handle('ai:getSavedChats', async () => {
+  return chatHistoryService.listSavedSessions();
+});
+
+ipcMain.handle('ai:loadSavedChat', async (_event, sessionId: string) => {
+  return chatHistoryService.loadSession(sessionId);
+});
+
+ipcMain.handle('ai:deleteSavedChat', async (_event, sessionId: string) => {
+  return chatHistoryService.deleteSession(sessionId);
 });
 
 // Live Git & GitHub status IPC

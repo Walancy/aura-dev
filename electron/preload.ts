@@ -103,6 +103,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('ai:getModels', { providerId }),
     setModel: (providerId: string, modelId: string) =>
       ipcRenderer.invoke('ai:setModel', { providerId, modelId }),
+    saveChatLocally: (session: any) =>
+      ipcRenderer.invoke('ai:saveChatLocally', session),
+    exportChatDialog: (session: any, format: 'markdown' | 'json') =>
+      ipcRenderer.invoke('ai:exportChatDialog', { session, format }),
+    getSavedChats: () =>
+      ipcRenderer.invoke('ai:getSavedChats'),
+    loadSavedChat: (sessionId: string) =>
+      ipcRenderer.invoke('ai:loadSavedChat', sessionId),
+    deleteSavedChat: (sessionId: string) =>
+      ipcRenderer.invoke('ai:deleteSavedChat', sessionId),
   },
 
   // Native Menu Listeners
