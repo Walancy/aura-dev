@@ -12446,12 +12446,18 @@ ${prompt}`;
           {/* Solid Accent Block "Ai na obra" (Toggles AI Chat & Focuses Input) */}
           <div
             onClick={() => {
-              if (activeTab !== 'ai') {
-                setActiveTab('ai');
+              if (activeTab !== 'ide') {
+                setActiveTab('ide');
               }
-              if (inputRef.current) {
-                inputRef.current.focus();
-              }
+              setShowAiPanel((prev) => {
+                const next = !prev;
+                if (next) {
+                  setTimeout(() => {
+                    inputRef.current?.focus();
+                  }, 80);
+                }
+                return next;
+              });
             }}
             title="Abrir Assistente AI na Obra"
             style={{
