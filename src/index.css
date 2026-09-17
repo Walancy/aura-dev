@@ -75,6 +75,25 @@ body {
   background: #FF6A00;
 }
 
+/* Split Terminal Divider - Linha cinza sutil com opacidade baixa */
+.resizer-split-term {
+  width: 7px;
+}
+
+.resizer-split-term::after {
+  content: '';
+  width: 1px;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.12);
+  transition: background 0.15s ease;
+  border-radius: 0;
+}
+
+.resizer-split-term:hover::after,
+.resizer-split-term.dragging::after {
+  background: rgba(255, 255, 255, 0.28);
+}
+
 .resizer-row {
   height: 5px;
   align-self: stretch;

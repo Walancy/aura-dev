@@ -2937,7 +2937,7 @@ export const App: React.FC = () => {
                         <>
                           {/* Interactive Resizer between split panes */}
                           <div
-                            className={`resizer-col ${isDraggingSplitPanes ? 'dragging' : ''}`}
+                            className={`resizer-col resizer-split-term ${isDraggingSplitPanes ? 'dragging' : ''}`}
                             onMouseDown={startResizeSplitPanes}
                             onDoubleClick={() => {
                               setTerminalSplitRatio(50);
