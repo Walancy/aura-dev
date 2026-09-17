@@ -604,11 +604,12 @@ ipcMain.handle('shell:openExternal', async (_event, { url }: { url: string }) =>
 });
 
 // Open native system terminal (Terminal.app on macOS) running a command
-ipcMain.handle('shell:openInSystemTerminal', async (_event, { command }: { command: string }) => {
+ipcMain.handle('shell:openInSystemTerminal', async (_event, { command, cwd }: { command: string; cwd?: string }) => {
   const { exec } = require('node:child_process');
   if (process.platform === 'darwin') {
-    const escaped = command.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    const script = `tell application "Terminal" to activate\ntell application "Terminal" to do script "${escaped}"`;
+    const escaped = (command || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const cdPart = cwd ? `cd \\"${cwd.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}\\" && ` : '';
+    const script = `tell application "Terminal" to activate\ntell application "Terminal" to do script "${cdPart}${escaped}"`;
     return new Promise((resolve) => {
       exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, (err: any) => {
         resolve({ success: !err, error: err?.message });

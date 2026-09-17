@@ -71,6 +71,8 @@ import {
   ChevronUp,
   Copy,
   FileCode,
+  Lock,
+  KeyRound,
   ThumbsUp,
   ThumbsDown,
 } from 'lucide-react';
@@ -3079,6 +3081,26 @@ export const App: React.FC = () => {
     }
   }, [openFiles, activeFileId]);
 
+  // Helper to detect authentication / OAuth expired errors in AI output
+  const isAuthErrorText = (text?: string): boolean => {
+    if (!text) return false;
+    const lower = text.toLowerCase();
+    return (
+      lower.includes('failed to authenticate') ||
+      lower.includes('oauth session expired') ||
+      lower.includes('session expired and could not be refreshed') ||
+      lower.includes('please run claude login') ||
+      lower.includes('please login') ||
+      lower.includes('authentication required') ||
+      lower.includes('not authenticated') ||
+      lower.includes('login required') ||
+      lower.includes('authorization required') ||
+      lower.includes('token expired') ||
+      lower.includes('api key is invalid') ||
+      lower.includes('please authenticate')
+    );
+  };
+
   // Rich Markdown, Code Blocks, and Link Formatter for Assistant Responses
   const renderFormattedMessage = (rawText: string, msgIdx: number) => {
     if (!rawText) return null;
@@ -4644,6 +4666,31 @@ ${prompt}`;
 
         // Strip ANSI terminal escape sequences for clean chat display
         cleanOutput = cleanOutput.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').trim();
+
+        // Check if output is an authentication / OAuth session expired error
+        const isAuthError = isAuthErrorText(cleanOutput);
+        if (isAuthError) {
+          const authCmd =
+            currentProvider.id === 'claude'
+              ? 'claude login'
+              : currentProvider.id === 'antigravity'
+              ? 'agy auth login'
+              : currentProvider.id === 'codex'
+              ? 'codex login'
+              : currentProvider.id === 'gemini'
+              ? 'gemini auth login'
+              : `${currentProvider.cliCommand} login`;
+
+          pushAiMessage({
+            type: 'auth_required',
+            text: cleanOutput,
+            command: authCmd,
+            providerId: currentProvider.id,
+            timestamp: Date.now(),
+          });
+          setIsAiExecuting(false);
+          return;
+        }
 
         // Check if output is a permission error or failure
         const hasPermissionOrCriticalError =
@@ -9427,26 +9474,199 @@ ${prompt}`;
                           )}
                         </div>
                       );
-                    } else if (item.type === 'auth_required') {
+                    } else if (item.type === 'auth_required' || (item.type === 'assistant' && isAuthErrorText(item.text))) {
+                      const prov = AI_PROVIDERS.find((p) => p.id === (item.providerId || selectedAiProvider)) || AI_PROVIDERS[0];
+                      const authCmd = item.command || (prov.id === 'claude' ? 'claude login' : prov.id === 'antigravity' ? 'agy auth login' : prov.id === 'codex' ? 'codex login' : `${prov.cliCommand} login`);
+
                       return (
                         <div
                           key={idx}
                           style={{
-                            background: hexToRgba(accentColor, 0.08),
-                            border: `1px solid ${hexToRgba(accentColor, 0.28)}`,
-                            borderLeft: `3px solid ${accentColor}`,
-                            padding: '10px 12px',
-                            borderRadius: '4px 8px 8px 4px',
-                            color: themeTokens.textPrimary,
+                            alignSelf: 'flex-start',
                             display: 'flex',
-                            flexDirection: 'column',
-                            gap: 6,
-                            fontFamily: 'Poppins, sans-serif',
-                            fontSize: 12,
+                            flexDirection: 'row',
+                            alignItems: 'flex-start',
+                            gap: 8,
+                            maxWidth: '96%',
+                            width: '100%',
                           }}
                         >
-                          <div style={{ whiteSpace: 'pre-wrap', lineHeight: '18px' }}>
-                            {item.text}
+                          {/* Assistant Avatar */}
+                          <div
+                            style={{
+                              width: 22,
+                              height: 22,
+                              borderRadius: 5,
+                              background: isEffectiveDark ? 'rgba(239, 68, 68, 0.15)' : 'rgba(239, 68, 68, 0.1)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              flexShrink: 0,
+                              marginTop: 2,
+                            }}
+                          >
+                            <Lock size={13} color="#ef4444" />
+                          </div>
+
+                          {/* Card Content */}
+                          <div
+                            style={{
+                              flex: '1 1 auto',
+                              background: isEffectiveDark ? '#1a1414' : '#fff5f5',
+                              border: isEffectiveDark ? '1px solid rgba(239, 68, 68, 0.25)' : '1px solid rgba(239, 68, 68, 0.2)',
+                              borderLeft: '3px solid #ef4444',
+                              borderRadius: 8,
+                              padding: '12px 14px',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 10,
+                              fontFamily: 'Poppins, sans-serif',
+                              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.15)',
+                            }}
+                          >
+                            {/* Header */}
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                                <KeyRound size={15} color="#ef4444" />
+                                <span style={{ fontWeight: 600, fontSize: 12.5, color: isEffectiveDark ? '#fca5a5' : '#b91c1c' }}>
+                                  Autenticação Necessária (OAuth Expirado)
+                                </span>
+                              </div>
+                              <span
+                                style={{
+                                  fontSize: 10.5,
+                                  fontWeight: 500,
+                                  color: '#ef4444',
+                                  background: isEffectiveDark ? 'rgba(239, 68, 68, 0.15)' : 'rgba(239, 68, 68, 0.1)',
+                                  padding: '2px 8px',
+                                  borderRadius: 12,
+                                }}
+                              >
+                                {prov.name}
+                              </span>
+                            </div>
+
+                            {/* Informative text */}
+                            <div style={{ fontSize: 12, color: themeTokens.textPrimary, lineHeight: '18px' }}>
+                              A sessão OAuth do <strong>{prov.name}</strong> expirou ou requer autorização interativa via navegador. Escolha uma das opções abaixo para autenticar pelo terminal:
+                            </div>
+
+                            {/* Raw output box */}
+                            <div
+                              style={{
+                                background: isEffectiveDark ? 'rgba(0, 0, 0, 0.45)' : 'rgba(0, 0, 0, 0.05)',
+                                padding: '8px 10px',
+                                borderRadius: 6,
+                                fontSize: 11,
+                                fontFamily: 'JetBrains Mono, monospace',
+                                color: isEffectiveDark ? '#f87171' : '#dc2626',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word',
+                                maxHeight: 110,
+                                overflowY: 'auto',
+                                lineHeight: '16px',
+                              }}
+                            >
+                              {item.text}
+                            </div>
+
+                            {/* Action Buttons Row */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 2 }}>
+                              {/* 1. System macOS Terminal */}
+                              <button
+                                onClick={async () => {
+                                  if (window.electronAPI?.shell?.openInSystemTerminal) {
+                                    setToastMessage(`Abrindo Terminal do macOS com "${authCmd}"...`);
+                                    await window.electronAPI.shell.openInSystemTerminal(authCmd, terminalCwd);
+                                  } else {
+                                    handleNewTerminalSession(prov.id === 'claude' ? 'claude' : 'zsh', `${prov.name} Login`, authCmd);
+                                  }
+                                }}
+                                style={{
+                                  background: '#ef4444',
+                                  border: 'none',
+                                  borderRadius: 5,
+                                  color: '#ffffff',
+                                  fontSize: 11.5,
+                                  fontWeight: 500,
+                                  fontFamily: 'Poppins, sans-serif',
+                                  padding: '6px 12px',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  boxShadow: '0 2px 8px rgba(239, 68, 68, 0.35)',
+                                  transition: 'all 0.15s ease',
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+                                onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                                title="Abre a janela do Terminal nativo do macOS para fazer o login OAuth"
+                              >
+                                <Monitor size={13} />
+                                <span>Abrir no Terminal do Mac</span>
+                              </button>
+
+                              {/* 2. Integrated DevFlow Terminal */}
+                              <button
+                                onClick={() => {
+                                  handleNewTerminalSession(prov.id === 'claude' ? 'claude' : 'zsh', `${prov.name} Login`, authCmd);
+                                  setIsTerminalCollapsed(false);
+                                  setActiveTermTab('terminal');
+                                  setToastMessage(`Iniciando "${authCmd}" no terminal integrado...`);
+                                }}
+                                style={{
+                                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
+                                  border: '1px solid ' + (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.1)'),
+                                  borderRadius: 5,
+                                  color: themeTokens.textPrimary,
+                                  fontSize: 11.5,
+                                  fontWeight: 500,
+                                  fontFamily: 'Poppins, sans-serif',
+                                  padding: '6px 12px',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  transition: 'all 0.15s ease',
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(0, 0, 0, 0.1)')}
+                                onMouseLeave={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)')}
+                                title="Abre uma aba no terminal integrado do DevFlow para autenticar"
+                              >
+                                <SquareTerminal size={13} color={accentColor} />
+                                <span>Terminal Integrado</span>
+                              </button>
+
+                              {/* 3. Copy Command */}
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(authCmd);
+                                  setToastMessage(`Comando "${authCmd}" copiado!`);
+                                }}
+                                style={{
+                                  background: 'transparent',
+                                  border: '1px solid ' + (isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'),
+                                  borderRadius: 5,
+                                  color: themeTokens.textSecondary,
+                                  fontSize: 11.5,
+                                  fontWeight: 400,
+                                  fontFamily: 'Poppins, sans-serif',
+                                  padding: '6px 10px',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 5,
+                                  marginLeft: 'auto',
+                                  transition: 'all 0.15s ease',
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.color = themeTokens.textPrimary)}
+                                onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textSecondary)}
+                                title="Copiar comando de autenticação"
+                              >
+                                <Copy size={12} />
+                                <span>Copiar "{authCmd}"</span>
+                              </button>
+                            </div>
                           </div>
                         </div>
                       );

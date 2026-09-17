@@ -55,7 +55,7 @@ export interface ElectronAPI {
   shell: {
     exec: (command: string, cwd?: string) => Promise<{ stdout: string; stderr: string; error: string | null; exitCode: number; newCwd?: string | null }>;
     openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
-    openInSystemTerminal?: (command: string) => Promise<{ success: boolean; error?: string }>;
+    openInSystemTerminal?: (command: string, cwd?: string) => Promise<{ success: boolean; error?: string }>;
   };
   git?: {
     getWorkspaceGitInfo: (workspacePath: string, activeFilePath?: string) => Promise<{

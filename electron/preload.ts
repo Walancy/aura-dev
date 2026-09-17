@@ -126,8 +126,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('shell:exec', { command, cwd }),
     openExternal: (url: string) =>
       ipcRenderer.invoke('shell:openExternal', { url }),
-    openInSystemTerminal: (command: string) =>
-      ipcRenderer.invoke('shell:openInSystemTerminal', { command }),
+    openInSystemTerminal: (command: string, cwd?: string) =>
+      ipcRenderer.invoke('shell:openInSystemTerminal', { command, cwd }),
   },
 
   // Git & GitHub Integration
