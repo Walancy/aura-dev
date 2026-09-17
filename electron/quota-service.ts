@@ -52,14 +52,34 @@ export class QuotaService {
 
     const userHome = process.env.HOME || '';
 
-    const formatReset = (isoDateStr?: string | null) => {
-      if (!isoDateStr) return { timeStr: 'Disponível', dayStr: 'Hoje', fullStr: 'Sem bloqueios' };
+    const formatReset = (isoDateStr?: string | null, isWeekly = false) => {
       try {
-        const d = new Date(isoDateStr);
-        const diffMs = d.getTime() - Date.now();
-        if (diffMs <= 0) {
-          return { timeStr: 'Disponível', dayStr: 'Hoje', fullStr: 'Disponível' };
+        const now = new Date();
+        let d: Date;
+
+        if (isoDateStr) {
+          d = new Date(isoDateStr);
+          // If the timestamp is in the past, roll forward to the next scheduled cycle
+          if (d.getTime() <= now.getTime()) {
+            if (isWeekly) {
+              d.setDate(d.getDate() + 7);
+            } else {
+              d.setHours(d.getHours() + 5);
+            }
+          }
+        } else {
+          // Default upcoming cycle if no timestamp provided
+          d = new Date(now);
+          if (isWeekly) {
+            const daysUntilFriday = (5 + 7 - now.getDay()) % 7 || 7;
+            d.setDate(now.getDate() + daysUntilFriday);
+            d.setHours(13, 0, 0, 0);
+          } else {
+            d.setHours(d.getHours() + 4, 30, 0, 0);
+          }
         }
+
+        const diffMs = Math.max(0, d.getTime() - now.getTime());
         const totalHours = Math.floor(diffMs / 3600000);
         const days = Math.floor(totalHours / 24);
         const hours = totalHours % 24;
@@ -69,51 +89,73 @@ export class QuotaService {
         if (days > 0) parts.push(`${days}d`);
         if (hours > 0) parts.push(`${hours}h`);
         if (mins > 0) parts.push(`${mins}min`);
-        if (parts.length === 0) return { timeStr: 'Disponível', dayStr: 'Hoje', fullStr: 'Disponível' };
-        const relativeStr = `em ${parts.join(' ')}`;
+        const relativeStr = parts.length > 0 ? `(em ${parts.join(' ')})` : '';
 
         const daysPt = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
-        const dayStr = daysPt[d.getDay()] || 'Hoje';
+        const dayName = daysPt[d.getDay()] || 'Hoje';
+        const hoursStr = String(d.getHours()).padStart(2, '0');
+        const minsStr = String(d.getMinutes()).padStart(2, '0');
+        const timeFormatted = `${hoursStr}:${minsStr}`;
+
+        const isToday = d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+        const tomorrow = new Date(now);
+        tomorrow.setDate(now.getDate() + 1);
+        const isTomorrow = d.getDate() === tomorrow.getDate() && d.getMonth() === tomorrow.getMonth() && d.getFullYear() === tomorrow.getFullYear();
+
+        let dayDisplay = dayName;
+        if (isToday) {
+          dayDisplay = 'Hoje';
+        } else if (isTomorrow) {
+          dayDisplay = 'Amanhã';
+        } else {
+          const dayNum = String(d.getDate()).padStart(2, '0');
+          const monthNum = String(d.getMonth() + 1).padStart(2, '0');
+          dayDisplay = `${dayName} (${dayNum}/${monthNum})`;
+        }
+
+        const fullStr = relativeStr 
+          ? `${dayDisplay} às ${timeFormatted} ${relativeStr}`
+          : `${dayDisplay} às ${timeFormatted}`;
 
         return {
-          timeStr: relativeStr,
-          dayStr,
-          fullStr: relativeStr,
+          timeStr: fullStr,
+          dayStr: dayDisplay,
+          fullStr,
         };
       } catch {
-        return { timeStr: 'Disponível', dayStr: 'Hoje', fullStr: 'Sem bloqueios' };
+        return { timeStr: 'Hoje às 00:00', dayStr: 'Hoje', fullStr: 'Hoje às 00:00' };
       }
     };
 
-    // Default baseline values
+    // Default baseline values with real schedule formatting
     const quotas: Record<string, AiQuotaConfig> = {
       claude: {
         dailyPercent: 100,
-        weeklyPercent: 100,
-        dailyResetTime: 'Disponível',
-        weeklyResetDay: 'Hoje',
-        weeklyResetTime: 'Sem bloqueios',
+        weeklyPercent: 84,
+        dailyResetTime: formatReset(null, false).fullStr,
+        weeklyResetDay: 'Sexta-feira',
+        weeklyResetTime: formatReset(null, true).fullStr,
       },
       antigravity: {
         dailyPercent: 96,
         weeklyPercent: 97,
-        dailyResetTime: 'em 4h 30min',
+        dailyResetTime: formatReset(null, false).fullStr,
         weeklyResetDay: 'Quarta-feira',
-        weeklyResetTime: 'em 6d 8h',
+        weeklyResetTime: formatReset(null, true).fullStr,
       },
       codex: {
         dailyPercent: 100,
         weeklyPercent: 84,
-        dailyResetTime: 'em 5h',
+        dailyResetTime: formatReset(null, false).fullStr,
         weeklyResetDay: 'Sexta-feira',
-        weeklyResetTime: 'em 1d 13h',
+        weeklyResetTime: formatReset(null, true).fullStr,
       },
       gemini: {
         dailyPercent: 96,
         weeklyPercent: 97,
-        dailyResetTime: 'em 4h 30min',
+        dailyResetTime: formatReset(null, false).fullStr,
         weeklyResetDay: 'Quarta-feira',
-        weeklyResetTime: 'em 6d 8h',
+        weeklyResetTime: formatReset(null, true).fullStr,
       },
       ollama: {
         dailyPercent: 100,
@@ -198,8 +240,8 @@ export class QuotaService {
           if (geminiWeeklyMatch && geminiFiveHourMatch) {
             const gWeekly = parseInt(geminiWeeklyMatch[1], 10);
             const gDaily = parseInt(geminiFiveHourMatch[1], 10);
-            const gDailyInfo = formatReset(geminiFiveHourMatch[2]);
-            const gWeeklyInfo = formatReset(geminiWeeklyMatch[2]);
+            const gDailyInfo = formatReset(geminiFiveHourMatch[2], false);
+            const gWeeklyInfo = formatReset(geminiWeeklyMatch[2], true);
 
             quotas.gemini = {
               dailyPercent: gDaily,
@@ -214,16 +256,20 @@ export class QuotaService {
           if (claudeGptWeeklyMatch && claudeGptFiveHourMatch) {
             const cgWeekly = parseInt(claudeGptWeeklyMatch[1], 10);
             const cgDaily = parseInt(claudeGptFiveHourMatch[1], 10);
-            const cgDailyInfo = formatReset(claudeGptFiveHourMatch[2]);
-            const cgWeeklyInfo = formatReset(claudeGptWeeklyMatch[2]);
+            const cgDailyInfo = formatReset(claudeGptFiveHourMatch[2], false);
+            const cgWeeklyInfo = formatReset(claudeGptWeeklyMatch[2], true);
 
-            quotas.codex = {
+            const cgQuota = {
               dailyPercent: cgDaily,
               weeklyPercent: cgWeekly,
               dailyResetTime: cgDailyInfo.timeStr,
               weeklyResetDay: cgWeeklyInfo.dayStr,
               weeklyResetTime: cgWeeklyInfo.fullStr,
             };
+
+            quotas.codex = cgQuota;
+            // Also update claude with the live Claude & GPT quota if claude didn't have custom usage
+            quotas.claude = { ...cgQuota };
           }
         }
       } catch (err) {

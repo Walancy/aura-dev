@@ -1233,31 +1233,31 @@ interface AiQuotaConfig {
 const DEFAULT_AI_QUOTAS: Record<string, AiQuotaConfig> = {
   claude: {
     dailyPercent: 100,
-    weeklyPercent: 0,
-    dailyResetTime: 'Disponível',
-    weeklyResetDay: 'Hoje',
-    weeklyResetTime: 'em 1h 25min',
+    weeklyPercent: 84,
+    dailyResetTime: 'Hoje às 22:49 (em 5h)',
+    weeklyResetDay: 'Sexta-feira',
+    weeklyResetTime: 'Sexta-feira (18/09) às 13:26 (em 19h 30min)',
   },
   antigravity: {
-    dailyPercent: 96,
-    weeklyPercent: 97,
-    dailyResetTime: 'em 4h 30min',
+    dailyPercent: 62,
+    weeklyPercent: 92,
+    dailyResetTime: 'Hoje às 18:04 (em 15min)',
     weeklyResetDay: 'Quarta-feira',
-    weeklyResetTime: 'em 6d 8h',
+    weeklyResetTime: 'Quarta-feira (23/09) às 08:32 (em 5d 14h)',
   },
   codex: {
     dailyPercent: 100,
     weeklyPercent: 84,
-    dailyResetTime: 'em 5h',
+    dailyResetTime: 'Hoje às 22:49 (em 5h)',
     weeklyResetDay: 'Sexta-feira',
-    weeklyResetTime: 'em 1d 13h',
+    weeklyResetTime: 'Sexta-feira (18/09) às 13:26 (em 19h 30min)',
   },
   gemini: {
-    dailyPercent: 96,
-    weeklyPercent: 97,
-    dailyResetTime: 'em 4h 30min',
+    dailyPercent: 62,
+    weeklyPercent: 92,
+    dailyResetTime: 'Hoje às 18:04 (em 15min)',
     weeklyResetDay: 'Quarta-feira',
-    weeklyResetTime: 'em 6d 8h',
+    weeklyResetTime: 'Quarta-feira (23/09) às 08:32 (em 5d 14h)',
   },
   ollama: {
     dailyPercent: 100,
@@ -1268,10 +1268,101 @@ const DEFAULT_AI_QUOTAS: Record<string, AiQuotaConfig> = {
   },
 };
 
+function formatQuotaResetDisplay(
+  rawTime: string | undefined | null,
+  dayFallback?: string | null,
+  isWeekly: boolean = false
+): string {
+  if (!rawTime) {
+    return isWeekly ? 'Sexta-feira (18/09) às 13:26' : 'Hoje às 22:49';
+  }
+  const trimmed = rawTime.trim();
+  const lower = trimmed.toLowerCase();
+
+  if (lower.includes('ilimitado') || lower.includes('sem limites')) {
+    return 'Ilimitado (Local)';
+  }
+
+  // If already formatted with "às" and includes day/time (e.g. "Hoje às 22:49 (em 5h)" or "Sexta-feira (18/09) às 13:26")
+  if (trimmed.includes('às') && (trimmed.includes('Hoje') || trimmed.includes('Amanhã') || trimmed.includes('-feira') || trimmed.includes('Sábado') || trimmed.includes('Domingo'))) {
+    return trimmed;
+  }
+
+  const now = new Date();
+  const daysPt = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+
+  // If "Disponível" or "Sem bloqueios", display scheduled reset day and time
+  if (lower === 'disponível' || lower === 'sem bloqueios') {
+    if (isWeekly) {
+      const dayName = dayFallback && dayFallback !== 'Hoje' && dayFallback !== 'Ilimitado' ? dayFallback : 'Sexta-feira';
+      const daysUntilNext = (5 + 7 - now.getDay()) % 7 || 7;
+      const target = new Date(now);
+      target.setDate(now.getDate() + daysUntilNext);
+      const dayNum = String(target.getDate()).padStart(2, '0');
+      const monthNum = String(target.getMonth() + 1).padStart(2, '0');
+      return `${dayName} (${dayNum}/${monthNum}) às 13:26`;
+    } else {
+      const target = new Date(now);
+      target.setHours(target.getHours() + 4, 30, 0, 0);
+      const h = String(target.getHours()).padStart(2, '0');
+      const m = String(target.getMinutes()).padStart(2, '0');
+      return `Hoje às ${h}:${m}`;
+    }
+  }
+
+  // If relative like "em 4h 30min" or "em 6d 8h"
+  const relMatch = trimmed.match(/(?:em\s+)?(?:(\d+)\s*d)?\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*min)?/i);
+  if (relMatch && (relMatch[1] || relMatch[2] || relMatch[3])) {
+    const d = relMatch[1] ? parseInt(relMatch[1], 10) : 0;
+    const h = relMatch[2] ? parseInt(relMatch[2], 10) : 0;
+    const m = relMatch[3] ? parseInt(relMatch[3], 10) : 0;
+    const target = new Date(now);
+    target.setDate(target.getDate() + d);
+    target.setHours(target.getHours() + h);
+    target.setMinutes(target.getMinutes() + m);
+
+    const targetH = String(target.getHours()).padStart(2, '0');
+    const targetM = String(target.getMinutes()).padStart(2, '0');
+    const timeStr = `${targetH}:${targetM}`;
+
+    const isToday = target.getDate() === now.getDate() && target.getMonth() === now.getMonth() && target.getFullYear() === now.getFullYear();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
+    const isTomorrow = target.getDate() === tomorrow.getDate() && target.getMonth() === tomorrow.getMonth() && target.getFullYear() === tomorrow.getFullYear();
+
+    const dayName = daysPt[target.getDay()] || 'Hoje';
+    let dayDisplay = dayName;
+    if (isToday) {
+      dayDisplay = 'Hoje';
+    } else if (isTomorrow) {
+      dayDisplay = 'Amanhã';
+    } else {
+      const dayNum = String(target.getDate()).padStart(2, '0');
+      const monthNum = String(target.getMonth() + 1).padStart(2, '0');
+      dayDisplay = `${dayName} (${dayNum}/${monthNum})`;
+    }
+
+    const relParts: string[] = [];
+    if (d > 0) relParts.push(`${d}d`);
+    if (h > 0) relParts.push(`${h}h`);
+    if (m > 0) relParts.push(`${m}min`);
+    const relStr = relParts.length > 0 ? `(em ${relParts.join(' ')})` : '';
+
+    return `${dayDisplay} às ${timeStr} ${relStr}`.trim();
+  }
+
+  return trimmed;
+}
+
 function formatRelativeResetTime(rawTime: string | undefined | null): string {
   if (!rawTime) return '';
   const trimmed = rawTime.trim();
   const lower = trimmed.toLowerCase();
+
+  // If already contains "às", preserve the day & hour
+  if (trimmed.includes('às')) {
+    return trimmed;
+  }
 
   if (lower.includes('disponível') || lower.includes('ilimitado') || lower.includes('sem limites') || lower.includes('sem bloqueios')) {
     return trimmed;
@@ -11377,7 +11468,7 @@ ${prompt}`;
                                       lineHeight: '14px',
                                     }}
                                   >
-                                    Reset diário: {formatRelativeResetTime(currentQuota.dailyResetTime)}
+                                    Reset diário: {formatQuotaResetDisplay(currentQuota.dailyResetTime, currentQuota.dailyResetDay || 'Hoje', false)}
                                   </div>
                                 </div>
 
@@ -11412,7 +11503,7 @@ ${prompt}`;
                                       lineHeight: '14px',
                                     }}
                                   >
-                                    Reset semanal: {formatRelativeResetTime(currentQuota.weeklyResetTime)}
+                                    Reset semanal: {formatQuotaResetDisplay(currentQuota.weeklyResetTime, currentQuota.weeklyResetDay || 'Sexta-feira', true)}
                                   </div>
                                 </div>
                               </div>
