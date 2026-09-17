@@ -1213,11 +1213,27 @@ export const App: React.FC = () => {
       return;
     }
 
+    if (cmd === 'claude') {
+      setTerminalHistory((prev) => [
+        ...prev,
+        cmdLine,
+        '💡 O Claude Code CLI requer um prompt neste modo de terminal.\n• Exemplo: claude "analise os arquivos deste projeto"\n• Ou envie sua pergunta diretamente no Chat de IA à direita!',
+        promptPrefix,
+      ]);
+      return;
+    }
+
+    let cmdToExecute = cmd;
+    if (cmd.startsWith('claude ') && !cmd.includes('-p ') && !cmd.includes('--print')) {
+      const promptArg = cmd.substring(7).trim().replace(/^["']|["']$/g, '');
+      cmdToExecute = `claude -p "${promptArg.replace(/"/g, '\\"')}" < /dev/null`;
+    }
+
     // Execute real command in macOS via Electron native shell
     if (window.electronAPI?.shell?.exec) {
       setTerminalHistory((prev) => [...prev, cmdLine]);
       try {
-        const res = await window.electronAPI.shell.exec(cmd, terminalCwd);
+        const res = await window.electronAPI.shell.exec(cmdToExecute, terminalCwd);
 
         // Update working directory if cd changed it
         let nextCwd = terminalCwd;

@@ -277,6 +277,22 @@ ipcMain.handle('shell:exec', async (_event, { command, cwd }: { command: string;
   const targetCwd = cwd && fs.existsSync(cwd) ? cwd : (userHome || process.cwd());
   const shellPath = process.env.SHELL || '/bin/zsh';
 
+  // Ensure workspace trust in ~/.claude.json so Claude Code does not block
+  try {
+    const claudeJsonPath = path.join(userHome, '.claude.json');
+    if (fs.existsSync(claudeJsonPath)) {
+      const cJson = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8'));
+      if (!cJson.projects) cJson.projects = {};
+      if (!cJson.projects[targetCwd] || !cJson.projects[targetCwd].hasTrustDialogAccepted) {
+        cJson.projects[targetCwd] = {
+          ...(cJson.projects[targetCwd] || {}),
+          hasTrustDialogAccepted: true,
+        };
+        fs.writeFileSync(claudeJsonPath, JSON.stringify(cJson, null, 2), 'utf8');
+      }
+    }
+  } catch {}
+
   const customPaths = [
     path.join(userHome, '.local/bin'),
     path.join(userHome, '.bun/bin'),
