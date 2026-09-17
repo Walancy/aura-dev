@@ -199,9 +199,10 @@ interface NativeXTermProps {
   sessionType?: string;
   cwd: string;
   isActive: boolean;
+  initialCommand?: string;
 }
 
-const NativeXTerm: React.FC<NativeXTermProps> = ({ sessionId, sessionType = 'zsh', cwd, isActive }) => {
+const NativeXTerm: React.FC<NativeXTermProps> = ({ sessionId, sessionType = 'zsh', cwd, isActive, initialCommand }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -260,6 +261,13 @@ const NativeXTerm: React.FC<NativeXTermProps> = ({ sessionId, sessionType = 'zsh
 
       // Spawn native PTY session
       pty.create(sessionId, sessionType, cwd, term.cols || 80, term.rows || 24);
+
+      // If initialCommand is provided (e.g. automatic CLI installation), send it once prompt is ready
+      if (initialCommand) {
+        setTimeout(() => {
+          pty.write(sessionId, `${initialCommand}\r`);
+        }, 500);
+      }
 
       // Load buffer history if session was already active
       pty.getHistory?.(sessionId).then((history) => {
@@ -353,7 +361,7 @@ const AI_PROVIDERS: AiProviderConfig[] = [
     id: 'claude',
     name: 'Claude',
     cliCommand: 'claude',
-    installUrl: 'https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview',
+    installUrl: 'https://claude.com/download',
     installGuide: 'npm install -g @anthropic-ai/claude-code',
     models: [
       'Claude 3.7 Sonnet (Thinking)',
@@ -367,7 +375,7 @@ const AI_PROVIDERS: AiProviderConfig[] = [
     id: 'antigravity',
     name: 'Google Antigravity',
     cliCommand: 'agy',
-    installUrl: 'https://github.com/google-deepmind/antigravity',
+    installUrl: 'https://antigravity.google/product/antigravity-cli?authuser=31',
     installGuide: 'curl -fsSL https://antigravity.google.com/install.sh | bash',
     models: [
       'AGY 2.0 Autonomous Agent',
@@ -380,8 +388,8 @@ const AI_PROVIDERS: AiProviderConfig[] = [
     id: 'codex',
     name: 'OpenAI Codex',
     cliCommand: 'codex',
-    installUrl: 'https://platform.openai.com/docs/models',
-    installGuide: 'npm install -g openai',
+    installUrl: 'https://learn.chatgpt.com/docs/codex/cli',
+    installGuide: 'npm install -g @openai/codex',
     models: [
       'GPT-4o (Omni)',
       'o3-mini (Reasoning)',
@@ -393,7 +401,7 @@ const AI_PROVIDERS: AiProviderConfig[] = [
     id: 'gemini',
     name: 'Google Gemini',
     cliCommand: 'gemini',
-    installUrl: 'https://ai.google.dev/gemini-api/docs/quickstart',
+    installUrl: 'https://geminicli.com/docs/get-started/installation/',
     installGuide: 'npm install -g @google/gemini-cli',
     models: [
       'Gemini 2.5 Pro (Thinking & Multimodal)',
@@ -427,32 +435,32 @@ interface AiQuotaConfig {
 
 const AI_QUOTAS: Record<string, AiQuotaConfig> = {
   claude: {
-    dailyPercent: 88,
-    weeklyPercent: 98,
-    dailyResetTime: '04:00',
-    weeklyResetDay: 'Segunda-feira',
-    weeklyResetTime: '04:00',
+    dailyPercent: 68,
+    weeklyPercent: 34,
+    dailyResetTime: '04:00 (em 5h 40m)',
+    weeklyResetDay: 'Domingo',
+    weeklyResetTime: '00:00 (em 3 dias)',
   },
   antigravity: {
-    dailyPercent: 94,
-    weeklyPercent: 99,
-    dailyResetTime: '00:00',
-    weeklyResetDay: 'Domingo',
-    weeklyResetTime: '00:00',
+    dailyPercent: 82,
+    weeklyPercent: 55,
+    dailyResetTime: '00:00 (em 1h 40m)',
+    weeklyResetDay: 'Segunda-feira',
+    weeklyResetTime: '00:00 (em 4 dias)',
   },
   codex: {
-    dailyPercent: 82,
-    weeklyPercent: 91,
-    dailyResetTime: '03:00',
-    weeklyResetDay: 'Quinta-feira',
-    weeklyResetTime: '03:00',
+    dailyPercent: 45,
+    weeklyPercent: 20,
+    dailyResetTime: '03:00 (em 4h 40m)',
+    weeklyResetDay: 'Sábado',
+    weeklyResetTime: '12:00 (em 2 dias)',
   },
   gemini: {
-    dailyPercent: 95,
-    weeklyPercent: 100,
-    dailyResetTime: '05:00',
-    weeklyResetDay: 'Terça-feira',
-    weeklyResetTime: '05:00',
+    dailyPercent: 91,
+    weeklyPercent: 73,
+    dailyResetTime: '02:00 (em 3h 40m)',
+    weeklyResetDay: 'Domingo',
+    weeklyResetTime: '18:00 (em 3 dias)',
   },
   ollama: {
     dailyPercent: 100,
@@ -466,9 +474,10 @@ const AI_QUOTAS: Record<string, AiQuotaConfig> = {
 interface TerminalSessionItem {
   id: string;
   name: string;
-  type: 'zsh' | 'bash' | 'claude' | 'agy';
+  type: string;
   pid: number;
   command: string;
+  initialCommand?: string;
   shellIntegration: string;
   isSplit?: boolean;
   splitWithId?: string;
@@ -1006,7 +1015,11 @@ export const App: React.FC = () => {
     monaco.editor.setTheme('figma-ainaobra');
   };
 
-  const handleNewTerminalSession = (type: 'zsh' | 'bash' | 'claude' | 'agy' = 'zsh') => {
+  const handleNewTerminalSession = (
+    type: 'zsh' | 'bash' | 'claude' | 'agy' | string = 'zsh',
+    name?: string,
+    initialCommand?: string
+  ) => {
     const newId = String(Date.now());
     const pid = Math.floor(60000 + Math.random() * 5000);
     const cmd =
@@ -1019,16 +1032,23 @@ export const App: React.FC = () => {
         : '/bin/zsh -il';
     const newSession: TerminalSessionItem = {
       id: newId,
-      name: type,
+      name: name || type,
       type,
       pid,
       command: cmd,
+      initialCommand,
       shellIntegration: 'Rich',
     };
     setTerminalSessions((prev) => [...prev, newSession]);
     setActiveSessionId(newId);
     setIsTerminalCollapsed(false);
     setActiveTermTab('terminal');
+  };
+
+  const handleInstallCliInTerminal = (provider: AiProviderConfig) => {
+    handleNewTerminalSession('zsh', `Instalar ${provider.name}`, provider.installGuide);
+    setProviderDropdown(false);
+    setToastMessage(`Iniciando instalação do CLI ${provider.name} no terminal integrado...`);
   };
 
   const handleKillTerminalSession = (sessionId: string, e?: React.MouseEvent) => {
@@ -1204,13 +1224,26 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleSaveActiveFile]);
 
-  // Check installed CLIs on native machine on startup
+  // Check installed CLIs on native machine on startup, window focus, and PTY command exits
   useEffect(() => {
-    if (window.electronAPI?.ai?.checkClis) {
-      window.electronAPI.ai.checkClis().then((res) => {
-        if (res) setInstalledClis(res);
-      }).catch(console.error);
-    }
+    const refreshInstalledClis = () => {
+      if (window.electronAPI?.ai?.checkClis) {
+        window.electronAPI.ai.checkClis().then((res) => {
+          if (res) setInstalledClis(res);
+        }).catch(console.error);
+      }
+    };
+
+    refreshInstalledClis();
+    window.addEventListener('focus', refreshInstalledClis);
+    const unsubExit = window.electronAPI?.pty?.onExit?.(() => {
+      refreshInstalledClis();
+    });
+
+    return () => {
+      window.removeEventListener('focus', refreshInstalledClis);
+      if (unsubExit) unsubExit();
+    };
   }, []);
 
   // Save chat sessions to localStorage
@@ -2894,6 +2927,7 @@ export const App: React.FC = () => {
                             sessionType={s.type}
                             cwd={workspacePath || terminalCwd || '/Users/walancy/Documents/codes/devflow-desktop'}
                             isActive={s.id === activeSessionId}
+                            initialCommand={s.initialCommand}
                           />
                         ))}
                       </div>
@@ -3802,32 +3836,70 @@ export const App: React.FC = () => {
                       flexShrink: 0,
                     }}
                   >
-                    <div style={{ color: '#ff6b6b', fontSize: 12, fontWeight: '400', fontFamily: 'Poppins, sans-serif' }}>
+                    <div style={{ color: '#ff6b6b', fontSize: 12, fontWeight: '500', fontFamily: 'Poppins, sans-serif' }}>
                       IA não instalada neste dispositivo
                     </div>
                     <div style={{ color: '#ccc', fontSize: 11, lineHeight: '16px', fontWeight: '400', fontFamily: 'Poppins, sans-serif' }}>
-                      O binário <span style={{ color: '#FF6A00' }}>{aiNotInstalledAlert.command}</span> não foi encontrado. Instale clicando no link abaixo:
+                      O binário <span style={{ color: '#FF6A00' }}>{aiNotInstalledAlert.command}</span> não foi encontrado no seu PATH. Instale diretamente no terminal da IDE:
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
                       <button
-                        onClick={() => handleOpenExternalLink(aiNotInstalledAlert.url)}
+                        onClick={() => {
+                          const prov = AI_PROVIDERS.find((p) => p.cliCommand === aiNotInstalledAlert.command || p.name === aiNotInstalledAlert.modelName) || AI_PROVIDERS[0];
+                          handleInstallCliInTerminal(prov);
+                          setAiNotInstalledAlert(null);
+                        }}
                         style={{
                           background: '#FF6A00',
                           border: 'none',
                           borderRadius: 4,
                           color: '#fff',
                           fontSize: 11,
-                          fontWeight: '400',
+                          fontWeight: '500',
                           fontFamily: 'Poppins, sans-serif',
-                          padding: '4px 10px',
+                          padding: '5px 12px',
                           cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          boxShadow: '0 2px 6px rgba(255, 106, 0, 0.3)',
                         }}
                       >
-                        Instalar {aiNotInstalledAlert.command}
+                        <SquareTerminal size={12} />
+                        Instalar no Terminal ({aiNotInstalledAlert.guide})
+                      </button>
+                      <button
+                        onClick={() => handleOpenExternalLink(aiNotInstalledAlert.url)}
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.08)',
+                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                          borderRadius: 4,
+                          color: '#ccc',
+                          fontSize: 11,
+                          fontWeight: '400',
+                          fontFamily: 'Poppins, sans-serif',
+                          padding: '5px 10px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                        }}
+                      >
+                        <ExternalLink size={11} />
+                        Página de Download
                       </button>
                       <button
                         onClick={() => setAiNotInstalledAlert(null)}
-                        style={{ background: 'transparent', border: 'none', color: '#777', fontSize: 11, cursor: 'pointer', fontFamily: 'Poppins, sans-serif', fontWeight: '400' }}
+                        style={{
+                          marginLeft: 'auto',
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#777',
+                          fontSize: 11,
+                          cursor: 'pointer',
+                          fontFamily: 'Poppins, sans-serif',
+                          fontWeight: '400',
+                        }}
                       >
                         Fechar
                       </button>
@@ -3894,25 +3966,59 @@ export const App: React.FC = () => {
                           }}
                         >
                           <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: '18px' }}>{item.text}</div>
-                          {item.downloadUrl && (
-                            <button
-                              onClick={() => handleOpenExternalLink(item.downloadUrl!)}
-                              style={{
-                                alignSelf: 'flex-start',
-                                background: '#FF6A00',
-                                border: 'none',
-                                borderRadius: 4,
-                                color: '#fff',
-                                fontSize: 11,
-                                fontWeight: '400',
-                                fontFamily: 'Poppins, sans-serif',
-                                padding: '4px 10px',
-                                cursor: 'pointer',
-                                marginTop: 4,
-                              }}
-                            >
-                              Instalar CLI no navegador
-                            </button>
+                          {(item.command || item.downloadUrl) && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                              {item.command && (
+                                <button
+                                  onClick={() => {
+                                    const prov = AI_PROVIDERS.find((p) => p.installGuide === item.command) || AI_PROVIDERS[0];
+                                    handleInstallCliInTerminal(prov);
+                                  }}
+                                  style={{
+                                    alignSelf: 'flex-start',
+                                    background: '#FF6A00',
+                                    border: 'none',
+                                    borderRadius: 4,
+                                    color: '#fff',
+                                    fontSize: 11,
+                                    fontWeight: '500',
+                                    fontFamily: 'Poppins, sans-serif',
+                                    padding: '4px 10px',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 5,
+                                    boxShadow: '0 2px 6px rgba(255, 106, 0, 0.3)',
+                                  }}
+                                >
+                                  <SquareTerminal size={11} />
+                                  Instalar no Terminal
+                                </button>
+                              )}
+                              {item.downloadUrl && (
+                                <button
+                                  onClick={() => handleOpenExternalLink(item.downloadUrl!)}
+                                  style={{
+                                    alignSelf: 'flex-start',
+                                    background: 'rgba(255, 255, 255, 0.08)',
+                                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                                    borderRadius: 4,
+                                    color: '#ccc',
+                                    fontSize: 11,
+                                    fontWeight: '400',
+                                    fontFamily: 'Poppins, sans-serif',
+                                    padding: '4px 9px',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                  }}
+                                >
+                                  <ExternalLink size={11} />
+                                  Página de Download
+                                </button>
+                              )}
+                            </div>
                           )}
                         </div>
                       );
@@ -4144,12 +4250,8 @@ export const App: React.FC = () => {
                                   key={p.id}
                                   onClick={() => {
                                     if (!isInstalled) {
-                                      // If CLI not installed, clicking opens the official download URL
-                                      if (window.electronAPI?.shell?.openExternal) {
-                                        window.electronAPI.shell.openExternal(p.installUrl);
-                                      } else {
-                                        window.open(p.installUrl, '_blank');
-                                      }
+                                      // If CLI not installed, clicking row opens installer in terminal
+                                      handleInstallCliInTerminal(p);
                                       return;
                                     }
                                     setSelectedAiProvider(p.id);
@@ -4158,7 +4260,7 @@ export const App: React.FC = () => {
                                   }}
                                   title={
                                     !isInstalled
-                                      ? `CLI "${p.cliCommand}" não instalado. Clique para acessar a página de download.`
+                                      ? `CLI "${p.cliCommand}" não instalado. Clique para instalar no terminal (${p.installGuide})`
                                       : undefined
                                   }
                                   style={{
@@ -4175,7 +4277,7 @@ export const App: React.FC = () => {
                                     alignItems: 'center',
                                     justifyContent: 'space-between',
                                     gap: 8,
-                                    opacity: isInstalled ? 1 : 0.45,
+                                    opacity: isInstalled ? 1 : 0.7,
                                     transition: 'background 0.15s ease, opacity 0.15s ease',
                                   }}
                                   onMouseEnter={(e) => {
@@ -4192,39 +4294,73 @@ export const App: React.FC = () => {
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
                                     {renderAiIcon(p.id, 15)}
                                     <span>{p.name}</span>
-                                    {!isInstalled && (
-                                      <span
-                                        style={{
-                                          fontSize: 9,
-                                          padding: '1px 5px',
-                                          borderRadius: 3,
-                                          background: 'rgba(255, 255, 255, 0.08)',
-                                          color: '#ccc',
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          gap: 3,
-                                          fontWeight: '400',
-                                        }}
-                                      >
-                                        <Download size={9} />
-                                        <span>Baixar</span>
-                                      </span>
-                                    )}
                                   </div>
 
-                                  {/* Small Switch for Orchestrator Selection */}
-                                  {isOrchestratorActive && (
-                                    <MiniSwitch
-                                      checked={isOrchestrated}
-                                      disabled={!isInstalled}
-                                      onChange={() => {
-                                        setOrchestratedProviders((prev) => ({
-                                          ...prev,
-                                          [p.id]: !prev[p.id],
-                                        }));
-                                      }}
-                                    />
-                                  )}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    {!isInstalled && (
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleInstallCliInTerminal(p);
+                                          }}
+                                          title={`Executar instalação no terminal: ${p.installGuide}`}
+                                          style={{
+                                            fontSize: 10,
+                                            padding: '2px 7px',
+                                            borderRadius: 4,
+                                            background: '#FF6A00',
+                                            border: 'none',
+                                            color: '#fff',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: 4,
+                                            fontWeight: 500,
+                                            fontFamily: 'Poppins, sans-serif',
+                                            cursor: 'pointer',
+                                            boxShadow: '0 2px 6px rgba(255, 106, 0, 0.3)',
+                                          }}
+                                        >
+                                          <SquareTerminal size={10} />
+                                          <span>Instalar</span>
+                                        </button>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleOpenExternalLink(p.installUrl);
+                                          }}
+                                          title="Abrir página oficial de download no navegador"
+                                          style={{
+                                            fontSize: 10,
+                                            padding: '3px 5px',
+                                            borderRadius: 4,
+                                            background: 'rgba(255, 255, 255, 0.08)',
+                                            border: 'none',
+                                            color: '#aaa',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            cursor: 'pointer',
+                                          }}
+                                        >
+                                          <ExternalLink size={10} />
+                                        </button>
+                                      </div>
+                                    )}
+
+                                    {/* Small Switch for Orchestrator Selection */}
+                                    {isOrchestratorActive && (
+                                      <MiniSwitch
+                                        checked={isOrchestrated}
+                                        disabled={!isInstalled}
+                                        onChange={() => {
+                                          setOrchestratedProviders((prev) => ({
+                                            ...prev,
+                                            [p.id]: !prev[p.id],
+                                          }));
+                                        }}
+                                      />
+                                    )}
+                                  </div>
                                 </div>
                               );
                             })}
