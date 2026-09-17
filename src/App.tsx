@@ -2752,7 +2752,7 @@ export const App: React.FC = () => {
                             value={terminalCommand}
                             onChange={(e) => setTerminalCommand(e.target.value)}
                             onKeyDown={handleTerminalKeyDown}
-                            placeholder="digite um comando (ex: ls, git status, bun run dev)..."
+                            autoFocus
                             style={{
                               flex: 1,
                               minWidth: 100,
@@ -2763,9 +2763,9 @@ export const App: React.FC = () => {
                               fontSize: 12,
                               fontFamily: 'JetBrains Mono, Menlo, monospace',
                               whiteSpace: 'nowrap',
+                              caretColor: '#FF6A00',
                             }}
                           />
-                          <span style={{ width: 6, height: 14, background: '#FF6A00', display: 'inline-block', flexShrink: 0 }} />
                         </form>
                       </div>
 
