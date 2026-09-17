@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
+import { Terminal as XTerm } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
 import {
   Files,
   Search,
@@ -189,6 +191,152 @@ const MiniSwitch: React.FC<{
     />
   </div>
 );
+
+// Real Native XTerm.js Terminal connected to node-pty
+interface NativeXTermProps {
+  sessionId: string;
+  sessionType?: string;
+  cwd: string;
+  isActive: boolean;
+}
+
+const NativeXTerm: React.FC<NativeXTermProps> = ({ sessionId, sessionType = 'zsh', cwd, isActive }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<XTerm | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const term = new XTerm({
+      cursorBlink: true,
+      cursorStyle: 'block',
+      fontSize: 12,
+      fontFamily: 'JetBrains Mono, Menlo, Monaco, "Courier New", monospace',
+      theme: {
+        background: '#101010',
+        foreground: '#d8dade',
+        cursor: '#FF6A00',
+        selectionBackground: 'rgba(255, 106, 0, 0.35)',
+        black: '#1a1d24',
+        red: '#ef4444',
+        green: '#10b981',
+        yellow: '#f59e0b',
+        blue: '#3b82f6',
+        magenta: '#a855f7',
+        cyan: '#06b6d4',
+        white: '#f8fafc',
+        brightBlack: '#64748b',
+        brightRed: '#f87171',
+        brightGreen: '#34d399',
+        brightYellow: '#fbbf24',
+        brightBlue: '#60a5fa',
+        brightMagenta: '#c084fc',
+        brightCyan: '#22d3ee',
+        brightWhite: '#ffffff',
+      },
+      convertEol: true,
+      allowProposedApi: true,
+    });
+
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(containerRef.current);
+
+    termRef.current = term;
+    fitAddonRef.current = fitAddon;
+
+    setTimeout(() => {
+      try {
+        fitAddon.fit();
+      } catch {}
+    }, 60);
+
+    let cleanupDataListener: (() => void) | null = null;
+
+    if (window.electronAPI?.pty) {
+      const pty = window.electronAPI.pty;
+
+      // Spawn native PTY session
+      pty.create(sessionId, sessionType, cwd, term.cols || 80, term.rows || 24);
+
+      // Load buffer history if session was already active
+      pty.getHistory?.(sessionId).then((history) => {
+        if (history) term.write(history);
+      }).catch(() => {});
+
+      cleanupDataListener = pty.onData((payload) => {
+        if (payload.id === sessionId) {
+          term.write(payload.data);
+        }
+      });
+
+      const onDataDisp = term.onData((data) => {
+        pty.write(sessionId, data);
+      });
+
+      const handleResize = () => {
+        try {
+          fitAddon.fit();
+          pty.resize(sessionId, term.cols, term.rows);
+        } catch {}
+      };
+
+      const resizeObserver = new ResizeObserver(() => {
+        handleResize();
+      });
+      if (containerRef.current) {
+        resizeObserver.observe(containerRef.current);
+      }
+
+      window.addEventListener('resize', handleResize);
+
+      return () => {
+        window.removeEventListener('resize', handleResize);
+        resizeObserver.disconnect();
+        onDataDisp.dispose();
+        if (cleanupDataListener) cleanupDataListener();
+        term.dispose();
+      };
+    } else {
+      term.writeln('Terminal nativo disponível no aplicativo desktop.');
+      return () => {
+        term.dispose();
+      };
+    }
+  }, [sessionId, sessionType, cwd]);
+
+  // When tab becomes active, fit and focus
+  useEffect(() => {
+    if (isActive && termRef.current && fitAddonRef.current) {
+      const timer = setTimeout(() => {
+        try {
+          fitAddonRef.current?.fit();
+          if (window.electronAPI?.pty && termRef.current) {
+            window.electronAPI.pty.resize(sessionId, termRef.current.cols, termRef.current.rows);
+          }
+          termRef.current?.focus();
+        } catch {}
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [isActive, sessionId]);
+
+  return (
+    <div
+      ref={containerRef}
+      style={{
+        width: '100%',
+        height: '100%',
+        flex: 1,
+        overflow: 'hidden',
+        background: '#101010',
+        display: isActive ? 'block' : 'none',
+      }}
+      onClick={() => termRef.current?.focus()}
+    />
+  );
+};
 
 interface AiProviderConfig {
   id: string;
@@ -2708,12 +2856,12 @@ export const App: React.FC = () => {
                       style={{
                         flex: '1 1 0',
                         alignSelf: 'stretch',
-                        padding: 12,
+                        padding: '6px 8px',
                         background: '#101010',
                         borderRadius: 10,
                         border: 'none',
                         justifyContent: 'flex-start',
-                        alignItems: 'flex-start',
+                        alignItems: 'stretch',
                         gap: 0,
                         display: 'flex',
                         overflow: 'hidden',
@@ -2721,68 +2869,31 @@ export const App: React.FC = () => {
                         position: 'relative',
                       }}
                     >
-                      {/* Left Split Pane (Interactive Shell) */}
+                      {/* Left Split Pane (Real Native Terminal) */}
                       <div
-                        ref={terminalScrollRef}
-                        onClick={() => termInputRef.current?.focus()}
                         style={{
                           width: isSplitTerminal ? `${terminalSplitRatio}%` : '100%',
                           flex: isSplitTerminal ? 'none' : '1 1 0',
                           alignSelf: 'stretch',
+                          height: '100%',
                           flexDirection: 'column',
                           justifyContent: 'flex-start',
-                          alignItems: 'flex-start',
-                          gap: 6,
-                          display: 'inline-flex',
-                          fontFamily: 'JetBrains Mono, Menlo, monospace',
-                          overflowX: 'auto',
-                          overflowY: 'auto',
+                          alignItems: 'stretch',
+                          display: 'flex',
+                          overflow: 'hidden',
                           minWidth: 0,
-                          cursor: 'text',
-                          paddingRight: isSplitTerminal ? 4 : 0,
+                          position: 'relative',
                         }}
                       >
-                        <div style={{ justifyContent: 'flex-start', alignItems: 'center', gap: 4, display: 'inline-flex', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                          <TerminalIcon size={13} color="#FF6A00" />
-                          <div style={{ color: 'white', fontSize: 10.5, fontWeight: '400', whiteSpace: 'nowrap' }}>
-                            {terminalShell} (Sessão {activeSessionId}) • {terminalCwd}
-                          </div>
-                        </div>
-
-                        {/* History output without ugly wrapping */}
-                        {terminalHistory.map((line, idx) => (
-                          <div key={idx} style={{ color: '#d8dade', fontSize: 12, lineHeight: '18px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', flexShrink: 0 }}>
-                            {line}
-                          </div>
-                        ))}
-
-                        {/* Prompt with Active Typing Input (STRICTLY NO-WRAP) */}
-                        <form onSubmit={handleTerminalSubmit} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 5, marginTop: 2, flexWrap: 'nowrap', flexShrink: 0 }}>
-                          <span style={{ width: 5, height: 5, borderRadius: 9999, border: '1px #656565 solid', flexShrink: 0 }} />
-                          <span style={{ color: '#FF6A00', fontSize: 12, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                            walancy@{terminalCwd.split('/').filter(Boolean).pop() || 'workspace'} %
-                          </span>
-                          <input
-                            ref={termInputRef}
-                            type="text"
-                            value={terminalCommand}
-                            onChange={(e) => setTerminalCommand(e.target.value)}
-                            onKeyDown={handleTerminalKeyDown}
-                            autoFocus
-                            style={{
-                              flex: 1,
-                              minWidth: 100,
-                              background: 'transparent',
-                              border: 'none',
-                              outline: 'none',
-                              color: '#ffffff',
-                              fontSize: 12,
-                              fontFamily: 'JetBrains Mono, Menlo, monospace',
-                              whiteSpace: 'nowrap',
-                              caretColor: '#FF6A00',
-                            }}
+                        {terminalSessions.map((s) => (
+                          <NativeXTerm
+                            key={s.id}
+                            sessionId={s.id}
+                            sessionType={s.type}
+                            cwd={workspacePath || terminalCwd || '/Users/walancy/Documents/codes/devflow-desktop'}
+                            isActive={s.id === activeSessionId}
                           />
-                        </form>
+                        ))}
                       </div>
 
                       {/* Right Split Pane (Visible when isSplitTerminal is TRUE) */}
@@ -2805,26 +2916,22 @@ export const App: React.FC = () => {
                             style={{
                               flex: '1 1 0',
                               alignSelf: 'stretch',
+                              height: '100%',
                               flexDirection: 'column',
                               justifyContent: 'flex-start',
-                              alignItems: 'flex-start',
-                              gap: 6,
-                              display: 'inline-flex',
-                              fontFamily: 'JetBrains Mono, Menlo, monospace',
-                              overflowX: 'auto',
-                              overflowY: 'auto',
+                              alignItems: 'stretch',
+                              display: 'flex',
+                              overflow: 'hidden',
                               minWidth: 0,
                               paddingLeft: 4,
                             }}
                           >
-                            <div style={{ justifyContent: 'flex-start', alignItems: 'center', gap: 4, display: 'inline-flex', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                              <TerminalIcon size={13} color="#585858" />
-                              <div style={{ color: '#585858', fontSize: 10.5, fontWeight: '400', whiteSpace: 'nowrap' }}>zsh (auxiliar)</div>
-                            </div>
-                            <div style={{ justifyContent: 'flex-start', alignItems: 'center', gap: 5, display: 'inline-flex', fontSize: 12, flexWrap: 'nowrap', flexShrink: 0 }}>
-                              <span style={{ width: 5, height: 5, borderRadius: 9999, border: '1px #656565 solid', flexShrink: 0 }} />
-                              <span style={{ color: '#656565', whiteSpace: 'nowrap' }}>walancy@MacBook-Pro codes % </span>
-                            </div>
+                            <NativeXTerm
+                              sessionId="split-term-2"
+                              sessionType="zsh"
+                              cwd={workspacePath || terminalCwd || '/Users/walancy/Documents/codes/devflow-desktop'}
+                              isActive={true}
+                            />
                           </div>
                         </>
                       )}
