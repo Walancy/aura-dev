@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 
 export interface SidebarPanelsProps {
-  activeTab: 'search' | 'git' | 'debug' | 'preview' | 'extensions';
+  activeTab: 'search' | 'git' | 'debug' | 'preview' | 'extensions' | 'testing';
   workspacePath: string;
   themeTokens: {
     bgCard: string;
@@ -1956,6 +1956,117 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                 );
               })
             )}
+          </div>
+        </div>
+      )}
+
+      {/* -------------------------------------------------- */}
+      {/* 6. Testing Panel (VS Code & Antigravity Beaker)     */}
+      {/* -------------------------------------------------- */}
+      {activeTab === 'testing' && (
+        <div
+          style={{
+            width: '100%',
+            flex: '1 1 0',
+            padding: 12,
+            background: themeTokens.bgCard,
+            borderRadius: 8,
+            border: 'none',
+            flexDirection: 'column',
+            justifyContent: 'flex-start',
+            alignItems: 'flex-start',
+            gap: 12,
+            display: 'inline-flex',
+            overflowY: 'auto',
+          }}
+        >
+          {/* Header */}
+          <div style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: themeTokens.textSecondary }}>
+              Testes & Validação
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => onRunTerminalCommand('Testes', 'npm test')}
+                style={{
+                  background: accentColor,
+                  color: accentTextColor,
+                  border: 'none',
+                  borderRadius: 4,
+                  padding: '3px 8px',
+                  fontSize: 10,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                }}
+                title="Executar todos os testes no terminal"
+              >
+                <Play size={10} />
+                <span>Executar</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Runner Cards */}
+          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div
+              style={{
+                padding: '8px 10px',
+                borderRadius: 6,
+                background: isEffectiveDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                cursor: 'pointer',
+              }}
+              onClick={() => onRunTerminalCommand('npm test', 'npm test')}
+            >
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: themeTokens.textPrimary }}>npm test</div>
+                <div style={{ fontSize: 10, color: themeTokens.textSecondary }}>Executa o test runner padrão do projeto</div>
+              </div>
+              <Play size={12} style={{ color: accentColor }} />
+            </div>
+
+            <div
+              style={{
+                padding: '8px 10px',
+                borderRadius: 6,
+                background: isEffectiveDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                cursor: 'pointer',
+              }}
+              onClick={() => onRunTerminalCommand('Vitest Watch', 'npx vitest')}
+            >
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: themeTokens.textPrimary }}>Vitest (Watch)</div>
+                <div style={{ fontSize: 10, color: themeTokens.textSecondary }}>Execução interativa contínua</div>
+              </div>
+              <Play size={12} style={{ color: accentColor }} />
+            </div>
+
+            <div
+              style={{
+                padding: '8px 10px',
+                borderRadius: 6,
+                background: isEffectiveDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                cursor: 'pointer',
+              }}
+              onClick={() => onRunTerminalCommand('TypeCheck', 'npx tsc --noEmit')}
+            >
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: themeTokens.textPrimary }}>TypeScript Check</div>
+                <div style={{ fontSize: 10, color: themeTokens.textSecondary }}>Validação estática de tipos</div>
+              </div>
+              <Play size={12} style={{ color: accentColor }} />
+            </div>
           </div>
         </div>
       )}

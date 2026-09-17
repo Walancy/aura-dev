@@ -85,6 +85,16 @@ import ollamaLogo from './assets/logos/ollama-icon.svg';
 import { FileIcon, FolderIcon } from './components/FileIcon';
 import { SidebarPanels } from './components/ide/SidebarPanels';
 import { ExtensionDetailsView } from './components/ide/ExtensionDetailsView';
+import {
+  CodiconFiles,
+  CodiconSearch,
+  CodiconSourceControl,
+  CodiconDebugAlt,
+  CodiconRemoteExplorer,
+  CodiconExtensions,
+  CodiconBeaker,
+  CodiconSettingsGear,
+} from './components/Codicons';
 
 // Customize Layout Official VS Code / Antigravity Icon
 const CustomizeLayoutIcon: React.FC<{ size?: number; color?: string }> = ({ size = 18, color = 'currentColor' }) => (
@@ -2019,8 +2029,32 @@ export const App: React.FC = () => {
 
   // Panel & Layout Visibility Controls (Antigravity & VS Code Customize Layout)
   const [showExplorer, setShowExplorer] = useState(true);
-  const [activeActivityTab, setActiveActivityTab] = useState<'explorer' | 'search' | 'git' | 'debug' | 'preview' | 'extensions'>('explorer');
+  const [activeActivityTab, setActiveActivityTab] = useState<'explorer' | 'search' | 'git' | 'debug' | 'preview' | 'extensions' | 'testing'>('explorer');
   const [activeExtensionDetails, setActiveExtensionDetails] = useState<any | null>(null);
+  const [gitModifiedCount, setGitModifiedCount] = useState<number>(0);
+
+  useEffect(() => {
+    let isCancelled = false;
+    const fetchGitCount = async () => {
+      if (!workspacePath || !window.electronAPI?.shell?.exec) return;
+      try {
+        const res = await window.electronAPI.shell.exec('git status --porcelain=v1', workspacePath);
+        if (!isCancelled && res?.stdout) {
+          const lines = res.stdout.trim().split('\n').map((l: string) => l.trim()).filter(Boolean);
+          setGitModifiedCount(lines.length);
+        } else if (!isCancelled && res && res.exitCode === 0) {
+          setGitModifiedCount(0);
+        }
+      } catch {}
+    };
+
+    fetchGitCount();
+    const timer = setInterval(fetchGitCount, 4000);
+    return () => {
+      isCancelled = true;
+      clearInterval(timer);
+    };
+  }, [workspacePath]);
   const [showAiPanel, setShowAiPanel] = useState(true);
   const [showActivityBar, setShowActivityBar] = useState(true);
   const [showStatusBar, setShowStatusBar] = useState(true);
@@ -6140,28 +6174,40 @@ ${prompt}`;
               <div
                 style={{
                   alignSelf: 'stretch',
-                  padding: 15,
+                  width: 48,
+                  padding: '10px 0',
                   background: themeTokens.bgCard,
                   borderRadius: 10,
-                  border: '1px solid ' + themeTokens.border,
+                  border: 'none',
                   flexDirection: 'column',
                   justifyContent: 'flex-start',
-                  alignItems: 'flex-start',
-                  gap: 15,
+                  alignItems: 'center',
+                  gap: 6,
                   display: 'inline-flex',
                   flexShrink: 0,
                   order: sidebarPosition === 'right' ? 7 : 1,
                   transition: 'background 0.2s ease',
+                  userSelect: 'none',
                 }}
               >
                 {/* 1. Files / Explorer */}
                 <div
                   style={{
-                    width: 24,
-                    height: 24,
-                    color: (showExplorer && activeActivityTab === 'explorer') ? accentColor : themeTokens.textSecondary,
+                    width: 38,
+                    height: 38,
+                    borderRadius: 6,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    position: 'relative',
                     cursor: 'pointer',
-                    transition: 'color 0.15s ease',
+                    background: (showExplorer && activeActivityTab === 'explorer')
+                      ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
+                      : 'transparent',
+                    color: (showExplorer && activeActivityTab === 'explorer')
+                      ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
+                      : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
+                    transition: 'all 0.15s ease',
                   }}
                   title="Explorador de Arquivos (⌘⇧E)"
                   onClick={() => {
@@ -6172,20 +6218,40 @@ ${prompt}`;
                       setShowExplorer(true);
                     }
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'explorer') ? accentColor : themeTokens.textPrimary)}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'explorer') ? accentColor : themeTokens.textSecondary)}
+                  onMouseEnter={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'explorer')) {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+                      e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : themeTokens.textPrimary;
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'explorer')) {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = isEffectiveDark ? '#858585' : themeTokens.textSecondary;
+                    }
+                  }}
                 >
-                  <Files size={20} />
+                  <CodiconFiles size={22} />
                 </div>
 
                 {/* 2. Global Search & Replace */}
                 <div
                   style={{
-                    width: 24,
-                    height: 24,
-                    color: (showExplorer && activeActivityTab === 'search') ? accentColor : themeTokens.textSecondary,
+                    width: 38,
+                    height: 38,
+                    borderRadius: 6,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    position: 'relative',
                     cursor: 'pointer',
-                    transition: 'color 0.15s ease',
+                    background: (showExplorer && activeActivityTab === 'search')
+                      ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
+                      : 'transparent',
+                    color: (showExplorer && activeActivityTab === 'search')
+                      ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
+                      : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
+                    transition: 'all 0.15s ease',
                   }}
                   title="Buscar em Arquivos (⌘⇧F)"
                   onClick={() => {
@@ -6196,20 +6262,40 @@ ${prompt}`;
                       setShowExplorer(true);
                     }
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'search') ? accentColor : themeTokens.textPrimary)}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'search') ? accentColor : themeTokens.textSecondary)}
+                  onMouseEnter={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'search')) {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+                      e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : themeTokens.textPrimary;
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'search')) {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = isEffectiveDark ? '#858585' : themeTokens.textSecondary;
+                    }
+                  }}
                 >
-                  <Search size={19} />
+                  <CodiconSearch size={20} />
                 </div>
 
                 {/* 3. Source Control / Git */}
                 <div
                   style={{
-                    width: 24,
-                    height: 24,
-                    color: (showExplorer && activeActivityTab === 'git') ? accentColor : themeTokens.textSecondary,
+                    width: 38,
+                    height: 38,
+                    borderRadius: 6,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    position: 'relative',
                     cursor: 'pointer',
-                    transition: 'color 0.15s ease',
+                    background: (showExplorer && activeActivityTab === 'git')
+                      ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
+                      : 'transparent',
+                    color: (showExplorer && activeActivityTab === 'git')
+                      ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
+                      : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
+                    transition: 'all 0.15s ease',
                   }}
                   title="Controle de Versão / Git (⌃⇧G)"
                   onClick={() => {
@@ -6220,20 +6306,65 @@ ${prompt}`;
                       setShowExplorer(true);
                     }
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'git') ? accentColor : themeTokens.textPrimary)}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'git') ? accentColor : themeTokens.textSecondary)}
+                  onMouseEnter={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'git')) {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+                      e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : themeTokens.textPrimary;
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'git')) {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = isEffectiveDark ? '#858585' : themeTokens.textSecondary;
+                    }
+                  }}
                 >
-                  <GitBranch size={20} />
+                  <CodiconSourceControl size={22} />
+                  {gitModifiedCount > 0 && (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        bottom: 4,
+                        right: 4,
+                        minWidth: 15,
+                        height: 15,
+                        padding: '0 3.5px',
+                        borderRadius: 8,
+                        background: '#0078d4',
+                        color: '#ffffff',
+                        fontSize: 9.5,
+                        fontWeight: 700,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        lineHeight: 1,
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.5)',
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      {gitModifiedCount > 99 ? '99+' : gitModifiedCount}
+                    </span>
+                  )}
                 </div>
 
                 {/* 4. Run and Debug */}
                 <div
                   style={{
-                    width: 24,
-                    height: 24,
-                    color: (showExplorer && activeActivityTab === 'debug') ? accentColor : themeTokens.textSecondary,
+                    width: 38,
+                    height: 38,
+                    borderRadius: 6,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    position: 'relative',
                     cursor: 'pointer',
-                    transition: 'color 0.15s ease',
+                    background: (showExplorer && activeActivityTab === 'debug')
+                      ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
+                      : 'transparent',
+                    color: (showExplorer && activeActivityTab === 'debug')
+                      ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
+                      : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
+                    transition: 'all 0.15s ease',
                   }}
                   title="Executar e Depurar (⌘⇧D)"
                   onClick={() => {
@@ -6244,22 +6375,42 @@ ${prompt}`;
                       setShowExplorer(true);
                     }
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'debug') ? accentColor : themeTokens.textPrimary)}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'debug') ? accentColor : themeTokens.textSecondary)}
+                  onMouseEnter={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'debug')) {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+                      e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : themeTokens.textPrimary;
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'debug')) {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = isEffectiveDark ? '#858585' : themeTokens.textSecondary;
+                    }
+                  }}
                 >
-                  <Play size={19} />
+                  <CodiconDebugAlt size={22} />
                 </div>
 
-                {/* 5. Web Preview & Ports */}
+                {/* 5. Web Preview & Ports / Remote Explorer */}
                 <div
                   style={{
-                    width: 24,
-                    height: 24,
-                    color: (showExplorer && activeActivityTab === 'preview') ? accentColor : themeTokens.textSecondary,
+                    width: 38,
+                    height: 38,
+                    borderRadius: 6,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    position: 'relative',
                     cursor: 'pointer',
-                    transition: 'color 0.15s ease',
+                    background: (showExplorer && activeActivityTab === 'preview')
+                      ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
+                      : 'transparent',
+                    color: (showExplorer && activeActivityTab === 'preview')
+                      ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
+                      : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
+                    transition: 'all 0.15s ease',
                   }}
-                  title="Web Preview & Portas Ativas"
+                  title="Web Preview, Portas & Remote Explorer"
                   onClick={() => {
                     if (showExplorer && activeActivityTab === 'preview') {
                       setShowExplorer(false);
@@ -6268,20 +6419,40 @@ ${prompt}`;
                       setShowExplorer(true);
                     }
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'preview') ? accentColor : themeTokens.textPrimary)}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'preview') ? accentColor : themeTokens.textSecondary)}
+                  onMouseEnter={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'preview')) {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+                      e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : themeTokens.textPrimary;
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'preview')) {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = isEffectiveDark ? '#858585' : themeTokens.textSecondary;
+                    }
+                  }}
                 >
-                  <Monitor size={19} />
+                  <CodiconRemoteExplorer size={22} />
                 </div>
 
                 {/* 6. Extensions Marketplace (Open VSX) */}
                 <div
                   style={{
-                    width: 24,
-                    height: 24,
-                    color: (showExplorer && activeActivityTab === 'extensions') ? accentColor : themeTokens.textSecondary,
+                    width: 38,
+                    height: 38,
+                    borderRadius: 6,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    position: 'relative',
                     cursor: 'pointer',
-                    transition: 'color 0.15s ease',
+                    background: (showExplorer && activeActivityTab === 'extensions')
+                      ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
+                      : 'transparent',
+                    color: (showExplorer && activeActivityTab === 'extensions')
+                      ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
+                      : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
+                    transition: 'all 0.15s ease',
                   }}
                   title="Extensões do VS Code (Open VSX Marketplace) (⌘⇧X)"
                   onClick={() => {
@@ -6292,19 +6463,93 @@ ${prompt}`;
                       setShowExplorer(true);
                     }
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'extensions') ? accentColor : themeTokens.textPrimary)}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = (showExplorer && activeActivityTab === 'extensions') ? accentColor : themeTokens.textSecondary)}
+                  onMouseEnter={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'extensions')) {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+                      e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : themeTokens.textPrimary;
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'extensions')) {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = isEffectiveDark ? '#858585' : themeTokens.textSecondary;
+                    }
+                  }}
                 >
-                  <Blocks size={20} />
+                  <CodiconExtensions size={22} />
                 </div>
+
+                {/* 7. Testing (VS Code & Antigravity Beaker) */}
                 <div
-                  style={{ width: 24, height: 24, color: themeTokens.textSecondary, marginTop: 'auto', cursor: 'pointer' }}
-                  title="Settings (⌘,)"
-                  onClick={() => setIsSettingsModalOpen(true)}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = accentColor)}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textSecondary)}
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 6,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    position: 'relative',
+                    cursor: 'pointer',
+                    background: (showExplorer && activeActivityTab === 'testing')
+                      ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
+                      : 'transparent',
+                    color: (showExplorer && activeActivityTab === 'testing')
+                      ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
+                      : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
+                    transition: 'all 0.15s ease',
+                  }}
+                  title="Testes & Validação (Test Explorer)"
+                  onClick={() => {
+                    if (showExplorer && activeActivityTab === 'testing') {
+                      setShowExplorer(false);
+                    } else {
+                      setActiveActivityTab('testing');
+                      setShowExplorer(true);
+                    }
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'testing')) {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+                      e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : themeTokens.textPrimary;
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'testing')) {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = isEffectiveDark ? '#858585' : themeTokens.textSecondary;
+                    }
+                  }}
                 >
-                  <Settings size={19} />
+                  <CodiconBeaker size={20} />
+                </div>
+
+                {/* Settings Gear (Pinned to Bottom) */}
+                <div
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 6,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    position: 'relative',
+                    cursor: 'pointer',
+                    color: isEffectiveDark ? '#858585' : themeTokens.textSecondary,
+                    marginTop: 'auto',
+                    transition: 'all 0.15s ease',
+                  }}
+                  title="Configurações (⌘,)"
+                  onClick={() => setIsSettingsModalOpen(true)}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+                    e.currentTarget.style.color = isEffectiveDark ? '#ffffff' : themeTokens.textPrimary;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'transparent';
+                    e.currentTarget.style.color = isEffectiveDark ? '#858585' : themeTokens.textSecondary;
+                  }}
+                >
+                  <CodiconSettingsGear size={22} />
                 </div>
               </div>
 
