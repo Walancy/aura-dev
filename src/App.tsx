@@ -45,6 +45,7 @@ import {
   Download,
   Layers,
   MessageSquare,
+  Wand2,
 } from 'lucide-react';
 import avatarImg from './avatar.png';
 import claudeLogo from './assets/logos/claude-color.svg';
@@ -641,6 +642,7 @@ export const App: React.FC = () => {
 
   // Orchestrator States
   const [isOrchestratorActive, setIsOrchestratorActive] = useState<boolean>(false);
+  const [orchestratorTooltipOpen, setOrchestratorTooltipOpen] = useState<boolean>(false);
   const [orchestratedProviders, setOrchestratedProviders] = useState<Record<string, boolean>>({
     claude: true,
     antigravity: true,
@@ -4027,38 +4029,63 @@ export const App: React.FC = () => {
                   >
                     {/* Left Dropdown Trigger: Orchestrator + IA Selector */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
-                      {/* Orchestrator Toggle Button */}
-                      <div
-                        onClick={() => setIsOrchestratorActive(!isOrchestratorActive)}
-                        title={
-                          isOrchestratorActive
-                            ? 'Orquestrador Ativo (Alternando tarefas entre as IAs selecionadas)'
-                            : 'Ativar Orquestrador de Tarefas'
-                        }
-                        style={{
-                          height: 26,
-                          paddingLeft: 8,
-                          paddingRight: 8,
-                          borderRadius: 5,
-                          background: isOrchestratorActive ? '#FF6A00' : 'rgba(255, 255, 255, 0.06)',
-                          color: isOrchestratorActive ? '#ffffff' : '#999999',
-                          boxShadow: isOrchestratorActive ? '0 0 10px rgba(255, 106, 0, 0.4)' : 'none',
-                          justifyContent: 'center',
-                          alignItems: 'center',
-                          gap: 5,
-                          display: 'flex',
-                          cursor: 'pointer',
-                          whiteSpace: 'nowrap',
-                          transition: 'all 0.15s ease',
-                          fontSize: 11.5,
-                          fontFamily: 'Poppins, sans-serif',
-                          fontWeight: isOrchestratorActive ? '500' : '400',
-                          flexShrink: 0,
-                          userSelect: 'none',
-                        }}
-                      >
-                        <Layers size={13} color={isOrchestratorActive ? '#ffffff' : '#999999'} />
-                        <span>Orquestrador</span>
+                      {/* Orchestrator Toggle Button (Icon only with hover tooltip) */}
+                      <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                        <div
+                          onClick={() => setIsOrchestratorActive(!isOrchestratorActive)}
+                          onMouseEnter={() => setOrchestratorTooltipOpen(true)}
+                          onMouseLeave={() => setOrchestratorTooltipOpen(false)}
+                          style={{
+                            width: 26,
+                            height: 26,
+                            borderRadius: 5,
+                            background: isOrchestratorActive ? '#FF6A00' : 'rgba(255, 255, 255, 0.06)',
+                            color: isOrchestratorActive ? '#ffffff' : '#999999',
+                            boxShadow: isOrchestratorActive ? '0 0 10px rgba(255, 106, 0, 0.4)' : 'none',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            display: 'flex',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                            flexShrink: 0,
+                            userSelect: 'none',
+                          }}
+                        >
+                          <Wand2 size={13.5} color={isOrchestratorActive ? '#ffffff' : '#999999'} />
+                        </div>
+
+                        {/* Hover Tooltip */}
+                        {orchestratorTooltipOpen && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              bottom: 'calc(100% + 8px)',
+                              left: '50%',
+                              transform: 'translateX(-50%)',
+                              background: '#181818',
+                              border: '1px solid rgba(255, 255, 255, 0.12)',
+                              borderRadius: 6,
+                              padding: '5px 9px',
+                              color: '#ffffff',
+                              fontSize: 11,
+                              fontFamily: 'Poppins, sans-serif',
+                              whiteSpace: 'nowrap',
+                              zIndex: 10000,
+                              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.6)',
+                              pointerEvents: 'none',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 6,
+                            }}
+                          >
+                            <span style={{ color: isOrchestratorActive ? '#FF6A00' : '#ffffff', fontWeight: 500 }}>
+                              {isOrchestratorActive ? 'Orquestrador Ativo' : 'Orquestrador'}
+                            </span>
+                            <span style={{ color: '#777777', fontSize: 10 }}>
+                              {isOrchestratorActive ? '• Alternando tarefas' : '• Clique para ativar'}
+                            </span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Select AI (Provider) Button with Logo */}
