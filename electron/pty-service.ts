@@ -42,8 +42,15 @@ export class NativePtyService {
     console.log(`[Native PTY] AGY at: ${this.agyBinPath || 'Built-in AGY TUI bridge'}`);
   }
 
+  private currentAccentColor: string = '#FF6A00';
+
   setWindow(window: BrowserWindow) {
     this.mainWindow = window;
+  }
+
+  setAccentColor(accentColor: string) {
+    if (!accentColor) return;
+    this.currentAccentColor = accentColor;
   }
 
   createSession(
@@ -51,8 +58,12 @@ export class NativePtyService {
     type: 'zsh' | 'claude' | 'agy' | 'antigravity' | 'gemini' | 'ollama' | 'custom' | string = 'zsh',
     cwd: string = process.cwd(),
     cols: number = 80,
-    rows: number = 24
+    rows: number = 24,
+    accentColor?: string
   ): NativePtySession {
+    if (accentColor) {
+      this.currentAccentColor = accentColor;
+    }
     if (this.sessions.has(id)) {
       return this.sessions.get(id)!;
     }
@@ -107,8 +118,14 @@ export class NativePtyService {
       args = ['-l', '-c', 'ollama run llama3'];
       title = 'Ollama CLI';
     } else if (type === 'codex') {
-      file = '/bin/zsh';
-      args = ['-l'];
+      const homeCodex = '/opt/homebrew/bin/codex';
+      if (fs.existsSync(homeCodex)) {
+        file = homeCodex;
+        args = [];
+      } else {
+        file = '/bin/zsh';
+        args = ['-l', '-c', 'codex'];
+      }
       title = 'OpenAI Codex CLI';
     }
 

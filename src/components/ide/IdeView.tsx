@@ -120,7 +120,7 @@ export const IdeView: React.FC = () => {
         style={{
           width: '46px',
           backgroundColor: '#08090b',
-          borderRight: '1px solid #16181f',
+          borderRight: 'none',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'space-between',
@@ -185,7 +185,7 @@ export const IdeView: React.FC = () => {
         style={{
           width: '230px',
           backgroundColor: '#0e0f13',
-          borderRight: '1px solid #1a1b22',
+          borderRight: 'none',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'space-between',
@@ -251,7 +251,7 @@ export const IdeView: React.FC = () => {
               </div>
 
               {ainaobraOpen && (
-                <div style={{ marginLeft: '16px', borderLeft: '1px solid rgba(255, 102, 0, 0.4)', paddingLeft: '6px' }}>
+                <div style={{ marginLeft: '16px', borderLeft: 'none', paddingLeft: '6px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '3px 8px', color: '#b0b5c3', cursor: 'pointer' }}>
                     <ChevronRight size={13} color="#6e7485" />
                     <Folder size={14} color="#d97706" />
@@ -274,7 +274,7 @@ export const IdeView: React.FC = () => {
         </div>
 
         {/* Bottom Collapsible Sections: Outline & Timeline */}
-        <div style={{ borderTop: '1px solid #1a1b22' }}>
+        <div style={{ borderTop: 'none' }}>
           <div
             style={{
               padding: '6px 12px',
@@ -284,7 +284,7 @@ export const IdeView: React.FC = () => {
               fontSize: '0.74rem',
               color: '#7b8192',
               cursor: 'pointer',
-              borderBottom: '1px solid #14151b',
+              borderBottom: 'none',
             }}
           >
             <span>Outline</span>
@@ -315,7 +315,7 @@ export const IdeView: React.FC = () => {
           style={{
             height: '35px',
             backgroundColor: '#0c0d10',
-            borderBottom: '1px solid #1a1b22',
+            borderBottom: 'none',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
@@ -336,7 +336,7 @@ export const IdeView: React.FC = () => {
                 fontSize: '0.76rem',
                 color: activeEditorTab === 'docker' ? '#ffffff' : '#737989',
                 backgroundColor: activeEditorTab === 'docker' ? '#14151b' : 'transparent',
-                borderRight: '1px solid #16181f',
+                borderRight: 'none',
                 cursor: 'pointer',
               }}
             >
@@ -357,7 +357,7 @@ export const IdeView: React.FC = () => {
                 fontSize: '0.76rem',
                 color: activeEditorTab === 'test' ? '#ffffff' : '#737989',
                 backgroundColor: activeEditorTab === 'test' ? '#14151b' : 'transparent',
-                borderRight: '1px solid #16181f',
+                borderRight: 'none',
                 cursor: 'pointer',
               }}
             >
@@ -377,7 +377,7 @@ export const IdeView: React.FC = () => {
                 fontSize: '0.76rem',
                 color: activeEditorTab === 'main' ? '#ffffff' : '#737989',
                 backgroundColor: activeEditorTab === 'main' ? '#14151b' : 'transparent',
-                borderRight: '1px solid #16181f',
+                borderRight: 'none',
                 cursor: 'pointer',
               }}
             >
@@ -423,7 +423,7 @@ export const IdeView: React.FC = () => {
           style={{
             height: '270px',
             backgroundColor: '#090a0c',
-            borderTop: '1px solid #181920',
+            borderTop: 'none',
             display: 'flex',
             flexDirection: 'column',
           }}
@@ -433,7 +433,7 @@ export const IdeView: React.FC = () => {
             style={{
               height: '32px',
               backgroundColor: '#090a0c',
-              borderBottom: '1px solid #15161c',
+              borderBottom: 'none',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
@@ -507,7 +507,7 @@ export const IdeView: React.FC = () => {
             <div
               style={{
                 flex: 1,
-                borderRight: '1px solid #16181f',
+                borderRight: 'none',
                 padding: '8px 12px',
                 fontFamily: 'JetBrains Mono, Menlo, monospace',
                 fontSize: '0.74rem',
@@ -560,7 +560,7 @@ export const IdeView: React.FC = () => {
             <div
               style={{
                 width: '90px',
-                borderLeft: '1px solid #16181f',
+                borderLeft: 'none',
                 padding: '6px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -575,7 +575,7 @@ export const IdeView: React.FC = () => {
                   padding: '3px 6px',
                   borderRadius: '3px',
                   backgroundColor: '#191b22',
-                  border: '1px solid rgba(255,102,0,0.4)',
+                  border: 'none',
                   fontSize: '0.7rem',
                   color: '#fff',
                   cursor: 'pointer',
@@ -609,7 +609,7 @@ export const IdeView: React.FC = () => {
         style={{
           width: '320px',
           backgroundColor: '#17110c',
-          borderLeft: '1px solid #241c16',
+          borderLeft: 'none',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
@@ -637,7 +637,7 @@ export const IdeView: React.FC = () => {
             width: '100%',
             maxWidth: '280px',
             backgroundColor: '#201812',
-            border: '1px solid #2e231b',
+            border: 'none',
             borderRadius: '12px',
             padding: '12px 14px',
             display: 'flex',
@@ -695,14 +695,14 @@ export const IdeView: React.FC = () => {
                     left: 0,
                     width: '200px',
                     backgroundColor: '#261e17',
-                    border: '1px solid #3d2f25',
+                    border: 'none',
                     borderRadius: '8px',
                     padding: '4px',
-                    zIndex: 100,
+                    zIndex: 99999,
                     boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
                   }}
                 >
-                  {['Claude Sonnet 5', 'Claude Code CLI', 'Antigravity (AGY)', 'Gemini Flash'].map((m) => (
+                  {['Sonnet 5', 'Claude Code', 'Antigravity (AGY)', '3.8 Flash'].map((m) => (
                     <div
                       key={m}
                       onClick={() => {

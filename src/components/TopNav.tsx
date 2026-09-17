@@ -27,7 +27,7 @@ export const TopNav: React.FC<TopNavProps> = ({ activeTab, setActiveTab }) => {
       style={{
         height: '42px',
         backgroundColor: '#090a0d',
-        borderBottom: '1px solid #16181f',
+        borderBottom: 'none',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',

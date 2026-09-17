@@ -1,13 +1,44 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, nativeImage } from 'electron';
 import * as path from 'node:path';
+import * as fs from 'node:fs';
 import { NativePtyService } from './pty-service';
 import { NativeFileSystemService } from './fs-service';
 import { NativeProjectsService } from './projects-service';
 import { NativePortsService } from './ports-service';
 import { setupApplicationMenu } from './menu';
+import { NativeCommandsService } from './commands-service';
+import { quotaService } from './quota-service';
+import { modelService } from './model-service';
+import { gitService } from './git-service';
 
 // Set macOS application name
 app.name = 'Ainaobra IDE';
+
+const getAppIcon = () => {
+  const iconLocations = [
+    path.join(__dirname, '../icon-mac.png'),
+    path.join(__dirname, 'icon-mac.png'),
+    path.join(process.cwd(), 'icon-mac.png'),
+    path.join(app.getAppPath(), 'icon-mac.png'),
+    path.join(__dirname, '../public/icon-mac.png'),
+  ];
+  for (const loc of iconLocations) {
+    try {
+      if (fs.existsSync(loc)) return loc;
+    } catch {}
+  }
+  return null;
+};
+
+const appIconPath = getAppIcon();
+const appIconImage = appIconPath ? nativeImage.createFromPath(appIconPath) : null;
+
+// Immediately set Dock icon on macOS if dock is ready
+if (process.platform === 'darwin' && appIconImage && app.dock) {
+  try {
+    app.dock.setIcon(appIconImage);
+  } catch {}
+}
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -15,6 +46,7 @@ const ptyService = new NativePtyService();
 const fsService = new NativeFileSystemService();
 const projectsService = new NativeProjectsService();
 const portsService = new NativePortsService();
+const commandsService = new NativeCommandsService();
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -25,6 +57,7 @@ function createWindow() {
     backgroundColor: '#000000',
     titleBarStyle: 'hidden',
     trafficLightPosition: { x: 14, y: 17 },
+    icon: appIconImage || undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -33,7 +66,17 @@ function createWindow() {
     },
   });
 
+  if (process.platform === 'darwin' && appIconImage && app.dock) {
+    try {
+      app.dock.setIcon(appIconImage);
+    } catch {}
+  }
+
   ptyService.setWindow(mainWindow);
+
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    console.log(`[Renderer] [level ${level}] ${message} (${sourceId}:${line})`);
+  });
 
   // Setup macOS top menu bar
   setupApplicationMenu(() => mainWindow);
@@ -45,6 +88,30 @@ function createWindow() {
 
   mainWindow.on('leave-full-screen', () => {
     mainWindow?.webContents.send('window:fullscreen-change', false);
+  });
+
+  // Window Controls & Theme Sync
+  ipcMain.on('window:minimize', () => {
+    mainWindow?.minimize();
+  });
+
+  ipcMain.on('window:maximize', () => {
+    if (mainWindow?.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow?.maximize();
+    }
+  });
+
+  ipcMain.on('window:close', () => {
+    mainWindow?.close();
+  });
+
+  ipcMain.on('theme:set', (_event, mode: 'dark' | 'light') => {
+    nativeTheme.themeSource = mode;
+    if (mainWindow) {
+      mainWindow.setBackgroundColor(mode === 'light' ? '#eaedf1' : '#000000');
+    }
   });
 
   // Load from Vite dev server if active, otherwise load compiled dist/index.html
@@ -79,9 +146,9 @@ ipcMain.handle('window:isFullscreen', () => {
 });
 
 // PTY
-ipcMain.handle('pty:create', (_event, { id, type, cwd, cols, rows }) => {
+ipcMain.handle('pty:create', (_event, { id, type, cwd, cols, rows, accentColor }) => {
   try {
-    const session = ptyService.createSession(id, type, cwd, cols, rows);
+    const session = ptyService.createSession(id, type, cwd, cols, rows, accentColor);
     return {
       success: true,
       id: session.id,
@@ -92,6 +159,15 @@ ipcMain.handle('pty:create', (_event, { id, type, cwd, cols, rows }) => {
     };
   } catch (err: any) {
     console.error('[Native PTY] Create failed:', err);
+    return { success: false, error: err?.message || String(err) };
+  }
+});
+
+ipcMain.handle('pty:setAccentColor', (_event, { accentColor }) => {
+  try {
+    ptyService.setAccentColor(accentColor);
+    return { success: true };
+  } catch (err: any) {
     return { success: false, error: err?.message || String(err) };
   }
 });
@@ -136,6 +212,44 @@ ipcMain.handle('fs:deleteItem', (_event, { itemPath }) => {
   return { success: true };
 });
 
+ipcMain.handle('fs:searchInFiles', async (_event, { dirPath, query, isRegex = false, matchCase = false, matchWholeWord = false, maxResults = 250 }) => {
+  if (!query || !dirPath) return { results: [] };
+  const { exec } = require('node:child_process');
+  const fs = require('node:fs');
+  if (!fs.existsSync(dirPath)) return { results: [] };
+
+  let flags = '-rnI';
+  if (!matchCase) flags += 'i';
+  if (matchWholeWord) flags += 'w';
+  if (isRegex) flags += 'E'; else flags += 'F';
+
+  const excludeDirs = '--exclude-dir={node_modules,.git,dist,.next,.turbo,build,out,.system_generated}';
+  const escapedQuery = query.replace(/'/g, "'\\''");
+  const cmd = `grep ${flags} ${excludeDirs} -- '${escapedQuery}' "${dirPath}" | head -n ${maxResults}`;
+
+  return new Promise((resolve) => {
+    exec(cmd, { maxBuffer: 10 * 1024 * 1024 }, (err: any, stdout: string) => {
+      if (err && !stdout) {
+        return resolve({ results: [] });
+      }
+      const lines = stdout.split('\n').filter(Boolean);
+      const results: { file: string; line: number; text: string }[] = [];
+      for (const line of lines) {
+        const match = line.match(/^([^:]+):(\d+):(.*)$/);
+        if (match) {
+          results.push({
+            file: match[1],
+            line: parseInt(match[2], 10),
+            text: match[3],
+          });
+        }
+      }
+      resolve({ results });
+    });
+  });
+});
+
+
 // Projects & Tasks
 ipcMain.handle('projects:getProjects', () => {
   return {
@@ -170,6 +284,33 @@ ipcMain.handle('ports:scan', async () => {
   return { ports };
 });
 
+// Extensions search via Open VSX Registry
+ipcMain.handle('extensions:search', async (_event, { query = '', size = 30, category = '' }) => {
+  try {
+    let url = `https://open-vsx.org/api/-/search?size=${size}`;
+    if (query && query.trim()) {
+      url += `&query=${encodeURIComponent(query.trim())}`;
+    } else {
+      url += `&sortBy=downloadCount&sortOrder=desc`;
+    }
+    if (category && category.trim()) {
+      url += `&category=${encodeURIComponent(category.trim())}`;
+    }
+    const resp = await fetch(url, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'DevFlow-Desktop/1.0',
+      },
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    return { success: true, extensions: data.extensions || [], totalSize: data.totalSize || 0 };
+  } catch (err: any) {
+    console.warn('[Extensions] Search failed:', err.message);
+    return { success: false, error: err.message, extensions: [] };
+  }
+});
+
 // AI Agent
 ipcMain.handle('ai:prompt', async (_event, { prompt, model, cwd }) => {
   const activeProj = projectsService.getActiveProject();
@@ -196,7 +337,7 @@ ipcMain.handle('ai:prompt', async (_event, { prompt, model, cwd }) => {
 
 // Check Installed AI CLIs on the system
 ipcMain.handle('ai:checkClis', async () => {
-  const { execSync } = require('node:child_process');
+  const { exec } = require('node:child_process');
   const userHome = process.env.HOME || '';
   const customPaths = [
     path.join(userHome, '.local/bin'),
@@ -213,27 +354,65 @@ ipcMain.handle('ai:checkClis', async () => {
   ];
   const envPath = `${customPaths.join(':')}:${process.env.PATH || ''}`;
 
-  const check = (bin: string): boolean => {
-    try {
-      execSync(`which ${bin}`, {
+  const check = (bin: string): Promise<boolean> => {
+    for (const dir of customPaths) {
+      const fullPath = path.join(dir, bin);
+      try {
+        if (fs.existsSync(fullPath)) return Promise.resolve(true);
+      } catch {}
+    }
+    return new Promise((resolve) => {
+      exec(`which ${bin}`, {
         env: { ...process.env, PATH: envPath },
         stdio: 'pipe',
-        timeout: 3000,
+        timeout: 1000,
         shell: '/bin/zsh',
+      }, (err: any) => {
+        resolve(!err);
       });
-      return true;
-    } catch {
-      return false;
-    }
+    });
   };
 
+  const [claude, agy, antigravity, codex, gemini, ollama] = await Promise.all([
+    check('claude'),
+    check('agy'),
+    check('antigravity'),
+    check('codex'),
+    check('gemini'),
+    check('ollama'),
+  ]);
+
   return {
-    claude: check('claude'),
-    antigravity: check('agy') || check('antigravity'),
-    codex: check('codex'),
-    gemini: check('gemini'),
-    ollama: check('ollama'),
+    claude,
+    antigravity: agy || antigravity,
+    codex,
+    gemini,
+    ollama,
   };
+});
+
+// Dynamic Slash Commands extractor from active CLI
+ipcMain.handle('ai:getCommands', async (_event, { providerId }: { providerId: string }) => {
+  return commandsService.getCommands(providerId);
+});
+
+// Live AI Quotas
+ipcMain.handle('ai:getQuotas', async () => {
+  return quotaService.getQuotas();
+});
+
+// Dynamic AI Models extractor and setter
+ipcMain.handle('ai:getModels', async (_event, { providerId }: { providerId: string }) => {
+  return modelService.getModels(providerId);
+});
+
+ipcMain.handle('ai:setModel', async (_event, { providerId, modelId }: { providerId: string; modelId: string }) => {
+  return modelService.setModel(providerId, modelId);
+});
+
+// Live Git & GitHub status IPC
+ipcMain.handle('git:getWorkspaceGitInfo', async (_event, { workspacePath, activeFilePath }: { workspacePath: string; activeFilePath?: string }) => {
+  return gitService.getWorkspaceGitInfo(workspacePath, activeFilePath);
 });
 
 // Native macOS Dialogs (Abrir Arquivo / Pasta)
@@ -309,6 +488,7 @@ ipcMain.handle('shell:exec', async (_event, { command, cwd }: { command: string;
   const envPath = `${customPaths.join(':')}:${process.env.PATH || ''}`;
 
   return new Promise((resolve) => {
+    const { spawn } = require('node:child_process');
     const trimmed = (command || '').trim();
     const isCd = trimmed === 'cd' || trimmed.startsWith('cd ');
     // If cd, execute command and then print the resulting working directory
@@ -322,36 +502,94 @@ ipcMain.handle('shell:exec', async (_event, { command, cwd }: { command: string;
       HOME: userHome,
     };
 
-    exec(
-      `${shellPath} -l -c ${JSON.stringify(cmdToRun)}`,
-      {
-        cwd: targetCwd,
-        env,
-        timeout: 60000,
-        maxBuffer: 20 * 1024 * 1024,
-      },
-      (error: any, stdout: string, stderr: string) => {
-        if (isCd && !error) {
-          const lines = (stdout || '').trim().split('\n');
-          const newCwd = lines[lines.length - 1]?.trim();
-          resolve({
-            stdout: '',
-            stderr: stderr || '',
-            error: null,
-            exitCode: 0,
-            newCwd: newCwd && fs.existsSync(newCwd) ? newCwd : null,
-          });
-          return;
-        }
+    let stdout = '';
+    let stderr = '';
+    let resolved = false;
 
-        resolve({
-          stdout: stdout || '',
-          stderr: stderr || '',
-          error: error ? (error.message || 'Command failed') : null,
-          exitCode: error ? (error.code || 1) : 0,
+    const authRegex = /Authentication required|Please visit the URL to log in|paste the authorization code|oauth2\/auth|waiting for authentication/i;
+
+    const child = spawn(shellPath, ['-l', '-c', cmdToRun], {
+      cwd: targetCwd,
+      env,
+    });
+
+    const finish = (result: any) => {
+      if (!resolved) {
+        resolved = true;
+        clearTimeout(timer);
+        resolve(result);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch {}
+      finish({
+        stdout,
+        stderr,
+        error: 'Command timed out',
+        exitCode: 124,
+      });
+    }, 60000);
+
+    child.stdout.on('data', (chunk: any) => {
+      const str = chunk.toString();
+      stdout += str;
+      // Early detection: CLI is prompting for browser login or auth code, return immediately
+      if (authRegex.test(str) || authRegex.test(stdout)) {
+        try { child.kill('SIGTERM'); } catch {}
+        finish({
+          stdout,
+          stderr,
+          error: null,
+          exitCode: 0,
         });
       }
-    );
+    });
+
+    child.stderr.on('data', (chunk: any) => {
+      const str = chunk.toString();
+      stderr += str;
+      if (authRegex.test(str) || authRegex.test(stderr)) {
+        try { child.kill('SIGTERM'); } catch {}
+        finish({
+          stdout,
+          stderr,
+          error: null,
+          exitCode: 0,
+        });
+      }
+    });
+
+    child.on('close', (code: number) => {
+      if (isCd && code === 0) {
+        const lines = (stdout || '').trim().split('\n');
+        const newCwd = lines[lines.length - 1]?.trim();
+        finish({
+          stdout: '',
+          stderr: stderr || '',
+          error: null,
+          exitCode: 0,
+          newCwd: newCwd && fs.existsSync(newCwd) ? newCwd : null,
+        });
+        return;
+      }
+
+      finish({
+        stdout: stdout || '',
+        stderr: stderr || '',
+        error: code !== 0 ? `Command exited with code ${code}` : null,
+        exitCode: code || 0,
+      });
+    });
+
+    child.on('error', (err: any) => {
+      finish({
+        stdout: '',
+        stderr: '',
+        error: err.message,
+        exitCode: 1,
+      });
+    });
   });
 });
 
@@ -365,7 +603,40 @@ ipcMain.handle('shell:openExternal', async (_event, { url }: { url: string }) =>
   }
 });
 
-app.whenReady().then(createWindow);
+// Open native system terminal (Terminal.app on macOS) running a command
+ipcMain.handle('shell:openInSystemTerminal', async (_event, { command }: { command: string }) => {
+  const { exec } = require('node:child_process');
+  if (process.platform === 'darwin') {
+    const escaped = command.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const script = `tell application "Terminal" to activate\ntell application "Terminal" to do script "${escaped}"`;
+    return new Promise((resolve) => {
+      exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, (err: any) => {
+        resolve({ success: !err, error: err?.message });
+      });
+    });
+  } else if (process.platform === 'win32') {
+    return new Promise((resolve) => {
+      exec(`start cmd.exe /k "${command}"`, (err: any) => {
+        resolve({ success: !err, error: err?.message });
+      });
+    });
+  } else {
+    return new Promise((resolve) => {
+      exec(`x-terminal-emulator -e "${command}" || gnome-terminal -- bash -c "${command}; exec bash"`, (err: any) => {
+        resolve({ success: !err, error: err?.message });
+      });
+    });
+  }
+});
+
+app.whenReady().then(() => {
+  if (process.platform === 'darwin' && appIconImage && app.dock) {
+    try {
+      app.dock.setIcon(appIconImage);
+    } catch {}
+  }
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

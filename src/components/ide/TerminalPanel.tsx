@@ -45,8 +45,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
       theme: {
         background: '#0c0d12',
         foreground: '#e2e8f0',
-        cursor: '#ff6600',
-        selectionBackground: 'rgba(255, 102, 0, 0.3)',
+        cursor: getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim() || '#FF6A00',
+        selectionBackground: 'rgba(255, 106, 0, 0.3)',
         black: '#1a1d24',
         red: '#ef4444',
         green: '#10b981',
@@ -193,7 +193,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
       style={{
         height: isCollapsed ? '32px' : '230px',
         backgroundColor: 'var(--bg-main)',
-        borderTop: '1px solid var(--border-color)',
+        borderTop: 'none',
         display: 'flex',
         flexDirection: 'column',
         transition: 'height 0.2s ease',
@@ -203,7 +203,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
         style={{
           height: '32px',
           backgroundColor: 'var(--bg-surface)',
-          borderBottom: '1px solid var(--border-color)',
+          borderBottom: 'none',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -243,7 +243,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
                   fontWeight: isActive ? 600 : 400,
                   backgroundColor: isActive ? '#0c0d12' : 'transparent',
                   color: isActive ? '#ffffff' : 'var(--text-secondary)',
-                  border: isActive ? '1px solid var(--border-active)' : '1px solid transparent',
+                  border: 'none',
                   cursor: 'pointer',
                 }}
               >
@@ -306,7 +306,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
             style={{
               padding: '2px 8px',
               fontSize: '0.72rem',
-              borderColor: 'rgba(255, 102, 0, 0.4)',
+              border: 'none',
               color: '#ff8833',
               display: 'flex',
               alignItems: 'center',
@@ -324,7 +324,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
             style={{
               padding: '2px 8px',
               fontSize: '0.72rem',
-              borderColor: 'rgba(0, 210, 255, 0.4)',
+              border: 'none',
               color: 'var(--accent-cyan)',
               display: 'flex',
               alignItems: 'center',
@@ -342,7 +342,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
             style={{
               padding: '2px 8px',
               fontSize: '0.72rem',
-              borderColor: 'rgba(16, 163, 127, 0.4)',
+              border: 'none',
               color: '#10a37f',
               display: 'flex',
               alignItems: 'center',
@@ -360,7 +360,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({ projectCwd }) => {
             style={{
               padding: '2px 8px',
               fontSize: '0.72rem',
-              borderColor: 'rgba(16, 185, 129, 0.4)',
+              border: 'none',
               color: '#34d399',
               display: 'flex',
               alignItems: 'center',

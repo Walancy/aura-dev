@@ -9,18 +9,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('window:fullscreen-change', handler);
       return () => ipcRenderer.removeListener('window:fullscreen-change', handler);
     },
+    minimize: () => ipcRenderer.send('window:minimize'),
+    maximize: () => ipcRenderer.send('window:maximize'),
+    close: () => ipcRenderer.send('window:close'),
+    setTheme: (theme: 'dark' | 'light') => ipcRenderer.send('theme:set', theme),
   },
 
   // PTY Methods
   pty: {
-    create: (id: string, type: string, cwd: string, cols: number, rows: number) =>
-      ipcRenderer.invoke('pty:create', { id, type, cwd, cols, rows }),
+    create: (id: string, type: string, cwd: string, cols: number, rows: number, accentColor?: string) =>
+      ipcRenderer.invoke('pty:create', { id, type, cwd, cols, rows, accentColor }),
     write: (id: string, data: string) =>
       ipcRenderer.send('pty:write', { id, data }),
     resize: (id: string, cols: number, rows: number) =>
       ipcRenderer.send('pty:resize', { id, cols, rows }),
     kill: (id: string) =>
       ipcRenderer.send('pty:kill', { id }),
+    setAccentColor: (accentColor: string) =>
+      ipcRenderer.invoke('pty:setAccentColor', { accentColor }),
     getHistory: (id: string) =>
       ipcRenderer.invoke('pty:getHistory', { id }),
     onData: (callback: (payload: { id: string; data: string }) => void) => {
@@ -47,6 +53,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('fs:createItem', { itemPath, isDirectory }),
     deleteItem: (itemPath: string) =>
       ipcRenderer.invoke('fs:deleteItem', { itemPath }),
+    searchInFiles: (dirPath: string, query: string, options?: { isRegex?: boolean; matchCase?: boolean; matchWholeWord?: boolean; maxResults?: number }) =>
+      ipcRenderer.invoke('fs:searchInFiles', { dirPath, query, ...options }),
   },
 
   // Projects & Tasks Methods
@@ -66,11 +74,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
     scan: () => ipcRenderer.invoke('ports:scan'),
   },
 
+  // Extensions Methods
+  extensions: {
+    search: (query = '', size = 30, category = '') =>
+      ipcRenderer.invoke('extensions:search', { query, size, category }),
+  },
+
   // AI Agent Methods
   ai: {
     prompt: (prompt: string, model: string, cwd?: string) =>
       ipcRenderer.invoke('ai:prompt', { prompt, model, cwd }),
     checkClis: () => ipcRenderer.invoke('ai:checkClis'),
+    getCommands: (providerId: string) =>
+      ipcRenderer.invoke('ai:getCommands', { providerId }),
+    getQuotas: () =>
+      ipcRenderer.invoke('ai:getQuotas'),
+    getModels: (providerId: string) =>
+      ipcRenderer.invoke('ai:getModels', { providerId }),
+    setModel: (providerId: string, modelId: string) =>
+      ipcRenderer.invoke('ai:setModel', { providerId, modelId }),
   },
 
   // Native Menu Listeners
@@ -104,5 +126,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('shell:exec', { command, cwd }),
     openExternal: (url: string) =>
       ipcRenderer.invoke('shell:openExternal', { url }),
+    openInSystemTerminal: (command: string) =>
+      ipcRenderer.invoke('shell:openInSystemTerminal', { command }),
+  },
+
+  // Git & GitHub Integration
+  git: {
+    getWorkspaceGitInfo: (workspacePath: string, activeFilePath?: string) =>
+      ipcRenderer.invoke('git:getWorkspaceGitInfo', { workspacePath, activeFilePath }),
   },
 });

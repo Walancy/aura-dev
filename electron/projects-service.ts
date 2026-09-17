@@ -28,7 +28,7 @@ export class NativeProjectsService {
     {
       id: 'ainaobra',
       name: 'Ainaobra Monorepo',
-      path: '/Users/walancy/Documents/codes/ainaobra',
+      path: '/Users/walancy/Documents/codes/Ainaobra/ainaobra',
       description: 'Plataforma Ainaobra (painel web, wireframe, backend NestJS, supabase)',
       lastActive: new Date().toISOString(),
     },

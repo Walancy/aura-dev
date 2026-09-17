@@ -4,10 +4,11 @@ export interface ElectronAPI {
     onFullscreenChange: (callback: (isFullscreen: boolean) => void) => () => void;
   };
   pty: {
-    create: (id: string, type: string, cwd: string, cols: number, rows: number) => Promise<{ success: boolean; id?: string; title?: string; pid?: number; error?: string }>;
+    create: (id: string, type: string, cwd: string, cols: number, rows: number, accentColor?: string) => Promise<{ success: boolean; id?: string; title?: string; pid?: number; error?: string }>;
     write: (id: string, data: string) => void;
     resize: (id: string, cols: number, rows: number) => void;
     kill: (id: string) => void;
+    setAccentColor?: (accentColor: string) => Promise<{ success: boolean; error?: string }>;
     getHistory?: (id: string) => Promise<string>;
     onData: (callback: (payload: { id: string; data: string }) => void) => () => void;
     onExit: (callback: (payload: { id: string; exitCode: number }) => void) => () => void;
@@ -18,6 +19,7 @@ export interface ElectronAPI {
     writeFile: (filePath: string, content: string) => Promise<{ success: boolean }>;
     createItem: (itemPath: string, isDirectory: boolean) => Promise<{ success: boolean }>;
     deleteItem: (itemPath: string) => Promise<{ success: boolean }>;
+    searchInFiles?: (dirPath: string, query: string, options?: { isRegex?: boolean; matchCase?: boolean; matchWholeWord?: boolean; maxResults?: number }) => Promise<{ results: Array<{ file: string; line: number; text: string }> }>;
   };
   projects: {
     getProjects: () => Promise<{ projects: any[]; activeProject: any }>;
@@ -30,9 +32,16 @@ export interface ElectronAPI {
   ports: {
     scan: () => Promise<{ ports: any[] }>;
   };
+  extensions?: {
+    search?: (query?: string, size?: number, category?: string) => Promise<{ success: boolean; extensions: any[]; totalSize?: number; error?: string }>;
+  };
   ai: {
     prompt: (prompt: string, model: string, cwd?: string) => Promise<{ response: string }>;
     checkClis?: () => Promise<Record<string, boolean>>;
+    getCommands?: (providerId: string) => Promise<Array<{ command: string; description: string; usage?: string }>>;
+    getQuotas?: () => Promise<Record<string, { dailyPercent: number; weeklyPercent: number; dailyResetTime: string; weeklyResetDay: string; weeklyResetTime: string }>>;
+    getModels?: (providerId: string) => Promise<{ providerId: string; currentModel: string; currentModelId: string; models: Array<{ id: string; label: string; tag?: string; description?: string }> }>;
+    setModel?: (providerId: string, modelId: string) => Promise<{ success: boolean; currentModel: string; message: string }>;
   };
   menu: {
     onAction: (callback: (action: string) => void) => () => void;
@@ -46,6 +55,22 @@ export interface ElectronAPI {
   shell: {
     exec: (command: string, cwd?: string) => Promise<{ stdout: string; stderr: string; error: string | null; exitCode: number; newCwd?: string | null }>;
     openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
+    openInSystemTerminal?: (command: string) => Promise<{ success: boolean; error?: string }>;
+  };
+  git?: {
+    getWorkspaceGitInfo: (workspacePath: string, activeFilePath?: string) => Promise<{
+      isGitRepo: boolean;
+      branch: string;
+      repoName: string;
+      repoOwner?: string;
+      remoteUrl?: string;
+      issuesCount: number;
+      sprintTitle?: string;
+      sprintRemaining?: string;
+      authorBlame?: string;
+      modifiedCount: number;
+      lastCommitHash?: string;
+    }>;
   };
 }
 

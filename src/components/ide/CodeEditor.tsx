@@ -77,7 +77,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
         style={{
           height: '35px',
           backgroundColor: 'var(--bg-surface)',
-          borderBottom: '1px solid var(--border-color)',
+          borderBottom: 'none',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -102,8 +102,8 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
                   fontWeight: isActive ? 600 : 400,
                   color: isActive ? '#ffffff' : 'var(--text-secondary)',
                   backgroundColor: isActive ? '#0c0d12' : 'transparent',
-                  borderTop: isActive ? '2px solid var(--accent-orange)' : '2px solid transparent',
-                  borderRight: '1px solid var(--border-color)',
+                  borderTop: 'none',
+                  borderRight: 'none',
                   cursor: 'pointer',
                   userSelect: 'none',
                 }}

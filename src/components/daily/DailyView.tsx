@@ -104,7 +104,7 @@ export const DailyView: React.FC = () => {
                 style={{
                   width: '100%',
                   backgroundColor: 'var(--bg-main)',
-                  border: '1px solid var(--border-color)',
+                  border: 'none',
                   borderRadius: '6px',
                   color: '#fff',
                   fontSize: '0.75rem',
@@ -125,7 +125,7 @@ export const DailyView: React.FC = () => {
                 style={{
                   width: '100%',
                   backgroundColor: 'var(--bg-main)',
-                  border: '1px solid var(--border-color)',
+                  border: 'none',
                   borderRadius: '6px',
                   color: '#fff',
                   fontSize: '0.75rem',
@@ -146,7 +146,7 @@ export const DailyView: React.FC = () => {
                 style={{
                   width: '100%',
                   backgroundColor: 'var(--bg-main)',
-                  border: '1px solid var(--border-color)',
+                  border: 'none',
                   borderRadius: '6px',
                   color: '#fff',
                   fontSize: '0.75rem',
@@ -208,7 +208,7 @@ export const DailyView: React.FC = () => {
               style={{
                 backgroundColor: 'var(--bg-surface)',
                 borderRadius: '8px',
-                border: '1px solid var(--border-color)',
+                border: 'none',
                 display: 'flex',
                 flexDirection: 'column',
                 minHeight: '400px',
@@ -218,7 +218,7 @@ export const DailyView: React.FC = () => {
               <div
                 style={{
                   padding: '12px 14px',
-                  borderBottom: '1px solid var(--border-color)',
+                  borderBottom: 'none',
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
@@ -301,7 +301,7 @@ export const DailyView: React.FC = () => {
                         alignItems: 'center',
                         marginTop: '4px',
                         paddingTop: '6px',
-                        borderTop: '1px solid var(--border-color)',
+                        borderTop: 'none',
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.7rem', color: 'var(--text-muted)' }}>

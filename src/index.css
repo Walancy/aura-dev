@@ -1,5 +1,38 @@
 @import '@xterm/xterm/css/xterm.css';
 
+:root {
+  --accent-color: #FF6A00;
+  --accent-text-color: #ffffff;
+  --bg-app: #000000;
+  --bg-card: #101010;
+  --text-primary: #ffffff;
+  --text-secondary: #888888;
+  --border-color: transparent;
+}
+
+:root[data-theme="light"] {
+  --bg-app: #eaedf1;
+  --bg-card: #ffffff;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --border-color: transparent;
+}
+
+::placeholder {
+  color: #64748b;
+  opacity: 0.85;
+}
+
+:root[data-theme="dark"] ::placeholder {
+  color: #888888;
+  opacity: 0.7;
+}
+
+:root[data-theme="light"] ::placeholder {
+  color: #64748b;
+  opacity: 0.95;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -8,8 +41,8 @@
 
 body {
   font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background-color: #000000;
-  color: #ffffff;
+  background-color: var(--bg-app);
+  color: var(--text-primary);
   height: 100vh;
   width: 100vw;
   overflow: hidden;
@@ -26,11 +59,11 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #262626;
+  background: rgba(128, 128, 128, 0.25);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #383838;
+  background: rgba(128, 128, 128, 0.45);
 }
 
 .font-code {
@@ -43,7 +76,7 @@ body {
   height: 100%;
 }
 .xterm-viewport {
-  background-color: #101010 !important;
+  background-color: var(--bg-card) !important;
 }
 
 /* VS Code style Resizers */
@@ -72,7 +105,7 @@ body {
 
 .resizer-col:hover::after,
 .resizer-col.dragging::after {
-  background: #FF6A00;
+  background: var(--accent-color, #FF6A00);
 }
 
 /* Split Terminal Divider - Linha cinza sutil com opacidade baixa */
@@ -84,14 +117,14 @@ body {
   content: '';
   width: 1px;
   height: 100%;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--border-color, rgba(255, 255, 255, 0.12));
   transition: background 0.15s ease;
   border-radius: 0;
 }
 
 .resizer-split-term:hover::after,
 .resizer-split-term.dragging::after {
-  background: rgba(255, 255, 255, 0.28);
+  background: var(--accent-color, #FF6A00);
 }
 
 .resizer-row {
@@ -102,7 +135,7 @@ body {
   z-index: 30;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justifyContent: center;
   user-select: none;
   touch-action: none;
   flex-shrink: 0;
@@ -119,7 +152,7 @@ body {
 
 .resizer-row:hover::after,
 .resizer-row.dragging::after {
-  background: #FF6A00;
+  background: var(--accent-color, #FF6A00);
 }
 
 body.resizing-col {
@@ -130,4 +163,41 @@ body.resizing-col {
 body.resizing-row {
   cursor: row-resize !important;
   user-select: none !important;
+}
+
+/* Utility to hide scrollbars while allowing scroll */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes thinkingBounce {
+  0%, 80%, 100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+  40% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+
+.thinking-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  display: inline-block;
+  animation: thinkingBounce 1.2s infinite ease-in-out both;
 }

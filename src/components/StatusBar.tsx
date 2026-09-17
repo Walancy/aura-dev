@@ -7,7 +7,7 @@ export const StatusBar: React.FC = () => {
       style={{
         height: '24px',
         backgroundColor: '#090a0d',
-        borderTop: '1px solid #16181f',
+        borderTop: 'none',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',

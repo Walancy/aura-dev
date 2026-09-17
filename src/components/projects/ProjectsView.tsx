@@ -155,7 +155,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                   gap: '8px',
                   marginTop: '20px',
                   paddingTop: '12px',
-                  borderTop: '1px solid var(--border-color)',
+                  borderTop: 'none',
                 }}
               >
                 <button
@@ -202,7 +202,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
               width: '450px',
               padding: '24px',
               backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-active)',
+              border: 'none',
               boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
             }}
           >
@@ -226,7 +226,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                     fontSize: '0.82rem',
                     backgroundColor: 'var(--bg-main)',
                     color: '#fff',
-                    border: '1px solid var(--border-color)',
+                    border: 'none',
                     borderRadius: '6px',
                   }}
                 />
@@ -248,7 +248,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                     fontSize: '0.82rem',
                     backgroundColor: 'var(--bg-main)',
                     color: '#fff',
-                    border: '1px solid var(--border-color)',
+                    border: 'none',
                     borderRadius: '6px',
                   }}
                 />
@@ -269,7 +269,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                     fontSize: '0.82rem',
                     backgroundColor: 'var(--bg-main)',
                     color: '#fff',
-                    border: '1px solid var(--border-color)',
+                    border: 'none',
                     borderRadius: '6px',
                     resize: 'none',
                   }}

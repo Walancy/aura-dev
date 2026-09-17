@@ -49,16 +49,16 @@ const AI_MODELS: AiModelOption[] = [
   },
   {
     id: 'openai-codex',
-    label: 'OpenAI Codex (GPT-5 / 4o)',
-    shortName: 'OpenAI Codex',
+    label: 'Codex (GPT-5 / 4o)',
+    shortName: 'Codex',
     tag: 'API',
     icon: codexLogo,
     accentColor: '#10a37f',
   },
   {
     id: 'gemini-flash',
-    label: 'Gemini 3.8 Flash (Google)',
-    shortName: 'Gemini Flash',
+    label: '3.8 Flash',
+    shortName: '3.8 Flash',
     tag: 'API',
     icon: geminiLogo,
     accentColor: '#4285f4',
@@ -172,7 +172,7 @@ export const AiChatSidebar: React.FC<AiChatSidebarProps> = ({
         width: '330px',
         minWidth: '290px',
         backgroundColor: 'var(--bg-surface)',
-        borderLeft: '1px solid var(--border-color)',
+        borderLeft: 'none',
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
@@ -182,7 +182,7 @@ export const AiChatSidebar: React.FC<AiChatSidebarProps> = ({
       <div
         style={{
           padding: '12px 16px',
-          borderBottom: '1px solid var(--border-color)',
+          borderBottom: 'none',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
@@ -199,7 +199,7 @@ export const AiChatSidebar: React.FC<AiChatSidebarProps> = ({
               backgroundColor: 'rgba(255, 255, 255, 0.05)',
               padding: '3px 6px',
               borderRadius: '6px',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
+              border: 'none',
             }}
           >
             <img
@@ -262,7 +262,7 @@ export const AiChatSidebar: React.FC<AiChatSidebarProps> = ({
                 color: isUser ? '#ffffff' : 'var(--text-primary)',
                 padding: '8px 12px',
                 borderRadius: isUser ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
-                border: isUser ? 'none' : '1px solid var(--border-color)',
+                border: 'none',
                 fontSize: '0.8rem',
                 lineHeight: 1.45,
                 boxShadow: isUser
@@ -322,7 +322,7 @@ export const AiChatSidebar: React.FC<AiChatSidebarProps> = ({
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
-              border: `1px solid ${activeModel.accentColor}33`,
+              border: 'none',
             }}
           >
             <img
@@ -348,7 +348,7 @@ export const AiChatSidebar: React.FC<AiChatSidebarProps> = ({
           display: 'flex',
           gap: '6px',
           overflowX: 'auto',
-          borderTop: '1px solid var(--border-color)',
+          borderTop: 'none',
           backgroundColor: 'var(--bg-main)',
         }}
       >
@@ -379,7 +379,7 @@ export const AiChatSidebar: React.FC<AiChatSidebarProps> = ({
       <div
         style={{
           padding: '10px',
-          borderTop: '1px solid var(--border-color)',
+          borderTop: 'none',
           backgroundColor: 'var(--bg-surface)',
           display: 'flex',
           flexDirection: 'column',
@@ -391,7 +391,7 @@ export const AiChatSidebar: React.FC<AiChatSidebarProps> = ({
             display: 'flex',
             alignItems: 'center',
             backgroundColor: 'var(--bg-main)',
-            border: '1px solid var(--border-color)',
+            border: 'none',
             borderRadius: '8px',
             padding: '4px 8px',
           }}
@@ -446,7 +446,7 @@ export const AiChatSidebar: React.FC<AiChatSidebarProps> = ({
               justifyContent: 'space-between',
               padding: '6px 10px',
               backgroundColor: 'var(--bg-card)',
-              border: `1px solid ${isDropdownOpen ? activeModel.accentColor : 'var(--border-color)'}`,
+              border: 'none',
               borderRadius: '6px',
               fontSize: '0.75rem',
               color: 'var(--text-secondary)',
@@ -498,11 +498,11 @@ export const AiChatSidebar: React.FC<AiChatSidebarProps> = ({
                 left: 0,
                 width: '100%',
                 backgroundColor: 'var(--bg-card)',
-                border: '1px solid var(--border-active)',
+                border: 'none',
                 borderRadius: '8px',
                 padding: '5px',
                 boxShadow: '0 -6px 20px rgba(0,0,0,0.6)',
-                zIndex: 60,
+                zIndex: 99999,
                 display: 'flex',
                 flexDirection: 'column',
                 gap: '2px',

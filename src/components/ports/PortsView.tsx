@@ -63,7 +63,7 @@ export const PortsView: React.FC = () => {
             <tr
               style={{
                 backgroundColor: 'var(--bg-surface)',
-                borderBottom: '1px solid var(--border-color)',
+                borderBottom: 'none',
                 color: 'var(--text-secondary)',
                 fontSize: '0.74rem',
                 textTransform: 'uppercase',
@@ -89,7 +89,7 @@ export const PortsView: React.FC = () => {
                 <tr
                   key={p.port}
                   style={{
-                    borderBottom: '1px solid var(--border-color)',
+                    borderBottom: 'none',
                     transition: 'background-color 0.15s ease',
                   }}
                   onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-card-hover)')}
