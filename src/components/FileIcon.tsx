@@ -1,4 +1,5 @@
 import React from 'react';
+import { FileText } from 'lucide-react';
 
 // Eagerly import all file and folder SVG icons from assets
 const fileIconsMap = import.meta.glob<string>('../assets/file-icons/files/*.svg', {
@@ -204,12 +205,9 @@ export interface FileIconProps {
   style?: React.CSSProperties;
 }
 
-export const FileIcon: React.FC<FileIconProps> = ({ fileName, size = 15, className, style }) => {
+export function getFileSvgUrlForName(fileName: string): string {
   const lowerName = fileName.toLowerCase();
-
   let iconName = 'document';
-
-  // 1. Check exact file names
   if (EXACT_FILE_MAP[lowerName]) {
     iconName = EXACT_FILE_MAP[lowerName];
   } else if (lowerName.startsWith('.env')) {
@@ -219,14 +217,16 @@ export const FileIcon: React.FC<FileIconProps> = ({ fileName, size = 15, classNa
   } else if (lowerName.endsWith('.test.js') || lowerName.endsWith('.spec.js')) {
     iconName = 'js-test';
   } else {
-    // 2. Check extension
     const ext = lowerName.split('.').pop() || '';
     if (EXTENSION_MAP[ext]) {
       iconName = EXTENSION_MAP[ext];
     }
   }
+  return getFileSvgUrl(iconName);
+}
 
-  const iconUrl = getFileSvgUrl(iconName);
+export const FileIcon: React.FC<FileIconProps> = ({ fileName, size = 15, className, style }) => {
+  const iconUrl = getFileSvgUrlForName(fileName);
 
   if (!iconUrl) {
     return (
@@ -242,7 +242,7 @@ export const FileIcon: React.FC<FileIconProps> = ({ fileName, size = 15, classNa
           ...style,
         }}
       >
-        📄
+        <FileText size={size * 0.8} color={color || '#888'} />
       </div>
     );
   }

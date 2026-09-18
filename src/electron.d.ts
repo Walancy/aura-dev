@@ -19,6 +19,8 @@ export interface ElectronAPI {
     writeFile: (filePath: string, content: string) => Promise<{ success: boolean }>;
     createItem: (itemPath: string, isDirectory: boolean) => Promise<{ success: boolean }>;
     deleteItem: (itemPath: string) => Promise<{ success: boolean }>;
+    renameItem: (oldPath: string, newPath: string) => Promise<{ success: boolean }>;
+    copyItem: (srcPath: string, destPath: string) => Promise<{ success: boolean }>;
     searchInFiles?: (dirPath: string, query: string, options?: { isRegex?: boolean; matchCase?: boolean; matchWholeWord?: boolean; maxResults?: number }) => Promise<{ results: Array<{ file: string; line: number; text: string }> }>;
   };
   projects: {
@@ -49,9 +51,10 @@ export interface ElectronAPI {
     setModel?: (providerId: string, modelId: string) => Promise<{ success: boolean; currentModel: string; message: string }>;
     saveChatLocally?: (session: any) => Promise<{ success: boolean; jsonPath: string; mdPath: string; error?: string }>;
     exportChatDialog?: (session: any, format: 'markdown' | 'json') => Promise<{ success: boolean; canceled?: boolean; filePath?: string; error?: string }>;
-    getSavedChats?: () => Promise<Array<{ id: string; title: string; provider: string; updatedAt: number; messageCount: number; path: string }>>;
+    getSavedChats?: () => Promise<Array<{ id: string; title: string; provider: string; updatedAt: number; messageCount: number; path: string; projectName?: string; workspacePath?: string; model?: string }>>;
     loadSavedChat?: (sessionId: string) => Promise<any>;
     deleteSavedChat?: (sessionId: string) => Promise<{ success: boolean }>;
+    runCli?: (payload: { cliCmd: string; prompt: string; model?: string; cwd?: string; additionalDirs?: string[] }) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
   };
   menu: {
     onAction: (callback: (action: string) => void) => () => void;
@@ -66,6 +69,7 @@ export interface ElectronAPI {
     exec: (command: string, cwd?: string) => Promise<{ stdout: string; stderr: string; error: string | null; exitCode: number; newCwd?: string | null }>;
     openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
     openInSystemTerminal?: (command: string, cwd?: string) => Promise<{ success: boolean; error?: string }>;
+    showItemInFolder?: (itemPath: string) => Promise<{ success: boolean; error?: string }>;
   };
   git?: {
     getWorkspaceGitInfo: (workspacePath: string, activeFilePath?: string) => Promise<{

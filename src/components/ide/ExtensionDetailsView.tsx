@@ -134,7 +134,7 @@ export const ExtensionDetailsView: React.FC<ExtensionDetailsViewProps> = ({
     // If theme has inline data or we fetch it
     onApplyTheme(themeItem.data, themeItem.label);
     setActiveThemeApplied(themeItem.label);
-    onToast(`🎨 Tema "${themeItem.label}" aplicado ao Monaco Editor!`);
+    onToast(`Tema "${themeItem.label}" aplicado`);
   };
 
   // Simple Markdown Renderer for README

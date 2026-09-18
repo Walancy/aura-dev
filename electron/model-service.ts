@@ -160,6 +160,19 @@ export class ModelService {
     let currentModelId = this.activeModelIds.claude || 'sonnet';
     const models: AiModelItem[] = [];
 
+    const CLAUDE_META: Record<string, { label: string; tag?: string; desc?: string }> = {
+      sonnet: { label: 'Sonnet 5', tag: 'Padrão', desc: 'Modelo mais inteligente e balanceado' },
+      opus: { label: 'Opus 5', tag: 'Poderoso', desc: 'Máxima capacidade de raciocínio profundo' },
+      haiku: { label: 'Haiku 4.5', tag: 'Rápido', desc: 'Respostas ultra-rápidas e econômicas' },
+      fable: { label: 'Fable 5.1', tag: 'Raciocínio', desc: 'Agente avançado com suporte a créditos' },
+      best: { label: 'Best (Fable 5.1)', desc: 'Melhor modelo disponível para a tarefa' },
+      'sonnet[1m]': { label: 'Sonnet 5 (1M)', tag: '1M Contexto', desc: 'Janela estendida de 1 milhão de tokens' },
+      'opus[1m]': { label: 'Opus 5 (1M)', tag: '1M Contexto', desc: 'Opus com 1 milhão de tokens de contexto' },
+      'fable[1m]': { label: 'Fable 5.1 (1M)', tag: '1M Contexto', desc: 'Fable com janela de contexto estendida' },
+      opusplan: { label: 'Opus Plan', tag: 'Planejamento', desc: 'Modo especializado em planejamento de código' },
+      default: { label: 'Default', desc: 'Padrão do sistema Claude Code' },
+    };
+
     if (bin) {
       try {
         const out = await runCommandAsync(`${bin} -p "/model" < /dev/null`, {
@@ -181,11 +194,14 @@ export class ModelService {
             .filter(Boolean);
 
           for (const token of rawTokens) {
-            const isDefault = token === 'sonnet';
+            const lower = token.toLowerCase();
+            const meta = CLAUDE_META[lower];
+            const label = (lower === 'sonnet' && currentModel) ? currentModel : (meta?.label || token);
             models.push({
               id: token,
-              label: token,
-              tag: isDefault ? 'Padrão' : undefined,
+              label,
+              tag: meta?.tag,
+              description: meta?.desc || token,
             });
           }
         }
@@ -208,17 +224,24 @@ export class ModelService {
         'default',
       ];
       for (const token of defaultClaudeTokens) {
+        const meta = CLAUDE_META[token];
         models.push({
           id: token,
-          label: token,
-          tag: token === 'sonnet' ? 'Padrão' : undefined,
+          label: meta?.label || token,
+          tag: meta?.tag,
+          description: meta?.desc || token,
         });
       }
     }
 
-    const matched = models.find((m) => currentModel.toLowerCase().includes(m.id.toLowerCase()) || m.id.toLowerCase() === currentModelId.toLowerCase());
+    const matched = models.find((m) =>
+      m.id.toLowerCase() === currentModelId.toLowerCase() ||
+      m.label.toLowerCase() === currentModel.toLowerCase() ||
+      currentModel.toLowerCase().includes(m.id.toLowerCase())
+    );
     if (matched) {
       currentModelId = matched.id;
+      currentModel = matched.label;
     }
 
     return {
@@ -251,12 +274,7 @@ export class ModelService {
           const match = line.trim().match(/([a-zA-Z0-9._-]+)\s{2,}(.+)$/);
           if (match) {
             const id = match[1].trim();
-            const rawLabel = match[2].trim();
-            // Remove redundant brand prefixes like "Gemini " or "Claude "
-            const label = rawLabel
-              .replace(/^gemini[\s-_]*/i, '')
-              .replace(/^claude[\s-_]*/i, '')
-              .trim();
+            const label = match[2].trim();
 
             let tag: string | undefined = undefined;
             if (id.includes('3.8') || id.includes('high')) tag = 'Mais Recente';
@@ -273,11 +291,19 @@ export class ModelService {
 
     if (models.length === 0) {
       models.push(
-        { id: 'gemini-3.8-flash-high', label: '3.8 Flash (High)', tag: 'Mais Recente' },
-        { id: 'gemini-3.8-flash-medium', label: '3.8 Flash (Medium)' },
-        { id: 'gemini-3.7-flash-high', label: '3.7 Flash (High)' },
-        { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 (Thinking)', tag: 'Raciocínio' },
-        { id: 'claude-opus-4-6-thinking', label: 'Opus 4.6 (Thinking)', tag: 'Poderoso' },
+        { id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)', tag: 'Mais Recente' },
+        { id: 'gemini-3.8-flash-medium', label: 'Gemini 3.8 Flash (Medium)' },
+        { id: 'gemini-3.8-flash-low', label: 'Gemini 3.8 Flash (Low)' },
+        { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' },
+        { id: 'gemini-3.7-flash-medium', label: 'Gemini 3.7 Flash (Medium)' },
+        { id: 'gemini-3.7-flash-low', label: 'Gemini 3.7 Flash (Low)' },
+        { id: 'gemini-3.6-flash-high', label: 'Gemini 3.6 Flash (High)' },
+        { id: 'gemini-3.6-flash-medium', label: 'Gemini 3.6 Flash (Medium)' },
+        { id: 'gemini-3.6-flash-low', label: 'Gemini 3.6 Flash (Low)' },
+        { id: 'gemini-3.1-pro-high', label: 'Gemini 3.1 Pro (High)', tag: 'Raciocínio' },
+        { id: 'gemini-3.1-pro-low', label: 'Gemini 3.1 Pro (Low)' },
+        { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (Thinking)', tag: 'Raciocínio' },
+        { id: 'claude-opus-4-6-thinking', label: 'Claude Opus 4.6 (Thinking)', tag: 'Poderoso' },
         { id: 'gpt-oss-120b-medium', label: 'GPT-OSS 120B (Medium)' },
       );
     }

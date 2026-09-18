@@ -53,6 +53,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('fs:createItem', { itemPath, isDirectory }),
     deleteItem: (itemPath: string) =>
       ipcRenderer.invoke('fs:deleteItem', { itemPath }),
+    renameItem: (oldPath: string, newPath: string) =>
+      ipcRenderer.invoke('fs:renameItem', { oldPath, newPath }),
+    copyItem: (srcPath: string, destPath: string) =>
+      ipcRenderer.invoke('fs:copyItem', { srcPath, destPath }),
     searchInFiles: (dirPath: string, query: string, options?: { isRegex?: boolean; matchCase?: boolean; matchWholeWord?: boolean; maxResults?: number }) =>
       ipcRenderer.invoke('fs:searchInFiles', { dirPath, query, ...options }),
   },
@@ -113,6 +117,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('ai:loadSavedChat', sessionId),
     deleteSavedChat: (sessionId: string) =>
       ipcRenderer.invoke('ai:deleteSavedChat', sessionId),
+    runCli: (payload: { cliCmd: string; prompt: string; model?: string; cwd?: string; additionalDirs?: string[] }) =>
+      ipcRenderer.invoke('ai:runCli', payload),
   },
 
   // Native Menu Listeners
@@ -148,6 +154,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('shell:openExternal', { url }),
     openInSystemTerminal: (command: string, cwd?: string) =>
       ipcRenderer.invoke('shell:openInSystemTerminal', { command, cwd }),
+    showItemInFolder: (itemPath: string) =>
+      ipcRenderer.invoke('shell:showItemInFolder', { itemPath }),
   },
 
   // Git & GitHub Integration

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } from 'react';
 import Editor, { DiffEditor, OnMount } from '@monaco-editor/react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -75,6 +75,13 @@ import {
   KeyRound,
   ThumbsUp,
   ThumbsDown,
+  Paperclip,
+  Image as ImageIcon,
+  Scissors,
+  ClipboardPaste,
+  Bug,
+  GitCompare,
+  History,
 } from 'lucide-react';
 import avatarImg from './avatar.png';
 import claudeLogo from './assets/logos/claude-color.svg';
@@ -83,6 +90,7 @@ import codexLogo from './assets/logos/codex-color.svg';
 import geminiLogo from './assets/logos/gemini-icon-seeklogo.svg';
 import ollamaLogo from './assets/logos/ollama-icon.svg';
 import { FileIcon, FolderIcon } from './components/FileIcon';
+import { PromptEditor, PromptEditorRef } from './components/PromptEditor';
 import { SidebarPanels } from './components/ide/SidebarPanels';
 import { ExtensionDetailsView } from './components/ide/ExtensionDetailsView';
 import {
@@ -1084,39 +1092,39 @@ export interface AiModeConfig {
 export const AI_MODES: AiModeConfig[] = [
   {
     id: 'auto',
-    name: 'Auto Mode',
+    name: 'Auto',
     shortName: 'Auto',
-    badge: '⚡',
+    badge: '',
     iconName: 'Zap',
-    description: 'Execução autônoma contínua. Aplica alterações e roda comandos sem confirmação manual.',
-    guide: 'Ideal para tarefas rápidas, automações completas e refatorações diretas.',
+    description: 'Execução autônoma contínua',
+    guide: 'Executa tarefas sem confirmação manual.',
   },
   {
     id: 'plan',
-    name: 'Planejamento (Architect)',
-    shortName: 'Plano',
-    badge: '📋',
+    name: 'Plan',
+    shortName: 'Plan',
+    badge: '',
     iconName: 'ListChecks',
-    description: 'Modo Architect. Cria uma estratégia passo a passo antes de alterar qualquer código.',
-    guide: 'Essencial para tarefas complexas, novas arquiteturas e sistemas de larga escala.',
+    description: 'Planejamento antes de codar',
+    guide: 'Cria estratégia antes de alterar código.',
   },
   {
     id: 'agent',
-    name: 'Agente Código',
+    name: 'Agente',
     shortName: 'Agente',
-    badge: '🤖',
+    badge: '',
     iconName: 'Bot',
-    description: 'Modo padrão assistente. Escreve, testa e depura código de forma interativa.',
-    guide: 'Ideal para desenvolvimento padrão do dia a dia com confirmação e diffs.',
+    description: 'Assistente interativo padrão',
+    guide: 'Escreve, testa e depura código.',
   },
   {
     id: 'ask',
-    name: 'Perguntar (Chat Only)',
+    name: 'Ask',
     shortName: 'Ask',
-    badge: '💬',
+    badge: '',
     iconName: 'MessageSquare',
-    description: 'Apenas explicações e respostas conceituais. Não modifica nenhum arquivo no disco.',
-    guide: 'Ideal para tirar dúvidas conceituais, documentação e análise de código.',
+    description: 'Apenas respostas conceituais',
+    guide: 'Não modifica arquivos no disco.',
   },
 ];
 
@@ -1132,16 +1140,16 @@ const AI_PROVIDERS: AiProviderConfig[] = [
     loginUrl: 'https://claude.ai/login',
     loginHelp: 'O Claude Code CLI requer login com sua conta Anthropic. Complete a autenticação no navegador ou envie a chave/código no terminal.',
     models: [
-      'sonnet',
-      'opus',
-      'haiku',
-      'fable',
-      'best',
-      'sonnet[1m]',
-      'opus[1m]',
-      'fable[1m]',
-      'opusplan',
-      'default',
+      'Sonnet 5',
+      'Opus 5',
+      'Haiku 4.5',
+      'Fable 5.1',
+      'Best (Fable 5.1)',
+      'Sonnet 5 (1M)',
+      'Opus 5 (1M)',
+      'Fable 5.1 (1M)',
+      'Opus Plan',
+      'Default',
     ],
     commands: [
       { command: '/help', description: 'Exibir comandos e opções disponíveis no Claude Code' },
@@ -1169,10 +1177,20 @@ const AI_PROVIDERS: AiProviderConfig[] = [
     loginUrl: 'https://antigravity.google/product/antigravity-cli?authuser=31',
     loginHelp: 'O Antigravity requer autorização de login com sua conta Google. Faça login no navegador e envie o código gerado para o CLI.',
     models: [
-      'AGY 2.0 Autonomous Agent',
-      'AGY Agentic Pair Programmer',
-      'AGY Planning & Architecture',
-      'AGY Background Deep Search',
+      'gemini-3.8-flash-high',
+      'gemini-3.8-flash-medium',
+      'gemini-3.8-flash-low',
+      'gemini-3.7-flash-high',
+      'gemini-3.7-flash-medium',
+      'gemini-3.7-flash-low',
+      'gemini-3.6-flash-high',
+      'gemini-3.6-flash-medium',
+      'gemini-3.6-flash-low',
+      'gemini-3.1-pro-high',
+      'gemini-3.1-pro-low',
+      'claude-sonnet-4-6',
+      'claude-opus-4-6-thinking',
+      'gpt-oss-120b-medium',
     ],
     commands: [
       { command: '/goal', description: 'Executar tarefa autônoma até o objetivo final', usage: '/goal [objetivo]' },
@@ -1198,10 +1216,16 @@ const AI_PROVIDERS: AiProviderConfig[] = [
     loginUrl: 'https://platform.openai.com/api-keys',
     loginHelp: 'O Codex CLI requer autenticação ou uma chave de API da OpenAI (OPENAI_API_KEY).',
     models: [
-      'GPT-4o (Omni)',
-      'o3-mini (Reasoning)',
-      'o1 Pro Mode',
-      'GPT-5 (Preview)',
+      'o3',
+      'o3-mini',
+      'o4-mini',
+      'o1',
+      'o1-mini',
+      'gpt-4o',
+      'gpt-4o-mini',
+      'gpt-4.5',
+      'claude-3-7-sonnet',
+      'gpt-oss-120b',
     ],
     commands: [
       { command: '/help', description: 'Exibir comandos e opções do Codex CLI' },
@@ -1225,10 +1249,16 @@ const AI_PROVIDERS: AiProviderConfig[] = [
     loginUrl: 'https://aistudio.google.com/apikey',
     loginHelp: 'O Gemini CLI requer autenticação com conta Google ou chave do Google AI Studio (GEMINI_API_KEY).',
     models: [
-      '2.5 Pro (Thinking & Multimodal)',
-      '2.5 Flash',
-      '2.0 Flash Thinking',
-      '1.5 Pro',
+      'gemini-2.5-flash',
+      'gemini-2.5-pro',
+      'gemini-2.0-flash-thinking',
+      'gemini-2.0-flash',
+      'gemini-1.5-pro',
+      'gemini-1.5-flash',
+      'gemini-3.8-flash-high',
+      'gemini-3.7-flash-high',
+      'gemini-3.6-flash',
+      'gemini-3.1-pro',
     ],
     commands: [
       { command: '/help', description: 'Exibir opções e ajuda do Gemini CLI' },
@@ -1249,10 +1279,10 @@ const AI_PROVIDERS: AiProviderConfig[] = [
     requiresLogin: false,
     loginHelp: 'O Ollama não requer login na nuvem! Ele executa modelos 100% locais e offline na sua máquina.',
     models: [
-      'DeepSeek R1 (70B & 8B)',
-      'Llama 3.3 70B',
-      'Qwen 2.5 Coder 32B',
-      'Mistral Large 2',
+      'llama3.3',
+      'deepseek-r1',
+      'qwen2.5-coder',
+      'mistral-large',
     ],
     commands: [
       { command: '/help', description: 'Exibir comandos disponíveis do Ollama' },
@@ -1268,10 +1298,7 @@ const AI_PROVIDERS: AiProviderConfig[] = [
 
 const formatModelDisplayName = (modelStr?: string | null): string => {
   if (!modelStr) return '';
-  return modelStr
-    .replace(/^gemini[\s-_]*/i, '')
-    .replace(/^claude[\s-_]*/i, '')
-    .trim();
+  return modelStr.trim();
 };
 
 interface AiQuotaConfig {
@@ -1778,6 +1805,12 @@ export const App: React.FC = () => {
   const [explorerMenuOpen, setExplorerMenuOpen] = useState(false);
   const explorerMenuRef = useRef<HTMLDivElement>(null);
 
+  // File Explorer right-click context menu (VS Code / Cursor / Antigravity style)
+  const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; node: ExplorerNode } | null>(null);
+  const fileContextMenuRef = useRef<HTMLDivElement>(null);
+  const [fileClipboard, setFileClipboard] = useState<{ path: string; mode: 'copy' | 'cut' } | null>(null);
+  const [compareSelectionPath, setCompareSelectionPath] = useState<string | null>(null);
+
   // Outline & Timeline State (VS Code & Antigravity Style)
   const [isOutlineOpen, setIsOutlineOpen] = useState(false);
   const [outlineFilter, setOutlineFilter] = useState('');
@@ -1937,10 +1970,55 @@ export const App: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState<string>('sonnet');
   const [providerDropdown, setProviderDropdown] = useState(false);
   const [modelDropdown, setModelDropdown] = useState(false);
+  const [activeProviderSubmenu, setActiveProviderSubmenu] = useState<string | null>(null);
+  const [submenuOpenOnLeft, setSubmenuOpenOnLeft] = useState(false);
   const [activeModels, setActiveModels] = useState<Record<string, { currentModel: string; currentModelId: string; models: Array<{ id: string; label: string; tag?: string; description?: string }> }>>({});
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [quotaTooltipOpen, setQuotaTooltipOpen] = useState(false);
   const [aiQuotas, setAiQuotas] = useState<Record<string, AiQuotaConfig>>(DEFAULT_AI_QUOTAS);
+
+  // Helper to dynamically reposition/flip popups to avoid edge clipping or overflow
+  const clampPopupToViewport = useCallback((el: HTMLElement | null) => {
+    if (!el) return;
+    const pad = 8;
+    const rect = el.getBoundingClientRect();
+
+    // Horizontal check: right overflow
+    if (rect.right > window.innerWidth - pad) {
+      el.style.left = 'auto';
+      el.style.right = '0px';
+      const updated = el.getBoundingClientRect();
+      if (updated.left < pad) {
+        el.style.left = `${pad}px`;
+        el.style.right = `${pad}px`;
+        el.style.width = 'auto';
+        el.style.maxWidth = `calc(100vw - ${pad * 2}px)`;
+      }
+    } else if (rect.left < pad) {
+      // Horizontal check: left overflow
+      el.style.right = 'auto';
+      el.style.left = '0px';
+      const updated = el.getBoundingClientRect();
+      if (updated.right > window.innerWidth - pad) {
+        el.style.left = `${pad}px`;
+        el.style.right = `${pad}px`;
+        el.style.width = 'auto';
+        el.style.maxWidth = `calc(100vw - ${pad * 2}px)`;
+      }
+    }
+
+    // Vertical check: bottom/top overflow
+    const vertRect = el.getBoundingClientRect();
+    if (vertRect.bottom > window.innerHeight - pad) {
+      el.style.bottom = `${pad}px`;
+      el.style.maxHeight = `calc(100vh - ${pad * 2}px)`;
+      el.style.overflowY = 'auto';
+    } else if (vertRect.top < pad) {
+      el.style.top = `${pad}px`;
+      el.style.maxHeight = `calc(100vh - ${pad * 2}px)`;
+      el.style.overflowY = 'auto';
+    }
+  }, []);
 
   interface ChangedFileItem {
     path: string;
@@ -1976,11 +2054,276 @@ export const App: React.FC = () => {
     executionSteps?: ExecutionStepItem[];
     walkthrough?: WalkthroughItem;
     changedFiles?: ChangedFileItem[];
+    attachedFiles?: Array<{ id: string; name: string; path: string; isDirectory?: boolean }>;
+    attachedImages?: Array<{ id: string; name: string; dataUrl: string; size?: number }>;
   }
+
+  interface AttachedFileItem {
+    id: string;
+    path: string;
+    name: string;
+    isDirectory?: boolean;
+  }
+
+  interface AttachedImageItem {
+    id: string;
+    name: string;
+    dataUrl: string;
+    type?: string;
+    size?: number;
+    path?: string;
+  }
+
+  const MAX_ATTACHED_IMAGES = 7;
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFileItem[]>([]);
+  const [attachedImages, setAttachedImages] = useState<AttachedImageItem[]>([]);
+  const [imageLimitWarning, setImageLimitWarning] = useState<string | null>(null);
+  const [isPromptDragOver, setIsPromptDragOver] = useState<boolean>(false);
+  const promptDragCounterRef = useRef<number>(0);
+
+  useEffect(() => {
+    const handleGlobalDragEnd = () => {
+      promptDragCounterRef.current = 0;
+      setIsPromptDragOver(false);
+    };
+    window.addEventListener('dragend', handleGlobalDragEnd);
+    window.addEventListener('drop', handleGlobalDragEnd);
+    window.addEventListener('mouseleave', handleGlobalDragEnd);
+    return () => {
+      window.removeEventListener('dragend', handleGlobalDragEnd);
+      window.removeEventListener('drop', handleGlobalDragEnd);
+      window.removeEventListener('mouseleave', handleGlobalDragEnd);
+    };
+  }, []);
+
+  const triggerImageLimitWarning = useCallback(() => {
+    setImageLimitWarning('Limite máximo de 7 imagens por envio atingido.');
+    setTimeout(() => setImageLimitWarning(null), 3500);
+  }, []);
+
+  const handleImageFileAttached = useCallback((file: File) => {
+    const filePath = (file as any).path;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setAttachedImages((prev) => {
+        if (prev.length >= MAX_ATTACHED_IMAGES) {
+          triggerImageLimitWarning();
+          return prev;
+        }
+        if (filePath && prev.some((img) => img.path === filePath)) return prev;
+        return [
+          ...prev,
+          {
+            id: 'img-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+            name: file.name || (filePath ? filePath.split('/').pop() : `imagem_${Date.now()}.png`),
+            dataUrl: reader.result as string,
+            type: file.type || 'image/png',
+            size: file.size,
+            path: filePath,
+          },
+        ];
+      });
+    };
+    reader.readAsDataURL(file);
+  }, [triggerImageLimitWarning]);
+
+  const handlePromptPaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    let hasImage = false;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        hasImage = true;
+        const file = item.getAsFile();
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = () => {
+            setAttachedImages((prev) => {
+              if (prev.length >= MAX_ATTACHED_IMAGES) {
+                triggerImageLimitWarning();
+                return prev;
+              }
+              return [
+                ...prev,
+                {
+                  id: 'img-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+                  name: `imagem_${Date.now()}.png`,
+                  dataUrl: reader.result as string,
+                  type: file.type,
+                  size: file.size,
+                },
+              ];
+            });
+          };
+          reader.readAsDataURL(file);
+        }
+      }
+    }
+    if (hasImage) {
+      const hasText = e.clipboardData.getData('text');
+      if (!hasText) {
+        e.preventDefault();
+      }
+    }
+  }, [triggerImageLimitWarning]);
+
+  const insertMentionAtCaret = useCallback((mentionStr: string, dropEvent?: React.DragEvent) => {
+    if (promptEditorRef.current) {
+      const matches = Array.from(mentionStr.matchAll(/@\[(.*?)\]/g));
+      if (matches.length > 0) {
+        matches.forEach((m) => {
+          const path = m[1].replace(/^@+/, '');
+          const name = path.split('/').pop() || path;
+          promptEditorRef.current?.insertPill(path, name);
+        });
+      } else if (mentionStr.startsWith('/') || mentionStr.includes('.') || mentionStr.includes('\\') || mentionStr.startsWith('@')) {
+        const cleanPath = mentionStr.trim().replace(/^@+/, '');
+        const name = cleanPath.split('/').pop() || cleanPath;
+        promptEditorRef.current.insertPill(cleanPath, name);
+      } else {
+        promptEditorRef.current.insertText(mentionStr);
+      }
+      promptEditorRef.current.focus();
+      return;
+    }
+
+    const textarea = inputRef.current;
+    if (!textarea) {
+      setAskPrompt((prev) => (prev ? prev + ' ' + mentionStr : mentionStr));
+      return;
+    }
+
+    let insertPos = textarea.selectionStart ?? textarea.value.length;
+
+    // Detect caret position from drop point in Chromium / Electron
+    if (dropEvent) {
+      try {
+        const x = dropEvent.clientX;
+        const y = dropEvent.clientY;
+        if (typeof (document as any).caretPositionFromPoint === 'function') {
+          const pos = (document as any).caretPositionFromPoint(x, y);
+          if (pos && typeof pos.offset === 'number') {
+            insertPos = pos.offset;
+          }
+        } else if (typeof (document as any).caretRangeFromPoint === 'function') {
+          const range = (document as any).caretRangeFromPoint(x, y);
+          if (range && typeof range.startOffset === 'number') {
+            insertPos = range.startOffset;
+          }
+        }
+      } catch {}
+    }
+
+    setAskPrompt((currentVal) => {
+      const safePos = Math.min(Math.max(0, insertPos), currentVal.length);
+      const before = currentVal.substring(0, safePos);
+      const after = currentVal.substring(safePos);
+      const prefixSpace = before.length > 0 && !before.endsWith(' ') ? ' ' : '';
+      const suffixSpace = after.length > 0 && !after.startsWith(' ') ? ' ' : '';
+      const result = before + prefixSpace + mentionStr + suffixSpace + after;
+
+      const newCursor = before.length + prefixSpace.length + mentionStr.length + suffixSpace.length;
+      setTimeout(() => {
+        if (inputRef.current) {
+          inputRef.current.focus();
+          inputRef.current.setSelectionRange?.(newCursor, newCursor);
+        }
+      }, 15);
+
+      return result;
+    });
+  }, []);
+
+  const handlePromptDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsPromptDragOver(false);
+
+    // 1. Internal explorer node / open tab drop
+    const jsonStr = e.dataTransfer.getData('application/json');
+    if (jsonStr) {
+      try {
+        const data = JSON.parse(jsonStr);
+        if (data && data.path) {
+          if (promptEditorRef.current) {
+            promptEditorRef.current.insertPill(data.path, data.name);
+            promptEditorRef.current.focus();
+            return;
+          }
+          insertMentionAtCaret(`@[${data.path}]`, e);
+          return;
+        }
+      } catch {}
+    }
+
+    // 2. Native OS files / images drop
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const mentionsList: string[] = [];
+      Array.from(e.dataTransfer.files).forEach((file: File) => {
+        const filePath = (file as any).path || file.name;
+        mentionsList.push(`@[${filePath}]`);
+        if (file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|svg)$/i.test(filePath)) {
+          handleImageFileAttached(file);
+        }
+        if (promptEditorRef.current) {
+          promptEditorRef.current.insertPill(filePath, file.name);
+        }
+      });
+      if (promptEditorRef.current) {
+        promptEditorRef.current.focus();
+        return;
+      }
+      if (mentionsList.length > 0) {
+        insertMentionAtCaret(mentionsList.join(' '), e);
+      }
+      return;
+    }
+
+    // 3. Plain text path
+    const plainText = e.dataTransfer.getData('text/plain');
+    if (plainText) {
+      if (plainText.startsWith('@[') && plainText.endsWith(']')) {
+        const path = plainText.slice(2, -1).replace(/^@+/, '');
+        if (promptEditorRef.current) {
+          promptEditorRef.current.insertPill(path);
+          promptEditorRef.current.focus();
+          return;
+        }
+        insertMentionAtCaret(plainText, e);
+      } else if (plainText.startsWith('/') || plainText.includes('.') || plainText.startsWith('@')) {
+        const cleanText = plainText.trim().replace(/^@+/, '');
+        if (promptEditorRef.current) {
+          promptEditorRef.current.insertPill(cleanText);
+          promptEditorRef.current.focus();
+          return;
+        }
+        insertMentionAtCaret(`@[${cleanText}]`, e);
+      } else {
+        if (promptEditorRef.current) {
+          promptEditorRef.current.insertText(plainText);
+          promptEditorRef.current.focus();
+          return;
+        }
+        insertMentionAtCaret(plainText, e);
+      }
+    }
+  }, [insertMentionAtCaret, handleImageFileAttached]);
 
   const [aiHistory, setAiHistory] = useState<ChatMessageItem[]>([]);
   const [isAiExecuting, setIsAiExecuting] = useState(false);
   const [showThinkingDots, setShowThinkingDots] = useState(false);
+  const [atMentionState, setAtMentionState] = useState<{
+    isOpen: boolean;
+    query: string;
+    atPos: number;
+    selectedIndex: number;
+  }>({
+    isOpen: false,
+    query: '',
+    atPos: -1,
+    selectedIndex: 0,
+  });
 
   // Debounce thinking dots so fast responses never flash the dots
   useEffect(() => {
@@ -2042,7 +2385,28 @@ export const App: React.FC = () => {
     provider: string;
     updatedAt: number;
     history: ChatMessageItem[];
+    projectName?: string;
+    workspacePath?: string;
+    model?: string;
+    status?: 'running' | 'idle' | 'completed';
   }
+
+  const [chatHistoryModalOpen, setChatHistoryModalOpen] = useState<boolean>(false);
+  const [chatHistorySearch, setChatHistorySearch] = useState<string>('');
+  const [chatHistorySelectedIndex, setChatHistorySelectedIndex] = useState<number>(0);
+  const [chatHistoryShowAllRecent, setChatHistoryShowAllRecent] = useState<boolean>(false);
+  const [diskSavedChats, setDiskSavedChats] = useState<Array<{
+    id: string;
+    title: string;
+    provider: string;
+    updatedAt: number;
+    messageCount: number;
+    path: string;
+    projectName?: string;
+    workspacePath?: string;
+    model?: string;
+  }>>([]);
+  const chatHistoryInputRef = useRef<HTMLInputElement>(null);
 
   const [chatSessions, setChatSessions] = useState<ChatSessionItem[]>(() => {
     try {
@@ -2074,6 +2438,8 @@ export const App: React.FC = () => {
   const [activeChatSessionId, setActiveChatSessionId] = useState<string>('session-1');
   const [chatHistoryPopupOpen, setChatHistoryPopupOpen] = useState<boolean>(false);
   const chatHistoryPopupRef = useRef<HTMLDivElement>(null);
+  const [chatActionsMenuOpen, setChatActionsMenuOpen] = useState<boolean>(false);
+  const chatActionsMenuRef = useRef<HTMLDivElement>(null);
   const providerDropdownRef = useRef<HTMLDivElement>(null);
   const modelDropdownRef = useRef<HTMLDivElement>(null);
   const quotaTooltipRef = useRef<HTMLDivElement>(null);
@@ -2121,8 +2487,8 @@ export const App: React.FC = () => {
     setChatHistoryPopupOpen(false);
   };
 
-  const handleDeleteChatSession = (sessionId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleDeleteChatSession = (sessionId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation?.();
     setChatSessions((prev) => {
       const filtered = prev.filter((s) => s.id !== sessionId);
       if (sessionId === activeChatSessionId) {
@@ -2170,6 +2536,216 @@ export const App: React.FC = () => {
   const handleCancelRenameChatSession = () => {
     setEditingChatSessionId(null);
     setEditingChatTitle('');
+  };
+
+  const refreshSavedChats = useCallback(async () => {
+    if (window.electronAPI?.ai?.getSavedChats) {
+      try {
+        const list = await window.electronAPI.ai.getSavedChats();
+        setDiskSavedChats(list || []);
+      } catch {}
+    }
+  }, []);
+
+  const handleOpenChatHistoryModal = useCallback(() => {
+    setChatHistoryPopupOpen(false);
+    setChatActionsMenuOpen(false);
+    setChatHistoryModalOpen(true);
+    setChatHistorySearch('');
+    setChatHistorySelectedIndex(0);
+    setChatHistoryShowAllRecent(false);
+    refreshSavedChats();
+    setTimeout(() => {
+      chatHistoryInputRef.current?.focus();
+    }, 60);
+  }, [refreshSavedChats]);
+
+  const formatTimeAgo = useCallback((timestamp?: number): string => {
+    if (!timestamp) return 'recentemente';
+    const now = Date.now();
+    const diffSec = Math.max(0, Math.floor((now - timestamp) / 1000));
+    if (diffSec < 60) return 'agora';
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `há ${diffMin} min`;
+    const diffHours = Math.floor(diffMin / 60);
+    if (diffHours < 24) return diffHours === 1 ? 'há 1 hora' : `há ${diffHours} horas`;
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays === 1) return 'ontem';
+    if (diffDays < 7) return `há ${diffDays} dias`;
+    const diffWeeks = Math.floor(diffDays / 7);
+    return diffWeeks === 1 ? 'há 1 semana' : `há ${diffWeeks} semanas`;
+  }, []);
+
+  const handleSelectAnySession = useCallback(async (sessionId: string) => {
+    const existing = chatSessions.find((s) => s.id === sessionId);
+    if (existing) {
+      handleSelectChatSession(sessionId);
+      setChatHistoryModalOpen(false);
+      return;
+    }
+
+    if (window.electronAPI?.ai?.loadSavedChat) {
+      try {
+        const fullSession = await window.electronAPI.ai.loadSavedChat(sessionId);
+        if (fullSession) {
+          const newSessionItem: ChatSessionItem = {
+            id: fullSession.id || sessionId,
+            title: fullSession.title || 'Conversa',
+            provider: fullSession.provider || 'antigravity',
+            updatedAt: fullSession.updatedAt || Date.now(),
+            history: fullSession.history || [],
+            projectName: fullSession.context?.projectName,
+            workspacePath: fullSession.context?.workspacePath,
+            model: fullSession.model,
+          };
+          setChatSessions((prev) => [newSessionItem, ...prev.filter((s) => s.id !== newSessionItem.id)]);
+          setActiveChatSessionId(newSessionItem.id);
+          setAiHistory(newSessionItem.history || []);
+          if (newSessionItem.provider && newSessionItem.provider !== selectedAiProvider) {
+            setSelectedAiProvider(newSessionItem.provider);
+          }
+        }
+      } catch {}
+    }
+    setChatHistoryModalOpen(false);
+  }, [chatSessions, selectedAiProvider]);
+
+  const handleDeleteAnySession = useCallback(async (sessionId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    handleDeleteChatSession(sessionId);
+    if (window.electronAPI?.ai?.deleteSavedChat) {
+      await window.electronAPI.ai.deleteSavedChat(sessionId);
+    }
+    setDiskSavedChats((prev) => prev.filter((d) => d.id !== sessionId));
+  }, []);
+
+  // Unified list of all chat sessions (in-memory + saved on disk)
+  const allUnifiedSessions = useMemo(() => {
+    const map = new Map<string, {
+      id: string;
+      title: string;
+      provider: string;
+      updatedAt: number;
+      projectName?: string;
+      workspacePath?: string;
+      model?: string;
+      isCurrent?: boolean;
+      isRunning?: boolean;
+    }>();
+
+    // 1. In-memory sessions
+    chatSessions.forEach((s) => {
+      const pName =
+        s.projectName ||
+        (s.workspacePath ? s.workspacePath.split('/').filter(Boolean).pop() : undefined) ||
+        (workspacePath ? workspacePath.split('/').filter(Boolean).pop() : 'devflow-desktop');
+
+      map.set(s.id, {
+        id: s.id,
+        title: s.title || 'Nova Conversa',
+        provider: s.provider || 'antigravity',
+        updatedAt: s.updatedAt || Date.now(),
+        projectName: pName,
+        workspacePath: s.workspacePath || workspacePath,
+        model: s.model,
+        isCurrent: s.id === activeChatSessionId,
+        isRunning: isAiExecuting && s.id === activeChatSessionId,
+      });
+    });
+
+    // 2. Disk saved sessions
+    diskSavedChats.forEach((d) => {
+      const existing = map.get(d.id);
+      if (!existing) {
+        map.set(d.id, {
+          id: d.id,
+          title: d.title || 'Conversa',
+          provider: d.provider || 'antigravity',
+          updatedAt: d.updatedAt || Date.now(),
+          projectName: d.projectName || (d.workspacePath ? d.workspacePath.split('/').filter(Boolean).pop() : 'devflow-desktop'),
+          workspacePath: d.workspacePath,
+          model: d.model,
+          isCurrent: d.id === activeChatSessionId,
+          isRunning: false,
+        });
+      } else {
+        if (d.projectName && !existing.projectName) existing.projectName = d.projectName;
+        if (d.model && !existing.model) existing.model = d.model;
+        if (d.updatedAt && d.updatedAt > existing.updatedAt) existing.updatedAt = d.updatedAt;
+      }
+    });
+
+    return Array.from(map.values());
+  }, [chatSessions, diskSavedChats, activeChatSessionId, isAiExecuting, workspacePath]);
+
+  const filteredConvos = useMemo(() => {
+    const q = chatHistorySearch.trim().toLowerCase();
+    if (!q) return allUnifiedSessions;
+    return allUnifiedSessions.filter((s) =>
+      s.title.toLowerCase().includes(q) ||
+      (s.projectName && s.projectName.toLowerCase().includes(q)) ||
+      s.provider.toLowerCase().includes(q)
+    );
+  }, [allUnifiedSessions, chatHistorySearch]);
+
+  const currentConvo = useMemo(() => {
+    if (chatHistorySearch.trim()) return undefined;
+    return filteredConvos.find((s) => s.isCurrent);
+  }, [filteredConvos, chatHistorySearch]);
+
+  const runningConvos = useMemo(() => {
+    return filteredConvos.filter((s) => s.isRunning && s.id !== currentConvo?.id);
+  }, [filteredConvos, currentConvo]);
+
+  const recentConvos = useMemo(() => {
+    return filteredConvos
+      .filter((s) => s.id !== currentConvo?.id && !s.isRunning)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  }, [filteredConvos, currentConvo]);
+
+  const visibleRecentConvos = useMemo(() => {
+    if (chatHistoryShowAllRecent || chatHistorySearch.trim()) {
+      return recentConvos;
+    }
+    return recentConvos.slice(0, 4);
+  }, [recentConvos, chatHistoryShowAllRecent, chatHistorySearch]);
+
+  const selectableConvosList = useMemo(() => {
+    const list: typeof allUnifiedSessions = [];
+    if (currentConvo) list.push(currentConvo);
+    runningConvos.forEach((s) => list.push(s));
+    visibleRecentConvos.forEach((s) => list.push(s));
+    return list;
+  }, [currentConvo, runningConvos, visibleRecentConvos]);
+
+  const handleChatHistoryKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setChatHistoryModalOpen(false);
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setChatHistorySelectedIndex((prev) =>
+        selectableConvosList.length > 0 ? (prev + 1) % selectableConvosList.length : 0
+      );
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setChatHistorySelectedIndex((prev) =>
+        selectableConvosList.length > 0 ? (prev - 1 + selectableConvosList.length) % selectableConvosList.length : 0
+      );
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const target = selectableConvosList[chatHistorySelectedIndex];
+      if (target) {
+        handleSelectAnySession(target.id);
+      }
+      return;
+    }
   };
 
   // Save chat session locally on disk with rich context (project, files, branch, provider, model)
@@ -2290,8 +2866,8 @@ export const App: React.FC = () => {
     const ext = fileName.split('.').pop()?.toLowerCase();
     if (ext === 'tsx' || ext === 'jsx') {
       return (
-        <span style={{ color: '#38bdf8', fontSize: 13, display: 'inline-flex', alignItems: 'center', lineHeight: 1 }} title="React">
-          ⚛️
+        <span style={{ fontSize: 9, fontWeight: 700, background: '#0284c7', color: '#fff', padding: '1px 3px', borderRadius: 2, lineHeight: 1 }} title="React">
+          {ext.toUpperCase()}
         </span>
       );
     }
@@ -2565,6 +3141,7 @@ export const App: React.FC = () => {
 
 
   const inputRef = useRef<HTMLInputElement>(null);
+  const promptEditorRef = useRef<PromptEditorRef>(null);
   const termInputRef = useRef<HTMLInputElement>(null);
   const editorInstanceRef = useRef<any>(null);
 
@@ -3028,6 +3605,68 @@ export const App: React.FC = () => {
     }
   };
 
+  // Render user prompt text with interactive @[file] pills (Antigravity Style)
+  const renderPromptTextWithMentions = (text: string) => {
+    if (!text) return null;
+    const parts = text.split(/(@\[.*?\])/g);
+    return (
+      <span>
+        {parts.map((part, pIdx) => {
+          const match = part.match(/^@\[(.*?)\]$/);
+          if (match) {
+            const filePath = match[1];
+            const fileName = filePath.split('/').filter(Boolean).pop() || filePath;
+            const isImg = /\.(png|jpe?g|webp|gif|svg|ico)$/i.test(filePath);
+            return (
+              <span
+                key={pIdx}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleOpenFile(filePath, fileName);
+                }}
+                title={`Abrir no editor: ${filePath}`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '1px 6px',
+                  borderRadius: 4,
+                  background: 'rgba(59, 130, 246, 0.18)',
+                  border: '1px solid rgba(59, 130, 246, 0.35)',
+                  color: '#60a5fa',
+                  fontSize: 11.5,
+                  fontWeight: 500,
+                  fontFamily: 'Poppins, monospace',
+                  cursor: 'pointer',
+                  verticalAlign: 'baseline',
+                  margin: '0 2px',
+                  userSelect: 'none',
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'rgba(59, 130, 246, 0.3)';
+                  e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.6)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(59, 130, 246, 0.18)';
+                  e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.35)';
+                }}
+              >
+                {isImg ? (
+                  <ImageIcon size={12} color="#60a5fa" />
+                ) : (
+                  <FileIcon fileName={fileName} size={12} />
+                )}
+                <span>@{fileName}</span>
+              </span>
+            );
+          }
+          return <span key={pIdx}>{part}</span>;
+        })}
+      </span>
+    );
+  };
+
     // Close Editor More Menu on outside click
   useEffect(() => {
     const handleOutside = (e: MouseEvent) => {
@@ -3129,7 +3768,7 @@ export const App: React.FC = () => {
   };
 
   const handleCloseFile = (fileId: string, e?: React.MouseEvent) => {
-    e.stopPropagation();
+    e?.stopPropagation?.();
     if (openFiles.length <= 1) return;
     const nextFiles = openFiles.filter((f) => f.id !== fileId);
     setOpenFiles(nextFiles);
@@ -3488,7 +4127,7 @@ export const App: React.FC = () => {
         setAccentColor(newAccent);
       }
 
-      setToastMessage(`🎨 Tema "${themeLabel}" ativado no Monaco Editor!`);
+      setToastMessage(`Tema "${themeLabel}" ativado`);
     } catch (err: any) {
       setToastMessage(`Erro ao aplicar tema: ${err?.message || err}`);
     }
@@ -3943,6 +4582,76 @@ export const App: React.FC = () => {
     return list;
   }, [fileTree, openFiles, workspacePath]);
 
+  // Check if caret in prompt is currently typing an @ mention
+  const checkAtMentionState = useCallback((val: string, cursorIdx: number) => {
+    const textBefore = val.slice(0, cursorIdx);
+    const lastAt = textBefore.lastIndexOf('@');
+    if (lastAt !== -1) {
+      const charBefore = lastAt > 0 ? textBefore[lastAt - 1] : ' ';
+      const textAfter = textBefore.slice(lastAt + 1);
+      // Valid if char before @ is whitespace/newline/start of text, and textAfter has no spaces and no '['
+      if ((charBefore === ' ' || charBefore === '\n' || lastAt === 0) && !/\s/.test(textAfter) && !textAfter.includes('[')) {
+        setAtMentionState({
+          isOpen: true,
+          query: textAfter.toLowerCase(),
+          atPos: lastAt,
+          selectedIndex: 0,
+        });
+        return;
+      }
+    }
+    setAtMentionState((prev) => (prev.isOpen ? { ...prev, isOpen: false } : prev));
+  }, []);
+
+  // Filtered files for @ mention autocomplete in AI prompt
+  const filteredAtFiles = useMemo(() => {
+    if (!atMentionState.isOpen) return [];
+    const q = atMentionState.query.trim().toLowerCase();
+    if (!q) {
+      const result: { name: string; path: string; isGit?: boolean }[] = [];
+      const seen = new Set<string>();
+      for (const ofile of openFiles) {
+        if (!seen.has(ofile.path)) {
+          seen.add(ofile.path);
+          result.push({ name: ofile.name, path: ofile.path, isGit: false });
+        }
+      }
+      for (const wfile of allWorkspaceFiles) {
+        if (!seen.has(wfile.path)) {
+          seen.add(wfile.path);
+          result.push(wfile);
+        }
+      }
+      return result.slice(0, 15);
+    }
+    return allWorkspaceFiles
+      .filter((f) => f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q))
+      .slice(0, 15);
+  }, [atMentionState.isOpen, atMentionState.query, openFiles, allWorkspaceFiles]);
+
+  const handleSelectAtItem = (file: { name: string; path: string }) => {
+    if (promptEditorRef.current) {
+      promptEditorRef.current.insertPill(file.path, file.name);
+    } else {
+      const currentVal = askPrompt;
+      const cursorPos = inputRef.current?.selectionStart ?? currentVal.length;
+      const atPos = atMentionState.atPos !== -1 ? atMentionState.atPos : cursorPos;
+      const before = currentVal.slice(0, atPos);
+      const after = currentVal.slice(cursorPos);
+      const mentionText = `@[${file.path}] `;
+      const newPrompt = before + mentionText + after;
+      setAskPrompt(newPrompt);
+      setTimeout(() => {
+        if (inputRef.current) {
+          inputRef.current.focus();
+          const nextCaret = before.length + mentionText.length;
+          inputRef.current.setSelectionRange?.(nextCaret, nextCaret);
+        }
+      }, 15);
+    }
+    setAtMentionState({ isOpen: false, query: '', atPos: -1, selectedIndex: 0 });
+  };
+
   interface QuickOpenItemDef {
     id: string;
     title: string;
@@ -4247,6 +4956,10 @@ export const App: React.FC = () => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Escape: Exit Zen mode, Close Theme Popup, Settings Modal, Settings Menu, Quick Open, or Customize Layout
       if (e.key === 'Escape') {
+        if (chatHistoryModalOpen) {
+          setChatHistoryModalOpen(false);
+          return;
+        }
         if (isThemePopupOpen) {
           setIsThemePopupOpen(false);
           return;
@@ -4271,6 +4984,15 @@ export const App: React.FC = () => {
           setIsCustomizeLayoutOpen(false);
           return;
         }
+      }
+      // Cmd/Ctrl + Shift + H: Toggle Chat History Modal
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'h') {
+        e.preventDefault();
+        setChatHistoryModalOpen((prev) => {
+          if (!prev) handleOpenChatHistoryModal();
+          return !prev;
+        });
+        return;
       }
       // Cmd/Ctrl + ,: Open Settings Modal
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === ',') {
@@ -4373,7 +5095,7 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleSaveActiveFile, isCustomizeLayoutOpen, isQuickOpenOpen, isSettingsMenuOpen, isSettingsModalOpen, isThemePopupOpen, isZenMode]);
+  }, [handleSaveActiveFile, isCustomizeLayoutOpen, isQuickOpenOpen, isSettingsMenuOpen, isSettingsModalOpen, isThemePopupOpen, isZenMode, chatHistoryModalOpen, handleOpenChatHistoryModal]);
 
   // Check installed CLIs on native machine: startup, window focus, PTY command exits, and low-frequency poll
   useEffect(() => {
@@ -4406,7 +5128,7 @@ export const App: React.FC = () => {
             if (prov) {
               handleSwitchAiProvider(prov.id);
               setAiNotInstalledAlert(null);
-              setToastMessage(`🎉 ${prov.name} instalado com sucesso e liberado para uso!`);
+              setToastMessage(`${prov.name} instalado`);
             }
           }
         }).catch(console.error);
@@ -4454,32 +5176,40 @@ export const App: React.FC = () => {
       localStorage.setItem('ide_ai_chat_sessions', JSON.stringify(chatSessions));
     } catch {}
 
-    // Auto-save active chat session to local disk with full context
+    // Auto-save active chat session to local disk with full context automatically
     const activeSession = chatSessions.find((s) => s.id === activeChatSessionId);
-    if (activeSession && activeSession.history && activeSession.history.length > 0 && window.electronAPI?.ai?.saveChatLocally) {
+    const msgs = (activeSession?.history && activeSession.history.length > 0)
+      ? activeSession.history
+      : (aiHistory.length > 0 ? aiHistory : []);
+
+    if (activeChatSessionId && msgs.length > 0 && window.electronAPI?.ai?.saveChatLocally) {
       const timer = setTimeout(() => {
+        const projectName =
+          activeSession?.projectName ||
+          (workspacePath ? workspacePath.split('/').filter(Boolean).pop() : 'devflow-desktop');
+
         window.electronAPI.ai.saveChatLocally({
-          id: activeSession.id,
-          title: activeSession.title || 'Conversa',
-          provider: activeSession.provider || selectedAiProvider,
+          id: activeChatSessionId,
+          title: activeSession?.title || (msgs[0]?.text ? msgs[0].text.slice(0, 36) : 'Conversa'),
+          provider: activeSession?.provider || selectedAiProvider,
           model: activeModels[selectedAiProvider]?.currentModel || selectedAiProvider,
-          createdAt: activeSession.updatedAt || Date.now(),
+          createdAt: activeSession?.updatedAt || Date.now(),
           updatedAt: Date.now(),
           context: {
             workspacePath,
-            projectName: workspacePath ? workspacePath.split('/').filter(Boolean).pop() : 'Projeto',
+            projectName,
             currentBranch: currentBranch || 'main',
             activeFilePath: activeFile?.path || activeFile?.name || '',
             openTabs: openFiles.map((t) => t.name || t.path),
-            provider: activeSession.provider || selectedAiProvider,
+            provider: activeSession?.provider || selectedAiProvider,
             model: activeModels[selectedAiProvider]?.currentModel || selectedAiProvider,
           },
-          history: activeSession.history,
+          history: msgs,
         }).catch(() => {});
-      }, 1500);
+      }, 500);
       return () => clearTimeout(timer);
     }
-  }, [chatSessions, activeChatSessionId, selectedAiProvider, activeModels, selectedModel, workspacePath, currentBranch, activeFile, openFiles]);
+  }, [chatSessions, aiHistory, activeChatSessionId, selectedAiProvider, activeModels, selectedModel, workspacePath, currentBranch, activeFile, openFiles]);
 
   // Click outside listener for Explorer 3-dots popup
   useEffect(() => {
@@ -4494,6 +5224,26 @@ export const App: React.FC = () => {
     }
   }, [explorerMenuOpen]);
 
+  // Click outside / Escape listener for File Explorer right-click context menu
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (fileContextMenuRef.current && !fileContextMenuRef.current.contains(e.target as Node)) {
+        setFileContextMenu(null);
+      }
+    };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setFileContextMenu(null);
+    };
+    if (fileContextMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleEscape);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+        document.removeEventListener('keydown', handleEscape);
+      };
+    }
+  }, [fileContextMenu]);
+
   // Click outside listener for Chat History popup
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -4507,11 +5257,25 @@ export const App: React.FC = () => {
     }
   }, [chatHistoryPopupOpen]);
 
+  // Click outside listener for Chat Actions popup
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (chatActionsMenuRef.current && !chatActionsMenuRef.current.contains(e.target as Node)) {
+        setChatActionsMenuOpen(false);
+      }
+    };
+    if (chatActionsMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [chatActionsMenuOpen]);
+
   // Click outside listener for Provider Dropdown popup
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (providerDropdownRef.current && !providerDropdownRef.current.contains(e.target as Node)) {
         setProviderDropdown(false);
+        setActiveProviderSubmenu(null);
       }
     };
     if (providerDropdown) {
@@ -4519,6 +5283,15 @@ export const App: React.FC = () => {
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
   }, [providerDropdown]);
+
+  // Dynamically check if model submenu has space to the right or should open to the left
+  useLayoutEffect(() => {
+    if (providerDropdown && activeProviderSubmenu && providerDropdownRef.current) {
+      const rect = providerDropdownRef.current.getBoundingClientRect();
+      const spaceOnRight = window.innerWidth - (rect.left + 220);
+      setSubmenuOpenOnLeft(spaceOnRight < 240);
+    }
+  }, [providerDropdown, activeProviderSubmenu]);
 
   // Click outside listener for Model Dropdown popup
   useEffect(() => {
@@ -4559,15 +5332,21 @@ export const App: React.FC = () => {
     refreshAiModels(selectedAiProvider);
   }, [selectedAiProvider, refreshAiModels]);
 
-  const handleSelectModel = async (modelItem: { id: string; label: string }) => {
+  const handleSelectModel = async (modelItem: { id: string; label: string }, targetProviderId?: string) => {
+    const provId = targetProviderId || selectedAiProvider;
     setModelDropdown(false);
+    setProviderDropdown(false);
+    setActiveProviderSubmenu(null);
+    if (provId !== selectedAiProvider) {
+      handleSwitchAiProvider(provId);
+    }
     setSelectedModel(modelItem.label);
     setActiveModels((prev) => {
-      const existing = prev[selectedAiProvider];
+      const existing = prev[provId];
       return {
         ...prev,
-        [selectedAiProvider]: {
-          providerId: selectedAiProvider,
+        [provId]: {
+          providerId: provId,
           currentModel: modelItem.label,
           currentModelId: modelItem.id,
           models: existing?.models || [],
@@ -4578,9 +5357,9 @@ export const App: React.FC = () => {
     if (window.electronAPI?.ai?.setModel) {
       setIsLoadingModels(true);
       try {
-        const res = await window.electronAPI.ai.setModel(selectedAiProvider, modelItem.id);
+        const res = await window.electronAPI.ai.setModel(provId, modelItem.id);
         if (res?.success) {
-          setToastMessage(`Modelo alterado: ${modelItem.label}`);
+          setToastMessage(`Modelo: ${modelItem.label}`);
         }
       } catch (err) {
         console.error('Failed to set AI model:', err);
@@ -4704,6 +5483,274 @@ export const App: React.FC = () => {
     }
   };
 
+  // -------------------------------------------------------------------------
+  // File Explorer right-click context menu actions (VS Code / Cursor / Antigravity style)
+  // -------------------------------------------------------------------------
+  const closeFileContextMenu = () => setFileContextMenu(null);
+
+  const handleFileNodeContextMenu = (e: React.MouseEvent, node: ExplorerNode) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setExplorerMenuOpen(false);
+    setFileContextMenu({ x: e.clientX, y: e.clientY, node });
+  };
+
+  const getParentDir = (itemPath: string) => itemPath.split('/').slice(0, -1).join('/') || workspacePath;
+
+  const handleCtxOpen = (node: ExplorerNode) => {
+    closeFileContextMenu();
+    if (!node.isDirectory) handleOpenFile(node.path, node.name);
+  };
+
+  const handleCtxOpenToSide = async (node: ExplorerNode) => {
+    closeFileContextMenu();
+    if (node.isDirectory) return;
+    const existing = openFiles.find((f) => f.path === node.path);
+    let fileId = existing?.id;
+    if (!fileId) {
+      let content = '';
+      if (window.electronAPI?.fs?.readFile) {
+        try {
+          const res = await window.electronAPI.fs.readFile(node.path);
+          content = res.content || '';
+        } catch {}
+      }
+      const newFile: OpenFileItem = {
+        id: node.path,
+        name: node.name,
+        path: node.path,
+        content,
+        language: getFileLanguage(node.name),
+        isDirty: false,
+      };
+      setOpenFiles((prev) => [...prev, newFile]);
+      fileId = newFile.id;
+    }
+    if (!activeFileId) {
+      setActiveFileId(fileId);
+    } else {
+      setSecondaryFileId(fileId);
+      setEditorSplitOrientation('vertical');
+      setIsEditorSplit(true);
+    }
+  };
+
+  const handleCtxOpenWith = async (node: ExplorerNode) => {
+    closeFileContextMenu();
+    if (node.isDirectory) return;
+    const appName = prompt('Abrir com qual aplicativo? (ex: Visual Studio Code, TextEdit)');
+    if (!appName || !appName.trim()) return;
+    if (window.electronAPI?.shell?.exec) {
+      const escapedApp = appName.trim().replace(/"/g, '\\"');
+      const res = await window.electronAPI.shell.exec(`open -a "${escapedApp}" "${node.path}"`);
+      if (res?.exitCode !== 0) {
+        setToastMessage(`Não foi possível abrir com "${appName.trim()}"`);
+      }
+    }
+  };
+
+  const handleCtxRevealInFinder = async (node: ExplorerNode) => {
+    closeFileContextMenu();
+    if (window.electronAPI?.shell?.showItemInFolder) {
+      await window.electronAPI.shell.showItemInFolder(node.path);
+    } else if (window.electronAPI?.shell?.exec) {
+      await window.electronAPI.shell.exec(`open -R "${node.path}"`);
+    }
+  };
+
+  const handleCtxOpenInTerminal = (node: ExplorerNode) => {
+    closeFileContextMenu();
+    const dir = node.isDirectory ? node.path : getParentDir(node.path);
+    handleNewTerminalSession('zsh', node.name, `cd "${dir}"`);
+  };
+
+  const handleCtxSelectForCompare = (node: ExplorerNode) => {
+    closeFileContextMenu();
+    if (node.isDirectory) return;
+    setCompareSelectionPath(node.path);
+    setToastMessage(`"${node.name}" selecionado para comparação`);
+  };
+
+  const handleCtxCompareWithSelected = async (node: ExplorerNode) => {
+    closeFileContextMenu();
+    if (!compareSelectionPath || node.isDirectory) return;
+    try {
+      const [originalRes, modifiedRes] = await Promise.all([
+        window.electronAPI?.fs?.readFile(compareSelectionPath),
+        window.electronAPI?.fs?.readFile(node.path),
+      ]);
+      setActiveReview({
+        files: [
+          {
+            path: node.path,
+            name: node.name,
+            dir: getParentDir(node.path),
+            additions: 0,
+            deletions: 0,
+          },
+        ],
+        currentIndex: 0,
+        originalContent: originalRes?.content || '',
+        modifiedContent: modifiedRes?.content || '',
+        isSideBySide: true,
+      });
+    } finally {
+      setCompareSelectionPath(null);
+    }
+  };
+
+  const handleCtxOpenTimeline = async (node: ExplorerNode) => {
+    closeFileContextMenu();
+    if (node.isDirectory) return;
+    await handleOpenFile(node.path, node.name);
+    setIsTimelineOpen(true);
+  };
+
+  const handleCtxCut = (node: ExplorerNode) => {
+    closeFileContextMenu();
+    setFileClipboard({ path: node.path, mode: 'cut' });
+    setToastMessage(`"${node.name}" recortado`);
+  };
+
+  const handleCtxCopy = (node: ExplorerNode) => {
+    closeFileContextMenu();
+    setFileClipboard({ path: node.path, mode: 'copy' });
+    setToastMessage(`"${node.name}" copiado`);
+  };
+
+  const handleCtxPaste = async (node: ExplorerNode) => {
+    closeFileContextMenu();
+    if (!fileClipboard) return;
+    const targetDir = node.isDirectory ? node.path : getParentDir(node.path);
+    const itemName = fileClipboard.path.split('/').pop() || 'item';
+    const destPath = `${targetDir}/${itemName}`;
+    if (destPath === fileClipboard.path) {
+      setFileClipboard(null);
+      return;
+    }
+    try {
+      if (fileClipboard.mode === 'copy' && window.electronAPI?.fs?.copyItem) {
+        await window.electronAPI.fs.copyItem(fileClipboard.path, destPath);
+      } else if (fileClipboard.mode === 'cut' && window.electronAPI?.fs?.renameItem) {
+        await window.electronAPI.fs.renameItem(fileClipboard.path, destPath);
+        setFileClipboard(null);
+      }
+      await loadWorkspaceTree(workspacePath);
+      setToastMessage(`"${itemName}" colado em ${targetDir.split('/').pop()}`);
+    } catch (err: any) {
+      setToastMessage(`Erro ao colar: ${err.message}`);
+    }
+  };
+
+  const handleCtxCopyPath = (node: ExplorerNode) => {
+    closeFileContextMenu();
+    navigator.clipboard.writeText(node.path);
+    setToastMessage('Caminho absoluto copiado!');
+  };
+
+  const handleCtxCopyRelativePath = (node: ExplorerNode) => {
+    closeFileContextMenu();
+    const rel = node.path.replace(workspacePath, '').replace(/^\//, '');
+    navigator.clipboard.writeText(rel);
+    setToastMessage('Caminho relativo copiado!');
+  };
+
+  const isTestFileName = (name: string) => /\.(test|spec)\.[tj]sx?$/i.test(name);
+
+  const handleCtxRunTests = (node: ExplorerNode, mode: 'run' | 'debug' | 'coverage') => {
+    closeFileContextMenu();
+    const target = node.path;
+    const cmd =
+      mode === 'coverage'
+        ? `bun test --coverage "${target}"`
+        : mode === 'debug'
+        ? `bun test --inspect-brk "${target}"`
+        : `bun test "${target}"`;
+    const label = mode === 'coverage' ? `Coverage: ${node.name}` : mode === 'debug' ? `Debug: ${node.name}` : `Test: ${node.name}`;
+    handleNewTerminalSession('zsh', label, cmd);
+  };
+
+  const handleCtxRename = async (node: ExplorerNode) => {
+    closeFileContextMenu();
+    const newName = prompt('Novo nome:', node.name);
+    if (!newName || !newName.trim() || newName.trim() === node.name) return;
+    const newPath = `${getParentDir(node.path)}/${newName.trim()}`;
+    if (window.electronAPI?.fs?.renameItem) {
+      try {
+        await window.electronAPI.fs.renameItem(node.path, newPath);
+        await loadWorkspaceTree(workspacePath);
+        setOpenFiles((prev) =>
+          prev.map((f) =>
+            f.path === node.path
+              ? { ...f, id: newPath, path: newPath, name: newName.trim(), language: getFileLanguage(newName.trim()) }
+              : f
+          )
+        );
+        if (activeFileId === node.path) setActiveFileId(newPath);
+        if (secondaryFileId === node.path) setSecondaryFileId(newPath);
+        setToastMessage(`Renomeado para "${newName.trim()}"`);
+      } catch (err: any) {
+        alert(`Erro ao renomear: ${err.message}`);
+      }
+    }
+  };
+
+  const handleCtxDelete = async (node: ExplorerNode) => {
+    closeFileContextMenu();
+    if (!confirm(`Excluir "${node.name}"? Esta ação não pode ser desfeita.`)) return;
+    if (window.electronAPI?.fs?.deleteItem) {
+      try {
+        await window.electronAPI.fs.deleteItem(node.path);
+        await loadWorkspaceTree(workspacePath);
+        const remaining = openFiles.filter((f) => f.path !== node.path && !f.path.startsWith(node.path + '/'));
+        setOpenFiles(remaining);
+        if (activeFileId === node.path || activeFileId.startsWith(node.path + '/')) {
+          setActiveFileId(remaining.length > 0 ? remaining[0].id : '');
+        }
+        setToastMessage(`"${node.name}" excluído`);
+      } catch (err: any) {
+        alert(`Erro ao excluir: ${err.message}`);
+      }
+    }
+  };
+
+  const handleCtxNewFile = async (node: ExplorerNode) => {
+    closeFileContextMenu();
+    const targetDir = node.isDirectory ? node.path : getParentDir(node.path);
+    const fileName = prompt('Nome do novo arquivo (ex: app.module.ts, style.css):');
+    if (!fileName || !fileName.trim()) return;
+    const fullPath = `${targetDir}/${fileName.trim()}`;
+    if (window.electronAPI?.fs?.createItem) {
+      try {
+        await window.electronAPI.fs.createItem(fullPath, false);
+        setExpandedFolders((prev) => new Set(prev).add(targetDir));
+        await loadWorkspaceTree(workspacePath);
+        handleOpenFile(fullPath, fileName.trim(), '');
+        setToastMessage(`Arquivo criado: ${fileName.trim()}`);
+      } catch (err: any) {
+        alert(`Erro ao criar arquivo: ${err.message}`);
+      }
+    }
+  };
+
+  const handleCtxNewFolder = async (node: ExplorerNode) => {
+    closeFileContextMenu();
+    const targetDir = node.isDirectory ? node.path : getParentDir(node.path);
+    const folderName = prompt('Nome da nova pasta:');
+    if (!folderName || !folderName.trim()) return;
+    const fullPath = `${targetDir}/${folderName.trim()}`;
+    if (window.electronAPI?.fs?.createItem) {
+      try {
+        await window.electronAPI.fs.createItem(fullPath, true);
+        setExpandedFolders((prev) => new Set(prev).add(targetDir));
+        await loadWorkspaceTree(workspacePath);
+        setToastMessage(`Pasta criada: ${folderName.trim()}`);
+      } catch (err: any) {
+        alert(`Erro ao criar pasta: ${err.message}`);
+      }
+    }
+  };
+
   const handleClearTerminal = () => {
     const promptPrefix = `walancy@MacBook-Pro ${terminalCwd.split('/').pop() || 'codes'} % `;
     setTerminalHistory([promptPrefix]);
@@ -4732,7 +5779,7 @@ export const App: React.FC = () => {
       setTerminalHistory((prev) => [
         ...prev,
         cmdLine,
-        '💡 O Claude Code CLI requer um prompt neste modo de terminal.\n• Exemplo: claude "analise os arquivos deste projeto"\n• Ou envie sua pergunta diretamente no Chat de IA à direita!',
+        'O Claude Code CLI requer um prompt neste modo de terminal.\nExemplo: claude "analise os arquivos deste projeto"',
         promptPrefix,
       ]);
       return;
@@ -4843,10 +5890,18 @@ export const App: React.FC = () => {
 
 
   // Execute AI CLI command (e.g., claude, agy, gemini) or check if installed
-  const handleAiSubmit = async (e?: React.FormEvent) => {
+  const handleAiSubmit = async (e?: React.FormEvent, promptOverride?: string) => {
     if (e) e.preventDefault();
-    const prompt = askPrompt.trim();
-    if (!prompt || isAiExecuting) return;
+    const prompt = (promptOverride !== undefined ? promptOverride : promptEditorRef.current ? promptEditorRef.current.getValue() : askPrompt).trim();
+    if ((!prompt && attachedFiles.length === 0 && attachedImages.length === 0) || isAiExecuting) return;
+
+    // Snapshot attached files & images, then clear prompt and attachments
+    const currentAttachedFiles = [...attachedFiles];
+    const currentAttachedImages = attachedImages.slice(0, MAX_ATTACHED_IMAGES);
+    setAttachedFiles([]);
+    setAttachedImages([]);
+    setAskPrompt('');
+    promptEditorRef.current?.clear();
 
     // Determine target provider: alternate if orchestrator active, or use selected
     let currentProvider = AI_PROVIDERS.find((p) => p.id === selectedAiProvider) || AI_PROVIDERS[0];
@@ -4876,6 +5931,8 @@ export const App: React.FC = () => {
       executionSteps?: ExecutionStepItem[];
       walkthrough?: WalkthroughItem;
       changedFiles?: ChangedFileItem[];
+      attachedFiles?: AttachedFileItem[];
+      attachedImages?: AttachedImageItem[];
     }) => {
       if (msg.text?.toLowerCase().includes('executando')) return;
       const messageWithProvider: ChatMessageItem = {
@@ -4892,7 +5949,7 @@ export const App: React.FC = () => {
             updated[idx] = {
               ...curr,
               provider: currentProvider.id,
-              title: curr.title === 'Chat Inicial' || curr.title === 'Nova Conversa' ? prompt.slice(0, 36) : curr.title,
+              title: curr.title === 'Chat Inicial' || curr.title === 'Nova Conversa' ? (prompt || (currentAttachedFiles[0]?.name || 'Nova Conversa')).slice(0, 36) : curr.title,
               updatedAt: Date.now(),
               history: next,
             };
@@ -4900,7 +5957,7 @@ export const App: React.FC = () => {
           } else {
             const newSession: ChatSessionItem = {
               id: activeChatSessionId,
-              title: prompt.slice(0, 36),
+              title: (prompt || (currentAttachedFiles[0]?.name || 'Nova Conversa')).slice(0, 36),
               provider: currentProvider.id,
               updatedAt: Date.now(),
               history: next,
@@ -4912,8 +5969,15 @@ export const App: React.FC = () => {
       });
     };
 
-    // Add user message to AI history & session
-    pushAiMessage({ type: 'user', text: prompt, command: `${cliCmd}` });
+    // Add user message to AI history & session with attached items
+    const userDisplayPrompt = prompt || (currentAttachedFiles.length > 0 ? `Analise o(s) arquivo(s): ${currentAttachedFiles.map((f) => f.name).join(', ')}` : 'Analise a imagem anexada.');
+    pushAiMessage({
+      type: 'user',
+      text: userDisplayPrompt,
+      command: `${cliCmd}`,
+      attachedFiles: currentAttachedFiles.length > 0 ? currentAttachedFiles : undefined,
+      attachedImages: currentAttachedImages.length > 0 ? currentAttachedImages : undefined,
+    });
 
     // Check if provider has exhausted credits (0% daily or 0% weekly)
     const currentQuota = aiQuotas[currentProvider.id] || DEFAULT_AI_QUOTAS[currentProvider.id];
@@ -4942,7 +6006,7 @@ export const App: React.FC = () => {
     if (isDelegatedByOrchestrator) {
       pushAiMessage({
         type: 'system',
-        text: `⚡ [Orquestrador: Tarefa alternada para ${currentProvider.name}]`,
+        text: `[Orquestrador: Tarefa alternada para ${currentProvider.name}]`,
       });
     }
 
@@ -4966,7 +6030,7 @@ export const App: React.FC = () => {
           setAiNotInstalledAlert(alertData);
           pushAiMessage({
             type: 'error',
-            text: `⚠️ IA não instalada neste dispositivo!\nO CLI "${cliCmd}" não foi encontrado no seu PATH.\nInstale clicando no botão abaixo para começar a usar.`,
+            text: `CLI "${cliCmd}" não encontrado no PATH.\nInstale para utilizar.`,
             downloadUrl: currentProvider.installUrl,
             command: currentProvider.installGuide,
           });
@@ -5050,16 +6114,93 @@ export const App: React.FC = () => {
         // 2. Build full project context for the AI CLI
         let modeInstruction = '';
         if (aiMode === 'auto') {
-          modeInstruction = '⚡ MODO ATIVO: AUTO MODE (Execução Autônoma Contínua). Execute todas as alterações necessárias, crie ou modifique arquivos e rode comandos necessários diretamente sem parar para perguntar confirmações a cada passo.';
+          modeInstruction = '[Modo Auto]: Execução contínua sem confirmação intermediária.';
         } else if (aiMode === 'plan') {
-          modeInstruction = '📋 MODO ATIVO: PLANEJAMENTO (Architect / Plan Mode). Antes de modificar qualquer arquivo, analise detalhadamente a arquitetura e apresente um plano de implementação estruturado passo a passo, identificando arquivos a serem alterados, novos arquivos e potenciais riscos.';
+          modeInstruction = '[Modo Plan]: Apresente o plano detalhado antes de modificar arquivos.';
         } else if (aiMode === 'ask') {
-          modeInstruction = '💬 MODO ATIVO: CONVERSAÇÃO / ASK ONLY. Apenas responda a dúvida ou explique o código solicitado. NÃO altere arquivos e NÃO proponha comandos modificadores sem o usuário pedir explicitamente.';
+          modeInstruction = '[Modo Ask]: Apenas explicações e respostas conceituais. Não altere arquivos.';
         } else {
-          modeInstruction = '🤖 MODO ATIVO: AGENTE CÓDIGO (Padrão). Implemente a solução de código de forma interativa, testando e validando cada passo com excelência técnica.';
+          modeInstruction = '[Modo Agente]: Desenvolvimento interativo com validações.';
         }
 
-        let promptWithContext = prompt;
+        // Resolve all @[path] mentions from user prompt and load file contents directly
+        const mentionRegex = /@\[(.*?)\]/g;
+        const mentions: string[] = [];
+        let match;
+        while ((match = mentionRegex.exec(prompt)) !== null) {
+          if (match[1] && !mentions.includes(match[1].trim())) {
+            mentions.push(match[1].trim());
+          }
+        }
+
+        const mentionedFilesData: Array<{
+          path: string;
+          name: string;
+          content?: string;
+          isImage?: boolean;
+          error?: string;
+        }> = [];
+
+        for (const mentionPath of mentions) {
+          const resolvedPath = mentionPath.startsWith('/')
+            ? mentionPath
+            : `${effectiveCwd}/${mentionPath}`;
+          const fileName = resolvedPath.split('/').filter(Boolean).pop() || resolvedPath;
+          const isImg = /\.(png|jpe?g|webp|gif|svg|ico)$/i.test(resolvedPath);
+          if (isImg) {
+            mentionedFilesData.push({ path: resolvedPath, name: fileName, isImage: true });
+          } else {
+            try {
+              const fileRes = await window.electronAPI.fs.readFile(resolvedPath);
+              if (fileRes && fileRes.content !== undefined) {
+                mentionedFilesData.push({ path: resolvedPath, name: fileName, content: fileRes.content });
+              } else {
+                mentionedFilesData.push({ path: resolvedPath, name: fileName, error: fileRes?.error || 'Arquivo não encontrado' });
+              }
+            } catch (err: any) {
+              mentionedFilesData.push({ path: resolvedPath, name: fileName, error: err?.message || 'Erro ao ler arquivo' });
+            }
+          }
+        }
+
+        let mentionsContextBlock = '';
+        if (mentionedFilesData.length > 0) {
+          mentionsContextBlock += `\n\n[Itens Mencionados pelo Usuário via @]:\n`;
+          mentionedFilesData.forEach((item) => {
+            mentionsContextBlock += `@[${item.path}] é um [${item.isImage ? 'Arquivo de Imagem' : 'Arquivo de Código/Texto'}]: ${item.path}\n`;
+          });
+
+          mentionsContextBlock += `\n[Conteúdo Real dos Arquivos Referenciados no Prompt]:\n`;
+          mentionedFilesData.forEach((item) => {
+            if (item.content !== undefined) {
+              const ext = item.name.split('.').pop() || '';
+              const maxChars = 35000;
+              const isTruncated = item.content.length > maxChars;
+              const text = isTruncated ? item.content.slice(0, maxChars) + '\n... [restante truncado para manter velocidade]' : item.content;
+              mentionsContextBlock += `\n--- Início de ${item.path} ---\n\`\`\`${ext}\n${text}\n\`\`\`\n--- Fim de ${item.path} ---\n`;
+            } else if (item.isImage) {
+              mentionsContextBlock += `\n--- Imagem: ${item.path} (Arquivo de imagem anexado para visualização) ---\n`;
+            } else if (item.error) {
+              mentionsContextBlock += `\n--- Arquivo: ${item.path} (Aviso: ${item.error}) ---\n`;
+            }
+          });
+        }
+
+        let promptWithContext = prompt || userDisplayPrompt;
+        let attachedContextBlock = '';
+        if (currentAttachedFiles.length > 0) {
+          const filesListStr = currentAttachedFiles
+            .map((f) => `- ${f.isDirectory ? '[Pasta/Diretório]' : '[Arquivo]'}: ${f.path}`)
+            .join('\n');
+          attachedContextBlock += `\n\n[Arquivos e Pastas de Contexto Anexados pelo Usuário]:\n${filesListStr}\nPor favor, consulte e utilize esses arquivos/pastas como contexto prioritário para executar a tarefa.`;
+        }
+        if (currentAttachedImages.length > 0) {
+          attachedContextBlock += `\n\n[Imagens Anexadas]: ${currentAttachedImages.length} imagem(ns) colada(s) ou anexada(s) pelo usuário no chat.`;
+        }
+        if (mentionsContextBlock) {
+          attachedContextBlock += mentionsContextBlock;
+        }
+
         if (!prompt.startsWith('/')) {
           promptWithContext = `[Contexto do Projeto Aberto no DevFlow]:
 ${modeInstruction}
@@ -5067,7 +6208,7 @@ ${modeInstruction}
 - Diretório Raiz do Projeto: ${effectiveCwd}
 ${appSubDir ? `- Módulo/Subaplicação em Edição: ${appSubDir}` : ''}
 ${activeFile?.path ? `- Arquivo Aberto no Editor: ${activeFile.path}` : ''}
-${openFiles.length > 0 ? `- Arquivos Abertos: ${openFiles.map((f) => f.path).filter(Boolean).join(', ')}` : ''}
+${openFiles.length > 0 ? `- Arquivos Abertos: ${openFiles.map((f) => f.path).filter(Boolean).join(', ')}` : ''}${attachedContextBlock}
 
 INSTRUÇÕES OBRIGATÓRIAS:
 1. Você está executando DIRETAMENTE no diretório do projeto: "${effectiveCwd}".
@@ -5076,8 +6217,27 @@ INSTRUÇÕES OBRIGATÓRIAS:
 4. Ao criar novos componentes, páginas ou utilitários, coloque-os na estrutura de pastas correspondente do projeto atual.
 
 Instrução do Usuário:
-${prompt}`;
+${prompt || userDisplayPrompt}`;
+        } else {
+          promptWithContext += attachedContextBlock;
         }
+
+        const mentionedDirFlags = mentionedFilesData
+          .map((f) => {
+            const parts = f.path.split('/');
+            parts.pop();
+            const parentDir = parts.join('/');
+            if (parentDir && !parentDir.startsWith(effectiveCwd)) {
+              return `--add-dir "${parentDir}"`;
+            }
+            return '';
+          })
+          .filter(Boolean);
+
+        const additionalDirFlags = Array.from(new Set([
+          ...currentAttachedFiles.filter((f) => f.isDirectory).map((f) => `--add-dir "${f.path}"`),
+          ...mentionedDirFlags,
+        ])).join(' ');
 
         let fullCommand = `${cliCmd} "${promptWithContext.replace(/"/g, '\\"')}"`;
         if (cliCmd === 'claude') {
@@ -5085,7 +6245,8 @@ ${prompt}`;
           fullCommand = `export PATH="$HOME/.local/bin:$PATH"; claude${modelFlag} --dangerously-skip-permissions -p "${promptWithContext.replace(/"/g, '\\"')}" < /dev/null`;
         } else if (cliCmd === 'agy') {
           const modelFlag = activeModelId && !prompt.startsWith('/') ? ` --model "${activeModelId}"` : '';
-          fullCommand = `export PATH="$HOME/.local/bin:$PATH"; agy${modelFlag} --dangerously-skip-permissions --add-dir "${effectiveCwd}" -p "${promptWithContext.replace(/"/g, '\\"')}"`;
+          const dirFlags = additionalDirFlags ? ` ${additionalDirFlags}` : '';
+          fullCommand = `export PATH="$HOME/.local/bin:$PATH"; agy${modelFlag} --dangerously-skip-permissions --add-dir "${effectiveCwd}"${dirFlags} -p "${promptWithContext.replace(/"/g, '\\"')}"`;
         } else if (cliCmd === 'codex') {
           const modelFlag = activeModelId && !prompt.startsWith('/') ? ` -m "${activeModelId}"` : '';
           fullCommand = `export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; codex exec${modelFlag} --dangerously-bypass-approvals-and-sandbox --cd "${effectiveCwd}" "${promptWithContext.replace(/"/g, '\\"')}"`;
@@ -5100,7 +6261,29 @@ ${prompt}`;
         );
 
         const startTime = Date.now();
-        const execRes = await window.electronAPI.shell.exec(fullCommand, effectiveCwd);
+        let execRes: { stdout: string; stderr: string; exitCode: number; error?: string | null };
+        if (window.electronAPI?.ai?.runCli) {
+          const additionalDirsList = [
+            ...currentAttachedFiles.filter((f) => f.isDirectory).map((f) => f.path),
+            ...mentionedFilesData
+              .map((f) => {
+                const parts = f.path.split('/');
+                parts.pop();
+                const parentDir = parts.join('/');
+                return parentDir && !parentDir.startsWith(effectiveCwd) ? parentDir : '';
+              })
+              .filter(Boolean),
+          ];
+          execRes = await window.electronAPI.ai.runCli({
+            cliCmd,
+            prompt: promptWithContext,
+            model: activeModelId && !prompt.startsWith('/') ? activeModelId : undefined,
+            cwd: effectiveCwd,
+            additionalDirs: additionalDirsList,
+          });
+        } else {
+          execRes = await window.electronAPI.shell.exec(fullCommand, effectiveCwd);
+        }
         const durationMs = Date.now() - startTime;
         const durationSec = Math.max(1, Math.round(durationMs / 1000));
         const workedDuration = durationSec >= 60 ? `${Math.floor(durationSec / 60)}m ${durationSec % 60}s` : `${durationSec}s`;
@@ -6211,6 +7394,7 @@ ${prompt}`;
               {/* Settings Dropdown Menu */}
               {isSettingsMenuOpen && (
                 <div
+                  ref={clampPopupToViewport}
                   style={{
                     position: 'absolute',
                     top: 32,
@@ -6973,7 +8157,7 @@ ${prompt}`;
                     }}
                     onStartReview={(files, index) => {
                       if (files && files.length > 0) {
-                        startReview(files, index || 0);
+                        handleStartReview(files, index || 0);
                       }
                     }}
                     onRunTerminalCommand={(name, cmd) => {
@@ -7025,7 +8209,10 @@ ${prompt}`;
                       {/* 3 Dots Popup Menu */}
                       {explorerMenuOpen && (
                         <div
-                          ref={explorerMenuRef}
+                          ref={(el) => {
+                            explorerMenuRef.current = el;
+                            clampPopupToViewport(el);
+                          }}
                           style={{
                             position: 'absolute',
                             top: 'calc(100% + 4px)',
@@ -7104,10 +8291,23 @@ ${prompt}`;
                         const isDir = item.isDirectory;
                         const ext = (item.extension || item.name.split('.').pop() || '').toLowerCase();
                         const isFileActive = activeFileId === item.path;
+                        const isCtxTarget = fileContextMenu?.node.path === item.path;
 
                         return (
                           <div key={item.path} style={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
                             <div
+                              draggable={true}
+                              onDragStart={(e) => {
+                                const dragData = {
+                                  type: 'devflow-item',
+                                  path: item.path,
+                                  name: item.name,
+                                  isDirectory: item.isDirectory,
+                                };
+                                e.dataTransfer.setData('application/json', JSON.stringify(dragData));
+                                e.dataTransfer.setData('text/plain', `@[${item.path}]`);
+                                e.dataTransfer.effectAllowed = 'copy';
+                              }}
                               onClick={() => {
                                 if (isDir) {
                                   setExpandedFolders((prev) => {
@@ -7120,13 +8320,14 @@ ${prompt}`;
                                   handleOpenFile(item.path, item.name);
                                 }
                               }}
+                              onContextMenu={(e) => handleFileNodeContextMenu(e, item)}
                               style={{
                                 width: '100%',
                                 paddingLeft: depth * 12 + 2,
                                 paddingRight: 6,
                                 height: 24,
                                 borderRadius: 4,
-                                background: isFileActive ? hexToRgba(accentColor, 0.12) : 'transparent',
+                                background: isFileActive || isCtxTarget ? hexToRgba(accentColor, 0.12) : 'transparent',
                                 display: 'flex',
                                 alignItems: 'center',
                                 gap: 6,
@@ -7136,10 +8337,10 @@ ${prompt}`;
                                 transition: 'background 0.1s ease',
                               }}
                               onMouseEnter={(e) => {
-                                if (!isFileActive) e.currentTarget.style.background = themeTokens.hoverBg;
+                                if (!isFileActive && !isCtxTarget) e.currentTarget.style.background = themeTokens.hoverBg;
                               }}
                               onMouseLeave={(e) => {
-                                if (!isFileActive) e.currentTarget.style.background = 'transparent';
+                                if (!isFileActive && !isCtxTarget) e.currentTarget.style.background = 'transparent';
                               }}
                             >
                               {isDir ? (
@@ -7625,6 +8826,18 @@ ${prompt}`;
                       <React.Fragment key={file.id}>
                         {idx > 0 && <div style={{ width: 1, height: 16, background: themeTokens.border }} />}
                         <div
+                          draggable={true}
+                          onDragStart={(e) => {
+                            const dragData = {
+                              type: 'devflow-item',
+                              path: file.path || file.id,
+                              name: file.name,
+                              isDirectory: false,
+                            };
+                            e.dataTransfer.setData('application/json', JSON.stringify(dragData));
+                            e.dataTransfer.setData('text/plain', `@[${file.path || file.id}]`);
+                            e.dataTransfer.effectAllowed = 'copy';
+                          }}
                           onClick={() => setActiveFileId(file.id)}
                           style={{
                             height: 28,
@@ -7813,6 +9026,7 @@ ${prompt}`;
 
                   {editorMoreMenuOpen && (
                     <div
+                      ref={clampPopupToViewport}
                       style={{
                         position: 'absolute',
                         top: 32,
@@ -8522,6 +9736,7 @@ ${prompt}`;
                       {/* Shell Dropdown Menu */}
                       {shellDropdownOpen && (
                         <div
+                          ref={clampPopupToViewport}
                           style={{
                             position: 'absolute',
                             bottom: 44,
@@ -8718,6 +9933,7 @@ ${prompt}`;
                       {/* More Options Dropdown Menu */}
                       {moreOptionsOpen && (
                         <div
+                          ref={clampPopupToViewport}
                           style={{
                             position: 'absolute',
                             bottom: 44,
@@ -9114,9 +10330,12 @@ ${prompt}`;
                               onMouseEnter={(e) => {
                                 setHoveredRowId(s.id);
                                 if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+                                const currentEl = e.currentTarget;
+                                const parentEl = currentEl.parentElement;
                                 hoverTimerRef.current = setTimeout(() => {
-                                  const rect = e.currentTarget.getBoundingClientRect();
-                                  const parentRect = e.currentTarget.parentElement?.getBoundingClientRect();
+                                  if (!currentEl || !parentEl) return;
+                                  const rect = currentEl.getBoundingClientRect();
+                                  const parentRect = parentEl.getBoundingClientRect();
                                   if (parentRect) {
                                     setPopoverTop(rect.top - parentRect.top + 28);
                                   }
@@ -9685,95 +10904,185 @@ ${prompt}`;
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    {aiHistory.length > 0 && (
-                      <>
-                        <button
-                          onClick={() => handleSaveCurrentChatLocally()}
-                          title="Salvar conversa localmente com contexto em ~/.devflow/chats/"
-                          style={{
-                            background: 'transparent',
-                            border: 'none',
-                            color: themeTokens.textSecondary,
-                            cursor: 'pointer',
-                            padding: '3px 6px',
-                            fontSize: 11,
-                            fontFamily: 'Poppins, sans-serif',
-                            fontWeight: '400',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 4,
-                            borderRadius: 4,
-                            transition: 'color 0.15s ease',
-                          }}
-                          onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary)}
-                          onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary)}
-                        >
-                          <Save size={12} />
-                          <span>Salvar</span>
-                        </button>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }} ref={chatActionsMenuRef}>
+                    <button
+                      onClick={() => setChatActionsMenuOpen((prev) => !prev)}
+                      title="Mais opções"
+                      style={{
+                        background: chatActionsMenuOpen
+                          ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)')
+                          : 'transparent',
+                        border: 'none',
+                        color: chatActionsMenuOpen ? themeTokens.textPrimary : themeTokens.textSecondary,
+                        cursor: 'pointer',
+                        padding: '4px 6px',
+                        borderRadius: 4,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary;
+                        (e.currentTarget as HTMLElement).style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!chatActionsMenuOpen) {
+                          (e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary;
+                          (e.currentTarget as HTMLElement).style.background = 'transparent';
+                        }
+                      }}
+                    >
+                      <MoreHorizontal size={14} />
+                    </button>
 
-                        <button
-                          onClick={() => handleExportChat(undefined, 'markdown')}
-                          title="Exportar conversa formatada como Markdown (.md)"
-                          style={{
-                            background: 'transparent',
-                            border: 'none',
-                            color: themeTokens.textSecondary,
-                            cursor: 'pointer',
-                            padding: '3px 6px',
-                            fontSize: 11,
-                            fontFamily: 'Poppins, sans-serif',
-                            fontWeight: '400',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 4,
-                            borderRadius: 4,
-                            transition: 'color 0.15s ease',
-                          }}
-                          onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary)}
-                          onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary)}
-                        >
-                          <Download size={12} />
-                          <span>Exportar</span>
-                        </button>
-
-                        <button
+                    {chatActionsMenuOpen && (
+                      <div
+                        ref={clampPopupToViewport}
+                        style={{
+                          position: 'absolute',
+                          top: 'calc(100% + 4px)',
+                          right: 0,
+                          background: themeTokens.bgCardSecondary,
+                          border: `1px solid ${themeTokens.border}`,
+                          borderRadius: 8,
+                          padding: 4,
+                          minWidth: 140,
+                          zIndex: 100000,
+                          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 2,
+                        }}
+                      >
+                        <div
                           onClick={() => {
+                            setChatActionsMenuOpen(false);
+                            handleOpenChatHistoryModal();
+                          }}
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                            fontSize: 12,
+                            fontFamily: 'Poppins, sans-serif',
+                            color: themeTokens.textPrimary,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 8,
+                            transition: 'background 0.15s ease',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'transparent';
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <Clock size={13} color={accentColor} />
+                            <span>Ver Histórico</span>
+                          </div>
+                          <span style={{ fontSize: 10, color: themeTokens.textSecondary, opacity: 0.7 }}>⌘⇧H</span>
+                        </div>
+                        <div
+                          onClick={() => {
+                            setChatActionsMenuOpen(false);
+                            handleSaveCurrentChatLocally();
+                          }}
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                            fontSize: 12,
+                            fontFamily: 'Poppins, sans-serif',
+                            color: themeTokens.textPrimary,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            transition: 'background 0.15s ease',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'transparent';
+                          }}
+                        >
+                          <Save size={13} color={themeTokens.textSecondary} />
+                          <span>Salvar</span>
+                        </div>
+
+                        <div
+                          onClick={() => {
+                            setChatActionsMenuOpen(false);
+                            handleExportChat(undefined, 'markdown');
+                          }}
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                            fontSize: 12,
+                            fontFamily: 'Poppins, sans-serif',
+                            color: themeTokens.textPrimary,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            transition: 'background 0.15s ease',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'transparent';
+                          }}
+                        >
+                          <Download size={13} color={themeTokens.textSecondary} />
+                          <span>Exportar</span>
+                        </div>
+
+                        <div
+                          onClick={() => {
+                            setChatActionsMenuOpen(false);
                             setAiHistory([]);
                             setChatSessions((prev) =>
                               prev.map((s) => (s.id === activeChatSessionId ? { ...s, history: [] } : s))
                             );
                           }}
-                          title="Limpar histórico"
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          color: themeTokens.textSecondary,
-                          cursor: 'pointer',
-                          padding: '3px 6px',
-                          fontSize: 11,
-                          fontFamily: 'Poppins, sans-serif',
-                          fontWeight: '400',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 4,
-                          borderRadius: 4,
-                        }}
-                        onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary)}
-                        onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary)}
-                      >
-                        <Trash2 size={12} />
-                        <span>Limpar</span>
-                      </button>
-                      </>
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                            fontSize: 12,
+                            fontFamily: 'Poppins, sans-serif',
+                            color: '#ef4444',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            transition: 'background 0.15s ease',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = isEffectiveDark ? 'rgba(239, 68, 68, 0.12)' : 'rgba(239, 68, 68, 0.08)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'transparent';
+                          }}
+                        >
+                          <Trash2 size={13} color="#ef4444" />
+                          <span>Limpar</span>
+                        </div>
+                      </div>
                     )}
                   </div>
 
                   {/* Chat History & Sessions Popup */}
                   {chatHistoryPopupOpen && (
                     <div
-                      ref={chatHistoryPopupRef}
+                      ref={(el) => {
+                        chatHistoryPopupRef.current = el;
+                        clampPopupToViewport(el);
+                      }}
                       style={{
                         position: 'absolute',
                         top: 34,
@@ -9927,21 +11236,34 @@ ${prompt}`;
                                       </button>
                                     </form>
                                   ) : (
-                                    <span
-                                      onDoubleClick={(e) => handleStartRenameChatSession(s, e)}
-                                      title="Duplo clique para renomear"
-                                      style={{
-                                        fontSize: 11.5,
-                                        color: themeTokens.textPrimary,
-                                        overflow: 'hidden',
-                                        textOverflow: 'ellipsis',
-                                        whiteSpace: 'nowrap',
-                                        fontWeight: isActive ? '500' : '400',
-                                        flex: 1,
-                                      }}
-                                    >
-                                      {s.title}
-                                    </span>
+                                    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, gap: 1 }}>
+                                      <span
+                                        onDoubleClick={(e) => handleStartRenameChatSession(s, e)}
+                                        title="Duplo clique para renomear"
+                                        style={{
+                                          fontSize: 11.5,
+                                          color: themeTokens.textPrimary,
+                                          overflow: 'hidden',
+                                          textOverflow: 'ellipsis',
+                                          whiteSpace: 'nowrap',
+                                          fontWeight: isActive ? '500' : '400',
+                                        }}
+                                      >
+                                        {s.title}
+                                      </span>
+                                      <span
+                                        style={{
+                                          fontSize: 10,
+                                          color: isEffectiveDark ? 'rgba(255, 255, 255, 0.4)' : 'rgba(0, 0, 0, 0.45)',
+                                          whiteSpace: 'nowrap',
+                                          overflow: 'hidden',
+                                          textOverflow: 'ellipsis',
+                                          lineHeight: '13px',
+                                        }}
+                                      >
+                                        {formatTimeAgo(s.updatedAt)}
+                                      </span>
+                                    </div>
                                   )}
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
@@ -10012,6 +11334,44 @@ ${prompt}`;
                             );
                           })
                         )}
+
+                        {/* Ver mais... row inside chat list */}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenChatHistoryModal()}
+                          title="Abrir modal com histórico completo e detalhes das conversas"
+                          style={{
+                            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
+                            border: `1px dashed ${themeTokens.border}`,
+                            color: themeTokens.textSecondary,
+                            borderRadius: 5,
+                            padding: '5px 8px',
+                            fontSize: 11,
+                            fontFamily: 'Poppins, sans-serif',
+                            fontWeight: '500',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 5,
+                            marginTop: 3,
+                            transition: 'all 0.15s ease',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.color = themeTokens.textPrimary;
+                            e.currentTarget.style.borderColor = accentColor;
+                            e.currentTarget.style.background = hexToRgba(accentColor, 0.08);
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.color = themeTokens.textSecondary;
+                            e.currentTarget.style.borderColor = themeTokens.border;
+                            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)';
+                          }}
+                        >
+                          <Clock size={11} color={accentColor} />
+                          <span>Ver mais conversas...</span>
+                          <ChevronRight size={11} />
+                        </button>
                       </div>
 
                       {/* Popup Footer */}
@@ -10020,34 +11380,44 @@ ${prompt}`;
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
-                          paddingTop: 4,
-                          borderTop: 'none',
-                          fontSize: 10,
+                          paddingTop: 6,
+                          borderTop: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.07)'}`,
+                          fontSize: 10.5,
                           color: themeTokens.textSecondary,
                         }}
                       >
-                        <span style={{ opacity: 0.65 }}>Salvo em ~/.devflow/chats/</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, opacity: 0.75 }} title="Conversas salvas automaticamente em ~/.devflow/chats/">
+                          <Check size={11} color={accentColor} />
+                          <span>Salvo automaticamente</span>
+                        </div>
                         <button
                           type="button"
-                          onClick={() => handleSaveCurrentChatLocally()}
-                          title="Salvar sessão ativa no disco agora"
+                          onClick={() => handleOpenChatHistoryModal()}
+                          title="Ver detalhes de todas as conversas salvas"
                           style={{
-                            background: 'transparent',
+                            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.06)',
                             border: 'none',
                             color: accentColor,
                             cursor: 'pointer',
-                            padding: '2px 4px',
-                            fontSize: 10,
+                            padding: '3px 8px',
+                            fontSize: 10.5,
                             fontFamily: 'Poppins, sans-serif',
                             fontWeight: '500',
                             display: 'flex',
                             alignItems: 'center',
                             gap: 3,
-                            borderRadius: 3,
+                            borderRadius: 4,
+                            transition: 'all 0.15s ease',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = hexToRgba(accentColor, 0.18);
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.06)';
                           }}
                         >
-                          <Save size={10} />
-                          <span>Salvar Agora</span>
+                          <span>Ver mais</span>
+                          <ChevronRight size={11} />
                         </button>
                       </div>
                     </div>
@@ -10179,6 +11549,11 @@ ${prompt}`;
 
                   <div
                     ref={aiTerminalScrollRef}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onDrop={handlePromptDrop}
                     style={{
                       flex: '1 1 0',
                       minHeight: 0,
@@ -10224,9 +11599,61 @@ ${prompt}`;
                               fontWeight: '400',
                               lineHeight: '18px',
                               flex: '1 1 auto',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 6,
                             }}
                           >
-                            {item.text}
+                            {/* Attached Images in User Message */}
+                            {item.attachedImages && item.attachedImages.length > 0 && (
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 2 }}>
+                                {item.attachedImages.map((img, imgIdx) => (
+                                  <img
+                                    key={imgIdx}
+                                    src={img.dataUrl}
+                                    alt={img.name}
+                                    style={{
+                                      maxWidth: 180,
+                                      maxHeight: 140,
+                                      borderRadius: 6,
+                                      objectFit: 'cover',
+                                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                                      boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                            )}
+
+                            <div style={{ lineHeight: '20px' }}>{renderPromptTextWithMentions(item.text)}</div>
+
+                            {/* Attached Files & Folders in User Message */}
+                            {item.attachedFiles && item.attachedFiles.length > 0 && (
+                              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 4 }}>
+                                {item.attachedFiles.map((f, fIdx) => (
+                                  <div
+                                    key={fIdx}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: 5,
+                                      background: isEffectiveDark ? 'rgba(0, 0, 0, 0.35)' : 'rgba(255, 255, 255, 0.6)',
+                                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                                      borderRadius: 4,
+                                      padding: '2px 7px 2px 5px',
+                                      fontSize: 11,
+                                    }}
+                                  >
+                                    {f.isDirectory ? (
+                                      <FolderIcon folderName={f.name} isOpen={false} size={12} />
+                                    ) : (
+                                      <FileIcon fileName={f.name} size={12} />
+                                    )}
+                                    <span style={{ fontWeight: 500 }}>{f.name}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                           <img
                             src={avatarImg}
@@ -11003,15 +12430,14 @@ ${prompt}`;
                   const safeSelectedIndex = filteredSlashCommands.length > 0 ? Math.min(Math.max(0, selectedSlashIndex), filteredSlashCommands.length - 1) : 0;
 
                   const handleSelectSlashCommand = (cmd: AiSlashCommand) => {
-                    setAskPrompt(`${cmd.command} `);
+                    if (promptEditorRef.current) {
+                      promptEditorRef.current.setValue(`${cmd.command} `);
+                      promptEditorRef.current.focus();
+                    } else if (inputRef.current) {
+                      setAskPrompt(`${cmd.command} `);
+                      inputRef.current.focus();
+                    }
                     setIsSlashDismissed(true);
-                    setTimeout(() => {
-                      if (inputRef.current) {
-                        inputRef.current.focus();
-                        const len = cmd.command.length + 1;
-                        inputRef.current.setSelectionRange?.(len, len);
-                      }
-                    }, 50);
                   };
 
                   const currentQuota = aiQuotas[selectedAiProvider] || DEFAULT_AI_QUOTAS[selectedAiProvider];
@@ -11118,15 +12544,41 @@ ${prompt}`;
 
                       <form
                         onSubmit={handleAiSubmit}
+                        onDragEnter={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          promptDragCounterRef.current += 1;
+                          setIsPromptDragOver(true);
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                        onDragLeave={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          promptDragCounterRef.current -= 1;
+                          if (promptDragCounterRef.current <= 0) {
+                            promptDragCounterRef.current = 0;
+                            setIsPromptDragOver(false);
+                          }
+                        }}
+                        onDrop={(e) => {
+                          promptDragCounterRef.current = 0;
+                          setIsPromptDragOver(false);
+                          handlePromptDrop(e);
+                        }}
                         style={{
                           alignSelf: 'stretch',
                           background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(255, 255, 255, 0.45)',
                           backdropFilter: 'blur(12px)',
                           WebkitBackdropFilter: 'blur(12px)',
                           borderRadius: 10,
-                          border: 'none',
+                          border: isPromptDragOver
+                            ? '1px solid #3b82f6'
+                            : (isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)'),
                           outline: 'none',
-                          boxShadow: 'none',
+                          boxShadow: isPromptDragOver ? '0 0 12px rgba(59, 130, 246, 0.3)' : 'none',
                           flexDirection: 'column',
                           justifyContent: 'flex-start',
                           alignItems: 'flex-start',
@@ -11135,9 +12587,120 @@ ${prompt}`;
                           position: 'relative',
                           flexShrink: 0,
                           zIndex: 50,
-                          transition: 'background 0.2s ease',
+                          transition: 'all 0.2s ease',
                         }}
                       >
+                      {/* Image limit warning banner */}
+                      {imageLimitWarning && (
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            padding: '6px 12px',
+                            margin: '8px 14px 0 14px',
+                            borderRadius: 6,
+                            background: 'rgba(239, 68, 68, 0.15)',
+                            border: '1px solid rgba(239, 68, 68, 0.35)',
+                            color: '#f87171',
+                            fontSize: 11.5,
+                            fontFamily: 'Poppins, sans-serif',
+                            fontWeight: 500,
+                          }}
+                        >
+                          <AlertTriangle size={13} />
+                          <span>{imageLimitWarning}</span>
+                        </div>
+                      )}
+
+                      {/* Attached Images Preview Row (Antigravity Style) */}
+                      {attachedImages.length > 0 && (
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 8,
+                            padding: '10px 14px 2px 14px',
+                            maxWidth: '100%',
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              overflowX: 'auto',
+                              minWidth: 0,
+                            }}
+                          >
+                            {attachedImages.map((img) => (
+                              <div
+                                key={img.id}
+                                style={{
+                                  position: 'relative',
+                                  width: 38,
+                                  height: 38,
+                                  borderRadius: 6,
+                                  overflow: 'hidden',
+                                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                                  background: '#111',
+                                  flexShrink: 0,
+                                  boxShadow: '0 2px 6px rgba(0, 0, 0, 0.4)',
+                                }}
+                              >
+                                <img
+                                  src={img.dataUrl}
+                                  alt={img.name}
+                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setAttachedImages((prev) => prev.filter((i) => i.id !== img.id))}
+                                  title="Remover imagem"
+                                  style={{
+                                    position: 'absolute',
+                                    top: 2,
+                                    right: 2,
+                                    width: 14,
+                                    height: 14,
+                                    borderRadius: '50%',
+                                    background: 'rgba(0, 0, 0, 0.75)',
+                                    border: 'none',
+                                    color: '#fff',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    cursor: 'pointer',
+                                    padding: 0,
+                                  }}
+                                >
+                                  <X size={9} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+
+                          <span
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 500,
+                              fontFamily: 'Poppins, sans-serif',
+                              color: attachedImages.length >= MAX_ATTACHED_IMAGES ? '#f59e0b' : themeTokens.textSecondary,
+                              whiteSpace: 'nowrap',
+                              userSelect: 'none',
+                              padding: '2px 7px',
+                              borderRadius: 4,
+                              background: attachedImages.length >= MAX_ATTACHED_IMAGES ? 'rgba(245, 158, 11, 0.14)' : 'rgba(255, 255, 255, 0.05)',
+                              border: attachedImages.length >= MAX_ATTACHED_IMAGES ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(255, 255, 255, 0.08)',
+                              flexShrink: 0,
+                            }}
+                          >
+                            {attachedImages.length}/{MAX_ATTACHED_IMAGES} imagens{attachedImages.length >= MAX_ATTACHED_IMAGES ? ' (máx)' : ''}
+                          </span>
+                        </div>
+                      )}
+
                       {/* Floating Slash Commands Autocomplete Menu */}
                       {isSlashActive && (
                         <div
@@ -11227,31 +12790,181 @@ ${prompt}`;
                         </div>
                       )}
 
-                      {/* Larger Typing Area (Multi-line Support with Enter to Send) */}
-                      <div style={{ alignSelf: 'stretch', padding: '12px 14px', display: 'flex', alignItems: 'flex-start' }}>
-                        <textarea
-                          ref={inputRef as any}
-                          value={askPrompt}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setAskPrompt(val);
-                            if (!val.startsWith('/')) {
-                              if (isSlashDismissed) setIsSlashDismissed(false);
-                            } else {
-                              setSelectedSlashIndex(0);
-                            }
+                      {/* Floating @ Mention Autocomplete Menu (Antigravity Style) */}
+                      {atMentionState.isOpen && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            bottom: 'calc(100% + 8px)',
+                            left: 0,
+                            right: 0,
+                            background: isEffectiveDark ? '#181818' : '#ffffff',
+                            borderRadius: 10,
+                            border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(0, 0, 0, 0.1)',
+                            boxShadow: isEffectiveDark ? '0 8px 24px rgba(0, 0, 0, 0.75)' : '0 8px 24px rgba(0, 0, 0, 0.15)',
+                            padding: 6,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 2,
+                            maxHeight: 250,
+                            overflowY: 'auto',
+                            zIndex: 99999,
                           }}
-                          onKeyDown={(e) => {
+                        >
+                          <div
+                            style={{
+                              padding: '4px 8px 6px 8px',
+                              borderBottom: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)',
+                              marginBottom: 4,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              color: themeTokens.textSecondary,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              fontFamily: 'Poppins, sans-serif',
+                            }}
+                          >
+                            <span style={{ color: '#60a5fa', fontWeight: 700 }}>@</span>
+                            <span>Mencionar Arquivo no Prompt (Contexto Direto)</span>
+                          </div>
+
+                          {filteredAtFiles.length > 0 ? (
+                            filteredAtFiles.map((file, idx) => {
+                              const isSelected = idx === atMentionState.selectedIndex;
+                              const ext = (file.name.split('.').pop() || '').toLowerCase();
+                              const isImg = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'gif'].includes(ext);
+                              return (
+                                <div
+                                  key={file.path}
+                                  onClick={() => handleSelectAtItem(file)}
+                                  onMouseEnter={() => setAtMentionState((prev) => ({ ...prev, selectedIndex: idx }))}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    padding: '6px 10px',
+                                    borderRadius: 6,
+                                    cursor: 'pointer',
+                                    background: isSelected
+                                      ? (isEffectiveDark ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.12)')
+                                      : 'transparent',
+                                    outline: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : 'none',
+                                    transition: 'all 0.12s ease',
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: '1 1 auto' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                                      {isImg ? (
+                                        <ImageIcon size={13} color="#60a5fa" />
+                                      ) : (
+                                        <FileIcon fileName={file.name} size={13} />
+                                      )}
+                                    </div>
+                                    <span
+                                      style={{
+                                        color: isSelected ? themeTokens.textPrimary : (isEffectiveDark ? '#e0e0e0' : '#222222'),
+                                        fontFamily: 'Poppins, sans-serif',
+                                        fontSize: 12,
+                                        fontWeight: 600,
+                                        whiteSpace: 'nowrap',
+                                      }}
+                                    >
+                                      {file.name}
+                                    </span>
+                                    <span
+                                      style={{
+                                        color: themeTokens.textSecondary,
+                                        fontFamily: 'Poppins, monospace',
+                                        fontSize: 10.5,
+                                        whiteSpace: 'nowrap',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        opacity: 0.8,
+                                        maxWidth: 240,
+                                      }}
+                                      title={file.path}
+                                    >
+                                      {file.path.replace(workspacePath, '').replace(/^\//, '') || file.path}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <div style={{ padding: '8px 10px', color: themeTokens.textSecondary, fontSize: 11.5, fontFamily: 'Poppins, sans-serif' }}>
+                              Nenhum arquivo correspondente para <strong style={{ color: themeTokens.textPrimary }}>@{atMentionState.query}</strong>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Larger Typing Area (Multi-line Support with Enter to Send) */}
+                      <div style={{ alignSelf: 'stretch', padding: '10px 14px 6px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <PromptEditor
+                          ref={promptEditorRef}
+                          placeholder="Pergunte, mencione arquivos com @ ou arraste para cá..."
+                          disabled={isAiExecuting}
+                          isEffectiveDark={isEffectiveDark}
+                          maxImages={MAX_ATTACHED_IMAGES}
+                          currentImagesCount={attachedImages.length}
+                          onImageLimitReached={triggerImageLimitWarning}
+                          onImageAttached={handleImageFileAttached}
+                          onSubmit={(prompt) => handleAiSubmit(undefined, prompt)}
+                          onAtMentionQuery={(q) => {
+                            setAtMentionState((prev) => ({
+                              ...prev,
+                              isOpen: true,
+                              query: q,
+                              selectedIndex: 0,
+                            }));
+                          }}
+                          onAtMentionClose={() => {
+                            setAtMentionState((prev) => ({ ...prev, isOpen: false }));
+                          }}
+                          onKeyDownExtra={(e) => {
+                            if (atMentionState.isOpen && filteredAtFiles.length > 0) {
+                              if (e.key === 'ArrowDown') {
+                                e.preventDefault();
+                                setAtMentionState((prev) => ({
+                                  ...prev,
+                                  selectedIndex: (prev.selectedIndex + 1) % filteredAtFiles.length,
+                                }));
+                                return true;
+                              }
+                              if (e.key === 'ArrowUp') {
+                                e.preventDefault();
+                                setAtMentionState((prev) => ({
+                                  ...prev,
+                                  selectedIndex: (prev.selectedIndex - 1 + filteredAtFiles.length) % filteredAtFiles.length,
+                                }));
+                                return true;
+                              }
+                              if (e.key === 'Enter' || e.key === 'Tab') {
+                                e.preventDefault();
+                                const selected = filteredAtFiles[atMentionState.selectedIndex] || filteredAtFiles[0];
+                                if (selected) {
+                                  handleSelectAtItem(selected);
+                                }
+                                return true;
+                              }
+                              if (e.key === 'Escape') {
+                                e.preventDefault();
+                                setAtMentionState((prev) => ({ ...prev, isOpen: false }));
+                                return true;
+                              }
+                            }
+
                             if (isSlashActive && filteredSlashCommands.length > 0) {
                               if (e.key === 'ArrowDown') {
                                 e.preventDefault();
                                 setSelectedSlashIndex((prev) => (prev + 1) % filteredSlashCommands.length);
-                                return;
+                                return true;
                               }
                               if (e.key === 'ArrowUp') {
                                 e.preventDefault();
                                 setSelectedSlashIndex((prev) => (prev - 1 + filteredSlashCommands.length) % filteredSlashCommands.length);
-                                return;
+                                return true;
                               }
                               if (e.key === 'Enter' || e.key === 'Tab') {
                                 e.preventDefault();
@@ -11259,37 +12972,91 @@ ${prompt}`;
                                 if (cmd) {
                                   handleSelectSlashCommand(cmd);
                                 }
-                                return;
+                                return true;
                               }
                               if (e.key === 'Escape') {
                                 e.preventDefault();
                                 setIsSlashDismissed(true);
-                                return;
+                                return true;
                               }
                             }
-
-                            if (e.key === 'Enter' && !e.shiftKey) {
-                              e.preventDefault();
-                              handleAiSubmit();
-                            }
-                          }}
-                          placeholder={`Perguntar ou digite / para comandos do ${activeAiProvider.name}...`}
-                          disabled={isAiExecuting}
-                          rows={3}
-                          style={{
-                            flex: '1 1 0',
-                            color: themeTokens.textPrimary,
-                            fontSize: 12.5,
-                            fontFamily: 'Poppins, sans-serif',
-                            fontWeight: '400',
-                            background: 'transparent',
-                            border: 'none',
-                            outline: 'none',
-                            resize: 'none',
-                            lineHeight: '19px',
-                            minHeight: 58,
+                            return false;
                           }}
                         />
+
+                        {/* Attached Files & Folders Chips (Antigravity Style) */}
+                        {attachedFiles.length > 0 && (
+                          <div
+                            style={{
+                              display: 'flex',
+                              flexWrap: 'wrap',
+                              alignItems: 'center',
+                              gap: 6,
+                              paddingTop: 2,
+                            }}
+                          >
+                            {attachedFiles.map((file) => (
+                              <div
+                                key={file.id}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
+                                  border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.12)'}`,
+                                  borderRadius: 6,
+                                  padding: '3px 8px 3px 6px',
+                                  fontSize: 12,
+                                  fontFamily: 'Poppins, sans-serif',
+                                  color: themeTokens.textPrimary,
+                                  userSelect: 'none',
+                                  maxWidth: '100%',
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                                  {file.isDirectory ? (
+                                    <FolderIcon folderName={file.name} isOpen={false} size={14} />
+                                  ) : (
+                                    <FileIcon fileName={file.name} size={14} />
+                                  )}
+                                </div>
+                                <span
+                                  title={file.path}
+                                  style={{
+                                    maxWidth: 190,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    fontWeight: 500,
+                                  }}
+                                >
+                                  {file.name}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setAttachedFiles((prev) => prev.filter((f) => f.id !== file.id))}
+                                  title="Remover anexo"
+                                  style={{
+                                    background: 'transparent',
+                                    border: 'none',
+                                    color: themeTokens.textSecondary,
+                                    cursor: 'pointer',
+                                    padding: 1,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    borderRadius: 3,
+                                  }}
+                                  onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = '#ef4444')}
+                                  onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary)}
+                                >
+                                  <X size={11} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+
                       </div>
 
                   {/* Bottom Row: AI Selector + Model Selector + Send Button */}
@@ -11339,6 +13106,7 @@ ${prompt}`;
                         {/* Hover Tooltip */}
                         {orchestratorTooltipOpen && (
                           <div
+                            ref={clampPopupToViewport}
                             style={{
                               position: 'absolute',
                               bottom: 'calc(100% + 8px)',
@@ -11372,7 +13140,25 @@ ${prompt}`;
                       {/* Select AI (Provider) Button with Logo */}
                       <div style={{ position: 'relative', flexShrink: 1, minWidth: 0 }} ref={providerDropdownRef}>
                         <div
-                          onClick={() => setProviderDropdown(!providerDropdown)}
+                          onClick={() => {
+                            const willOpen = !providerDropdown;
+                            setProviderDropdown(willOpen);
+                            if (willOpen) {
+                              if (providerDropdownRef.current) {
+                                const rect = providerDropdownRef.current.getBoundingClientRect();
+                                const spaceOnRight = window.innerWidth - (rect.left + 220);
+                                setSubmenuOpenOnLeft(spaceOnRight < 240);
+                              }
+                              const isInstalled = installedClis[selectedAiProvider] ?? true;
+                              if (isInstalled) {
+                                setActiveProviderSubmenu(selectedAiProvider);
+                              } else {
+                                setActiveProviderSubmenu(null);
+                              }
+                            } else {
+                              setActiveProviderSubmenu(null);
+                            }
+                          }}
                           style={{
                             height: 26,
                             paddingLeft: 7,
@@ -11388,7 +13174,7 @@ ${prompt}`;
                             cursor: 'pointer',
                             whiteSpace: 'nowrap',
                             transition: 'background 0.15s ease',
-                            maxWidth: 110,
+                            maxWidth: 190,
                             minWidth: 0,
                             overflow: 'hidden',
                           }}
@@ -11406,16 +13192,36 @@ ${prompt}`;
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',
                               minWidth: 0,
+                              flexShrink: 0,
                             }}
                           >
                             {AI_PROVIDERS.find((p) => p.id === selectedAiProvider)?.name || 'Claude'}
                           </div>
+                          {selectedModel && (
+                            <div
+                              style={{
+                                color: themeTokens.textSecondary,
+                                opacity: 0.85,
+                                fontSize: 10.5,
+                                fontFamily: 'Poppins, sans-serif',
+                                fontWeight: '400',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                minWidth: 0,
+                                flexShrink: 1,
+                              }}
+                            >
+                              {formatModelDisplayName(selectedModel) || selectedModel}
+                            </div>
+                          )}
                           <ChevronDown size={10} color={themeTokens.textSecondary} style={{ flexShrink: 0 }} />
                         </div>
 
                         {/* AI Providers Dropdown Menu */}
                         {providerDropdown && (
                           <div
+                            ref={clampPopupToViewport}
                             style={{
                               position: 'absolute',
                               bottom: 34,
@@ -11437,6 +13243,14 @@ ${prompt}`;
                               const isInstalled = installedClis[p.id] ?? true;
                               const isSelected = selectedAiProvider === p.id;
                               const isOrchestrated = !!orchestratedProviders[p.id];
+                              const isOpen = activeProviderSubmenu === p.id;
+
+                              const dynamicList = activeModels[p.id]?.models || [];
+                              const fallbackList = (p.models || []).map((mName) => ({
+                                id: mName,
+                                label: mName,
+                              }));
+                              const modelList = dynamicList.length > 0 ? dynamicList : fallbackList;
 
                               return (
                                 <div
@@ -11448,7 +13262,17 @@ ${prompt}`;
                                       return;
                                     }
                                     handleSwitchAiProvider(p.id);
-                                    setProviderDropdown(false);
+                                    if (modelList.length > 0) {
+                                      if (providerDropdownRef.current) {
+                                        const rect = providerDropdownRef.current.getBoundingClientRect();
+                                        const spaceOnRight = window.innerWidth - (rect.left + 220);
+                                        setSubmenuOpenOnLeft(spaceOnRight < 240);
+                                      }
+                                      setActiveProviderSubmenu((prev) => (prev === p.id ? null : p.id));
+                                    } else {
+                                      setProviderDropdown(false);
+                                      setActiveProviderSubmenu(null);
+                                    }
                                     setAiNotInstalledAlert(null);
                                   }}
                                   title={
@@ -11465,7 +13289,11 @@ ${prompt}`;
                                     cursor: 'pointer',
                                     borderRadius: 6,
                                     whiteSpace: 'nowrap',
-                                    background: isSelected ? hexToRgba(accentColor, 0.15) : 'transparent',
+                                    background: isSelected
+                                      ? hexToRgba(accentColor, 0.15)
+                                      : isOpen
+                                      ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)')
+                                      : 'transparent',
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'space-between',
@@ -11474,12 +13302,12 @@ ${prompt}`;
                                     transition: 'background 0.15s ease, opacity 0.15s ease',
                                   }}
                                   onMouseEnter={(e) => {
-                                    if (!isSelected) {
+                                    if (!isSelected && !isOpen) {
                                       e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
                                     }
                                   }}
                                   onMouseLeave={(e) => {
-                                    if (!isSelected) {
+                                    if (!isSelected && !isOpen) {
                                       e.currentTarget.style.background = 'transparent';
                                     }
                                   }}
@@ -11570,10 +13398,145 @@ ${prompt}`;
                                         }}
                                       />
                                     )}
+
+                                    {/* Arrow to toggle models submenu on click - only if installed */}
+                                    {isInstalled && modelList.length > 0 && (
+                                      <div
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          if (providerDropdownRef.current) {
+                                            const rect = providerDropdownRef.current.getBoundingClientRect();
+                                            const spaceOnRight = window.innerWidth - (rect.left + 220);
+                                            setSubmenuOpenOnLeft(spaceOnRight < 240);
+                                          }
+                                          setActiveProviderSubmenu((prev) => (prev === p.id ? null : p.id));
+                                        }}
+                                        title="Ver opções de modelos"
+                                        style={{
+                                          padding: '2px 3px',
+                                          borderRadius: 4,
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          background: isOpen ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)') : 'transparent',
+                                          cursor: 'pointer',
+                                          transition: 'all 0.15s ease',
+                                        }}
+                                      >
+                                        <ChevronRight
+                                          size={11}
+                                          color={isOpen ? themeTokens.textPrimary : themeTokens.textSecondary}
+                                          style={{
+                                            opacity: isOpen ? 1 : 0.6,
+                                            transform: isOpen ? 'rotate(90deg)' : (submenuOpenOnLeft ? 'rotate(180deg)' : 'none'),
+                                            transition: 'transform 0.15s ease',
+                                          }}
+                                        />
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
                               );
                             })}
+
+                            {/* Submenu on Click with AI models - anchored to bottom: 0 to never cut off */}
+                            {(() => {
+                              if (!activeProviderSubmenu) return null;
+                              const targetProvider = AI_PROVIDERS.find((p) => p.id === activeProviderSubmenu);
+                              if (!targetProvider) return null;
+                              const isTargetInstalled = installedClis[targetProvider.id] ?? true;
+                              if (!isTargetInstalled) return null;
+
+                              const dynamicList = activeModels[targetProvider.id]?.models || [];
+                              const fallbackList = (targetProvider.models || []).map((mName) => ({
+                                id: mName,
+                                label: mName,
+                              }));
+                              const modelList = dynamicList.length > 0 ? dynamicList : fallbackList;
+                              if (modelList.length === 0) return null;
+
+                              return (
+                                <div
+                                  ref={(el) => {
+                                    if (el && !submenuOpenOnLeft) {
+                                      const rect = el.getBoundingClientRect();
+                                      if (rect.right > window.innerWidth - 8) {
+                                        setSubmenuOpenOnLeft(true);
+                                      }
+                                    }
+                                  }}
+                                  style={{
+                                    position: 'absolute',
+                                    left: submenuOpenOnLeft ? 'auto' : 'calc(100% + 4px)',
+                                    right: submenuOpenOnLeft ? 'calc(100% + 4px)' : 'auto',
+                                    bottom: 0,
+                                    background: themeTokens.bgCardSecondary,
+                                    borderRadius: 10,
+                                    border: `1px solid ${themeTokens.border}`,
+                                    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
+                                    padding: 6,
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: 2,
+                                    zIndex: 100002,
+                                    minWidth: 160,
+                                    width: 'max-content',
+                                    maxWidth: 240,
+                                    maxHeight: 'min(360px, calc(100vh - 120px))',
+                                    overflowY: 'auto',
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <div style={{ padding: '3px 8px 5px', fontSize: 10, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                    Modelos {targetProvider.name}
+                                  </div>
+                                  {modelList.map((m) => {
+                                    const currentId = activeModels[targetProvider.id]?.currentModelId;
+                                    const currentLabel = activeModels[targetProvider.id]?.currentModel;
+                                    const isCurrent = (targetProvider.id === selectedAiProvider) && (currentId === m.id || currentLabel === m.label || (selectedModel && (selectedModel === m.id || selectedModel === m.label)));
+
+                                    return (
+                                      <div
+                                        key={m.id}
+                                        onClick={() => {
+                                          handleSelectModel(m, targetProvider.id);
+                                        }}
+                                        style={{
+                                          padding: '6px 10px',
+                                          borderRadius: 6,
+                                          cursor: 'pointer',
+                                          background: isCurrent ? hexToRgba(accentColor, 0.15) : 'transparent',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: 8,
+                                          transition: 'background 0.15s ease',
+                                          whiteSpace: 'nowrap',
+                                        }}
+                                        onMouseEnter={(e) => {
+                                          if (!isCurrent) e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                          if (!isCurrent) e.currentTarget.style.background = 'transparent';
+                                        }}
+                                      >
+                                        {isCurrent ? <Check size={12} color={accentColor} style={{ flexShrink: 0 }} /> : <div style={{ width: 12, flexShrink: 0 }} />}
+                                        <span
+                                          style={{
+                                            fontSize: 12,
+                                            fontFamily: 'Poppins, sans-serif',
+                                            fontWeight: isCurrent ? 500 : 400,
+                                            color: isCurrent ? accentColor : themeTokens.textPrimary,
+                                            whiteSpace: 'nowrap',
+                                          }}
+                                        >
+                                          {formatModelDisplayName(m.label) || m.label}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })()}
                           </div>
                         )}
                       </div>
@@ -11604,9 +13567,6 @@ ${prompt}`;
                             transition: 'all 0.15s ease',
                           }}
                         >
-                          <span style={{ fontSize: 11 }}>
-                            {AI_MODES.find((m) => m.id === aiMode)?.badge || '⚡'}
-                          </span>
                           <span
                             style={{
                               fontSize: 11,
@@ -11629,6 +13589,7 @@ ${prompt}`;
                         {/* AI Mode Dropdown Menu */}
                         {aiModeDropdown && (
                           <div
+                            ref={clampPopupToViewport}
                             style={{
                               position: 'absolute',
                               bottom: 'calc(100% + 8px)',
@@ -11646,7 +13607,7 @@ ${prompt}`;
                             }}
                           >
                             <div style={{ padding: '3px 8px', fontSize: 10, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                              Modo de Execução da IA
+                              Modo de execução
                             </div>
                             {AI_MODES.map((m) => {
                               const isSelected = aiMode === m.id;
@@ -11656,7 +13617,7 @@ ${prompt}`;
                                   onClick={() => {
                                     setAiMode(m.id);
                                     setAiModeDropdown(false);
-                                    setToastMessage(`Modo alterado para ${m.name}`);
+                                    setToastMessage(`Modo: ${m.name}`);
                                   }}
                                   style={{
                                     padding: '7px 9px',
@@ -11676,160 +13637,17 @@ ${prompt}`;
                                   }}
                                 >
                                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 500, color: themeTokens.textPrimary }}>
-                                      <span>{m.badge}</span>
-                                      <span>{m.name}</span>
-                                    </div>
+                                    <span style={{ fontSize: 12, fontWeight: 500, color: themeTokens.textPrimary }}>
+                                      {m.name}
+                                    </span>
                                     {isSelected && <Check size={12} color={accentColor} />}
                                   </div>
-                                  <div style={{ fontSize: 10.5, color: themeTokens.textSecondary, lineHeight: '14px', paddingLeft: 22 }}>
+                                  <div style={{ fontSize: 10.5, color: themeTokens.textSecondary, lineHeight: '14px' }}>
                                     {m.description}
                                   </div>
                                 </div>
                               );
                             })}
-                          </div>
-                        )}
-                      </div>
-                      {/* Select AI Model Button with Pill & Dropdown */}
-                      <div style={{ position: 'relative', flexShrink: 1, minWidth: 0 }} ref={modelDropdownRef}>
-                        <div
-                          onClick={() => setModelDropdown(!modelDropdown)}
-                          title="Alterar modelo de IA da CLI"
-                          style={{
-                            height: 26,
-                            paddingLeft: 7,
-                            paddingRight: 7,
-                            borderRadius: 5,
-                            background: modelDropdown
-                              ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
-                              : (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : '#e2e8f0'),
-                            justifyContent: 'flex-start',
-                            alignItems: 'center',
-                            gap: 4,
-                            display: 'flex',
-                            cursor: 'pointer',
-                            whiteSpace: 'nowrap',
-                            transition: 'background 0.15s ease',
-                            maxWidth: 125,
-                            minWidth: 0,
-                            overflow: 'hidden',
-                          }}
-                          onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)')}
-                          onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = modelDropdown ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)') : (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)'))}
-                        >
-                          <span
-                            style={{
-                              color: themeTokens.textPrimary,
-                              fontSize: 11,
-                              fontFamily: 'Poppins, sans-serif',
-                              fontWeight: 400,
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              minWidth: 0,
-                            }}
-                          >
-                            {(() => {
-                              const m = activeModels[selectedAiProvider];
-                              const name = m?.currentModel || m?.currentModelId || (selectedAiProvider === 'claude' ? 'sonnet' : 'Padrão');
-                              return formatModelDisplayName(name) || name;
-                            })()}
-                          </span>
-                          <ChevronDown size={10} color={themeTokens.textSecondary} style={{ flexShrink: 0 }} />
-                        </div>
-
-                        {/* Model Dropdown Menu */}
-                        {modelDropdown && (
-                          <div
-                            style={{
-                              position: 'absolute',
-                              bottom: 34,
-                              left: '50%',
-                              transform: 'translateX(-50%)',
-                              background: themeTokens.bgCardSecondary,
-                              borderRadius: 10,
-                              border: `1px solid ${themeTokens.border}`,
-                              boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
-                              padding: 6,
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: 2,
-                              zIndex: 99999,
-                              minWidth: 220,
-                              maxWidth: 270,
-                              maxHeight: 280,
-                              overflowY: 'auto',
-                            }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px 6px', borderBottom: `1px solid ${themeTokens.border}`, gap: 8 }}>
-                              <span style={{ fontSize: 10.5, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                Modelos {activeAiProvider.name}
-                              </span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  refreshAiModels(selectedAiProvider);
-                                }}
-                                title="Recarregar modelos da CLI"
-                                style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 2, display: 'flex', alignItems: 'center' }}
-                              >
-                                <RefreshCw size={11} className={isLoadingModels ? 'spin' : ''} />
-                              </button>
-                            </div>
-
-                            {(activeModels[selectedAiProvider]?.models || []).length > 0 ? (
-                              (activeModels[selectedAiProvider]?.models || []).map((m) => {
-                                const currentId = activeModels[selectedAiProvider]?.currentModelId;
-                                const currentLabel = activeModels[selectedAiProvider]?.currentModel;
-                                const isCurrent = currentId === m.id || currentLabel === m.label;
-                                return (
-                                  <div
-                                    key={m.id}
-                                    onClick={() => handleSelectModel(m)}
-                                    style={{
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'space-between',
-                                      padding: '7px 10px',
-                                      borderRadius: 6,
-                                      cursor: 'pointer',
-                                      background: isCurrent ? hexToRgba(accentColor, 0.15) : 'transparent',
-                                      transition: 'background 0.15s ease',
-                                    }}
-                                    onMouseEnter={(e) => {
-                                      if (!isCurrent) (e.currentTarget as HTMLElement).style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.04)';
-                                    }}
-                                    onMouseLeave={(e) => {
-                                      if (!isCurrent) (e.currentTarget as HTMLElement).style.background = 'transparent';
-                                    }}
-                                  >
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
-                                      {isCurrent ? <Check size={13} color={accentColor} /> : <div style={{ width: 13 }} />}
-                                      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                                        <span style={{ color: isCurrent ? accentColor : themeTokens.textPrimary, fontSize: 11.5, fontWeight: isCurrent ? 600 : 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                          {formatModelDisplayName(m.label) || m.label}
-                                        </span>
-                                        {m.description && (
-                                          <span style={{ color: themeTokens.textSecondary, fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                            {m.description}
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                    {m.tag && (
-                                      <span style={{ fontSize: 9.5, color: accentColor, background: hexToRgba(accentColor, 0.12), padding: '2px 5px', borderRadius: 4, flexShrink: 0, marginLeft: 6 }}>
-                                        {m.tag}
-                                      </span>
-                                    )}
-                                  </div>
-                                );
-                              })
-                            ) : (
-                              <div style={{ padding: '8px 10px', color: themeTokens.textSecondary, fontSize: 11, fontFamily: 'Poppins, sans-serif' }}>
-                                Carregando modelos da CLI...
-                              </div>
-                            )}
                           </div>
                         )}
                       </div>
@@ -12021,27 +13839,33 @@ ${prompt}`;
                       })()}
 
                       {/* Circular Send Button */}
-                      <button
-                        type="submit"
-                        disabled={isAiExecuting || !askPrompt.trim()}
-                        style={{
-                          width: 24,
-                          height: 24,
-                          background: askPrompt.trim() && !isAiExecuting ? chatAccentColor : (isEffectiveDark ? '#333333' : '#e2e8f0'),
-                          borderRadius: 61,
-                          border: 'none',
-                          outline: 'none',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          color: askPrompt.trim() && !isAiExecuting ? getContrastTextColor(chatAccentColor) : (isEffectiveDark ? '#666666' : '#94a3b8'),
-                          cursor: askPrompt.trim() && !isAiExecuting ? 'pointer' : 'default',
-                          flexShrink: 0,
-                          transition: 'all 0.15s ease',
-                        }}
-                      >
-                        <ArrowRight size={13} strokeWidth={2.5} color={askPrompt.trim() && !isAiExecuting ? getContrastTextColor(chatAccentColor) : (isEffectiveDark ? '#666666' : '#94a3b8')} />
-                      </button>
+                      {(() => {
+                        const canSubmit = (askPrompt.trim().length > 0 || attachedFiles.length > 0 || attachedImages.length > 0) && !isAiExecuting;
+                        const isSendActive = canSubmit;
+                        return (
+                          <button
+                            type="submit"
+                            disabled={!canSubmit}
+                            style={{
+                              width: 24,
+                              height: 24,
+                              background: isSendActive ? chatAccentColor : (isEffectiveDark ? '#333333' : '#e2e8f0'),
+                              borderRadius: 61,
+                              border: 'none',
+                              outline: 'none',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              color: isSendActive ? getContrastTextColor(chatAccentColor) : (isEffectiveDark ? '#666666' : '#94a3b8'),
+                              cursor: isSendActive ? 'pointer' : 'default',
+                              flexShrink: 0,
+                              transition: 'all 0.15s ease',
+                            }}
+                          >
+                            <ArrowRight size={13} strokeWidth={2.5} color={isSendActive ? getContrastTextColor(chatAccentColor) : (isEffectiveDark ? '#666666' : '#94a3b8')} />
+                          </button>
+                        );
+                      })()}
                     </div>
                   </div>
                 </form>
@@ -12453,6 +14277,7 @@ ${prompt}`;
                 const next = !prev;
                 if (next) {
                   setTimeout(() => {
+                    promptEditorRef.current?.focus();
                     inputRef.current?.focus();
                   }, 80);
                 }
@@ -12484,6 +14309,123 @@ ${prompt}`;
         </div>
       </div>
     )}
+
+        {/* File Explorer Right-Click Context Menu (VS Code / Cursor / Antigravity style) */}
+        {fileContextMenu && (() => {
+          const node = fileContextMenu.node;
+          const isDir = node.isDirectory;
+          const showTestGroup = isDir || isTestFileName(node.name);
+
+          type MenuEntry =
+            | { type: 'divider' }
+            | { type: 'item'; icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean; disabled?: boolean };
+
+          const item = (
+            icon: React.ReactNode,
+            label: string,
+            onClick: () => void,
+            opts?: { danger?: boolean; disabled?: boolean }
+          ): MenuEntry => ({ type: 'item', icon, label, onClick, danger: opts?.danger, disabled: opts?.disabled });
+          const divider = (): MenuEntry => ({ type: 'divider' });
+
+          const entries: MenuEntry[] = [];
+          if (!isDir) {
+            entries.push(item(<Columns size={13} />, 'Abrir ao Lado', () => handleCtxOpenToSide(node)));
+            entries.push(item(<ExternalLink size={13} />, 'Abrir Com...', () => handleCtxOpenWith(node)));
+          }
+          entries.push(item(<FolderOpen size={13} />, 'Revelar no Finder', () => handleCtxRevealInFinder(node)));
+          entries.push(item(<SquareTerminal size={13} />, 'Abrir no Terminal Integrado', () => handleCtxOpenInTerminal(node)));
+
+          if (!isDir) {
+            entries.push(divider());
+            entries.push(item(<GitCompare size={13} />, 'Selecionar para Comparar', () => handleCtxSelectForCompare(node)));
+            if (compareSelectionPath && compareSelectionPath !== node.path) {
+              entries.push(item(<GitCompare size={13} />, 'Comparar com Selecionado', () => handleCtxCompareWithSelected(node)));
+            }
+            entries.push(divider());
+            entries.push(item(<History size={13} />, 'Abrir Timeline', () => handleCtxOpenTimeline(node)));
+          }
+
+          entries.push(divider());
+          entries.push(item(<Scissors size={13} />, 'Recortar', () => handleCtxCut(node)));
+          entries.push(item(<Copy size={13} />, 'Copiar', () => handleCtxCopy(node)));
+          entries.push(item(<ClipboardPaste size={13} />, 'Colar', () => handleCtxPaste(node), { disabled: !fileClipboard }));
+
+          entries.push(divider());
+          entries.push(item(<FileText size={13} />, 'Copiar Caminho', () => handleCtxCopyPath(node)));
+          entries.push(item(<FileText size={13} />, 'Copiar Caminho Relativo', () => handleCtxCopyRelativePath(node)));
+
+          if (showTestGroup) {
+            entries.push(divider());
+            entries.push(item(<Play size={13} />, 'Executar Testes', () => handleCtxRunTests(node, 'run')));
+            entries.push(item(<Bug size={13} />, 'Depurar Testes', () => handleCtxRunTests(node, 'debug')));
+            entries.push(item(<Layers size={13} />, 'Executar Testes com Cobertura', () => handleCtxRunTests(node, 'coverage')));
+          }
+
+          entries.push(divider());
+          entries.push(item(<FilePlus size={13} />, 'Novo Arquivo...', () => handleCtxNewFile(node)));
+          entries.push(item(<FolderPlus size={13} />, 'Nova Pasta...', () => handleCtxNewFolder(node)));
+
+          entries.push(divider());
+          entries.push(item(<Pencil size={13} />, 'Renomear...', () => handleCtxRename(node)));
+          entries.push(item(<Trash2 size={13} />, 'Excluir', () => handleCtxDelete(node), { danger: true }));
+
+          return (
+            <div
+              ref={(el) => {
+                fileContextMenuRef.current = el;
+                clampPopupToViewport(el);
+              }}
+              style={{
+                position: 'fixed',
+                top: fileContextMenu.y,
+                left: fileContextMenu.x,
+                minWidth: 215,
+                maxWidth: 260,
+                background: themeTokens.bgCardSecondary,
+                border: '1px solid ' + themeTokens.border,
+                borderRadius: 8,
+                padding: '5px 0',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                zIndex: 999999,
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+            >
+              {entries.map((entry, idx) =>
+                entry.type === 'divider' ? (
+                  <div key={idx} style={{ height: 1, background: themeTokens.border, margin: '4px 0' }} />
+                ) : (
+                  <div
+                    key={idx}
+                    onClick={() => {
+                      if (!entry.disabled) entry.onClick();
+                    }}
+                    style={{
+                      padding: '7px 12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      fontSize: 12,
+                      cursor: entry.disabled ? 'default' : 'pointer',
+                      color: entry.disabled ? themeTokens.textMuted : entry.danger ? '#ef4444' : themeTokens.textPrimary,
+                      opacity: entry.disabled ? 0.5 : 1,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!entry.disabled) e.currentTarget.style.background = themeTokens.hoverBg;
+                    }}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', color: entry.danger ? '#ef4444' : accentColor }}>
+                      {entry.icon}
+                    </span>
+                    <span>{entry.label}</span>
+                  </div>
+                )
+              )}
+            </div>
+          );
+        })()}
 
         {/* Global Toast Notification (Auto-dismisses & click to dismiss) */}
         {toastMessage && (
@@ -12709,6 +14651,394 @@ ${prompt}`;
                     );
                   })
                 )}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Chat History & All Convos Modal (Antigravity Style) */}
+        {chatHistoryModalOpen && (
+          <>
+            {/* Backdrop */}
+            <div
+              onClick={() => setChatHistoryModalOpen(false)}
+              style={{
+                position: 'fixed',
+                inset: 0,
+                background: 'rgba(0, 0, 0, 0.55)',
+                zIndex: 999998,
+                backdropFilter: 'blur(3px)',
+                animation: 'fadeIn 0.12s ease-out',
+              }}
+            />
+
+            {/* Modal Dialog */}
+            <div
+              style={{
+                position: 'fixed',
+                top: '12%',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                width: 580,
+                maxWidth: 'calc(100vw - 32px)',
+                background: '#1c1c1f',
+                border: '1px solid rgba(255, 255, 255, 0.12)',
+                borderRadius: 10,
+                boxShadow: '0 24px 64px rgba(0, 0, 0, 0.85)',
+                zIndex: 999999,
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+                boxSizing: 'border-box',
+                animation: 'fadeIn 0.12s ease-out',
+                fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+              }}
+            >
+              {/* Top Search Input Bar */}
+              <div style={{ padding: '12px 14px 8px 14px', background: '#1c1c1f' }}>
+                <input
+                  ref={chatHistoryInputRef}
+                  type="text"
+                  value={chatHistorySearch}
+                  onChange={(e) => {
+                    setChatHistorySearch(e.target.value);
+                    setChatHistorySelectedIndex(0);
+                  }}
+                  onKeyDown={handleChatHistoryKeyDown}
+                  placeholder="Search all convos..."
+                  autoFocus
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    background: 'rgba(255, 255, 255, 0.04)',
+                    border: '1.5px solid #3b82f6',
+                    borderRadius: 8,
+                    padding: '8px 12px',
+                    color: '#ffffff',
+                    fontSize: 13,
+                    fontFamily: 'Poppins, sans-serif',
+                    outline: 'none',
+                    boxShadow: '0 0 0 1px rgba(59, 130, 246, 0.25)',
+                  }}
+                />
+              </div>
+
+              {/* Convos List */}
+              <div
+                style={{
+                  maxHeight: 380,
+                  overflowY: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  padding: '4px 6px 10px 6px',
+                }}
+              >
+                {selectableConvosList.length === 0 ? (
+                  <div style={{ padding: '24px 16px', color: 'rgba(255, 255, 255, 0.4)', fontSize: 12.5, textAlign: 'center' }}>
+                    {chatHistorySearch.trim() ? `Nenhuma conversa encontrada para "${chatHistorySearch}"` : 'Nenhum histórico de conversa registrado.'}
+                  </div>
+                ) : (
+                  <>
+                    {/* 1. CURRENT SECTION */}
+                    {currentConvo && (
+                      <div>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 600,
+                            color: 'rgba(255, 255, 255, 0.45)',
+                            padding: '6px 10px 4px 10px',
+                            letterSpacing: '0.02em',
+                          }}
+                        >
+                          Current
+                        </div>
+                        {(() => {
+                          const item = currentConvo;
+                          const flatIdx = selectableConvosList.findIndex((x) => x.id === item.id);
+                          const isSelected = flatIdx === chatHistorySelectedIndex;
+                          return (
+                            <div
+                              key={item.id}
+                              onClick={() => handleSelectAnySession(item.id)}
+                              onMouseEnter={() => setChatHistorySelectedIndex(flatIdx)}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '8px 12px',
+                                margin: '2px 4px',
+                                borderRadius: 6,
+                                cursor: 'pointer',
+                                background: isSelected ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.025)',
+                                transition: 'background 0.08s ease',
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden', minWidth: 0, flex: 1 }}>
+                                <span
+                                  style={{
+                                    fontSize: 13,
+                                    fontWeight: 500,
+                                    color: '#ffffff',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {item.title}
+                                </span>
+                                {item.projectName && (
+                                  <span
+                                    style={{
+                                      fontSize: 12,
+                                      color: 'rgba(255, 255, 255, 0.4)',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap',
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    {item.projectName}
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                                <span style={{ fontSize: 11.5, color: 'rgba(255, 255, 255, 0.4)' }}>
+                                  {formatTimeAgo(item.updatedAt)}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleDeleteAnySession(item.id, e)}
+                                  title="Excluir conversa"
+                                  style={{
+                                    background: 'transparent',
+                                    border: 'none',
+                                    color: 'rgba(255, 255, 255, 0.4)',
+                                    cursor: 'pointer',
+                                    padding: 2,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    borderRadius: 3,
+                                  }}
+                                  onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = '#ef4444')}
+                                  onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = 'rgba(255, 255, 255, 0.4)')}
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+
+                    {/* 2. RUNNING SECTION */}
+                    {runningConvos.length > 0 && (
+                      <div style={{ marginTop: currentConvo ? 8 : 0 }}>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 600,
+                            color: 'rgba(255, 255, 255, 0.45)',
+                            padding: '6px 10px 4px 10px',
+                            letterSpacing: '0.02em',
+                          }}
+                        >
+                          Running
+                        </div>
+                        {runningConvos.map((item) => {
+                          const flatIdx = selectableConvosList.findIndex((x) => x.id === item.id);
+                          const isSelected = flatIdx === chatHistorySelectedIndex;
+                          return (
+                            <div
+                              key={item.id}
+                              onClick={() => handleSelectAnySession(item.id)}
+                              onMouseEnter={() => setChatHistorySelectedIndex(flatIdx)}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '8px 12px',
+                                margin: '2px 4px',
+                                borderRadius: 6,
+                                cursor: 'pointer',
+                                background: isSelected ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                                transition: 'background 0.08s ease',
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden', minWidth: 0, flex: 1 }}>
+                                <span
+                                  style={{
+                                    fontSize: 13,
+                                    fontWeight: 500,
+                                    color: '#ffffff',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {item.title}
+                                </span>
+                                {item.projectName && (
+                                  <span
+                                    style={{
+                                      fontSize: 12,
+                                      color: 'rgba(255, 255, 255, 0.4)',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap',
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    {item.projectName}
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                                <span style={{ fontSize: 11.5, color: 'rgba(255, 255, 255, 0.4)' }}>
+                                  {formatTimeAgo(item.updatedAt)}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* 3. RECENT SECTION */}
+                    {visibleRecentConvos.length > 0 && (
+                      <div style={{ marginTop: (currentConvo || runningConvos.length > 0) ? 8 : 0 }}>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 600,
+                            color: 'rgba(255, 255, 255, 0.45)',
+                            padding: '6px 10px 4px 10px',
+                            letterSpacing: '0.02em',
+                          }}
+                        >
+                          Recent
+                        </div>
+                        {visibleRecentConvos.map((item) => {
+                          const flatIdx = selectableConvosList.findIndex((x) => x.id === item.id);
+                          const isSelected = flatIdx === chatHistorySelectedIndex;
+                          return (
+                            <div
+                              key={item.id}
+                              onClick={() => handleSelectAnySession(item.id)}
+                              onMouseEnter={() => setChatHistorySelectedIndex(flatIdx)}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '8px 12px',
+                                margin: '2px 4px',
+                                borderRadius: 6,
+                                cursor: 'pointer',
+                                background: isSelected ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                                transition: 'background 0.08s ease',
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden', minWidth: 0, flex: 1 }}>
+                                <span
+                                  style={{
+                                    fontSize: 13,
+                                    fontWeight: 500,
+                                    color: '#ffffff',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {item.title}
+                                </span>
+                                {item.projectName && (
+                                  <span
+                                    style={{
+                                      fontSize: 12,
+                                      color: 'rgba(255, 255, 255, 0.4)',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap',
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    {item.projectName}
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                                <span style={{ fontSize: 11.5, color: 'rgba(255, 255, 255, 0.4)' }}>
+                                  {formatTimeAgo(item.updatedAt)}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleDeleteAnySession(item.id, e)}
+                                  title="Excluir conversa"
+                                  style={{
+                                    background: 'transparent',
+                                    border: 'none',
+                                    color: 'rgba(255, 255, 255, 0.4)',
+                                    cursor: 'pointer',
+                                    padding: 2,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    borderRadius: 3,
+                                  }}
+                                  onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = '#ef4444')}
+                                  onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = 'rgba(255, 255, 255, 0.4)')}
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {/* Show more button if there are more recent convos */}
+                        {!chatHistoryShowAllRecent && !chatHistorySearch.trim() && recentConvos.length > 4 && (
+                          <div
+                            onClick={() => setChatHistoryShowAllRecent(true)}
+                            style={{
+                              padding: '8px 14px',
+                              fontSize: 12,
+                              color: 'rgba(255, 255, 255, 0.45)',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              transition: 'color 0.15s ease',
+                            }}
+                            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = '#3b82f6')}
+                            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = 'rgba(255, 255, 255, 0.45)')}
+                          >
+                            <span>Show {recentConvos.length - 4} more...</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div
+                style={{
+                  borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+                  padding: '8px 16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  fontSize: 11,
+                  color: 'rgba(255, 255, 255, 0.35)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>↑↓ to navigate</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>↵ to select</span>
+                </div>
               </div>
             </div>
           </>

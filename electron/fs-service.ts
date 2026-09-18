@@ -108,4 +108,26 @@ export class NativeFileSystemService {
       fs.unlinkSync(targetPath);
     }
   }
+
+  renameItem(oldPath: string, newPath: string): void {
+    if (!fs.existsSync(oldPath)) {
+      throw new Error(`Item not found: ${oldPath}`);
+    }
+    const parent = path.dirname(newPath);
+    if (!fs.existsSync(parent)) {
+      fs.mkdirSync(parent, { recursive: true });
+    }
+    fs.renameSync(oldPath, newPath);
+  }
+
+  copyItem(srcPath: string, destPath: string): void {
+    if (!fs.existsSync(srcPath)) {
+      throw new Error(`Item not found: ${srcPath}`);
+    }
+    const parent = path.dirname(destPath);
+    if (!fs.existsSync(parent)) {
+      fs.mkdirSync(parent, { recursive: true });
+    }
+    fs.cpSync(srcPath, destPath, { recursive: true });
+  }
 }

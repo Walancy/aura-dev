@@ -214,6 +214,16 @@ ipcMain.handle('fs:deleteItem', (_event, { itemPath }) => {
   return { success: true };
 });
 
+ipcMain.handle('fs:renameItem', (_event, { oldPath, newPath }) => {
+  fsService.renameItem(oldPath, newPath);
+  return { success: true };
+});
+
+ipcMain.handle('fs:copyItem', (_event, { srcPath, destPath }) => {
+  fsService.copyItem(srcPath, destPath);
+  return { success: true };
+});
+
 ipcMain.handle('fs:searchInFiles', async (_event, { dirPath, query, isRegex = false, matchCase = false, matchWholeWord = false, maxResults = 250 }) => {
   if (!query || !dirPath) return { results: [] };
   const { exec } = require('node:child_process');
@@ -431,6 +441,146 @@ ipcMain.handle('ai:deleteSavedChat', async (_event, sessionId: string) => {
   return chatHistoryService.deleteSession(sessionId);
 });
 
+// Direct execution of AI CLIs (claude, agy, codex) without shell string interpretation
+// This prevents command substitution vulnerabilities (e.g. backticks ```env running /usr/bin/env)
+ipcMain.handle('ai:runCli', async (_event, {
+  cliCmd,
+  prompt,
+  model,
+  cwd,
+  additionalDirs,
+}: {
+  cliCmd: string;
+  prompt: string;
+  model?: string;
+  cwd?: string;
+  additionalDirs?: string[];
+}) => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { spawn } = require('node:child_process');
+  const userHome = process.env.HOME || '';
+  const targetCwd = cwd && fs.existsSync(cwd) ? cwd : (userHome || process.cwd());
+
+  const customPaths = [
+    path.join(userHome, '.local/bin'),
+    path.join(userHome, '.bun/bin'),
+    path.join(userHome, '.cargo/bin'),
+    '/opt/homebrew/bin',
+    '/opt/homebrew/sbin',
+    '/usr/local/bin',
+    '/usr/local/sbin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+  ];
+  const envPath = `${customPaths.join(':')}:${process.env.PATH || ''}`;
+
+  let binaryPath = cliCmd;
+  for (const p of customPaths) {
+    const candidate = path.join(p, cliCmd);
+    if (fs.existsSync(candidate)) {
+      binaryPath = candidate;
+      break;
+    }
+  }
+
+  const args: string[] = [];
+  if (cliCmd === 'claude') {
+    if (model && !prompt.startsWith('/')) {
+      args.push('--model', model);
+    }
+    args.push('--dangerously-skip-permissions');
+    args.push('-p', prompt);
+  } else if (cliCmd === 'agy') {
+    if (model && !prompt.startsWith('/')) {
+      args.push('--model', model);
+    }
+    args.push('--dangerously-skip-permissions');
+    args.push('--add-dir', targetCwd);
+    if (additionalDirs && additionalDirs.length > 0) {
+      for (const dir of additionalDirs) {
+        args.push('--add-dir', dir);
+      }
+    }
+    args.push('-p', prompt);
+  } else if (cliCmd === 'codex') {
+    args.push('exec');
+    if (model && !prompt.startsWith('/')) {
+      args.push('-m', model);
+    }
+    args.push('--dangerously-bypass-approvals-and-sandbox');
+    args.push('--cd', targetCwd);
+    args.push(prompt);
+  } else {
+    args.push(prompt);
+  }
+
+  // Strip Antigravity IDE and Electron internals so the CLI executes in a pristine clean environment
+  const cleanEnv = { ...process.env };
+  for (const key of Object.keys(cleanEnv)) {
+    if (
+      key.startsWith('ANTIGRAVITY_') ||
+      key.startsWith('VSCODE_') ||
+      key.startsWith('ELECTRON_') ||
+      key.startsWith('GEMINI_')
+    ) {
+      delete cleanEnv[key];
+    }
+  }
+
+  const env = {
+    ...cleanEnv,
+    TERM: 'xterm-256color',
+    COLORTERM: 'truecolor',
+    PATH: envPath,
+    HOME: userHome,
+  };
+
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let resolved = false;
+
+    const child = spawn(binaryPath, args, {
+      cwd: targetCwd,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    child.stdout?.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+
+    child.stderr?.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    child.on('error', (err: Error) => {
+      if (!resolved) {
+        resolved = true;
+        resolve({
+          stdout: stdout.trim(),
+          stderr: (stderr + '\n' + err.message).trim(),
+          exitCode: 1,
+        });
+      }
+    });
+
+    child.on('close', (code: number) => {
+      if (!resolved) {
+        resolved = true;
+        resolve({
+          stdout: stdout.trim(),
+          stderr: stderr.trim(),
+          exitCode: code ?? 0,
+        });
+      }
+    });
+  });
+});
+
 // Live Git & GitHub status IPC
 ipcMain.handle('git:getWorkspaceGitInfo', async (_event, { workspacePath, activeFilePath }: { workspacePath: string; activeFilePath?: string }) => {
   return gitService.getWorkspaceGitInfo(workspacePath, activeFilePath);
@@ -618,6 +768,16 @@ ipcMain.handle('shell:exec', async (_event, { command, cwd }: { command: string;
 ipcMain.handle('shell:openExternal', async (_event, { url }: { url: string }) => {
   try {
     await shell.openExternal(url);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Reveal a file or folder in the OS file manager (Finder on macOS)
+ipcMain.handle('shell:showItemInFolder', (_event, { itemPath }: { itemPath: string }) => {
+  try {
+    shell.showItemInFolder(itemPath);
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message };

@@ -12,6 +12,8 @@ export interface ChatMessageItem {
   model?: string;
   diff?: any;
   command?: string;
+  attachedFiles?: any[];
+  attachedImages?: any[];
 }
 
 export interface ChatSessionContext {
@@ -100,7 +102,7 @@ export class ChatHistoryService {
     let md = `# Histórico de Conversa com IA: ${session.title || 'Conversa'}\n\n`;
     md += `> **Criado em:** ${createdDate} | **Atualizado:** ${updatedDate}\n\n`;
 
-    md += `## 📋 Contexto da Sessão\n`;
+    md += `## Contexto da Sessão\n`;
     md += `- **IA Provedor:** \`${session.provider || 'desconhecido'}\`\n`;
     if (session.model || ctx.model) {
       md += `- **Modelo Utilizado:** \`${session.model || ctx.model}\`\n`;
@@ -121,7 +123,7 @@ export class ChatHistoryService {
       md += `- **Arquivos Abertos no Editor:** ${ctx.openTabs.map((t) => `\`${t}\``).join(', ')}\n`;
     }
 
-    md += `\n---\n\n## 💬 Mensagens\n\n`;
+    md += `\n---\n\n## Mensagens\n\n`;
 
     const msgs = session.history || [];
     if (msgs.length === 0) {
@@ -129,7 +131,7 @@ export class ChatHistoryService {
     } else {
       msgs.forEach((msg, idx) => {
         const timeStr = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString('pt-BR') : '';
-        const roleName = msg.role === 'user' ? '👤 Usuário' : `🤖 Assistente (${msg.providerId || session.provider || 'IA'})`;
+        const roleName = msg.role === 'user' ? 'Usuário' : `Assistente (${msg.providerId || session.provider || 'IA'})`;
 
         md += `### ${roleName} ${timeStr ? `[${timeStr}]` : ''}\n\n`;
         md += `${msg.text || ''}\n\n`;
@@ -194,14 +196,17 @@ export class ChatHistoryService {
           const fullPath = path.join(storageDir, file);
           const raw = fs.readFileSync(fullPath, 'utf8');
           const data = JSON.parse(raw);
-          results.push({
-            id: data.id || file.replace('.json', ''),
-            title: data.title || 'Conversa',
-            provider: data.provider || 'antigravity',
-            updatedAt: data.updatedAt || fs.statSync(fullPath).mtimeMs,
-            messageCount: Array.isArray(data.history) ? data.history.length : 0,
-            path: fullPath,
-          });
+            results.push({
+              id: data.id || file.replace('.json', ''),
+              title: data.title || 'Conversa',
+              provider: data.provider || 'antigravity',
+              updatedAt: data.updatedAt || fs.statSync(fullPath).mtimeMs,
+              messageCount: Array.isArray(data.history) ? data.history.length : 0,
+              path: fullPath,
+              projectName: data.context?.projectName || '',
+              workspacePath: data.context?.workspacePath || '',
+              model: data.model || '',
+            });
         } catch {}
       }
 

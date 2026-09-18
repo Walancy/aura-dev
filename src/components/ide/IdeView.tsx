@@ -23,6 +23,7 @@ import {
   Terminal as TerminalIcon,
   ArrowRight,
   Sparkles,
+  FileCode,
 } from 'lucide-react';
 
 const codeContent = `import { Injectable } from '@nestjs/common';
@@ -340,7 +341,7 @@ export const IdeView: React.FC = () => {
                 cursor: 'pointer',
               }}
             >
-              <span style={{ color: '#38bdf8', fontWeight: 700, fontSize: '0.7rem' }}>🐳</span>
+              <FileCode size={12} color="#38bdf8" />
               <span>Dockerfile</span>
               <X size={12} style={{ opacity: 0.5, marginLeft: '4px' }} />
             </div>
