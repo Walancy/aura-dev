@@ -586,6 +586,36 @@ ipcMain.handle('git:getWorkspaceGitInfo', async (_event, { workspacePath, active
   return gitService.getWorkspaceGitInfo(workspacePath, activeFilePath);
 });
 
+ipcMain.handle('git:listRepos', async (_event, { workspacePath }: { workspacePath: string }) => {
+  return gitService.listWorkspaceRepos(workspacePath);
+});
+
+ipcMain.handle('git:getIssues', async (_event, { workspacePath }: { workspacePath: string }) => {
+  const gitDir = gitService.resolveGitDir(workspacePath);
+  if (!gitDir) return [];
+  let repoFullName = '';
+  try {
+    const remoteUrl = require('node:child_process').execSync('git config --get remote.origin.url', { cwd: gitDir, encoding: 'utf8', timeout: 3000 }).trim();
+    const match = remoteUrl.match(/[:/]([^/:]+\/[^/:]+?)(?:\.git)?$/);
+    if (match) repoFullName = match[1];
+  } catch {}
+  if (!repoFullName) return [];
+  return gitService.fetchGitHubIssues(repoFullName);
+});
+
+ipcMain.handle('git:createIssue', async (_event, { workspacePath, title, body }: { workspacePath: string; title: string; body?: string }) => {
+  const gitDir = gitService.resolveGitDir(workspacePath);
+  if (!gitDir) return { success: false, error: 'Repositório Git não encontrado' };
+  let repoFullName = '';
+  try {
+    const remoteUrl = require('node:child_process').execSync('git config --get remote.origin.url', { cwd: gitDir, encoding: 'utf8', timeout: 3000 }).trim();
+    const match = remoteUrl.match(/[:/]([^/:]+\/[^/:]+?)(?:\.git)?$/);
+    if (match) repoFullName = match[1];
+  } catch {}
+  if (!repoFullName) return { success: false, error: 'Remote GitHub não configurado' };
+  return gitService.createGitHubIssue(repoFullName, title, body);
+});
+
 // Native macOS Dialogs (Abrir Arquivo / Pasta)
 ipcMain.handle('dialog:openFile', async () => {
   if (!mainWindow) return null;

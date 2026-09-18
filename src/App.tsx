@@ -82,6 +82,12 @@ import {
   Bug,
   GitCompare,
   History,
+  Puzzle,
+  Zap,
+  ListChecks,
+  Bot,
+  Cpu,
+  GaugeCircle,
 } from 'lucide-react';
 import avatarImg from './avatar.png';
 import claudeLogo from './assets/logos/claude-color.svg';
@@ -870,20 +876,41 @@ interface NativeXTermProps {
   initialCommand?: string;
   accentColor?: string;
   isDark?: boolean;
+  fontSize?: number;
+  cursorStyle?: 'block' | 'bar' | 'underline';
+  cursorBlink?: boolean;
+  scrollback?: number;
+  copyOnSelect?: boolean;
 }
 
-const NativeXTerm: React.FC<NativeXTermProps> = ({ sessionId, sessionType = 'zsh', cwd, isActive, initialCommand, accentColor = '#FF6A00', isDark = true }) => {
+const NativeXTerm: React.FC<NativeXTermProps> = ({
+  sessionId,
+  sessionType = 'zsh',
+  cwd,
+  isActive,
+  initialCommand,
+  accentColor = '#FF6A00',
+  isDark = true,
+  fontSize = 12,
+  cursorStyle = 'block',
+  cursorBlink = true,
+  scrollback = 5000,
+  copyOnSelect = false,
+}) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const copyOnSelectRef = useRef(copyOnSelect);
+  copyOnSelectRef.current = copyOnSelect;
 
   useEffect(() => {
     if (!containerRef.current) return;
 
     const term = new XTerm({
-      cursorBlink: true,
-      cursorStyle: 'block',
-      fontSize: 12,
+      cursorBlink,
+      cursorStyle,
+      fontSize,
+      scrollback,
       fontFamily: 'JetBrains Mono, Menlo, Monaco, "Courier New", monospace',
       theme: {
         background: isDark ? '#101010' : '#ffffff',
@@ -955,6 +982,12 @@ const NativeXTerm: React.FC<NativeXTermProps> = ({ sessionId, sessionType = 'zsh
         pty.write(sessionId, data);
       });
 
+      const onSelectionDisp = term.onSelectionChange(() => {
+        if (copyOnSelectRef.current && term.hasSelection()) {
+          navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+        }
+      });
+
       const handleResize = () => {
         try {
           fitAddon.fit();
@@ -975,6 +1008,7 @@ const NativeXTerm: React.FC<NativeXTermProps> = ({ sessionId, sessionType = 'zsh
         window.removeEventListener('resize', handleResize);
         resizeObserver.disconnect();
         onDataDisp.dispose();
+        onSelectionDisp.dispose();
         if (cleanupDataListener) cleanupDataListener();
         term.dispose();
       };
@@ -1014,6 +1048,23 @@ const NativeXTerm: React.FC<NativeXTermProps> = ({ sessionId, sessionType = 'zsh
       };
     }
   }, [accentColor, isDark]);
+
+  // Dynamically apply font size, cursor style/blink and scrollback settings changes
+  // without tearing down the PTY-backed session (which would lose scroll position).
+  useEffect(() => {
+    if (termRef.current) {
+      termRef.current.options.fontSize = fontSize;
+      termRef.current.options.cursorStyle = cursorStyle;
+      termRef.current.options.cursorBlink = cursorBlink;
+      termRef.current.options.scrollback = scrollback;
+      try {
+        fitAddonRef.current?.fit();
+        if (window.electronAPI?.pty && termRef.current) {
+          window.electronAPI.pty.resize(sessionId, termRef.current.cols, termRef.current.rows);
+        }
+      } catch {}
+    }
+  }, [fontSize, cursorStyle, cursorBlink, scrollback, sessionId]);
 
   // When tab becomes active, fit and focus
   useEffect(() => {
@@ -1633,6 +1684,360 @@ function getFileLanguage(fileName: string): string {
   }
 }
 
+function isMarkdownFile(fileName: string): boolean {
+  return /\.(md|markdown|mdx)$/i.test(fileName);
+}
+
+interface ExtensionEditorTitleAction {
+  extensionName: string;
+  command: string;
+  title: string;
+  iconUrl?: string;
+}
+
+// Evaluates a single VS Code "when" clause atom (one side of a `&&`), honestly, for the
+// parts we can actually know without an extension host: the active file's extension/language,
+// and the extension's own declared boolean configuration defaults. Any atom referencing
+// extension-internal runtime state (e.g. "myExt.viewingSomething") is unknowable here, so
+// the whole clause is rejected rather than guessed at.
+function evaluateWhenClause(when: string, fileExt: string, configDefaults: Record<string, boolean>): boolean {
+  const andParts = when.split('&&').map((s) => s.trim()).filter(Boolean);
+  if (andParts.length === 0) return true;
+  for (const part of andParts) {
+    let negate = false;
+    let atom = part;
+    if (atom.startsWith('!')) {
+      negate = true;
+      atom = atom.slice(1).trim();
+    }
+    const extMatch = atom.match(/^resourceExtname\s*==\s*['"]\.(\w+)['"]$/);
+    const langMatch = atom.match(/^(resourceLangId|editorLangId)\s*==\s*['"](\w+)['"]$/);
+    const configMatch = atom.match(/^config\.([\w.]+)$/);
+    let atomValue: boolean | null = null;
+    if (extMatch) {
+      atomValue = extMatch[1].toLowerCase() === fileExt.toLowerCase();
+    } else if (langMatch) {
+      atomValue = langMatch[2].toLowerCase() === fileExt.toLowerCase();
+    } else if (configMatch) {
+      atomValue = configDefaults[configMatch[1]] ?? false;
+    } else {
+      return false; // unknown/unknowable atom (extension-internal state) — don't guess
+    }
+    if ((negate ? !atomValue : atomValue) !== true) return false; // AND semantics
+  }
+  return true;
+}
+
+// Reads VS Code-style `contributes.menus["editor/title"]` + `contributes.commands` (and
+// `contributes.configuration` for default values) from installed extensions and returns the
+// actions relevant to the given file. Contributions with no "when" clause always show,
+// matching real VS Code behavior.
+// Resolves a `contributes.commands[].icon` value (VS Code allows a relative path, a
+// {light,dark} pair of relative paths, or a "$(codicon-name)" reference) to a loadable
+// file:// URL pointing inside the extracted extension folder. Falls back to the
+// extension's marketplace icon when the command has no icon of its own, and to
+// `undefined` (generic icon) when the reference is a codicon we don't bundle.
+function resolveCommandIconUrl(icon: any, folderPath: string | undefined, isEffectiveDark: boolean, fallbackIconUrl: string | undefined): string | undefined {
+  let relPath: string | undefined;
+  if (typeof icon === 'string') {
+    if (icon.startsWith('$(')) return fallbackIconUrl; // built-in codicon reference — can't render without the codicon font
+    relPath = icon;
+  } else if (icon && typeof icon === 'object') {
+    relPath = (isEffectiveDark ? icon.dark : icon.light) || icon.dark || icon.light;
+  }
+  if (relPath && folderPath) {
+    const cleanRel = relPath.replace(/^\.?\/+/, '');
+    return `file://${folderPath}/extension/${cleanRel}`;
+  }
+  return fallbackIconUrl;
+}
+
+function getEditorTitleActions(installedExtensions: any[], fileName: string | undefined, isEffectiveDark: boolean): ExtensionEditorTitleAction[] {
+  if (!fileName || !installedExtensions?.length) return [];
+  const ext = fileName.split('.').pop()?.toLowerCase() || '';
+  const actions: ExtensionEditorTitleAction[] = [];
+  for (const inst of installedExtensions) {
+    if (inst.enabled === false) continue;
+    const menuEntries = inst.contributes?.menus?.['editor/title'];
+    const commands = inst.contributes?.commands;
+    if (!Array.isArray(menuEntries) || !Array.isArray(commands)) continue;
+
+    const configDefaults: Record<string, boolean> = {};
+    const configProps = inst.contributes?.configuration?.properties;
+    if (configProps) {
+      for (const [propKey, def] of Object.entries<any>(configProps)) {
+        if (typeof def?.default === 'boolean') configDefaults[propKey] = def.default;
+      }
+    }
+
+    for (const entry of menuEntries) {
+      const when: string | undefined = entry.when;
+      const matches = !when || evaluateWhenClause(when, ext, configDefaults);
+      if (!matches) continue;
+      const cmdDef = commands.find((c: any) => c.command === entry.command);
+      if (!cmdDef) continue;
+      actions.push({
+        extensionName: inst.displayName || inst.name,
+        command: entry.command,
+        title: cmdDef.title || entry.command,
+        iconUrl: resolveCommandIconUrl(cmdDef.icon, inst.folderPath, isEffectiveDark, inst.iconUrl || undefined),
+      });
+    }
+  }
+  return actions;
+}
+
+// Editor-title icon button for an extension-contributed action. Tracks its own image-load
+// failure so a broken/missing local icon file falls back to a generic icon instead of a
+// blank square.
+const ExtensionTitleActionButton: React.FC<{
+  action: ExtensionEditorTitleAction;
+  themeTokens: { textSecondary: string };
+  isEffectiveDark: boolean;
+  onClick: () => void;
+}> = ({ action, themeTokens, isEffectiveDark, onClick }) => {
+  const [imgFailed, setImgFailed] = useState(false);
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        width: 26,
+        height: 26,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        borderRadius: 4,
+        transition: 'background 0.15s ease',
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')}
+      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+      title={`${action.title} (contribuído por ${action.extensionName})`}
+    >
+      {action.iconUrl && !imgFailed ? (
+        <img
+          src={action.iconUrl}
+          alt={action.extensionName}
+          style={{ width: 14, height: 14, objectFit: 'contain', borderRadius: 2 }}
+          onError={() => setImgFailed(true)}
+        />
+      ) : (
+        <Puzzle size={14} color={themeTokens.textSecondary} />
+      )}
+    </div>
+  );
+};
+
+// Lightweight, dependency-free Markdown -> JSX renderer for the "Open Preview" panel.
+function renderInlineMarkdown(text: string, keyPrefix: string, accentColor: string): React.ReactNode[] {
+  const parts: React.ReactNode[] = [];
+  const pattern = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(\[[^\]]+\]\([^)]+\))/g;
+  let lastIndex = 0;
+  let idx = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text))) {
+    if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
+    const token = match[0];
+    if (token.startsWith('`')) {
+      parts.push(
+        <code
+          key={`${keyPrefix}-${idx++}`}
+          style={{ background: 'rgba(127,127,127,0.18)', padding: '1px 5px', borderRadius: 4, fontFamily: 'JetBrains Mono, Menlo, monospace', fontSize: '0.9em' }}
+        >
+          {token.slice(1, -1)}
+        </code>
+      );
+    } else if (token.startsWith('**')) {
+      parts.push(<strong key={`${keyPrefix}-${idx++}`}>{token.slice(2, -2)}</strong>);
+    } else if (token.startsWith('[')) {
+      const m = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+      parts.push(
+        m ? (
+          <a key={`${keyPrefix}-${idx++}`} href={m[2]} target="_blank" rel="noreferrer" style={{ color: accentColor, textDecoration: 'none' }}>
+            {m[1]}
+          </a>
+        ) : (
+          token
+        )
+      );
+    } else if (token.startsWith('*')) {
+      parts.push(<em key={`${keyPrefix}-${idx++}`}>{token.slice(1, -1)}</em>);
+    }
+    lastIndex = match.index + token.length;
+  }
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return parts;
+}
+
+function renderMarkdownPreview(
+  md: string,
+  opts: { textPrimary: string; textSecondary: string; textMuted: string; border: string; accentColor: string; isEffectiveDark: boolean }
+): React.ReactNode {
+  if (!md || !md.trim()) {
+    return <div style={{ color: opts.textMuted, fontSize: 13, fontStyle: 'italic', padding: 20 }}>Arquivo Markdown vazio.</div>;
+  }
+
+  const lines = md.replace(/\r\n/g, '\n').split('\n');
+  const blocks: React.ReactNode[] = [];
+  let i = 0;
+  let key = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Fenced code block
+    if (trimmed.startsWith('```')) {
+      const lang = trimmed.slice(3).trim();
+      const codeLines: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      i++; // skip closing fence
+      blocks.push(
+        <pre
+          key={key++}
+          style={{
+            background: opts.isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
+            border: `1px solid ${opts.border}`,
+            borderRadius: 8,
+            padding: '10px 12px',
+            overflowX: 'auto',
+            fontSize: 12.5,
+            fontFamily: 'JetBrains Mono, Menlo, monospace',
+            color: opts.textPrimary,
+          }}
+        >
+          <code>{codeLines.join('\n')}</code>
+        </pre>
+      );
+      if (lang) {
+        // no-op: language currently unused (no syntax highlighting in the lightweight preview)
+      }
+      continue;
+    }
+
+    // Horizontal rule
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      blocks.push(<hr key={key++} style={{ border: 'none', borderTop: `1px solid ${opts.border}`, margin: '10px 0' }} />);
+      i++;
+      continue;
+    }
+
+    // Headers
+    const headerMatch = trimmed.match(/^(#{1,4})\s+(.*)$/);
+    if (headerMatch) {
+      const level = headerMatch[1].length;
+      const sizes: Record<number, number> = { 1: 24, 2: 19, 3: 16, 4: 14 };
+      blocks.push(
+        React.createElement(
+          `h${level}`,
+          {
+            key: key++,
+            style: {
+              fontSize: sizes[level],
+              fontWeight: 700,
+              color: opts.textPrimary,
+              margin: level <= 2 ? '16px 0 8px' : '10px 0 4px',
+              borderBottom: level <= 2 ? `1px solid ${opts.border}` : 'none',
+              paddingBottom: level <= 2 ? 6 : 0,
+            },
+          },
+          renderInlineMarkdown(headerMatch[2], `h${key}`, opts.accentColor)
+        )
+      );
+      i++;
+      continue;
+    }
+
+    // Blockquote (consume consecutive lines)
+    if (trimmed.startsWith('>')) {
+      const quoteLines: string[] = [];
+      while (i < lines.length && lines[i].trim().startsWith('>')) {
+        quoteLines.push(lines[i].trim().replace(/^>\s?/, ''));
+        i++;
+      }
+      blocks.push(
+        <blockquote
+          key={key++}
+          style={{
+            margin: 0,
+            padding: '4px 14px',
+            borderLeft: `3px solid ${opts.accentColor}`,
+            color: opts.textSecondary,
+            fontStyle: 'italic',
+          }}
+        >
+          {quoteLines.map((ql, qi) => (
+            <div key={qi}>{renderInlineMarkdown(ql, `bq${key}-${qi}`, opts.accentColor)}</div>
+          ))}
+        </blockquote>
+      );
+      continue;
+    }
+
+    // Unordered list (consume consecutive items)
+    if (/^[-*]\s+/.test(trimmed)) {
+      const items: string[] = [];
+      while (i < lines.length && /^[-*]\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^[-*]\s+/, ''));
+        i++;
+      }
+      blocks.push(
+        <ul key={key++} style={{ margin: '4px 0', paddingLeft: 22, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {items.map((it, ii) => (
+            <li key={ii} style={{ color: opts.textPrimary, fontSize: 13 }}>
+              {renderInlineMarkdown(it, `ul${key}-${ii}`, opts.accentColor)}
+            </li>
+          ))}
+        </ul>
+      );
+      continue;
+    }
+
+    // Ordered list (consume consecutive items)
+    if (/^\d+\.\s+/.test(trimmed)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^\d+\.\s+/, ''));
+        i++;
+      }
+      blocks.push(
+        <ol key={key++} style={{ margin: '4px 0', paddingLeft: 22, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {items.map((it, ii) => (
+            <li key={ii} style={{ color: opts.textPrimary, fontSize: 13 }}>
+              {renderInlineMarkdown(it, `ol${key}-${ii}`, opts.accentColor)}
+            </li>
+          ))}
+        </ol>
+      );
+      continue;
+    }
+
+    // Blank line
+    if (!trimmed) {
+      blocks.push(<div key={key++} style={{ height: 6 }} />);
+      i++;
+      continue;
+    }
+
+    // Paragraph (consume consecutive non-blank plain lines)
+    const paraLines: string[] = [];
+    while (i < lines.length && lines[i].trim() && !/^(#{1,4})\s+/.test(lines[i].trim()) && !/^[-*]\s+/.test(lines[i].trim()) && !/^\d+\.\s+/.test(lines[i].trim()) && !lines[i].trim().startsWith('>') && !lines[i].trim().startsWith('```')) {
+      paraLines.push(lines[i].trim());
+      i++;
+    }
+    blocks.push(
+      <p key={key++} style={{ color: opts.textPrimary, margin: 0, fontSize: 13, lineHeight: 1.6 }}>
+        {renderInlineMarkdown(paraLines.join(' '), `p${key}`, opts.accentColor)}
+      </p>
+    );
+  }
+
+  return <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>{blocks}</div>;
+}
 
 const codeContent = `import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -1750,7 +2155,7 @@ export const App: React.FC = () => {
       isDirty: false,
     },
   ]);
-  const [activeFileId, setActiveFileId] = useState<string>(
+  const [activeFileId, setActiveFileId] = useState<string | null>(
     '/Users/walancy/Documents/codes/Ainaobra/ainaobra/apps/wireframe/src/pages/WireframeLogin.tsx'
   );
   const activeFile = openFiles.find((f) => f.id === activeFileId) || openFiles[0];
@@ -1962,7 +2367,14 @@ export const App: React.FC = () => {
     return () => clearInterval(timer);
   }, [refreshWorkspaceGitInfo]);
 
-  const [selectedAiProvider, setSelectedAiProvider] = useState<string>('claude');
+  const [selectedAiProvider, setSelectedAiProvider] = useState<string>(() => {
+    return localStorage.getItem('ide_selected_ai_provider') || 'claude';
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('ide_selected_ai_provider', selectedAiProvider);
+    } catch {}
+  }, [selectedAiProvider]);
   const [useAiChatThemeColor, setUseAiChatThemeColor] = useState<boolean>(() => {
     const saved = localStorage.getItem('ide_use_ai_chat_color');
     return saved !== null ? saved === 'true' : true;
@@ -2487,6 +2899,41 @@ export const App: React.FC = () => {
     setChatHistoryPopupOpen(false);
   };
 
+  const handleCreateNewChatSession = () => {
+    const newId = 'session-' + Date.now();
+    const newSession: ChatSessionItem = {
+      id: newId,
+      title: 'Nova Conversa',
+      provider: selectedAiProvider,
+      updatedAt: Date.now(),
+      history: [],
+    };
+    setChatSessions((prev) => [newSession, ...prev]);
+    setActiveChatSessionId(newId);
+    setAiHistory([]);
+    setChatHistoryPopupOpen(false);
+  };
+
+  // Chat sessions ordered most-recent-first (same order shown in the history popup),
+  // used to drive Back/Forward navigation between conversations.
+  const orderedChatSessions = useMemo(
+    () => [...chatSessions].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)),
+    [chatSessions]
+  );
+  const activeChatSessionNavIndex = orderedChatSessions.findIndex((s) => s.id === activeChatSessionId);
+
+  const handleChatSessionBack = () => {
+    if (activeChatSessionNavIndex >= 0 && activeChatSessionNavIndex < orderedChatSessions.length - 1) {
+      handleSelectChatSession(orderedChatSessions[activeChatSessionNavIndex + 1].id);
+    }
+  };
+
+  const handleChatSessionForward = () => {
+    if (activeChatSessionNavIndex > 0) {
+      handleSelectChatSession(orderedChatSessions[activeChatSessionNavIndex - 1].id);
+    }
+  };
+
   const handleDeleteChatSession = (sessionId: string, e?: React.MouseEvent) => {
     e?.stopPropagation?.();
     setChatSessions((prev) => {
@@ -2916,6 +3363,26 @@ export const App: React.FC = () => {
   const [showExplorer, setShowExplorer] = useState(true);
   const [activeActivityTab, setActiveActivityTab] = useState<'explorer' | 'search' | 'git' | 'debug' | 'preview' | 'extensions' | 'testing'>('explorer');
   const [activeExtensionDetails, setActiveExtensionDetails] = useState<any | null>(null);
+  // Real installed extensions, sourced from disk (~/.devflow/extensions/installed.json)
+  // via the electron backend — populated by the effect below, never fabricated.
+  const [installedExtensions, setInstalledExtensions] = useState<any[]>([]);
+
+  useEffect(() => {
+    let isCancelled = false;
+    if (window.electronAPI?.extensions?.getInstalled) {
+      window.electronAPI.extensions
+        .getInstalled()
+        .then((res) => {
+          if (!isCancelled && res?.success && Array.isArray(res.extensions)) {
+            setInstalledExtensions(res.extensions);
+          }
+        })
+        .catch(() => {});
+    }
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
   const [gitModifiedCount, setGitModifiedCount] = useState<number>(0);
 
   useEffect(() => {
@@ -2949,6 +3416,8 @@ export const App: React.FC = () => {
   });
   const [quickInputPosition, setQuickInputPosition] = useState<'top' | 'center'>('center');
   const [isZenMode, setIsZenMode] = useState(false);
+  const zenChordPendingRef = useRef(false);
+  const zenChordTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isCenteredLayout, setIsCenteredLayout] = useState(false);
   const [isCustomizeLayoutOpen, setIsCustomizeLayoutOpen] = useState(false);
   const customizeLayoutRef = useRef<HTMLDivElement>(null);
@@ -2964,7 +3433,7 @@ export const App: React.FC = () => {
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [settingsActiveTab, setSettingsActiveTab] = useState<'appearance' | 'editor' | 'shortcuts' | 'extensions'>('appearance');
+  const [settingsActiveTab, setSettingsActiveTab] = useState<'general' | 'appearance' | 'editor' | 'terminal' | 'ai' | 'shortcuts' | 'extensions'>('general');
 
   // Minimalist Draggable Theme Popup State
   const [isThemePopupOpen, setIsThemePopupOpen] = useState(false);
@@ -3048,6 +3517,52 @@ export const App: React.FC = () => {
   const [editorLineNumbers, setEditorLineNumbers] = useState<boolean>(() => {
     return localStorage.getItem('ide_editor_line_numbers') !== 'false';
   });
+  const [editorRenderWhitespace, setEditorRenderWhitespace] = useState<boolean>(() => {
+    return localStorage.getItem('ide_editor_render_whitespace') === 'true';
+  });
+  const [editorSmoothScrolling, setEditorSmoothScrolling] = useState<boolean>(() => {
+    return localStorage.getItem('ide_editor_smooth_scrolling') !== 'false';
+  });
+  const [editorBracketColorization, setEditorBracketColorization] = useState<boolean>(() => {
+    return localStorage.getItem('ide_editor_bracket_colorization') !== 'false';
+  });
+  // Terminal settings (Settings modal > Terminal tab)
+  const [terminalFontSize, setTerminalFontSize] = useState<number>(() => {
+    const s = localStorage.getItem('ide_terminal_font_size');
+    return s ? Number(s) : 12;
+  });
+  const [terminalCursorStyle, setTerminalCursorStyle] = useState<'block' | 'bar' | 'underline'>(() => {
+    return (localStorage.getItem('ide_terminal_cursor_style') as any) || 'block';
+  });
+  const [terminalCursorBlink, setTerminalCursorBlink] = useState<boolean>(() => {
+    return localStorage.getItem('ide_terminal_cursor_blink') !== 'false';
+  });
+  const [terminalScrollback, setTerminalScrollback] = useState<number>(() => {
+    const s = localStorage.getItem('ide_terminal_scrollback');
+    return s ? Number(s) : 5000;
+  });
+  const [terminalCopyOnSelect, setTerminalCopyOnSelect] = useState<boolean>(() => {
+    return localStorage.getItem('ide_terminal_copy_on_select') === 'true';
+  });
+  // AI / Agents defaults (Settings modal > IA & Agentes tab)
+  const [aiAutoApprove, setAiAutoApprove] = useState<boolean>(() => {
+    return localStorage.getItem('ide_ai_auto_approve') === 'true';
+  });
+  const [aiConfirmBeforeDelete, setAiConfirmBeforeDelete] = useState<boolean>(() => {
+    return localStorage.getItem('ide_ai_confirm_before_delete') !== 'false';
+  });
+  // General settings (Settings modal > Geral tab)
+  const [confirmBeforeClosingUnsaved, setConfirmBeforeClosingUnsaved] = useState<boolean>(() => {
+    return localStorage.getItem('ide_confirm_before_closing_unsaved') !== 'false';
+  });
+  const [restoreLastWorkspace, setRestoreLastWorkspace] = useState<boolean>(() => {
+    return localStorage.getItem('ide_restore_last_workspace') !== 'false';
+  });
+  const [autoRefreshGitStatus, setAutoRefreshGitStatus] = useState<boolean>(() => {
+    return localStorage.getItem('ide_auto_refresh_git_status') !== 'false';
+  });
+  // Markdown "Open Preview to the Side" (VS Code style, per-filetype editor action)
+  const [showMarkdownPreview, setShowMarkdownPreview] = useState<boolean>(false);
   // Split Editor and More Actions menu states
   const [isEditorSplit, setIsEditorSplit] = useState<boolean>(false);
   const [editorSplitOrientation, setEditorSplitOrientation] = useState<'vertical' | 'horizontal'>('vertical');
@@ -3769,11 +4284,10 @@ export const App: React.FC = () => {
 
   const handleCloseFile = (fileId: string, e?: React.MouseEvent) => {
     e?.stopPropagation?.();
-    if (openFiles.length <= 1) return;
     const nextFiles = openFiles.filter((f) => f.id !== fileId);
     setOpenFiles(nextFiles);
     if (activeFileId === fileId) {
-      setActiveFileId(nextFiles[nextFiles.length - 1].id);
+      setActiveFileId(nextFiles.length > 0 ? nextFiles[nextFiles.length - 1].id : null);
     }
   };
 
@@ -3880,25 +4394,44 @@ export const App: React.FC = () => {
   };
 
   // GitHub Issues Integration
+  // GitHub Issues Integration via Official API (with gh CLI fallback)
   const refreshGitHubIssues = useCallback(async () => {
-    if (!window.electronAPI?.shell?.exec) return;
     const cwd = workspacePath || process.cwd();
     setIsLoadingIssues(true);
     try {
-      const res = await window.electronAPI.shell.exec(
-        'export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh issue list --limit 30 --json number,title,author,updatedAt,labels,state',
-        cwd
-      );
-      if (res.exitCode === 0 && res.stdout.trim()) {
-        const parsed = JSON.parse(res.stdout.trim());
-        if (Array.isArray(parsed)) {
-          const normalized = parsed.map((item: any) => ({
+      // 1. Try Official GitHub REST API via IPC first
+      if (window.electronAPI?.git?.getIssues) {
+        const issues = await window.electronAPI.git.getIssues(cwd);
+        if (Array.isArray(issues) && issues.length > 0) {
+          const normalized = issues.map((item: any) => ({
             ...item,
             author: typeof item.author === 'object' && item.author !== null
               ? (item.author.login || item.author.name || 'walancy')
-              : (String(item.author || 'walancy')),
+              : String(item.author || 'walancy'),
           }));
           setGitIssues(normalized);
+          setIsLoadingIssues(false);
+          return;
+        }
+      }
+
+      // 2. Fallback to gh CLI
+      if (window.electronAPI?.shell?.exec) {
+        const res = await window.electronAPI.shell.exec(
+          'export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh issue list --limit 50 --json number,title,author,updatedAt,labels,state',
+          cwd
+        );
+        if (res.exitCode === 0 && res.stdout.trim()) {
+          const parsed = JSON.parse(res.stdout.trim());
+          if (Array.isArray(parsed)) {
+            const normalized = parsed.map((item: any) => ({
+              ...item,
+              author: typeof item.author === 'object' && item.author !== null
+                ? (item.author.login || item.author.name || 'walancy')
+                : (String(item.author || 'walancy')),
+            }));
+            setGitIssues(normalized);
+          }
         }
       }
     } catch (e) {
@@ -3909,21 +4442,35 @@ export const App: React.FC = () => {
   }, [workspacePath]);
 
   const handleCreateIssue = async (title: string) => {
-    if (!title.trim() || !window.electronAPI?.shell?.exec) return;
+    if (!title.trim()) return;
     const cwd = workspacePath || process.cwd();
     setIsLoadingIssues(true);
     try {
-      const res = await window.electronAPI.shell.exec(
-        `export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh issue create --title "${title.replace(/"/g, '\\"')}" --body "Criada via DevFlow IDE"`,
-        cwd
-      );
-      if (res.exitCode === 0) {
-        setToastMessage('Issue criada com sucesso no GitHub!');
-        setNewIssueTitle('');
-        setIsCreatingIssue(false);
-        await refreshGitHubIssues();
-      } else {
-        setToastMessage(`Erro ao criar issue: ${res.stderr || res.error}`);
+      if (window.electronAPI?.git?.createIssue) {
+        const res = await window.electronAPI.git.createIssue(cwd, title.trim());
+        if (res.success) {
+          setToastMessage('Issue criada com sucesso via GitHub API!');
+          setNewIssueTitle('');
+          setIsCreatingIssue(false);
+          await refreshGitHubIssues();
+          return;
+        }
+      }
+
+      // Fallback to gh CLI
+      if (window.electronAPI?.shell?.exec) {
+        const res = await window.electronAPI.shell.exec(
+          `export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh issue create --title "${title.replace(/"/g, '\\"')}" --body "Criada via DevFlow IDE"`,
+          cwd
+        );
+        if (res.exitCode === 0) {
+          setToastMessage('Issue criada com sucesso no GitHub!');
+          setNewIssueTitle('');
+          setIsCreatingIssue(false);
+          await refreshGitHubIssues();
+        } else {
+          setToastMessage(`Erro ao criar issue: ${res.stderr || res.error}`);
+        }
       }
     } catch (e: any) {
       setToastMessage(`Erro: ${e.message}`);
@@ -4131,6 +4678,118 @@ export const App: React.FC = () => {
     } catch (err: any) {
       setToastMessage(`Erro ao aplicar tema: ${err?.message || err}`);
     }
+  };
+
+  // -------------------------------------------------------------------------
+  // Real Extension Install/Uninstall/Toggle (single source of truth, backed by
+  // ~/.devflow/extensions/installed.json via the electron backend — used by both
+  // the Extensions marketplace list and the extension details view).
+  // -------------------------------------------------------------------------
+  const handleInstallExtension = async (ext: any) => {
+    if (!window.electronAPI?.extensions?.install) {
+      setToastMessage('Instalação de extensões indisponível neste ambiente.');
+      return;
+    }
+    setToastMessage(`Baixando e instalando "${ext.displayName || ext.name}"...`);
+    try {
+      const res = await window.electronAPI.extensions.install(ext.namespace, ext.name, ext.version);
+      if (res?.success && res.record) {
+        // Re-fetch the full list (rather than splicing res.record in directly) so
+        // computed fields like activityBarViews (resolved server-side) are included.
+        const listRes = await window.electronAPI.extensions.getInstalled?.();
+        if (listRes?.success && Array.isArray(listRes.extensions)) {
+          setInstalledExtensions(listRes.extensions);
+        } else {
+          setInstalledExtensions((prev) => [
+            res.record,
+            ...prev.filter((i) => !(i.namespace === ext.namespace && i.name === ext.name)),
+          ]);
+        }
+        if (res.record.themes && res.record.themes.length > 0) {
+          handleApplyVscodeTheme(res.record.themes[0].data, res.record.themes[0].label);
+        }
+        setToastMessage(`Extensão "${ext.displayName || ext.name}" instalada e pronta para uso!`);
+      } else {
+        setToastMessage(`Erro ao instalar extensão: ${res?.error || 'falha desconhecida'}`);
+      }
+    } catch (err: any) {
+      setToastMessage(`Erro ao instalar extensão: ${err?.message || err}`);
+    }
+  };
+
+  const handleUninstallExtension = async (ext: any) => {
+    if (!window.electronAPI?.extensions?.uninstall) return;
+    try {
+      await window.electronAPI.extensions.uninstall(ext.namespace, ext.name);
+      setInstalledExtensions((prev) => prev.filter((i) => !(i.namespace === ext.namespace && i.name === ext.name)));
+      setToastMessage(`Extensão "${ext.displayName || ext.name}" desinstalada.`);
+    } catch (err: any) {
+      setToastMessage(`Erro ao desinstalar: ${err?.message || err}`);
+    }
+  };
+
+  const handleToggleExtensionEnabled = async (ext: any) => {
+    if (!window.electronAPI?.extensions?.toggleEnabled) return;
+    try {
+      await window.electronAPI.extensions.toggleEnabled(ext.namespace, ext.name);
+      setInstalledExtensions((prev) =>
+        prev.map((i) => (i.namespace === ext.namespace && i.name === ext.name ? { ...i, enabled: !i.enabled } : i))
+      );
+    } catch (err: any) {
+      setToastMessage(`Erro ao alternar extensão: ${err?.message || err}`);
+    }
+  };
+
+  // Generates a commit message from the repo's diff using the AI provider
+  // currently selected in the AI chat panel (Source Control "Generate" button)
+  const handleGenerateCommitMessage = async (repoDir: string): Promise<string> => {
+    const currentProvider = AI_PROVIDERS.find((p) => p.id === selectedAiProvider);
+    if (!currentProvider) {
+      throw new Error('Selecione uma IA no painel de chat para gerar a mensagem de commit.');
+    }
+
+    const cliCmd = currentProvider.cliCommand;
+    const checkRes = await window.electronAPI?.shell?.exec(`which ${cliCmd}`, repoDir);
+    if (!checkRes || checkRes.exitCode !== 0 || !checkRes.stdout.trim()) {
+      throw new Error(`CLI "${cliCmd}" não encontrado. Selecione outra IA no painel de chat ou instale-a.`);
+    }
+
+    const [diffRes, statusRes] = await Promise.all([
+      window.electronAPI?.shell?.exec('git diff HEAD --', repoDir),
+      window.electronAPI?.shell?.exec('git status --porcelain', repoDir),
+    ]);
+
+    let diffText = (diffRes?.stdout || '').trim();
+    const untracked = (statusRes?.stdout || '')
+      .split('\n')
+      .filter((l: string) => l.startsWith('??'))
+      .map((l: string) => l.slice(3).trim());
+    if (untracked.length > 0) {
+      diffText += `\n\n[Novos arquivos não rastreados]: ${untracked.join(', ')}`;
+    }
+    if (!diffText.trim()) {
+      throw new Error('Nenhuma alteração encontrada para gerar a mensagem de commit.');
+    }
+
+    const activeModelId = activeModels[currentProvider.id]?.currentModelId;
+    const prompt = `Baseado no diff abaixo, escreva APENAS a mensagem de commit no padrão Conventional Commits (ex: "fix: ...", "feat: ...", "refactor: ..."), curta e objetiva, em português, sem corpo extra, sem aspas e sem markdown.\n\nDiff:\n${diffText.slice(0, 8000)}`;
+
+    const res = await window.electronAPI?.ai?.runCli?.({
+      cliCmd,
+      prompt,
+      model: activeModelId,
+      cwd: repoDir,
+    });
+
+    let output = (res?.stdout || res?.stderr || '').trim();
+    output = output.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').trim();
+    output = output.replace(/^```[a-z]*\n?/i, '').replace(/```$/, '').trim();
+    output = output.replace(/^["']|["']$/g, '').trim();
+
+    if (!output) {
+      throw new Error('A IA não retornou uma mensagem válida.');
+    }
+    return output;
   };
 
   // Helper to detect authentication / OAuth expired errors in AI output
@@ -4427,6 +5086,15 @@ export const App: React.FC = () => {
         setIsCenteredLayout(false);
       }
       return next;
+    });
+  };
+
+  // Toggles straight between Dark and Light (if currently following "system", flips to the
+  // explicit opposite of whatever is effectively showing right now).
+  const handleToggleThemeMode = () => {
+    setThemeMode((prev) => {
+      if (prev === 'system') return isEffectiveDark ? 'light' : 'dark';
+      return prev === 'dark' ? 'light' : 'dark';
     });
   };
 
@@ -4951,6 +5619,58 @@ export const App: React.FC = () => {
     localStorage.setItem('ide_editor_line_numbers', String(editorLineNumbers));
   }, [editorLineNumbers]);
 
+  useEffect(() => {
+    localStorage.setItem('ide_editor_render_whitespace', String(editorRenderWhitespace));
+  }, [editorRenderWhitespace]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_editor_smooth_scrolling', String(editorSmoothScrolling));
+  }, [editorSmoothScrolling]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_editor_bracket_colorization', String(editorBracketColorization));
+  }, [editorBracketColorization]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_terminal_font_size', String(terminalFontSize));
+  }, [terminalFontSize]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_terminal_cursor_style', terminalCursorStyle);
+  }, [terminalCursorStyle]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_terminal_cursor_blink', String(terminalCursorBlink));
+  }, [terminalCursorBlink]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_terminal_scrollback', String(terminalScrollback));
+  }, [terminalScrollback]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_terminal_copy_on_select', String(terminalCopyOnSelect));
+  }, [terminalCopyOnSelect]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_ai_auto_approve', String(aiAutoApprove));
+  }, [aiAutoApprove]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_ai_confirm_before_delete', String(aiConfirmBeforeDelete));
+  }, [aiConfirmBeforeDelete]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_confirm_before_closing_unsaved', String(confirmBeforeClosingUnsaved));
+  }, [confirmBeforeClosingUnsaved]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_restore_last_workspace', String(restoreLastWorkspace));
+  }, [restoreLastWorkspace]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_auto_refresh_git_status', String(autoRefreshGitStatus));
+  }, [autoRefreshGitStatus]);
+
   // Global shortcuts (Antigravity & VS Code layout toggles & Quick Open & Settings)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -4984,6 +5704,36 @@ export const App: React.FC = () => {
           setIsCustomizeLayoutOpen(false);
           return;
         }
+      }
+      // Cmd/Ctrl + K, then Z: Zen Mode / then T: Toggle Dark-Light Theme (VS Code-style two-key chords)
+      if (zenChordPendingRef.current) {
+        zenChordPendingRef.current = false;
+        if (zenChordTimeoutRef.current) clearTimeout(zenChordTimeoutRef.current);
+        if (e.key.toLowerCase() === 'z' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          handleToggleZenMode();
+          return;
+        }
+        if (e.key.toLowerCase() === 't' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          handleToggleThemeMode();
+          return;
+        }
+      }
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        zenChordPendingRef.current = true;
+        if (zenChordTimeoutRef.current) clearTimeout(zenChordTimeoutRef.current);
+        zenChordTimeoutRef.current = setTimeout(() => {
+          zenChordPendingRef.current = false;
+        }, 1500);
+        return;
+      }
+      // Ctrl + Cmd + F: Toggle Native Fullscreen (macOS system convention)
+      if (e.ctrlKey && e.metaKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        handleToggleFullscreen();
+        return;
       }
       // Cmd/Ctrl + Shift + H: Toggle Chat History Modal
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'h') {
@@ -5095,7 +5845,7 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleSaveActiveFile, isCustomizeLayoutOpen, isQuickOpenOpen, isSettingsMenuOpen, isSettingsModalOpen, isThemePopupOpen, isZenMode, chatHistoryModalOpen, handleOpenChatHistoryModal]);
+  }, [handleSaveActiveFile, isCustomizeLayoutOpen, isQuickOpenOpen, isSettingsMenuOpen, isSettingsModalOpen, isThemePopupOpen, isZenMode, chatHistoryModalOpen, handleOpenChatHistoryModal, handleToggleZenMode, handleToggleFullscreen, handleToggleThemeMode]);
 
   // Check installed CLIs on native machine: startup, window focus, PTY command exits, and low-frequency poll
   useEffect(() => {
@@ -5704,8 +6454,8 @@ export const App: React.FC = () => {
         await loadWorkspaceTree(workspacePath);
         const remaining = openFiles.filter((f) => f.path !== node.path && !f.path.startsWith(node.path + '/'));
         setOpenFiles(remaining);
-        if (activeFileId === node.path || activeFileId.startsWith(node.path + '/')) {
-          setActiveFileId(remaining.length > 0 ? remaining[0].id : '');
+        if (activeFileId === node.path || activeFileId?.startsWith(node.path + '/')) {
+          setActiveFileId(remaining.length > 0 ? remaining[0].id : null);
         }
         setToastMessage(`"${node.name}" excluído`);
       } catch (err: any) {
@@ -6543,12 +7293,8 @@ ${prompt || userDisplayPrompt}`;
               marginLeft: showTrafficLightSpacer ? 4 : 0,
               marginRight: showTrafficLightSpacer ? 6 : 0,
               borderRadius: 8,
-              background: showTrafficLightSpacer
-                ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#ffffff')
-                : 'transparent',
-              boxShadow: showTrafficLightSpacer && !isEffectiveDark
-                ? '0 1px 4px rgba(0, 0, 0, 0.08)'
-                : 'none',
+              background: 'transparent',
+              boxShadow: 'none',
               flexShrink: 0,
               transition: isDraggingExplorer || isDraggingAi || isDraggingTerminal ? 'none' : 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
               overflow: 'hidden',
@@ -7423,9 +8169,9 @@ ${prompt || userDisplayPrompt}`;
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      padding: '6px 12px',
+                      padding: '5px 12px',
                       cursor: 'pointer',
-                      fontSize: 12.5,
+                      fontSize: 11,
                       color: '#cccccc',
                       transition: 'background 0.08s ease',
                     }}
@@ -7452,9 +8198,9 @@ ${prompt || userDisplayPrompt}`;
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      padding: '6px 12px',
+                      padding: '5px 12px',
                       cursor: 'pointer',
-                      fontSize: 12.5,
+                      fontSize: 11,
                       color: '#cccccc',
                       transition: 'background 0.08s ease',
                     }}
@@ -7469,7 +8215,7 @@ ${prompt || userDisplayPrompt}`;
                   >
                     <span>Open User Settings</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                      <span style={{ fontSize: 11, color: '#888888', fontFamily: 'monospace' }}>⌘ ,</span>
+                      <span style={{ fontSize: 10, color: '#888888', fontFamily: 'monospace' }}>⌘ ,</span>
                     </div>
                   </div>
 
@@ -7480,9 +8226,9 @@ ${prompt || userDisplayPrompt}`;
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      padding: '6px 12px',
+                      padding: '5px 12px',
                       cursor: 'pointer',
-                      fontSize: 12.5,
+                      fontSize: 11,
                       color: '#cccccc',
                       transition: 'background 0.08s ease',
                     }}
@@ -7499,7 +8245,66 @@ ${prompt || userDisplayPrompt}`;
                       <span style={{ width: 8, height: 8, borderRadius: '50%', background: accentColor, flexShrink: 0 }} />
                       <span>Themes & Appearance (Cor e Tema)</span>
                     </div>
-                    <span style={{ fontSize: 10.5, color: '#888888', textTransform: 'capitalize' }}>{themeMode}</span>
+                    <span style={{ fontSize: 10, color: '#888888', textTransform: 'capitalize' }}>{themeMode}</span>
+                  </div>
+
+                  {/* Toggle Dark / Light Mode */}
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleToggleThemeMode();
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '5px 12px',
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      color: '#cccccc',
+                      transition: 'background 0.08s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = '#04395e';
+                      e.currentTarget.style.color = '#ffffff';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = '#cccccc';
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span>Toggle Dark / Light Mode</span>
+                      <span style={{ fontSize: 10, color: '#888888', fontFamily: 'monospace' }}>⌘K ⌘T</span>
+                    </div>
+                    <div
+                      role="switch"
+                      aria-checked={isEffectiveDark}
+                      title={isEffectiveDark ? 'Escuro' : 'Claro'}
+                      style={{
+                        width: 30,
+                        height: 17,
+                        borderRadius: 999,
+                        background: isEffectiveDark ? accentColor : 'rgba(255, 255, 255, 0.18)',
+                        position: 'relative',
+                        flexShrink: 0,
+                        transition: 'background 0.15s ease',
+                      }}
+                    >
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: 2,
+                          left: isEffectiveDark ? 15 : 2,
+                          width: 13,
+                          height: 13,
+                          borderRadius: '50%',
+                          background: '#ffffff',
+                          transition: 'left 0.15s ease',
+                          boxShadow: '0 1px 2px rgba(0, 0, 0, 0.4)',
+                        }}
+                      />
+                    </div>
                   </div>
 
                   {/* Divider */}
@@ -7516,9 +8321,9 @@ ${prompt || userDisplayPrompt}`;
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      padding: '6px 12px',
+                      padding: '5px 12px',
                       cursor: 'pointer',
-                      fontSize: 12.5,
+                      fontSize: 11,
                       color: '#cccccc',
                       transition: 'background 0.08s ease',
                     }}
@@ -7533,7 +8338,7 @@ ${prompt || userDisplayPrompt}`;
                   >
                     <span>Extensions</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                      <span style={{ fontSize: 11, color: '#888888', fontFamily: 'monospace' }}>⇧ ⌘ X</span>
+                      <span style={{ fontSize: 10, color: '#888888', fontFamily: 'monospace' }}>⇧ ⌘ X</span>
                     </div>
                   </div>
 
@@ -7548,9 +8353,9 @@ ${prompt || userDisplayPrompt}`;
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      padding: '6px 12px',
+                      padding: '5px 12px',
                       cursor: 'pointer',
-                      fontSize: 12.5,
+                      fontSize: 11,
                       color: '#cccccc',
                       transition: 'background 0.08s ease',
                     }}
@@ -7576,9 +8381,9 @@ ${prompt || userDisplayPrompt}`;
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      padding: '6px 12px',
+                      padding: '5px 12px',
                       cursor: 'pointer',
-                      fontSize: 12.5,
+                      fontSize: 11,
                       color: '#cccccc',
                       transition: 'background 0.08s ease',
                     }}
@@ -7607,9 +8412,9 @@ ${prompt || userDisplayPrompt}`;
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      padding: '6px 12px',
+                      padding: '5px 12px',
                       cursor: 'pointer',
-                      fontSize: 12.5,
+                      fontSize: 11,
                       color: '#cccccc',
                       transition: 'background 0.08s ease',
                     }}
@@ -7635,9 +8440,9 @@ ${prompt || userDisplayPrompt}`;
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      padding: '6px 12px',
+                      padding: '5px 12px',
                       cursor: 'pointer',
-                      fontSize: 12.5,
+                      fontSize: 11,
                       color: '#cccccc',
                       transition: 'background 0.08s ease',
                     }}
@@ -7887,8 +8692,8 @@ ${prompt || userDisplayPrompt}`;
                         height: 15,
                         padding: '0 3.5px',
                         borderRadius: 8,
-                        background: '#0078d4',
-                        color: '#ffffff',
+                        background: accentColor,
+                        color: accentTextColor,
                         fontSize: 9.5,
                         fontWeight: 700,
                         display: 'flex',
@@ -8080,6 +8885,73 @@ ${prompt || userDisplayPrompt}`;
                   <CodiconBeaker size={20} />
                 </div>
 
+                {/* Extension-contributed Activity Bar shortcuts (contributes.viewsContainers.activitybar) */}
+                {installedExtensions
+                  .filter((ext) => ext.enabled && Array.isArray(ext.activityBarViews) && ext.activityBarViews.length > 0)
+                  .flatMap((ext) =>
+                    ext.activityBarViews.map((view: { id: string; title: string; icon?: string }) => {
+                      const isActive = activeExtensionDetails?.namespace === ext.namespace && activeExtensionDetails?.name === ext.name;
+                      return (
+                        <div
+                          key={`${ext.namespace}.${ext.name}.${view.id}`}
+                          style={{
+                            width: 38,
+                            height: 38,
+                            borderRadius: 6,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            position: 'relative',
+                            cursor: 'pointer',
+                            background: isActive
+                              ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
+                              : 'transparent',
+                            color: isActive
+                              ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
+                              : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
+                            transition: 'all 0.15s ease',
+                          }}
+                          title={`${view.title} (${ext.displayName || ext.name})`}
+                          onClick={() => setActiveExtensionDetails(ext)}
+                          onMouseEnter={(e) => {
+                            if (!isActive) {
+                              e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+                              e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : themeTokens.textPrimary;
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isActive) {
+                              e.currentTarget.style.background = 'transparent';
+                              e.currentTarget.style.color = isEffectiveDark ? '#858585' : themeTokens.textSecondary;
+                            }
+                          }}
+                        >
+                          {view.icon ? (
+                            <div
+                              role="img"
+                              aria-label={view.title}
+                              style={{
+                                width: 20,
+                                height: 20,
+                                backgroundColor: 'currentColor',
+                                WebkitMaskImage: `url(${view.icon})`,
+                                maskImage: `url(${view.icon})`,
+                                WebkitMaskSize: 'contain',
+                                maskSize: 'contain',
+                                WebkitMaskRepeat: 'no-repeat',
+                                maskRepeat: 'no-repeat',
+                                WebkitMaskPosition: 'center',
+                                maskPosition: 'center',
+                              }}
+                            />
+                          ) : (
+                            <Blocks size={20} />
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+
                 {/* Settings Gear (Pinned to Bottom) */}
                 <div
                   style={{
@@ -8166,7 +9038,12 @@ ${prompt || userDisplayPrompt}`;
                     onToast={(msg) => setToastMessage(msg)}
                     onOpenBranchModal={() => setIsBranchModalOpen(true)}
                     currentBranch={currentBranch}
+                    onGenerateCommitMessage={handleGenerateCommitMessage}
+                    installedExtensions={installedExtensions}
                     onSelectExtension={(ext) => setActiveExtensionDetails(ext)}
+                    onInstallExtension={handleInstallExtension}
+                    onUninstallExtension={handleUninstallExtension}
+                    onToggleExtensionEnabled={handleToggleExtensionEnabled}
                   />
                 ) : (
                   <>
@@ -8373,7 +9250,18 @@ ${prompt || userDisplayPrompt}`;
                             </div>
 
                             {isDir && isExpanded && item.children && item.children.length > 0 && (
-                              <div style={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
+                              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    left: depth * 12 + 9,
+                                    top: 0,
+                                    bottom: 0,
+                                    width: 1,
+                                    background: isEffectiveDark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.09)',
+                                    pointerEvents: 'none',
+                                  }}
+                                />
                                 {item.children.map((child) => renderTreeItem(child, depth + 1))}
                               </div>
                             )}
@@ -8944,6 +9832,41 @@ ${prompt || userDisplayPrompt}`;
                     <span>Salvar</span>
                   </div>
                 )}
+                {/* 0. Markdown Preview (only for .md/.markdown/.mdx files) */}
+                {activeFile && isMarkdownFile(activeFile.name) && (
+                  <div
+                    onClick={() => setShowMarkdownPreview((prev) => !prev)}
+                    style={{
+                      width: 26,
+                      height: 26,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      borderRadius: 4,
+                      background: showMarkdownPreview ? hexToRgba(accentColor, 0.2) : 'transparent',
+                      transition: 'background 0.15s ease',
+                    }}
+                    title={showMarkdownPreview ? 'Fechar Pré-visualização' : 'Abrir Pré-visualização ao Lado'}
+                  >
+                    <Eye size={15} color={showMarkdownPreview ? accentColor : themeTokens.textPrimary} />
+                  </div>
+                )}
+
+                {/* 0.5 Extension-contributed editor/title actions (per file type, from installed extensions' manifests) */}
+                {getEditorTitleActions(installedExtensions, activeFile?.name, isEffectiveDark).map((action, aIdx) => (
+                  <ExtensionTitleActionButton
+                    key={`${action.extensionName}-${action.command}-${aIdx}`}
+                    action={action}
+                    themeTokens={themeTokens}
+                    isEffectiveDark={isEffectiveDark}
+                    onClick={() =>
+                      setToastMessage(
+                        `"${action.title}" (${action.extensionName}): execução de comandos de extensões ainda não é suportada nesta IDE.`
+                      )
+                    }
+                  />
+                ))}
                 {/* 1. Split Editor Right / Vertical */}
                 <div
                   onClick={() => {
@@ -9209,30 +10132,9 @@ ${prompt || userDisplayPrompt}`;
                   isEffectiveDark={isEffectiveDark}
                   accentColor={accentColor}
                   onClose={() => setActiveExtensionDetails(null)}
-                  onInstall={async (ext) => {
-                    if (window.electronAPI?.extensions?.install) {
-                      const res = await window.electronAPI.extensions.install(ext.namespace, ext.name, ext.version);
-                      if (res?.success && res.record) {
-                        setInstalledExtensions((prev: any) => [res.record, ...prev.filter((i: any) => !(i.namespace === ext.namespace && i.name === ext.name))]);
-                        if (res.record.themes && res.record.themes.length > 0) {
-                          handleApplyVscodeTheme(res.record.themes[0].data, res.record.themes[0].label);
-                        }
-                      }
-                    }
-                  }}
-                  onUninstall={async (ext) => {
-                    if (window.electronAPI?.extensions?.uninstall) {
-                      await window.electronAPI.extensions.uninstall(ext.namespace, ext.name);
-                      setInstalledExtensions((prev: any) => prev.filter((i: any) => !(i.namespace === ext.namespace && i.name === ext.name)));
-                      setToastMessage(`Extensão "${ext.displayName || ext.name}" desinstalada.`);
-                    }
-                  }}
-                  onToggleEnabled={async (ext) => {
-                    if (window.electronAPI?.extensions?.toggleEnabled) {
-                      await window.electronAPI.extensions.toggleEnabled(ext.namespace, ext.name);
-                      setInstalledExtensions((prev: any) => prev.map((i: any) => i.namespace === ext.namespace && i.name === ext.name ? { ...i, enabled: !i.enabled } : i));
-                    }
-                  }}
+                  onInstall={handleInstallExtension}
+                  onUninstall={handleUninstallExtension}
+                  onToggleEnabled={handleToggleExtensionEnabled}
                   onApplyTheme={(themeData, themeLabel) => handleApplyVscodeTheme(themeData, themeLabel)}
                   onToast={(msg) => setToastMessage(msg)}
                 />
@@ -9459,6 +10361,9 @@ ${prompt || userDisplayPrompt}`;
                           tabSize: editorTabSize,
                           lineNumbers: editorLineNumbers ? 'on' : 'off',
                           wordWrap: editorWordWrap ? 'on' : 'off',
+                          renderWhitespace: editorRenderWhitespace ? 'all' : 'none',
+                          smoothScrolling: editorSmoothScrolling,
+                          bracketPairColorization: { enabled: editorBracketColorization },
                           minimap: { enabled: false },
                           automaticLayout: true,
                         }}
@@ -9510,6 +10415,9 @@ ${prompt || userDisplayPrompt}`;
                                 tabSize: editorTabSize,
                                 lineNumbers: editorLineNumbers ? 'on' : 'off',
                                 wordWrap: editorWordWrap ? 'on' : 'off',
+                                renderWhitespace: editorRenderWhitespace ? 'all' : 'none',
+                                smoothScrolling: editorSmoothScrolling,
+                                bracketPairColorization: { enabled: editorBracketColorization },
                                 minimap: { enabled: false },
                                 automaticLayout: true,
                               }}
@@ -9518,6 +10426,53 @@ ${prompt || userDisplayPrompt}`;
                         </>
                       );
                     })()}
+                  </div>
+                </div>
+              ) : activeFile && isMarkdownFile(activeFile.name) && showMarkdownPreview ? (
+                <div style={{ display: 'flex', height: '100%', width: '100%' }}>
+                  {/* Source (left) */}
+                  <div style={{ flex: '0 0 50%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                    <Editor
+                      height="100%"
+                      language={activeFile.language}
+                      value={activeFile.content}
+                      theme={isEffectiveDark ? 'figma-ainaobra' : 'light'}
+                      onChange={handleEditorChange}
+                      onMount={handleEditorMount}
+                      options={{
+                        fontSize: editorFontSize,
+                        fontFamily: 'JetBrains Mono, Menlo, monospace',
+                        tabSize: editorTabSize,
+                        lineNumbers: editorLineNumbers ? 'on' : 'off',
+                        wordWrap: editorWordWrap ? 'on' : 'off',
+                        renderWhitespace: editorRenderWhitespace ? 'all' : 'none',
+                        smoothScrolling: editorSmoothScrolling,
+                        bracketPairColorization: { enabled: editorBracketColorization },
+                        minimap: { enabled: false },
+                        automaticLayout: true,
+                      }}
+                    />
+                  </div>
+
+                  {/* Divider */}
+                  <div style={{ width: 3, background: isEffectiveDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', flexShrink: 0 }} />
+
+                  {/* Preview (right) */}
+                  <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ height: 26, padding: '0 8px', display: 'flex', alignItems: 'center', gap: 6, background: isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)', fontSize: 11, color: themeTokens.textSecondary, flexShrink: 0 }}>
+                      <Eye size={11} color={accentColor} />
+                      <span>Pré-visualização</span>
+                    </div>
+                    <div style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', padding: '16px 20px', background: themeTokens.bgCard }}>
+                      {renderMarkdownPreview(activeFile.content, {
+                        textPrimary: themeTokens.textPrimary,
+                        textSecondary: themeTokens.textSecondary,
+                        textMuted: themeTokens.textMuted,
+                        border: themeTokens.border,
+                        accentColor,
+                        isEffectiveDark,
+                      })}
+                    </div>
                   </div>
                 </div>
               ) : activeFile ? (
@@ -9534,6 +10489,9 @@ ${prompt || userDisplayPrompt}`;
                     tabSize: editorTabSize,
                     lineNumbers: editorLineNumbers ? 'on' : 'off',
                     wordWrap: editorWordWrap ? 'on' : 'off',
+                    renderWhitespace: editorRenderWhitespace ? 'all' : 'none',
+                    smoothScrolling: editorSmoothScrolling,
+                    bracketPairColorization: { enabled: editorBracketColorization },
                     minimap: { enabled: editorMinimap },
                     scrollBeyondLastLine: false,
                     automaticLayout: true,
@@ -10101,8 +11059,6 @@ ${prompt || userDisplayPrompt}`;
                               overflow: 'hidden',
                               minWidth: 0,
                               position: 'relative',
-                              outline: isSplit && activeSessionId === leftSession?.id ? `1px solid ${accentColor}` : 'none',
-                              outlineOffset: -1,
                             }}
                           >
                             {terminalSessions.map((s) => {
@@ -10117,6 +11073,11 @@ ${prompt || userDisplayPrompt}`;
                                   initialCommand={s.initialCommand}
                                   accentColor={accentColor}
                                   isDark={isEffectiveDark}
+                                  fontSize={terminalFontSize}
+                                  cursorStyle={terminalCursorStyle}
+                                  cursorBlink={terminalCursorBlink}
+                                  scrollback={terminalScrollback}
+                                  copyOnSelect={terminalCopyOnSelect}
                                 />
                               );
                             })}
@@ -10145,7 +11106,7 @@ ${prompt || userDisplayPrompt}`;
                                   justifyContent: 'center',
                                 }}
                               >
-                                <div style={{ width: 1, height: '100%', background: themeTokens.border }} />
+                                <div style={{ width: 1, height: '100%', background: isEffectiveDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)' }} />
                               </div>
 
                               <div
@@ -10161,8 +11122,6 @@ ${prompt || userDisplayPrompt}`;
                                   overflow: 'hidden',
                                   minWidth: 0,
                                   position: 'relative',
-                                  outline: activeSessionId === rightSession.id ? `1px solid ${accentColor}` : 'none',
-                                  outlineOffset: -1,
                                 }}
                               >
                                 <NativeXTerm
@@ -10174,6 +11133,11 @@ ${prompt || userDisplayPrompt}`;
                                   initialCommand={rightSession.initialCommand}
                                   accentColor={accentColor}
                                   isDark={isEffectiveDark}
+                                  fontSize={terminalFontSize}
+                                  cursorStyle={terminalCursorStyle}
+                                  cursorBlink={terminalCursorBlink}
+                                  scrollback={terminalScrollback}
+                                  copyOnSelect={terminalCopyOnSelect}
                                 />
                               </div>
                             </>
@@ -10787,7 +11751,7 @@ ${prompt || userDisplayPrompt}`;
                   display: 'flex',
                   position: 'relative',
                   flexShrink: 0,
-                  transition: isDraggingAi ? 'none' : 'width 0.1s ease, background 0.2s ease',
+                  transition: isDraggingAi ? 'none' : 'width 0.18s ease, background 0.2s ease',
                   overflow: 'visible',
                   zIndex: 40,
                   order: sidebarPosition === 'right' ? 3 : 6,
@@ -10904,7 +11868,65 @@ ${prompt || userDisplayPrompt}`;
                     </div>
                   </div>
 
-                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }} ref={chatActionsMenuRef}>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 2 }} ref={chatActionsMenuRef}>
+                    {/* Back / Forward through recent chat sessions */}
+                    <button
+                      onClick={handleChatSessionBack}
+                      disabled={activeChatSessionNavIndex < 0 || activeChatSessionNavIndex >= orderedChatSessions.length - 1}
+                      title="Conversa Anterior"
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: themeTokens.textSecondary,
+                        cursor: activeChatSessionNavIndex < 0 || activeChatSessionNavIndex >= orderedChatSessions.length - 1 ? 'default' : 'pointer',
+                        opacity: activeChatSessionNavIndex < 0 || activeChatSessionNavIndex >= orderedChatSessions.length - 1 ? 0.4 : 1,
+                        padding: '4px 4px',
+                        borderRadius: 4,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary;
+                        (e.currentTarget as HTMLElement).style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary;
+                        (e.currentTarget as HTMLElement).style.background = 'transparent';
+                      }}
+                    >
+                      <ArrowLeft size={13} />
+                    </button>
+                    <button
+                      onClick={handleChatSessionForward}
+                      disabled={activeChatSessionNavIndex <= 0}
+                      title="Próxima Conversa"
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: themeTokens.textSecondary,
+                        cursor: activeChatSessionNavIndex <= 0 ? 'default' : 'pointer',
+                        opacity: activeChatSessionNavIndex <= 0 ? 0.4 : 1,
+                        padding: '4px 4px',
+                        borderRadius: 4,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary;
+                        (e.currentTarget as HTMLElement).style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary;
+                        (e.currentTarget as HTMLElement).style.background = 'transparent';
+                      }}
+                    >
+                      <ArrowRight size={13} />
+                    </button>
+
                     <button
                       onClick={() => setChatActionsMenuOpen((prev) => !prev)}
                       title="Mais opções"
@@ -11108,18 +12130,7 @@ ${prompt || userDisplayPrompt}`;
                         <button
                           type="button"
                           onClick={() => {
-                            const newId = 'session-' + Date.now();
-                            const newSession: ChatSessionItem = {
-                              id: newId,
-                              title: 'Nova Conversa',
-                              provider: selectedAiProvider,
-                              updatedAt: Date.now(),
-                              history: [],
-                            };
-                            setChatSessions((prev) => [newSession, ...prev]);
-                            setActiveChatSessionId(newId);
-                            setAiHistory([]);
-                            setChatHistoryPopupOpen(false);
+                            handleCreateNewChatSession();
                           }}
                           style={{
                             background: accentColor,
@@ -11141,13 +12152,16 @@ ${prompt || userDisplayPrompt}`;
                       </div>
 
                       {/* Chats List */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflowY: 'auto' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                         {chatSessions.length === 0 ? (
                           <div style={{ color: themeTokens.textSecondary, fontSize: 11, textAlign: 'center', padding: '12px 0' }}>
                             Nenhum chat anterior. Inicie uma nova conversa!
                           </div>
                         ) : (
-                          chatSessions.map((s) => {
+                          [...chatSessions]
+                            .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+                            .slice(0, 4)
+                            .map((s) => {
                             const sessionProvider = s.provider || s.history?.find((h) => h.providerId)?.providerId || selectedAiProvider || 'claude';
                             const providerObj = AI_PROVIDERS.find((p) => p.id === sessionProvider);
                             const isActive = s.id === activeChatSessionId;
@@ -11335,7 +12349,7 @@ ${prompt || userDisplayPrompt}`;
                           })
                         )}
 
-                        {/* Ver mais... row inside chat list */}
+                        {/* Botao para abrir restante do historico no modal */}
                         <button
                           type="button"
                           onClick={() => handleOpenChatHistoryModal()}
@@ -11345,7 +12359,7 @@ ${prompt || userDisplayPrompt}`;
                             border: `1px dashed ${themeTokens.border}`,
                             color: themeTokens.textSecondary,
                             borderRadius: 5,
-                            padding: '5px 8px',
+                            padding: '6px 10px',
                             fontSize: 11,
                             fontFamily: 'Poppins, sans-serif',
                             fontWeight: '500',
@@ -11353,7 +12367,7 @@ ${prompt || userDisplayPrompt}`;
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            gap: 5,
+                            gap: 6,
                             marginTop: 3,
                             transition: 'all 0.15s ease',
                           }}
@@ -11369,7 +12383,7 @@ ${prompt || userDisplayPrompt}`;
                           }}
                         >
                           <Clock size={11} color={accentColor} />
-                          <span>Ver mais conversas...</span>
+                          <span>Ver histórico</span>
                           <ChevronRight size={11} />
                         </button>
                       </div>
@@ -11390,35 +12404,9 @@ ${prompt || userDisplayPrompt}`;
                           <Check size={11} color={accentColor} />
                           <span>Salvo automaticamente</span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenChatHistoryModal()}
-                          title="Ver detalhes de todas as conversas salvas"
-                          style={{
-                            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.06)',
-                            border: 'none',
-                            color: accentColor,
-                            cursor: 'pointer',
-                            padding: '3px 8px',
-                            fontSize: 10.5,
-                            fontFamily: 'Poppins, sans-serif',
-                            fontWeight: '500',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 3,
-                            borderRadius: 4,
-                            transition: 'all 0.15s ease',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.background = hexToRgba(accentColor, 0.18);
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.06)';
-                          }}
-                        >
-                          <span>Ver mais</span>
-                          <ChevronRight size={11} />
-                        </button>
+                        <span style={{ fontSize: 10, opacity: 0.65 }}>
+                          {chatSessions.length > 4 ? `4 de ${chatSessions.length} recentes` : `${chatSessions.length} conversa${chatSessions.length === 1 ? '' : 's'}`}
+                        </span>
                       </div>
                     </div>
                   )}
@@ -13681,28 +14669,54 @@ ${prompt || userDisplayPrompt}`;
                               padding: '2px 3px',
                             }}
                           >
-                            <span
-                              style={{
-                                fontSize: 9.5,
-                                fontWeight: 700,
-                                color: currentQuota.weeklyPercent === 0 ? '#ef4444' : currentQuota.weeklyPercent <= 15 ? '#f97316' : themeTokens.textPrimary,
-                                fontFamily: 'Poppins, -apple-system, sans-serif',
-                                letterSpacing: '-0.02em',
-                              }}
-                            >
-                              {currentQuota.dailyPercent}%
-                            </span>
-                            <span
-                              style={{
-                                fontSize: 9.5,
-                                fontWeight: 700,
-                                color: currentQuota.dailyPercent === 0 ? '#ef4444' : currentQuota.dailyPercent <= 15 ? '#f97316' : themeTokens.textPrimary,
-                                fontFamily: 'Poppins, -apple-system, sans-serif',
-                                letterSpacing: '-0.02em',
-                              }}
-                            >
-                              {currentQuota.weeklyPercent}%
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: 3 }}>
+                              <span
+                                style={{
+                                  fontSize: 8,
+                                  fontWeight: 700,
+                                  color: accentColor,
+                                  fontFamily: 'Poppins, -apple-system, sans-serif',
+                                }}
+                                title="Diário"
+                              >
+                                D
+                              </span>
+                              <span
+                                style={{
+                                  fontSize: 9.5,
+                                  fontWeight: 700,
+                                  color: currentQuota.weeklyPercent === 0 ? '#ef4444' : currentQuota.weeklyPercent <= 15 ? '#f97316' : themeTokens.textPrimary,
+                                  fontFamily: 'Poppins, -apple-system, sans-serif',
+                                  letterSpacing: '-0.02em',
+                                }}
+                              >
+                                {currentQuota.dailyPercent}%
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: 3 }}>
+                              <span
+                                style={{
+                                  fontSize: 8,
+                                  fontWeight: 700,
+                                  color: accentColor,
+                                  fontFamily: 'Poppins, -apple-system, sans-serif',
+                                }}
+                                title="Semanal"
+                              >
+                                S
+                              </span>
+                              <span
+                                style={{
+                                  fontSize: 9.5,
+                                  fontWeight: 700,
+                                  color: currentQuota.dailyPercent === 0 ? '#ef4444' : currentQuota.dailyPercent <= 15 ? '#f97316' : themeTokens.textPrimary,
+                                  fontFamily: 'Poppins, -apple-system, sans-serif',
+                                  letterSpacing: '-0.02em',
+                                }}
+                              >
+                                {currentQuota.weeklyPercent}%
+                              </span>
+                            </div>
 
                             {/* Hover / Click Popup: fundo adaptativo do sistema, sem bordas, sombra suave */}
                             {quotaTooltipOpen && (
@@ -14499,8 +15513,10 @@ ${prompt || userDisplayPrompt}`;
               style={{
                 position: 'fixed',
                 inset: 0,
-                background: 'rgba(0, 0, 0, 0.45)',
+                background: 'rgba(0, 0, 0, 0.55)',
                 zIndex: 999998,
+                backdropFilter: 'blur(3px)',
+                animation: 'fadeIn 0.12s ease-out',
               }}
             />
 
@@ -14509,57 +15525,50 @@ ${prompt || userDisplayPrompt}`;
               ref={quickOpenContainerRef}
               style={{
                 position: 'fixed',
-                top: quickInputPosition === 'top' ? 46 : '16%',
+                top: quickInputPosition === 'top' ? 46 : '12%',
                 left: '50%',
                 transform: 'translateX(-50%)',
                 width: 620,
                 maxWidth: 'calc(100vw - 32px)',
                 background: themeTokens.bgCard,
                 border: `1px solid ${themeTokens.border}`,
-                borderRadius: 6,
-                boxShadow: '0 16px 40px rgba(0, 0, 0, 0.85)',
+                borderRadius: 10,
+                boxShadow: '0 24px 64px rgba(0, 0, 0, 0.85)',
                 zIndex: 999999,
                 display: 'flex',
                 flexDirection: 'column',
                 overflow: 'hidden',
                 boxSizing: 'border-box',
                 animation: 'fadeIn 0.12s ease-out',
+                fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
               }}
             >
               {/* Top Input Bar */}
-              <div style={{ padding: '6px 8px', background: themeTokens.bgCard }}>
-                <div
-                  style={{
-                    background: themeTokens.bgApp,
-                    border: `1px solid ${accentColor}`,
-                    borderRadius: 2,
-                    display: 'flex',
-                    alignItems: 'center',
-                    padding: '4px 8px',
-                    gap: 6,
+              <div style={{ padding: '12px 14px 8px 14px', background: themeTokens.bgCard }}>
+                <input
+                  ref={quickOpenInputRef}
+                  type="text"
+                  value={quickOpenQuery}
+                  onChange={(e) => {
+                    setQuickOpenQuery(e.target.value);
+                    setQuickOpenSelectedIndex(0);
                   }}
-                >
-                  <input
-                    ref={quickOpenInputRef}
-                    type="text"
-                    value={quickOpenQuery}
-                    onChange={(e) => {
-                      setQuickOpenQuery(e.target.value);
-                      setQuickOpenSelectedIndex(0);
-                    }}
-                    onKeyDown={handleQuickOpenKeyDown}
-                    placeholder="Search files by name (append : to go to line or @ to go to symbol)"
-                    style={{
-                      width: '100%',
-                      background: 'transparent',
-                      border: 'none',
-                      outline: 'none',
-                      color: themeTokens.textPrimary,
-                      fontSize: 13,
-                      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Poppins, sans-serif',
-                    }}
-                  />
-                </div>
+                  onKeyDown={handleQuickOpenKeyDown}
+                  placeholder="Search files by name (append : to go to line or @ to go to symbol)"
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
+                    border: `1.5px solid ${accentColor}`,
+                    borderRadius: 8,
+                    padding: '8px 12px',
+                    color: themeTokens.textPrimary,
+                    fontSize: 13,
+                    fontFamily: 'Poppins, sans-serif',
+                    outline: 'none',
+                    boxShadow: `0 0 0 1px ${hexToRgba(accentColor, 0.25)}`,
+                  }}
+                />
               </div>
 
               {/* Items List */}
@@ -14569,11 +15578,11 @@ ${prompt || userDisplayPrompt}`;
                   overflowY: 'auto',
                   display: 'flex',
                   flexDirection: 'column',
-                  padding: '2px 4px 6px 4px',
+                  padding: '4px 6px 10px 6px',
                 }}
               >
                 {visibleQuickOpenItems.length === 0 ? (
-                  <div style={{ padding: '12px 14px', color: themeTokens.textSecondary, fontSize: 12.5, textAlign: 'center' }}>
+                  <div style={{ padding: '24px 16px', color: themeTokens.textSecondary, fontSize: 12.5, textAlign: 'center' }}>
                     Nenhum arquivo ou comando correspondente encontrado
                   </div>
                 ) : (
@@ -14598,7 +15607,7 @@ ${prompt || userDisplayPrompt}`;
                             alignItems: 'center',
                             justifyContent: 'space-between',
                             padding: '4px 8px',
-                            borderRadius: 3,
+                            borderRadius: 6,
                             cursor: 'pointer',
                             background: isSelected ? hexToRgba(accentColor, 0.18) : 'transparent',
                             color: isSelected ? accentColor : themeTokens.textPrimary,
@@ -15053,35 +16062,38 @@ ${prompt || userDisplayPrompt}`;
               style={{
                 position: 'fixed',
                 inset: 0,
-                background: 'rgba(0, 0, 0, 0.65)',
+                background: 'rgba(0, 0, 0, 0.55)',
                 zIndex: 999998,
                 backdropFilter: 'blur(3px)',
+                animation: 'fadeIn 0.12s ease-out',
               }}
             />
 
             {/* Modal Dialog */}
             <div
+              onClick={(e) => e.stopPropagation()}
               style={{
                 position: 'fixed',
                 top: '50%',
                 left: '50%',
                 transform: 'translate(-50%, -50%)',
-                width: 760,
+                width: 920,
                 maxWidth: 'calc(100vw - 32px)',
-                height: 540,
+                height: '82vh',
+                minHeight: 560,
                 maxHeight: 'calc(100vh - 48px)',
-                background: themeTokens.bgCard,
+                background: isEffectiveDark ? '#141416' : '#ffffff',
                 border: `1px solid ${themeTokens.border}`,
                 borderRadius: 10,
-                boxShadow: '0 24px 60px rgba(0, 0, 0, 0.75)',
+                boxShadow: '0 24px 64px rgba(0, 0, 0, 0.85)',
                 zIndex: 999999,
                 display: 'flex',
                 flexDirection: 'column',
                 overflow: 'hidden',
                 boxSizing: 'border-box',
-                animation: 'fadeIn 0.15s ease-out',
+                animation: 'fadeIn 0.12s ease-out',
                 color: themeTokens.textPrimary,
-                fontFamily: 'Poppins, -apple-system, sans-serif',
+                fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
               }}
             >
               {/* Header */}
@@ -15090,29 +16102,45 @@ ${prompt || userDisplayPrompt}`;
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
-                  padding: '12px 18px',
-                  borderBottom: `1px solid ${themeTokens.border}`,
-                  background: themeTokens.bgApp,
+                  padding: '14px 18px',
+                  borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
+                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
                   flexShrink: 0,
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                  <Settings size={18} color={accentColor} />
-                  <span style={{ fontSize: 13.5, fontWeight: 600 }}>
-                    Configurações & Estilização do Sistema
-                  </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 8,
+                      background: hexToRgba(accentColor, 0.12),
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Settings size={17} color={accentColor} />
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: themeTokens.textPrimary }}>
+                      Configurações
+                    </div>
+                    <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>
+                      Estilização, editor, atalhos e extensões do DevFlow IDE
+                    </div>
+                  </div>
                 </div>
-                <div
+                <button
                   onClick={() => setIsSettingsModalOpen(false)}
                   style={{
-                    width: 26,
-                    height: 26,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderRadius: 4,
+                    background: 'none',
+                    border: 'none',
                     cursor: 'pointer',
                     color: themeTokens.textSecondary,
+                    padding: 4,
+                    display: 'flex',
+                    borderRadius: 4,
                     transition: 'background 0.15s ease',
                   }}
                   onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')}
@@ -15120,7 +16148,7 @@ ${prompt || userDisplayPrompt}`;
                   title="Fechar (Esc)"
                 >
                   <X size={16} />
-                </div>
+                </button>
               </div>
 
               {/* Body */}
@@ -15128,27 +16156,66 @@ ${prompt || userDisplayPrompt}`;
                 {/* Left Sidebar Tabs */}
                 <div
                   style={{
-                    width: 200,
+                    width: 230,
                     flexShrink: 0,
-                    background: themeTokens.bgApp,
-                    borderRight: `1px solid ${themeTokens.border}`,
-                    padding: '12px 8px',
+                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.015)' : 'rgba(0, 0, 0, 0.015)',
+                    borderRight: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'}`,
+                    padding: '14px 10px',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 4,
+                    overflowY: 'auto',
                   }}
                 >
-                  {[
-                    { id: 'appearance', label: 'Estilização & Temas', icon: <Palette size={15} /> },
-                    { id: 'editor', label: 'Configurações Editor', icon: <Code size={15} /> },
-                    { id: 'shortcuts', label: 'Atalhos de Teclado', icon: <Keyboard size={15} /> },
-                    { id: 'extensions', label: 'Extensões & Status', icon: <Blocks size={15} /> },
-                  ].map((tab) => {
-                    const active = settingsActiveTab === tab.id;
-                    return (
+                  <div style={{ fontSize: 10, fontWeight: 700, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6, padding: '0 10px', marginBottom: 6 }}>
+                    Configurações
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {[
+                      { id: 'general', label: 'Geral', icon: <GaugeCircle size={15} /> },
+                      { id: 'appearance', label: 'Estilização & Temas', icon: <Palette size={15} /> },
+                      { id: 'editor', label: 'Configurações Editor', icon: <Code size={15} /> },
+                      { id: 'terminal', label: 'Terminal', icon: <SquareTerminal size={15} /> },
+                      { id: 'ai', label: 'IA & Agentes', icon: <Bot size={15} /> },
+                      { id: 'shortcuts', label: 'Atalhos de Teclado', icon: <Keyboard size={15} /> },
+                      { id: 'extensions', label: 'Extensões & Status', icon: <Blocks size={15} /> },
+                    ].map((tab) => {
+                      const active = settingsActiveTab === tab.id;
+                      return (
+                        <div
+                          key={tab.id}
+                          onClick={() => setSettingsActiveTab(tab.id as any)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 9,
+                            padding: '8px 12px',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                            fontSize: 12.5,
+                            fontWeight: active ? 600 : 400,
+                            color: active ? themeTokens.textPrimary : themeTokens.textSecondary,
+                            background: active ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)') : 'transparent',
+                            transition: 'all 0.12s ease',
+                          }}
+                        >
+                          <div style={{ color: 'inherit' }}>{tab.icon}</div>
+                          <span>{tab.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Workspace group (real, live data — not decorative) */}
+                  {workspacePath && (
+                    <>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6, padding: '0 10px', marginTop: 18, marginBottom: 6 }}>
+                        Workspace
+                      </div>
                       <div
-                        key={tab.id}
-                        onClick={() => setSettingsActiveTab(tab.id as any)}
+                        onClick={() => {
+                          setIsSettingsModalOpen(false);
+                          setIsBranchModalOpen(true);
+                        }}
                         style={{
                           display: 'flex',
                           alignItems: 'center',
@@ -15156,23 +16223,149 @@ ${prompt || userDisplayPrompt}`;
                           padding: '8px 12px',
                           borderRadius: 6,
                           cursor: 'pointer',
-                          fontSize: 12.5,
-                          fontWeight: active ? 600 : 400,
-                          color: active ? themeTokens.textPrimary : themeTokens.textSecondary,
-                          background: active ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.07)') : 'transparent',
-                          borderLeft: active ? `3px solid ${accentColor}` : '3px solid transparent',
-                          transition: 'all 0.12s ease',
+                          fontSize: 12,
+                          color: themeTokens.textSecondary,
                         }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                        title="Abrir gerenciador de branches"
                       >
-                        <div style={{ color: active ? accentColor : 'inherit' }}>{tab.icon}</div>
-                        <span>{tab.label}</span>
+                        <Folder size={14} />
+                        <div style={{ minWidth: 0, overflow: 'hidden' }}>
+                          <div style={{ color: themeTokens.textPrimary, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {workspacePath.split('/').filter(Boolean).pop()}
+                          </div>
+                          {currentBranch && (
+                            <div style={{ fontSize: 10.5, display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <GitBranch size={9} />
+                              {currentBranch}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    );
-                  })}
+                    </>
+                  )}
+
+                  <div style={{ flex: 1 }} />
+
+                  {/* Footer */}
+                  <div style={{ borderTop: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'}`, paddingTop: 10, marginTop: 10, padding: '10px 10px 0 10px' }}>
+                    <div style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>DevFlow IDE • v1.0.0</div>
+                  </div>
                 </div>
 
                 {/* Right Content Pane */}
-                <div style={{ flex: 1, padding: '20px 24px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
+                <div style={{ flex: 1, padding: '22px 26px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 26 }}>
+                  {/* TAB 0: GENERAL */}
+                  {settingsActiveTab === 'general' && (
+                    <>
+                      <div>
+                        <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>Geral</div>
+                        <div style={{ fontSize: 12.5, color: themeTokens.textSecondary }}>
+                          Layout, comportamento de abertura e integração com o Git.
+                        </div>
+                      </div>
+
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Posição da Barra Lateral</div>
+                        <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 10 }}>
+                          Define de que lado da janela o Explorer, Busca e demais painéis são exibidos.
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, maxWidth: 420 }}>
+                          {[
+                            { id: 'left', label: 'Esquerda', desc: 'Padrão do VS Code', icon: <PanelLeft size={18} /> },
+                            { id: 'right', label: 'Direita', desc: 'Estilo Antigravity', icon: <PanelRight size={18} /> },
+                          ].map((s) => {
+                            const isSelected = sidebarPosition === s.id;
+                            return (
+                              <div
+                                key={s.id}
+                                onClick={() => setSidebarPosition(s.id as 'left' | 'right')}
+                                style={{
+                                  padding: '14px 12px',
+                                  borderRadius: 8,
+                                  cursor: 'pointer',
+                                  border: isSelected ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
+                                  background: isSelected ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)') : 'transparent',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: 6,
+                                  transition: 'all 0.15s ease',
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                  <div style={{ color: isSelected ? accentColor : 'inherit' }}>{s.icon}</div>
+                                  <div
+                                    style={{
+                                      width: 14,
+                                      height: 14,
+                                      borderRadius: '50%',
+                                      border: isSelected ? `4px solid ${accentColor}` : `2px solid ${themeTokens.textSecondary}`,
+                                      background: isSelected ? accentColor : 'transparent',
+                                    }}
+                                  />
+                                </div>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>{s.label}</div>
+                                <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>{s.desc}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Comportamento</div>
+                        {[
+                          {
+                            label: 'Layout Centralizado',
+                            desc: 'Restringe a largura do editor e o centraliza na janela, como no Zen Mode',
+                            checked: isCenteredLayout,
+                            onChange: () => setIsCenteredLayout(!isCenteredLayout),
+                          },
+                          {
+                            label: 'Restaurar Último Workspace ao Abrir',
+                            desc: 'Reabre automaticamente a última pasta de projeto utilizada',
+                            checked: restoreLastWorkspace,
+                            onChange: () => setRestoreLastWorkspace(!restoreLastWorkspace),
+                          },
+                          {
+                            label: 'Confirmar Antes de Fechar Abas Não Salvas',
+                            desc: 'Evita perda acidental de alterações ao fechar arquivos com edições pendentes',
+                            checked: confirmBeforeClosingUnsaved,
+                            onChange: () => setConfirmBeforeClosingUnsaved(!confirmBeforeClosingUnsaved),
+                          },
+                          {
+                            label: 'Atualizar Status do Git Automaticamente',
+                            desc: 'Consulta periodicamente alterações, branch e contagem de arquivos modificados',
+                            checked: autoRefreshGitStatus,
+                            onChange: () => setAutoRefreshGitStatus(!autoRefreshGitStatus),
+                          },
+                        ].map((row) => (
+                          <div
+                            key={row.label}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 12,
+                              padding: '9px 10px',
+                              borderRadius: 8,
+                              transition: 'background 0.15s ease',
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)')}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                          >
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>{row.label}</div>
+                              <div style={{ fontSize: 11.5, color: themeTokens.textSecondary }}>{row.desc}</div>
+                            </div>
+                            <MiniSwitch checked={row.checked} onChange={row.onChange} accentColor={accentColor} />
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
                   {/* TAB 1: APPEARANCE */}
                   {settingsActiveTab === 'appearance' && (
                     <>
@@ -15196,7 +16389,7 @@ ${prompt || userDisplayPrompt}`;
                                   padding: '14px 12px',
                                   borderRadius: 8,
                                   cursor: 'pointer',
-                                  border: isSelected ? `2px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
+                                  border: isSelected ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
                                   background: isSelected ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)') : 'transparent',
                                   display: 'flex',
                                   flexDirection: 'column',
@@ -15348,7 +16541,7 @@ ${prompt || userDisplayPrompt}`;
                               style={{
                                 padding: '6px 14px',
                                 borderRadius: 6,
-                                border: editorFontSize === size ? `2px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
+                                border: editorFontSize === size ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
                                 background: editorFontSize === size ? hexToRgba(accentColor, 0.15) : 'transparent',
                                 color: editorFontSize === size ? accentColor : themeTokens.textPrimary,
                                 fontSize: 12,
@@ -15376,7 +16569,7 @@ ${prompt || userDisplayPrompt}`;
                               style={{
                                 padding: '6px 14px',
                                 borderRadius: 6,
-                                border: editorTabSize === size ? `2px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
+                                border: editorTabSize === size ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
                                 background: editorTabSize === size ? hexToRgba(accentColor, 0.15) : 'transparent',
                                 color: editorTabSize === size ? accentColor : themeTokens.textPrimary,
                                 fontSize: 12,
@@ -15390,51 +16583,358 @@ ${prompt || userDisplayPrompt}`;
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: `1px solid ${themeTokens.border}` }}>
-                          <div>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>Quebra Automática de Linha (Word Wrap)</div>
-                            <div style={{ fontSize: 11.5, color: themeTokens.textSecondary }}>Quebra linhas longas sem necessidade de rolagem horizontal</div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setEditorWordWrap(!editorWordWrap)}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {[
+                          {
+                            label: 'Quebra Automática de Linha (Word Wrap)',
+                            desc: 'Quebra linhas longas sem necessidade de rolagem horizontal',
+                            checked: editorWordWrap,
+                            onChange: () => setEditorWordWrap(!editorWordWrap),
+                          },
+                          {
+                            label: 'Minimapa de Código (Minimap)',
+                            desc: 'Exibe a visão geral em miniatura do arquivo no lado direito',
+                            checked: editorMinimap,
+                            onChange: () => setEditorMinimap(!editorMinimap),
+                          },
+                          {
+                            label: 'Números de Linha (Line Numbers)',
+                            desc: 'Exibe a numeração de linhas na margem esquerda do editor',
+                            checked: editorLineNumbers,
+                            onChange: () => setEditorLineNumbers(!editorLineNumbers),
+                          },
+                          {
+                            label: 'Rolagem Suave (Smooth Scrolling)',
+                            desc: 'Anima a rolagem do editor em vez de saltos instantâneos',
+                            checked: editorSmoothScrolling,
+                            onChange: () => setEditorSmoothScrolling(!editorSmoothScrolling),
+                          },
+                          {
+                            label: 'Colorização de Pares de Colchetes',
+                            desc: 'Colore pares correspondentes de (), [] e {} para facilitar a leitura',
+                            checked: editorBracketColorization,
+                            onChange: () => setEditorBracketColorization(!editorBracketColorization),
+                          },
+                          {
+                            label: 'Renderizar Espaços em Branco',
+                            desc: 'Exibe pontos e setas para espaços e tabulações no código',
+                            checked: editorRenderWhitespace,
+                            onChange: () => setEditorRenderWhitespace(!editorRenderWhitespace),
+                          },
+                        ].map((row) => (
+                          <div
+                            key={row.label}
                             style={{
-                              padding: '5px 12px',
-                              borderRadius: 6,
-                              background: editorWordWrap ? accentColor : (isEffectiveDark ? '#333' : '#ccc'),
-                              color: '#ffffff',
-                              border: 'none',
-                              fontSize: 11.5,
-                              fontWeight: 600,
-                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 12,
+                              padding: '9px 10px',
+                              borderRadius: 8,
+                              transition: 'background 0.15s ease',
                             }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)')}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                           >
-                            {editorWordWrap ? 'Ativado' : 'Desativado'}
-                          </button>
-                        </div>
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>{row.label}</div>
+                              <div style={{ fontSize: 11.5, color: themeTokens.textSecondary }}>{row.desc}</div>
+                            </div>
+                            <MiniSwitch checked={row.checked} onChange={row.onChange} accentColor={accentColor} />
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
 
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: `1px solid ${themeTokens.border}` }}>
-                          <div>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>Minimapa de Código (Minimap)</div>
-                            <div style={{ fontSize: 11.5, color: themeTokens.textSecondary }}>Exibe a visão geral em miniatura do arquivo no lado direito</div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setEditorMinimap(!editorMinimap)}
+                  {/* TAB: TERMINAL */}
+                  {settingsActiveTab === 'terminal' && (
+                    <>
+                      <div>
+                        <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>Terminal</div>
+                        <div style={{ fontSize: 12.5, color: themeTokens.textSecondary }}>
+                          Fonte, cursor e comportamento dos terminais nativos integrados.
+                        </div>
+                      </div>
+
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Tamanho da Fonte</div>
+                        <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 10 }}>
+                          Ajusta a escala tipográfica de todas as sessões de terminal (xterm.js).
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          {[10, 11, 12, 13, 14, 16].map((size) => (
+                            <button
+                              key={size}
+                              type="button"
+                              onClick={() => setTerminalFontSize(size)}
+                              style={{
+                                padding: '6px 14px',
+                                borderRadius: 6,
+                                border: terminalFontSize === size ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
+                                background: terminalFontSize === size ? hexToRgba(accentColor, 0.15) : 'transparent',
+                                color: terminalFontSize === size ? accentColor : themeTokens.textPrimary,
+                                fontSize: 12,
+                                fontWeight: terminalFontSize === size ? 600 : 400,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {size}px
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Estilo do Cursor</div>
+                        <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 10 }}>
+                          Formato do cursor de texto exibido dentro do terminal.
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, maxWidth: 480 }}>
+                          {[
+                            { id: 'block', label: 'Block', preview: '█' },
+                            { id: 'bar', label: 'Bar', preview: '│' },
+                            { id: 'underline', label: 'Underline', preview: '_' },
+                          ].map((c) => {
+                            const isSelected = terminalCursorStyle === c.id;
+                            return (
+                              <div
+                                key={c.id}
+                                onClick={() => setTerminalCursorStyle(c.id as 'block' | 'bar' | 'underline')}
+                                style={{
+                                  padding: '12px',
+                                  borderRadius: 8,
+                                  cursor: 'pointer',
+                                  border: isSelected ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
+                                  background: isSelected ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)') : 'transparent',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  transition: 'all 0.15s ease',
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    fontFamily: 'JetBrains Mono, Menlo, monospace',
+                                    fontSize: 18,
+                                    lineHeight: 1,
+                                    color: isSelected ? accentColor : themeTokens.textPrimary,
+                                  }}
+                                >
+                                  devflow{c.preview}
+                                </div>
+                                <div style={{ fontSize: 11.5, fontWeight: isSelected ? 600 : 400, color: isSelected ? accentColor : themeTokens.textSecondary }}>
+                                  {c.label}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Histórico de Rolagem (Scrollback)</div>
+                        <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 10 }}>
+                          Número de linhas mantidas em memória para rolar para cima no terminal.
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          {[1000, 5000, 10000, 50000].map((n) => (
+                            <button
+                              key={n}
+                              type="button"
+                              onClick={() => setTerminalScrollback(n)}
+                              style={{
+                                padding: '6px 14px',
+                                borderRadius: 6,
+                                border: terminalScrollback === n ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
+                                background: terminalScrollback === n ? hexToRgba(accentColor, 0.15) : 'transparent',
+                                color: terminalScrollback === n ? accentColor : themeTokens.textPrimary,
+                                fontSize: 12,
+                                fontWeight: terminalScrollback === n ? 600 : 400,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              {n.toLocaleString('pt-BR')}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {[
+                          {
+                            label: 'Cursor Piscante (Cursor Blink)',
+                            desc: 'Faz o cursor do terminal piscar periodicamente',
+                            checked: terminalCursorBlink,
+                            onChange: () => setTerminalCursorBlink(!terminalCursorBlink),
+                          },
+                          {
+                            label: 'Copiar ao Selecionar Texto',
+                            desc: 'Copia automaticamente para a área de transferência ao selecionar texto no terminal',
+                            checked: terminalCopyOnSelect,
+                            onChange: () => setTerminalCopyOnSelect(!terminalCopyOnSelect),
+                          },
+                        ].map((row) => (
+                          <div
+                            key={row.label}
                             style={{
-                              padding: '5px 12px',
-                              borderRadius: 6,
-                              background: editorMinimap ? accentColor : (isEffectiveDark ? '#333' : '#ccc'),
-                              color: '#ffffff',
-                              border: 'none',
-                              fontSize: 11.5,
-                              fontWeight: 600,
-                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 12,
+                              padding: '9px 10px',
+                              borderRadius: 8,
+                              transition: 'background 0.15s ease',
                             }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)')}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                           >
-                            {editorMinimap ? 'Visível' : 'Oculto'}
-                          </button>
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>{row.label}</div>
+                              <div style={{ fontSize: 11.5, color: themeTokens.textSecondary }}>{row.desc}</div>
+                            </div>
+                            <MiniSwitch checked={row.checked} onChange={row.onChange} accentColor={accentColor} />
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  {/* TAB: IA & AGENTES */}
+                  {settingsActiveTab === 'ai' && (
+                    <>
+                      <div>
+                        <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>IA & Agentes</div>
+                        <div style={{ fontSize: 12.5, color: themeTokens.textSecondary }}>
+                          Provedor e modo padrão usados ao abrir o painel de IA, e regras de segurança para execução de agentes.
+                        </div>
+                      </div>
+
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Provedor de IA Padrão</div>
+                        <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 10 }}>
+                          CLI utilizada por padrão ao iniciar uma nova conversa no painel de IA.
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10 }}>
+                          {AI_PROVIDERS.map((p) => {
+                            const isSelected = selectedAiProvider === p.id;
+                            const iconMap: Record<string, React.ReactNode> = {
+                              claude: <ClaudeIcon size={16} />,
+                              antigravity: <AntigravityIcon size={16} />,
+                              codex: <CodexIcon size={16} />,
+                              gemini: <GeminiIcon size={16} />,
+                              ollama: <OllamaIcon size={16} />,
+                            };
+                            return (
+                              <div
+                                key={p.id}
+                                onClick={() => setSelectedAiProvider(p.id)}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 8,
+                                  padding: '10px 12px',
+                                  borderRadius: 8,
+                                  cursor: 'pointer',
+                                  border: isSelected ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
+                                  background: isSelected ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)') : 'transparent',
+                                  transition: 'all 0.15s ease',
+                                }}
+                              >
+                                {iconMap[p.id]}
+                                <span style={{ fontSize: 12.5, fontWeight: isSelected ? 600 : 400, color: isSelected ? accentColor : themeTokens.textPrimary }}>
+                                  {p.name}
+                                </span>
+                                {isSelected && <Check size={12} color={accentColor} style={{ marginLeft: 'auto' }} />}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Modo Padrão do Agente</div>
+                        <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 10 }}>
+                          Comportamento aplicado a novas conversas: execução autônoma, planejamento, agente interativo ou apenas respostas.
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+                          {AI_MODES.map((m) => {
+                            const isSelected = aiMode === m.id;
+                            const iconMap: Record<string, React.ReactNode> = {
+                              Zap: <Zap size={16} />,
+                              ListChecks: <ListChecks size={16} />,
+                              Bot: <Bot size={16} />,
+                              MessageSquare: <MessageSquare size={16} />,
+                            };
+                            return (
+                              <div
+                                key={m.id}
+                                onClick={() => setAiMode(m.id)}
+                                style={{
+                                  padding: '12px',
+                                  borderRadius: 8,
+                                  cursor: 'pointer',
+                                  border: isSelected ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
+                                  background: isSelected ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)') : 'transparent',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: 6,
+                                  transition: 'all 0.15s ease',
+                                }}
+                              >
+                                <div style={{ color: isSelected ? accentColor : 'inherit' }}>{iconMap[m.iconName]}</div>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>{m.name}</div>
+                                <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>{m.description}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Segurança</div>
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 12,
+                            padding: '9px 10px',
+                            borderRadius: 8,
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>Auto-aprovar Comandos do Agente</div>
+                            <div style={{ fontSize: 11.5, color: themeTokens.textSecondary, maxWidth: 460 }}>
+                              Executa comandos sugeridos pela IA sem pedir confirmação manual antes de cada ação.
+                            </div>
+                            {aiAutoApprove && (
+                              <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
+                                <AlertTriangle size={11} />
+                                Cuidado: comandos podem alterar ou apagar arquivos sem revisão prévia.
+                              </div>
+                            )}
+                          </div>
+                          <MiniSwitch checked={aiAutoApprove} onChange={() => setAiAutoApprove(!aiAutoApprove)} accentColor={accentColor} />
+                        </div>
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 12,
+                            padding: '9px 10px',
+                            borderRadius: 8,
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>Confirmar Antes de Excluir Arquivos</div>
+                            <div style={{ fontSize: 11.5, color: themeTokens.textSecondary }}>
+                              Pede confirmação sempre que um agente tentar deletar arquivos do projeto.
+                            </div>
+                          </div>
+                          <MiniSwitch checked={aiConfirmBeforeDelete} onChange={() => setAiConfirmBeforeDelete(!aiConfirmBeforeDelete)} accentColor={accentColor} />
                         </div>
                       </div>
                     </>
@@ -15447,18 +16947,24 @@ ${prompt || userDisplayPrompt}`;
                       <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 14 }}>
                         Guia de atalhos rápidos disponíveis na interface estilo Antigravity / VS Code.
                       </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                         {[
                           { action: 'Quick Open (Abrir Arquivo)', keys: ['⌘', 'P'] },
                           { action: 'Command Palette (Executar Comandos)', keys: ['⇧', '⌘', 'P'] },
+                          { action: 'Ir para Símbolo no Arquivo', keys: ['⇧', '⌘', 'O'] },
                           { action: 'Abrir Configurações do Sistema', keys: ['⌘', ','] },
                           { action: 'Alternar Barra Lateral (Explorer)', keys: ['⌘', 'B'] },
+                          { action: 'Explorer', keys: ['⇧', '⌘', 'E'] },
+                          { action: 'Buscar nos Arquivos', keys: ['⇧', '⌘', 'F'] },
+                          { action: 'Controle de Versão (Git)', keys: ['⇧', '⌘', 'G'] },
+                          { action: 'Executar e Depurar', keys: ['⇧', '⌘', 'D'] },
+                          { action: 'Gerenciador de Extensões', keys: ['⇧', '⌘', 'X'] },
                           { action: 'Alternar Painel Inferior (Terminal)', keys: ['⌘', 'J'] },
                           { action: 'Alternar Painel Lateral de IA', keys: ['⇧', '⌘', 'A'] },
-                          { action: 'Modo Tela Cheia (Fullscreen)', keys: ['⌘', 'F'] },
+                          { action: 'Histórico de Conversas com IA', keys: ['⇧', '⌘', 'H'] },
+                          { action: 'Modo Tela Cheia (Fullscreen)', keys: ['⌃', '⌘', 'F'] },
                           { action: 'Modo Zen (Foco Limpo)', keys: ['⌘', 'K', 'Z'] },
                           { action: 'Salvar Arquivo Ativo', keys: ['⌘', 'S'] },
-                          { action: 'Abrir Gerenciador de Extensões', keys: ['⇧', '⌘', 'X'] },
                         ].map((s, idx) => (
                           <div
                             key={idx}
@@ -15466,11 +16972,12 @@ ${prompt || userDisplayPrompt}`;
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'space-between',
-                              padding: '8px 12px',
-                              borderRadius: 6,
-                              background: isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)',
-                              border: `1px solid ${themeTokens.border}`,
+                              padding: '8px 10px',
+                              borderRadius: 8,
+                              transition: 'background 0.15s ease',
                             }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)')}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                           >
                             <span style={{ fontSize: 12.5, color: themeTokens.textPrimary }}>{s.action}</span>
                             <div style={{ display: 'flex', gap: 3 }}>
@@ -15504,8 +17011,7 @@ ${prompt || userDisplayPrompt}`;
                             style={{
                               padding: '10px 14px',
                               borderRadius: 8,
-                              background: themeTokens.bgApp,
-                              border: `1px solid ${themeTokens.border}`,
+                              background: isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'space-between',
@@ -15549,9 +17055,9 @@ ${prompt || userDisplayPrompt}`;
               top: themePopupPos.y,
               width: 320,
               background: themeTokens.bgCard,
-              borderRadius: 12,
-              border: 'none',
-              boxShadow: '0 18px 45px rgba(0, 0, 0, 0.5)',
+              borderRadius: 10,
+              border: `1px solid ${themeTokens.border}`,
+              boxShadow: '0 24px 64px rgba(0, 0, 0, 0.85)',
               zIndex: 999999,
               display: 'flex',
               flexDirection: 'column',
@@ -15769,9 +17275,6 @@ ${prompt || userDisplayPrompt}`;
                       title={`Cor ativa da IA: ${AI_BRAND_COLORS[selectedAiProvider] || accentColor}`}
                     />
                   </div>
-                  <span style={{ fontSize: 9.5, color: themeTokens.textSecondary }}>
-                    Claude (#FF8B67), Antigravity (#69C2FD), Codex (#8975B9), Gemini (#589EFF)
-                  </span>
                 </div>
                 <MiniSwitch
                   checked={useAiChatThemeColor}
@@ -15799,8 +17302,9 @@ ${prompt || userDisplayPrompt}`;
               left: 0,
               right: 0,
               bottom: 0,
-              background: 'rgba(0, 0, 0, 0.65)',
-              backdropFilter: 'blur(6px)',
+              background: 'rgba(0, 0, 0, 0.55)',
+              backdropFilter: 'blur(3px)',
+              animation: 'fadeIn 0.12s ease-out',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -15815,11 +17319,14 @@ ${prompt || userDisplayPrompt}`;
                 maxWidth: '92vw',
                 maxHeight: '80vh',
                 background: isEffectiveDark ? '#141416' : '#ffffff',
-                borderRadius: 14,
-                boxShadow: '0 25px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08)',
+                border: `1px solid ${themeTokens.border}`,
+                borderRadius: 10,
+                boxShadow: '0 24px 64px rgba(0, 0, 0, 0.85)',
                 display: 'flex',
                 flexDirection: 'column',
                 overflow: 'hidden',
+                animation: 'fadeIn 0.12s ease-out',
+                fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
               }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -16075,8 +17582,9 @@ ${prompt || userDisplayPrompt}`;
               left: 0,
               right: 0,
               bottom: 0,
-              background: 'rgba(0, 0, 0, 0.65)',
-              backdropFilter: 'blur(6px)',
+              background: 'rgba(0, 0, 0, 0.55)',
+              backdropFilter: 'blur(3px)',
+              animation: 'fadeIn 0.12s ease-out',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -16091,11 +17599,14 @@ ${prompt || userDisplayPrompt}`;
                 maxWidth: '92vw',
                 maxHeight: '82vh',
                 background: isEffectiveDark ? '#141416' : '#ffffff',
-                borderRadius: 14,
-                boxShadow: '0 25px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08)',
+                border: `1px solid ${themeTokens.border}`,
+                borderRadius: 10,
+                boxShadow: '0 24px 64px rgba(0, 0, 0, 0.85)',
                 display: 'flex',
                 flexDirection: 'column',
                 overflow: 'hidden',
+                animation: 'fadeIn 0.12s ease-out',
+                fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
               }}
               onClick={(e) => e.stopPropagation()}
             >

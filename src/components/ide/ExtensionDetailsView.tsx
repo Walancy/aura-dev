@@ -70,6 +70,32 @@ export const ExtensionDetailsView: React.FC<ExtensionDetailsViewProps> = ({
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   };
 
+  const formatBytes = (bytes?: number | null) => {
+    if (!bytes || bytes <= 0) return null;
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = bytes;
+    let unitIdx = 0;
+    while (value >= 1024 && unitIdx < units.length - 1) {
+      value /= 1024;
+      unitIdx++;
+    }
+    return `${value.toFixed(unitIdx === 0 ? 0 : 2)}${units[unitIdx]}`;
+  };
+
+  const formatUpdatedDate = (iso?: string | null) => {
+    if (!iso) return null;
+    const date = new Date(iso);
+    if (isNaN(date.getTime())) return null;
+    const diffMs = Date.now() - date.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays <= 0) return 'Hoje';
+    if (diffDays === 1) return 'Ontem';
+    if (diffDays < 30) return `${diffDays} dias atrás`;
+    const diffMonths = Math.floor(diffDays / 30);
+    if (diffMonths < 12) return `${diffMonths} ${diffMonths === 1 ? 'mês' : 'meses'} atrás`;
+    return date.toLocaleDateString('pt-BR');
+  };
+
   // Fetch full metadata, README and manifest from Open VSX
   useEffect(() => {
     let isMounted = true;
@@ -109,6 +135,13 @@ export const ExtensionDetailsView: React.FC<ExtensionDetailsViewProps> = ({
   const commands = contributes.commands || [];
   const snippets = contributes.snippets || [];
   const configuration = contributes.configuration;
+
+  const identifier = `${extData.namespace || ''}.${extData.name || ''}`;
+  const updatedLabel = formatUpdatedDate(extData.timestamp);
+  const sizeLabel = formatBytes(extData.sizeBytes);
+  const openVsxUrl = extData.namespace && extData.name
+    ? `https://open-vsx.org/extension/${extData.namespace}/${extData.name}`
+    : null;
 
   const downloadFormatted = extData.downloadCount
     ? extData.downloadCount > 1000000
@@ -555,13 +588,23 @@ export const ExtensionDetailsView: React.FC<ExtensionDetailsViewProps> = ({
       </div>
 
       {/* ---------------------------------------------------- */}
-      {/* 3. Sub-Tab Body                                      */}
+      {/* 3. Sub-Tab Body (content + metadata sidebar)         */}
       {/* ---------------------------------------------------- */}
       <div
         style={{
           flex: 1,
-          overflowY: 'auto',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'row',
+          gap: 24,
           padding: '20px 24px',
+        }}
+      >
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          overflowY: 'auto',
           display: 'flex',
           flexDirection: 'column',
         }}
@@ -723,6 +766,134 @@ export const ExtensionDetailsView: React.FC<ExtensionDetailsViewProps> = ({
           renderMarkdown(extData.changelog || 'Nenhum changelog disponível.')
         )}
       </div>
+
+      {/* ---------------------------------------------------- */}
+      {/* 4. Metadata Sidebar (Instalação, Marketplace, Recursos) */}
+      {/* ---------------------------------------------------- */}
+      <div
+        style={{
+          width: 210,
+          flexShrink: 0,
+          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 18,
+        }}
+      >
+        {/* Instalação */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            Instalação
+          </span>
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+              padding: 10,
+              borderRadius: 8,
+              background: themeTokens.bgCardSecondary || (isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)'),
+              border: '1px solid ' + themeTokens.border,
+            }}
+          >
+            {[
+              ['Identificador', identifier],
+              ['Versão', extData.version || '—'],
+              ...(updatedLabel ? [['Atualizado', updatedLabel]] : []),
+              ...(sizeLabel ? [['Tamanho', sizeLabel]] : []),
+            ].map(([label, value]) => (
+              <div key={label as string} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <span style={{ fontSize: 10, color: themeTokens.textMuted }}>{label}</span>
+                <span
+                  style={{
+                    fontSize: 11.5,
+                    color: themeTokens.textPrimary,
+                    fontFamily: label === 'Identificador' ? 'monospace' : 'inherit',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {value}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Categorias */}
+        {extData.categories && extData.categories.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              Categorias
+            </span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {extData.categories.map((cat: string) => (
+                <span
+                  key={cat}
+                  style={{
+                    fontSize: 10.5,
+                    padding: '3px 9px',
+                    borderRadius: 12,
+                    background: hexToRgba(accentColor, 0.12),
+                    color: accentColor,
+                    border: '1px solid ' + hexToRgba(accentColor, 0.25),
+                  }}
+                >
+                  {cat}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Recursos */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            Recursos
+          </span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {openVsxUrl && (
+              <a
+                href={openVsxUrl}
+                target="_blank"
+                rel="noreferrer"
+                style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: accentColor, textDecoration: 'none' }}
+              >
+                <ExternalLink size={12} />
+                <span>Ver na Open VSX</span>
+              </a>
+            )}
+            {extData.repository && (
+              <a
+                href={extData.repository}
+                target="_blank"
+                rel="noreferrer"
+                style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: accentColor, textDecoration: 'none' }}
+              >
+                <ExternalLink size={12} />
+                <span>Repositório</span>
+              </a>
+            )}
+            {extData.homepage && (
+              <a
+                href={extData.homepage}
+                target="_blank"
+                rel="noreferrer"
+                style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: accentColor, textDecoration: 'none' }}
+              >
+                <ExternalLink size={12} />
+                <span>Homepage</span>
+              </a>
+            )}
+            {extData.license && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 1, marginTop: 4 }}>
+                <span style={{ fontSize: 10, color: themeTokens.textMuted }}>Licença</span>
+                <span style={{ fontSize: 11.5, color: themeTokens.textPrimary }}>{extData.license}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
     </div>
   );
 };

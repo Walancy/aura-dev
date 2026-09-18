@@ -31,6 +31,14 @@ export interface ExtensionManifest {
     }>;
     configuration?: any;
     languages?: any[];
+    viewsContainers?: {
+      activitybar?: Array<{
+        id: string;
+        title: string;
+        icon: string;
+      }>;
+    };
+    views?: Record<string, Array<{ id: string; name: string; icon?: string }>>;
   };
 }
 
@@ -41,6 +49,8 @@ export interface InstalledExtensionRecord {
   displayName: string;
   description: string;
   iconUrl?: string;
+  downloadCount?: number;
+  averageRating?: number;
   installedAt: string;
   enabled: boolean;
   folderPath: string;
@@ -54,6 +64,10 @@ export interface InstalledExtensionRecord {
     language: string;
     data: any;
   }>;
+  // Computed at read time (not persisted): activity bar shortcut icons the
+  // extension declares via `contributes.viewsContainers.activitybar`, with
+  // their icon files inlined as data URIs so they load under Electron's CSP.
+  activityBarViews?: Array<{ id: string; title: string; icon?: string }>;
 }
 
 class ExtensionsService {
@@ -168,6 +182,16 @@ class ExtensionsService {
         } catch {}
       }
 
+      // Real download size (bytes) via HEAD request, matching what VS Code's marketplace page shows
+      let sizeBytes: number | null = null;
+      if (ext.files?.download) {
+        try {
+          const hResp = await fetch(ext.files.download, { method: 'HEAD' });
+          const len = hResp.headers.get('content-length');
+          if (len) sizeBytes = parseInt(len, 10);
+        } catch {}
+      }
+
       return {
         success: true,
         details: {
@@ -185,6 +209,8 @@ class ExtensionsService {
           repository: ext.repository || '',
           homepage: ext.homepage || '',
           license: ext.license || 'MIT',
+          timestamp: ext.timestamp || null,
+          sizeBytes,
           readme,
           changelog,
           contributes: manifest?.contributes || {},
@@ -300,6 +326,8 @@ class ExtensionsService {
         displayName: meta.displayName || manifest?.displayName || name,
         description: meta.description || manifest?.description || '',
         iconUrl: meta.files?.icon || null,
+        downloadCount: meta.downloadCount || 0,
+        averageRating: meta.averageRating || 5,
         installedAt: new Date().toLocaleDateString('pt-BR'),
         enabled: true,
         folderPath: targetFolder,
@@ -361,7 +389,53 @@ class ExtensionsService {
   // 6. Get List of Installed Extensions
   public getInstalled() {
     this.ensureDirs();
-    return { success: true, extensions: this.getInstalledInternal() };
+    const extensions = this.getInstalledInternal().map((record) => ({
+      ...record,
+      activityBarViews: this.resolveActivityBarViews(record),
+    }));
+    return { success: true, extensions };
+  }
+
+  // Resolves an extension's declared activity bar shortcut icons (if any) to
+  // inline data URIs. Extension icon files live under file:// paths, which
+  // Electron's renderer CSP refuses to load directly, so we read them here
+  // (main process, unrestricted fs access) and hand back a ready-to-render
+  // data URI instead.
+  private resolveActivityBarViews(
+    record: InstalledExtensionRecord
+  ): Array<{ id: string; title: string; icon?: string }> {
+    const containers = record.contributes?.viewsContainers?.activitybar || [];
+    if (containers.length === 0 || !record.folderPath) return [];
+
+    // Extensions often declare several containers for the same shortcut that only
+    // differ by a `when` clause (e.g. one variant per VS Code layout mode). We don't
+    // evaluate `when` conditions, so collapse duplicates sharing title+icon to avoid
+    // rendering the same shortcut twice.
+    const seen = new Set<string>();
+    const results: Array<{ id: string; title: string; icon?: string }> = [];
+
+    for (const container of containers) {
+      const dedupeKey = `${container.title}|${container.icon || ''}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+
+      let icon: string | undefined;
+      if (container.icon) {
+        try {
+          const iconPath = path.join(record.folderPath, 'extension', container.icon.replace(/^\.\//, ''));
+          if (fs.existsSync(iconPath)) {
+            const ext = path.extname(iconPath).toLowerCase();
+            const mime =
+              ext === '.svg' ? 'image/svg+xml' : ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png';
+            const buf = fs.readFileSync(iconPath);
+            icon = `data:${mime};base64,${buf.toString('base64')}`;
+          }
+        } catch {}
+      }
+      results.push({ id: container.id, title: container.title, icon });
+    }
+
+    return results;
   }
 
   private getInstalledInternal(): InstalledExtensionRecord[] {

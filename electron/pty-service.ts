@@ -1,9 +1,61 @@
 import { BrowserWindow } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { execSync } from 'node:child_process';
+import * as os from 'node:os';
+import * as https from 'node:https';
+import { execSync, exec } from 'node:child_process';
 
 const pty = require('node-pty');
+
+const ZSH_SYNTAX_HIGHLIGHTING_VERSION = '0.8.0';
+
+// Downloads and extracts a small (~150KB), BSD-licensed GitHub tag archive into destDir.
+// Used to fetch the zsh-syntax-highlighting plugin on first run; failures are non-fatal
+// (the colored prompt still works without it, just without live command highlighting).
+function downloadAndExtractGithubTag(repo: string, tag: string, destDir: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const url = `https://github.com/${repo}/archive/refs/tags/${tag}.tar.gz`;
+    const tmpTar = path.join(os.tmpdir(), `devflow-${Date.now()}.tar.gz`);
+
+    const download = (u: string, redirectCount = 0) => {
+      if (redirectCount > 5) {
+        reject(new Error('Muitos redirecionamentos'));
+        return;
+      }
+      https
+        .get(u, { headers: { 'User-Agent': 'devflow-desktop' } }, (res) => {
+          if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            res.resume();
+            download(res.headers.location, redirectCount + 1);
+            return;
+          }
+          if (res.statusCode !== 200) {
+            reject(new Error(`Download falhou: HTTP ${res.statusCode}`));
+            return;
+          }
+          const fileStream = fs.createWriteStream(tmpTar);
+          res.pipe(fileStream);
+          fileStream.on('finish', () =>
+            fileStream.close(() => {
+              fs.mkdirSync(destDir, { recursive: true });
+              exec(`tar -xzf "${tmpTar}" -C "${destDir}" --strip-components=1`, (err) => {
+                try {
+                  fs.unlinkSync(tmpTar);
+                } catch {}
+                if (err) reject(err);
+                else resolve();
+              });
+            })
+          );
+          fileStream.on('error', reject);
+          res.on('error', reject);
+        })
+        .on('error', reject);
+    };
+
+    download(url);
+  });
+}
 
 export interface NativePtySession {
   id: string;
@@ -43,6 +95,10 @@ export class NativePtyService {
   }
 
   private currentAccentColor: string = '#FF6A00';
+  private lastZshInitColor: string | null = null;
+  private zshInitDir = path.join(os.homedir(), '.devflow', 'zsh-init');
+  private syntaxHighlightingDir = path.join(this.zshInitDir, 'plugins', 'zsh-syntax-highlighting');
+  private syntaxHighlightingDownloadStarted = false;
 
   setWindow(window: BrowserWindow) {
     this.mainWindow = window;
@@ -51,6 +107,52 @@ export class NativePtyService {
   setAccentColor(accentColor: string) {
     if (!accentColor) return;
     this.currentAccentColor = accentColor;
+  }
+
+  // Fetches the (small, BSD-licensed) zsh-syntax-highlighting plugin once and caches it, so
+  // typed commands get live color feedback (valid command -> green, unknown -> red, etc.),
+  // matching what VS Code/Antigravity's terminal shows when that plugin is present. Runs in
+  // the background; the colored prompt works fine on its own while this is still downloading.
+  private ensureSyntaxHighlightingPlugin() {
+    const entry = path.join(this.syntaxHighlightingDir, 'zsh-syntax-highlighting.zsh');
+    if (this.syntaxHighlightingDownloadStarted || fs.existsSync(entry)) return;
+    this.syntaxHighlightingDownloadStarted = true;
+    downloadAndExtractGithubTag('zsh-users/zsh-syntax-highlighting', ZSH_SYNTAX_HIGHLIGHTING_VERSION, this.syntaxHighlightingDir)
+      .then(() => console.log('[Native PTY] zsh-syntax-highlighting installed'))
+      .catch((err) => {
+        console.warn('[Native PTY] Failed to fetch zsh-syntax-highlighting (prompt colors still work):', err);
+        this.syntaxHighlightingDownloadStarted = false;
+      });
+  }
+
+  // Gives our embedded zsh sessions a colored prompt (like VS Code/Antigravity's integrated
+  // terminal), without touching the user's own ~/.zshrc. Uses a custom ZDOTDIR whose .zshrc
+  // sources the user's real one first (so aliases/tools/exports keep working), then overrides
+  // PROMPT with a truecolor version of the app's accent color, then sources live command
+  // syntax highlighting if it's been downloaded. Regenerated only when the accent color changes.
+  private ensureColoredZshInit(): string {
+    this.ensureSyntaxHighlightingPlugin();
+    const color = /^#[0-9a-fA-F]{6}$/.test(this.currentAccentColor) ? this.currentAccentColor : '#FF6A00';
+    if (this.lastZshInitColor === color && fs.existsSync(path.join(this.zshInitDir, '.zshrc'))) {
+      return this.zshInitDir;
+    }
+    try {
+      fs.mkdirSync(this.zshInitDir, { recursive: true });
+      const highlightEntry = path.join(this.syntaxHighlightingDir, 'zsh-syntax-highlighting.zsh');
+      const rc = [
+        '# Auto-generated by DevFlow IDE — do not edit, regenerated on accent color change.',
+        '[ -f "$DEVFLOW_REAL_HOME/.zshrc" ] && ZDOTDIR="$DEVFLOW_REAL_HOME" source "$DEVFLOW_REAL_HOME/.zshrc"',
+        `PROMPT='%F{242}%n@%m%f %B%F{${color}}%1~%f%b %F{${color}}%#%f '`,
+        // Sourced last, as recommended by the plugin (it wraps ZLE widgets already defined above).
+        `[ -f "${highlightEntry}" ] && source "${highlightEntry}"`,
+        '',
+      ].join('\n');
+      fs.writeFileSync(path.join(this.zshInitDir, '.zshrc'), rc, 'utf8');
+      this.lastZshInitColor = color;
+    } catch (err) {
+      console.warn('[Native PTY] Failed to write colored zsh prompt init:', err);
+    }
+    return this.zshInitDir;
   }
 
   createSession(
@@ -88,7 +190,7 @@ export class NativePtyService {
       '/usr/sbin',
       '/sbin',
     ];
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       ...process.env,
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
@@ -127,6 +229,13 @@ export class NativePtyService {
         args = ['-l', '-c', 'codex'];
       }
       title = 'OpenAI Codex CLI';
+    }
+
+    // Give plain zsh sessions (interactive terminal, or CLI wrappers that shell out via zsh -c)
+    // a colored prompt matching the app's accent color, VS Code/Antigravity style.
+    if (file === '/bin/zsh') {
+      env.ZDOTDIR = this.ensureColoredZshInit();
+      env.DEVFLOW_REAL_HOME = userHome;
     }
 
     const term = pty.spawn(file, args, {

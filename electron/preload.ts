@@ -162,5 +162,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   git: {
     getWorkspaceGitInfo: (workspacePath: string, activeFilePath?: string) =>
       ipcRenderer.invoke('git:getWorkspaceGitInfo', { workspacePath, activeFilePath }),
+    listRepos: (workspacePath: string) =>
+      ipcRenderer.invoke('git:listRepos', { workspacePath }),
+    getIssues: (workspacePath: string) =>
+      ipcRenderer.invoke('git:getIssues', { workspacePath }),
+    createIssue: (workspacePath: string, title: string, body?: string) =>
+      ipcRenderer.invoke('git:createIssue', { workspacePath, title, body }),
   },
 });

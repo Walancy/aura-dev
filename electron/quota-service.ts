@@ -36,6 +36,47 @@ export class QuotaService {
     return null;
   }
 
+  private getClaudeBinPath(): string | null {
+    const userHome = process.env.HOME || '';
+    const candidatePaths = [
+      path.join(userHome, '.local/bin/claude'),
+      path.join(userHome, '.bun/bin/claude'),
+      path.join(userHome, '.cargo/bin/claude'),
+      '/opt/homebrew/bin/claude',
+      '/usr/local/bin/claude',
+      '/usr/bin/claude',
+    ];
+
+    for (const p of candidatePaths) {
+      try {
+        if (fs.existsSync(p)) return p;
+      } catch {}
+    }
+
+    return null;
+  }
+
+  // Parses Claude Code's own "/usage" reset phrasing, e.g. "Sep 18 at 6:30pm", into a Date.
+  private parseClaudeResetClock(text: string, now: Date): Date | null {
+    const m = text.trim().match(/^([A-Za-z]{3})\w*\s+(\d{1,2})\s+at\s+(\d{1,2}):(\d{2})\s*(am|pm)$/i);
+    if (!m) return null;
+    const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    const monIdx = months.indexOf(m[1].toLowerCase());
+    if (monIdx === -1) return null;
+    let hour = parseInt(m[3], 10);
+    const minute = parseInt(m[4], 10);
+    const ampm = m[5].toLowerCase();
+    if (ampm === 'pm' && hour !== 12) hour += 12;
+    if (ampm === 'am' && hour === 12) hour = 0;
+    const day = parseInt(m[2], 10);
+    let d = new Date(now.getFullYear(), monIdx, day, hour, minute, 0, 0);
+    // A date that "already happened" more than a day ago must actually be next year's occurrence.
+    if (d.getTime() < now.getTime() - 86400000) {
+      d = new Date(now.getFullYear() + 1, monIdx, day, hour, minute, 0, 0);
+    }
+    return d;
+  }
+
   public async getQuotas(force = false): Promise<Record<string, AiQuotaConfig>> {
     const now = Date.now();
     if (!force && this.cache && now - this.lastFetchTime < this.CACHE_TTL_MS) {
@@ -204,6 +245,60 @@ export class QuotaService {
       console.warn('[QuotaService] Failed to read ~/.claude.json:', err);
     }
 
+    // 1b. Fetch the REAL, live Claude Code subscription usage directly from the CLI
+    // (`claude -p "/usage"`). This is the actual official Anthropic subscription quota —
+    // ~/.claude.json's cached snapshot above is often stale or empty, so this live read
+    // takes priority whenever the CLI is available and responds.
+    const claudeBin = this.getClaudeBinPath();
+    if (claudeBin) {
+      try {
+        const customPaths = [
+          path.join(userHome, '.local/bin'),
+          path.join(userHome, '.bun/bin'),
+          '/opt/homebrew/bin',
+          '/usr/local/bin',
+        ];
+        const execEnv = {
+          ...process.env,
+          PATH: `${customPaths.join(':')}:${process.env.PATH || ''}`,
+        };
+
+        const out = await new Promise<string>((resolve) => {
+          exec(`${claudeBin} -p "/usage" < /dev/null`, {
+            encoding: 'utf8',
+            shell: '/bin/zsh',
+            env: execEnv,
+            timeout: 8000,
+          }, (_err, stdout) => {
+            resolve(stdout ? stdout.toString() : '');
+          });
+        });
+
+        const sessionMatch = out.match(/Current session:\s*(\d+)%\s*used\s*·\s*resets\s*([^(\n]+)/i);
+        const weekMatch = out.match(/Current week[^:]*:\s*(\d+)%\s*used\s*·\s*resets\s*([^(\n]+)/i);
+
+        if (sessionMatch || weekMatch) {
+          const nowDate = new Date();
+          const dailyUsed = sessionMatch ? parseInt(sessionMatch[1], 10) : null;
+          const weeklyUsed = weekMatch ? parseInt(weekMatch[1], 10) : null;
+          const dailyResetDate = sessionMatch ? this.parseClaudeResetClock(sessionMatch[2], nowDate) : null;
+          const weeklyResetDate = weekMatch ? this.parseClaudeResetClock(weekMatch[2], nowDate) : null;
+          const dailyInfo = formatReset(dailyResetDate ? dailyResetDate.toISOString() : null, false);
+          const weeklyInfo = formatReset(weeklyResetDate ? weeklyResetDate.toISOString() : null, true);
+
+          quotas.claude = {
+            dailyPercent: dailyUsed !== null ? Math.max(0, Math.min(100, 100 - dailyUsed)) : quotas.claude.dailyPercent,
+            weeklyPercent: weeklyUsed !== null ? Math.max(0, Math.min(100, 100 - weeklyUsed)) : quotas.claude.weeklyPercent,
+            dailyResetTime: dailyInfo.timeStr,
+            weeklyResetDay: weeklyInfo.dayStr,
+            weeklyResetTime: weeklyInfo.fullStr,
+          };
+        }
+      } catch (err) {
+        console.warn('[QuotaService] Failed to query live quota from claude CLI:', err);
+      }
+    }
+
     // 2. Fetch Antigravity / Gemini / Codex Live Quotas via agy CLI non-blockingly
     const agyBin = this.getAgyBinPath();
     if (agyBin) {
@@ -267,9 +362,10 @@ export class QuotaService {
               weeklyResetTime: cgWeeklyInfo.fullStr,
             };
 
+            // Antigravity's own "Claude and GPT models" reading is its own proxy pool —
+            // a different product from the official Claude Code subscription fetched
+            // live above (1b), so it must only ever apply to `codex`, never `claude`.
             quotas.codex = cgQuota;
-            // Also update claude with the live Claude & GPT quota if claude didn't have custom usage
-            quotas.claude = { ...cgQuota };
           }
         }
       } catch (err) {

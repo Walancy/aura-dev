@@ -85,6 +85,9 @@ export interface ElectronAPI {
       modifiedCount: number;
       lastCommitHash?: string;
     }>;
+    listRepos?: (workspacePath: string) => Promise<Array<{ dir: string; name: string }>>;
+    getIssues?: (workspacePath: string) => Promise<Array<any>>;
+    createIssue?: (workspacePath: string, title: string, body?: string) => Promise<{ success: boolean; issue?: any; error?: string }>;
   };
 }
 

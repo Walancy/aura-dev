@@ -22,7 +22,11 @@ import {
   Star,
   ExternalLink,
   X,
+  MoreHorizontal,
+  ChevronDown,
+  Sparkles,
 } from 'lucide-react';
+import { FileIcon } from '../FileIcon';
 
 export interface SidebarPanelsProps {
   activeTab: 'search' | 'git' | 'debug' | 'preview' | 'extensions' | 'testing';
@@ -46,7 +50,12 @@ export interface SidebarPanelsProps {
   onToast: (msg: string) => void;
   onOpenBranchModal?: () => void;
   currentBranch?: string;
+  onGenerateCommitMessage?: (repoDir: string) => Promise<string>;
   onSelectExtension?: (ext: any) => void;
+  installedExtensions: any[];
+  onInstallExtension: (ext: any) => Promise<void>;
+  onUninstallExtension: (ext: any) => Promise<void>;
+  onToggleExtensionEnabled: (ext: any) => Promise<void>;
 }
 
 export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
@@ -64,7 +73,12 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
   onToast,
   onOpenBranchModal,
   currentBranch = 'main',
+  onGenerateCommitMessage,
   onSelectExtension,
+  installedExtensions,
+  onInstallExtension,
+  onUninstallExtension,
+  onToggleExtensionEnabled,
 }) => {
   const hexToRgba = (hex: string, alpha: number) => {
     const cleanHex = hex.replace('#', '');
@@ -175,34 +189,80 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
   }, [searchResults]);
 
   // -------------------------------------------------------------------------
-  // 2. Git / Source Control State & Logic
+  // 2. Git / Source Control State & Logic (multi-repo)
   // -------------------------------------------------------------------------
-  const [gitChanges, setGitChanges] = useState<Array<{ path: string; status: string; staged: boolean }>>([]);
-  const [gitCommitMsg, setGitCommitMsg] = useState('');
-  const [isGitLoading, setIsGitLoading] = useState(false);
+  interface RepoGitEntry {
+    dir: string;
+    name: string;
+    branch: string;
+    changes: Array<{ path: string; status: string; staged: boolean }>;
+    commitMsg: string;
+    isLoading: boolean;
+    isGenerating: boolean;
+    collapsed: boolean;
+    changesCollapsed: boolean;
+  }
 
-  const refreshGitStatus = useCallback(async () => {
+  const [gitRepos, setGitRepos] = useState<RepoGitEntry[]>([]);
+  const [isGitLoading, setIsGitLoading] = useState(false);
+  const [changesGroupCollapsed, setChangesGroupCollapsed] = useState(false);
+
+  const updateRepo = useCallback(
+    (dir: string, patch: Partial<RepoGitEntry> | ((r: RepoGitEntry) => Partial<RepoGitEntry>)) => {
+      setGitRepos((prev) =>
+        prev.map((r) => (r.dir === dir ? { ...r, ...(typeof patch === 'function' ? patch(r) : patch) } : r))
+      );
+    },
+    []
+  );
+
+  const discoverAndRefreshRepos = useCallback(async () => {
     if (!window.electronAPI?.shell?.exec) return;
     setIsGitLoading(true);
-    const cwd = workspacePath || process.cwd();
     try {
-      const statusRes = await window.electronAPI.shell.exec('git status --porcelain=v1', cwd);
-      if (statusRes?.stdout !== undefined) {
-        const lines = statusRes.stdout.split('\n').filter(Boolean);
-        const changes: Array<{ path: string; status: string; staged: boolean }> = [];
-        for (const line of lines) {
-          const x = line[0];
-          const y = line[1];
-          const fPath = line.substring(3).trim();
-          if (x !== ' ' && x !== '?') {
-            changes.push({ path: fPath, status: x, staged: true });
-          }
-          if (y !== ' ') {
-            changes.push({ path: fPath, status: y === '?' ? '??' : y, staged: false });
-          }
-        }
-        setGitChanges(changes);
+      let repoDirs: Array<{ dir: string; name: string }> = [];
+      if (window.electronAPI.git?.listRepos) {
+        repoDirs = (await window.electronAPI.git.listRepos(workspacePath)) || [];
       }
+      if (repoDirs.length === 0) {
+        repoDirs = [{ dir: workspacePath, name: workspacePath.split('/').filter(Boolean).pop() || 'workspace' }];
+      }
+
+      const results = await Promise.all(
+        repoDirs.map(async ({ dir, name }) => {
+          const [statusRes, branchRes] = await Promise.all([
+            window.electronAPI!.shell!.exec('git status --porcelain=v1', dir),
+            window.electronAPI!.shell!.exec('git rev-parse --abbrev-ref HEAD', dir),
+          ]);
+          const changes: Array<{ path: string; status: string; staged: boolean }> = [];
+          const lines = (statusRes?.stdout || '').split('\n').filter(Boolean);
+          for (const line of lines) {
+            const x = line[0];
+            const y = line[1];
+            const fPath = line.substring(3).trim();
+            if (x !== ' ' && x !== '?') changes.push({ path: fPath, status: x, staged: true });
+            if (y !== ' ') changes.push({ path: fPath, status: y === '?' ? '??' : y, staged: false });
+          }
+          return { dir, name, branch: (branchRes?.stdout || 'main').trim() || 'main', changes };
+        })
+      );
+
+      setGitRepos((prev) =>
+        results.map((r) => {
+          const existing = prev.find((p) => p.dir === r.dir);
+          return {
+            dir: r.dir,
+            name: r.name,
+            branch: r.branch,
+            changes: r.changes,
+            commitMsg: existing?.commitMsg || '',
+            isLoading: false,
+            isGenerating: existing?.isGenerating || false,
+            collapsed: existing?.collapsed ?? false,
+            changesCollapsed: existing?.changesCollapsed ?? false,
+          };
+        })
+      );
     } catch (err) {
       console.warn('Git status refresh failed:', err);
     } finally {
@@ -210,74 +270,96 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
     }
   }, [workspacePath]);
 
-  const handleGitCommit = async () => {
-    if (!gitCommitMsg.trim()) {
+  const handleGitCommit = async (repoDir: string) => {
+    const repo = gitRepos.find((r) => r.dir === repoDir);
+    if (!repo || !repo.commitMsg.trim()) {
       onToast('Digite uma mensagem de commit');
       return;
     }
-    setIsGitLoading(true);
-    const cwd = workspacePath || process.cwd();
+    updateRepo(repoDir, { isLoading: true });
     try {
-      const hasStaged = gitChanges.some((c) => c.staged);
+      const hasStaged = repo.changes.some((c) => c.staged);
       if (!hasStaged) {
-        await window.electronAPI?.shell?.exec('git add -A', cwd);
+        await window.electronAPI?.shell?.exec('git add -A', repoDir);
       }
-      const escaped = gitCommitMsg.replace(/"/g, '\\"');
-      const commitRes = await window.electronAPI?.shell?.exec(`git commit -m "${escaped}"`, cwd);
+      const escaped = repo.commitMsg.replace(/"/g, '\\"');
+      const commitRes = await window.electronAPI?.shell?.exec(`git commit -m "${escaped}"`, repoDir);
       if (commitRes?.exitCode === 0) {
-        setGitCommitMsg('');
-        onToast('Commit realizado com sucesso!');
-        await refreshGitStatus();
+        updateRepo(repoDir, { commitMsg: '' });
+        onToast(`Commit realizado em ${repo.name}!`);
+        await discoverAndRefreshRepos();
       } else {
         onToast(commitRes?.stderr || 'Erro ao commitar');
       }
     } catch (err: any) {
       onToast(`Erro no commit: ${err.message}`);
     } finally {
-      setIsGitLoading(false);
+      updateRepo(repoDir, { isLoading: false });
     }
   };
 
-  const handleGitDiscard = async (filePath: string) => {
-    const cwd = workspacePath || process.cwd();
+  const handleGitDiscard = async (repoDir: string, filePath: string) => {
     try {
       await window.electronAPI?.shell?.exec(
         `git checkout -- "${filePath}" || git restore "${filePath}" || rm -rf "${filePath}"`,
-        cwd
+        repoDir
       );
       onToast(`Alterações descartadas em ${filePath}`);
-      refreshGitStatus();
+      discoverAndRefreshRepos();
     } catch (err: any) {
       onToast(`Erro ao descartar: ${err.message}`);
     }
   };
 
-  const handleGitStage = async (filePath: string) => {
-    const cwd = workspacePath || process.cwd();
-    await window.electronAPI?.shell?.exec(`git add "${filePath}"`, cwd);
-    refreshGitStatus();
+  const handleGitStage = async (repoDir: string, filePath: string) => {
+    await window.electronAPI?.shell?.exec(`git add "${filePath}"`, repoDir);
+    discoverAndRefreshRepos();
   };
 
-  const handleGitUnstage = async (filePath: string) => {
-    const cwd = workspacePath || process.cwd();
-    await window.electronAPI?.shell?.exec(`git reset HEAD "${filePath}"`, cwd);
-    refreshGitStatus();
+  const handleGitUnstage = async (repoDir: string, filePath: string) => {
+    await window.electronAPI?.shell?.exec(`git reset HEAD "${filePath}"`, repoDir);
+    discoverAndRefreshRepos();
   };
 
-  const handleGitSync = async () => {
-    const cwd = workspacePath || process.cwd();
-    onToast('Sincronizando com o repositório remoto...');
+  const handleGitSync = async (repoDir: string, repoName: string) => {
+    onToast(`Sincronizando ${repoName}...`);
     try {
-      const res = await window.electronAPI?.shell?.exec('git pull --rebase && git push', cwd);
+      const res = await window.electronAPI?.shell?.exec('git pull --rebase && git push', repoDir);
       if (res?.exitCode === 0) {
-        onToast('Sincronizado com sucesso!');
+        onToast(`${repoName} sincronizado com sucesso!`);
       } else {
         onToast(res?.stderr || 'Sincronização concluída com avisos');
       }
-      refreshGitStatus();
+      discoverAndRefreshRepos();
     } catch (e: any) {
       onToast(`Erro na sincronização: ${e.message}`);
     }
+  };
+
+  const handleGenerateCommitMsg = async (repoDir: string) => {
+    if (!onGenerateCommitMessage) {
+      onToast('Geração por IA indisponível');
+      return;
+    }
+    updateRepo(repoDir, { isGenerating: true });
+    try {
+      const msg = await onGenerateCommitMessage(repoDir);
+      updateRepo(repoDir, { commitMsg: msg });
+    } catch (err: any) {
+      onToast(err?.message || 'Erro ao gerar mensagem com IA');
+    } finally {
+      updateRepo(repoDir, { isGenerating: false });
+    }
+  };
+
+  const iconBtnStyle: React.CSSProperties = {
+    background: 'transparent',
+    border: 'none',
+    color: themeTokens.textSecondary,
+    cursor: 'pointer',
+    padding: 2,
+    display: 'flex',
+    alignItems: 'center',
   };
 
   // -------------------------------------------------------------------------
@@ -385,58 +467,6 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
   const [extensionSearchQuery, setExtensionSearchQuery] = useState('');
   const [selectedExtensionCategory, setSelectedExtensionCategory] = useState<string>('');
   const [marketplaceExtensions, setMarketplaceExtensions] = useState<any[]>([]);
-  const [installedExtensions, setInstalledExtensions] = useState<any[]>(() => {
-    try {
-      const saved = localStorage.getItem('devflow_installed_extensions');
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return [
-      {
-        name: 'prettier-vscode',
-        namespace: 'esbenp',
-        displayName: 'Prettier - Code formatter',
-        description: 'Code formatter using prettier for JS, TS, HTML, CSS, JSON and more.',
-        version: '10.4.1',
-        downloadCount: 42500000,
-        averageRating: 4.8,
-        enabled: true,
-        installedAt: 'Padrão da IDE',
-      },
-      {
-        name: 'vscode-eslint',
-        namespace: 'dbaeumer',
-        displayName: 'ESLint',
-        description: 'Integrates ESLint JavaScript into VS Code.',
-        version: '3.0.10',
-        downloadCount: 35100000,
-        averageRating: 4.7,
-        enabled: true,
-        installedAt: 'Padrão da IDE',
-      },
-      {
-        name: 'vscode-icons',
-        namespace: 'vscode-icons-team',
-        displayName: 'vscode-icons',
-        description: 'Icons for Visual Studio Code',
-        version: '12.9.0',
-        downloadCount: 22400000,
-        averageRating: 4.9,
-        enabled: true,
-        installedAt: 'Padrão da IDE',
-      },
-      {
-        name: 'tailwind-shade-for-vscode',
-        namespace: 'bradlc',
-        displayName: 'Tailwind CSS IntelliSense',
-        description: 'Intelligent Tailwind CSS tooling for VS Code',
-        version: '0.14.3',
-        downloadCount: 18900000,
-        averageRating: 4.9,
-        enabled: true,
-        installedAt: 'Padrão da IDE',
-      },
-    ];
-  });
   const [isExtensionsLoading, setIsExtensionsLoading] = useState(false);
 
   const searchMarketplace = useCallback(
@@ -461,75 +491,13 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
     [extensionSearchQuery, selectedExtensionCategory]
   );
 
-  const handleInstallExtension = async (ext: any) => {
-    onToast(`Baixando e instalando "${ext.displayName || ext.name}"...`);
-    try {
-      if (window.electronAPI?.extensions?.install) {
-        const res = await window.electronAPI.extensions.install(ext.namespace, ext.name, ext.version);
-        if (res?.success && res.record) {
-          setInstalledExtensions((prev) => {
-            const filtered = prev.filter((i) => !((i.namespace === ext.namespace) && i.name === ext.name));
-            const updated = [res.record, ...filtered];
-            localStorage.setItem('devflow_installed_extensions', JSON.stringify(updated));
-            return updated;
-          });
-          onToast(`Extensão "${ext.displayName || ext.name}" instalada e pronta para uso!`);
-          return;
-        }
-      }
-    } catch (err: any) {
-      console.warn('Backend install failed, fallback to local registry:', err);
-    }
-
-    setInstalledExtensions((prev) => {
-      const exists = prev.some(
-        (item) => (item.namespace || '') + '.' + item.name === (ext.namespace || '') + '.' + ext.name
-      );
-      if (exists) return prev;
-      const updated = [
-        {
-          ...ext,
-          enabled: true,
-          installedAt: new Date().toLocaleDateString('pt-BR'),
-        },
-        ...prev,
-      ];
-      localStorage.setItem('devflow_installed_extensions', JSON.stringify(updated));
-      return updated;
-    });
-    onToast(`Extensão "${ext.displayName || ext.name}" instalada com sucesso!`);
-  };
-
-  const handleUninstallExtension = (extName: string, extNamespace?: string) => {
-    setInstalledExtensions((prev) => {
-      const updated = prev.filter(
-        (item) => !((item.namespace || '') === (extNamespace || '') && item.name === extName)
-      );
-      localStorage.setItem('devflow_installed_extensions', JSON.stringify(updated));
-      return updated;
-    });
-    onToast(`Extensão desinstalada.`);
-  };
-
-  const handleToggleExtensionEnabled = (extName: string, extNamespace?: string) => {
-    setInstalledExtensions((prev) => {
-      const updated = prev.map((item) => {
-        if ((item.namespace || '') === (extNamespace || '') && item.name === extName) {
-          return { ...item, enabled: !item.enabled };
-        }
-        return item;
-      });
-      localStorage.setItem('devflow_installed_extensions', JSON.stringify(updated));
-      return updated;
-    });
-  };
 
   // Trigger data load when tabs switch
   useEffect(() => {
     if (activeTab === 'search') {
       setTimeout(() => searchInputRef.current?.focus(), 60);
     } else if (activeTab === 'git') {
-      refreshGitStatus();
+      discoverAndRefreshRepos();
     } else if (activeTab === 'debug') {
       loadPackageScripts();
     } else if (activeTab === 'preview') {
@@ -539,7 +507,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
         searchMarketplace('');
       }
     }
-  }, [activeTab, refreshGitStatus, loadPackageScripts, scanActivePorts, searchMarketplace, marketplaceExtensions.length]);
+  }, [activeTab, discoverAndRefreshRepos, loadPackageScripts, scanActivePorts, searchMarketplace, marketplaceExtensions.length]);
 
   return (
     <>
@@ -885,7 +853,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
             flexDirection: 'column',
             justifyContent: 'flex-start',
             alignItems: 'flex-start',
-            gap: 10,
+            gap: 8,
             display: 'flex',
             overflowY: 'auto',
             overflowX: 'hidden',
@@ -911,15 +879,15 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <button
-                onClick={refreshGitStatus}
+                onClick={() => discoverAndRefreshRepos()}
                 title="Atualizar status do Git"
                 style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 2 }}
               >
                 <RefreshCw size={13} className={isGitLoading ? 'spin-animate' : ''} />
               </button>
               <button
-                onClick={handleGitSync}
-                title="Sincronizar (Pull & Push)"
+                onClick={() => gitRepos.forEach((r) => handleGitSync(r.dir, r.name))}
+                title="Sincronizar todos os repositórios (Pull & Push)"
                 style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 2 }}
               >
                 <RotateCcw size={13} />
@@ -927,229 +895,388 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
             </div>
           </div>
 
-          {/* Branch Chip */}
-          <div
-            onClick={onOpenBranchModal}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              background: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-              border: 'none',
-              borderRadius: 6,
-              padding: '5px 8px',
-              cursor: 'pointer',
-              width: '100%',
-              boxSizing: 'border-box',
-            }}
-            title="Clique para alternar branch"
-          >
-            <GitBranch size={12} color={accentColor} />
-            <span
-              style={{
-                fontSize: 11,
-                color: themeTokens.textPrimary,
-                fontWeight: 500,
-                flex: 1,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
+          {/* Changes Group (wraps every detected repo) */}
+          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div
+              onClick={() => setChangesGroupCollapsed(!changesGroupCollapsed)}
+              style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '2px 0', userSelect: 'none' }}
             >
-              {currentBranch || 'main'}
-            </span>
-            <ChevronRight size={12} color={themeTokens.textSecondary} />
-          </div>
+              <ChevronRight
+                size={12}
+                color={themeTokens.textSecondary}
+                style={{ transform: changesGroupCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 0.15s ease' }}
+              />
+              <span style={{ fontSize: 10.5, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase' }}>
+                Alterações
+              </span>
+            </div>
 
-          {/* Commit Box */}
-          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <textarea
-              value={gitCommitMsg}
-              onChange={(e) => setGitCommitMsg(e.target.value)}
-              onKeyDown={(e) => {
-                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                  handleGitCommit();
-                }
-              }}
-              placeholder="Mensagem de commit (⌘Enter para commitar)..."
-              rows={3}
-              style={{
-                width: '100%',
-                background: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-                border: 'none',
-                borderRadius: 6,
-                padding: '7px 9px',
-                color: themeTokens.textPrimary,
-                fontSize: 11,
-                resize: 'none',
-                outline: 'none',
-                fontFamily: 'inherit',
-                boxSizing: 'border-box',
-              }}
-            />
-            <button
-              onClick={handleGitCommit}
-              disabled={isGitLoading || !gitCommitMsg.trim()}
-              style={{
-                width: '100%',
-                background: accentColor,
-                color: accentTextColor,
-                border: 'none',
-                borderRadius: 6,
-                padding: '6px 10px',
-                cursor: isGitLoading || !gitCommitMsg.trim() ? 'not-allowed' : 'pointer',
-                opacity: isGitLoading || !gitCommitMsg.trim() ? 0.6 : 1,
-                fontSize: 11,
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                transition: 'opacity 0.15s ease',
-              }}
-            >
-              <Check size={13} strokeWidth={2.5} />
-              <span>Commit</span>
-            </button>
-          </div>
+            {!changesGroupCollapsed && (
+              gitRepos.length === 0 ? (
+                <div style={{ padding: '20px 0', textAlign: 'center', color: themeTokens.textMuted, fontSize: 11 }}>
+                  {isGitLoading ? 'Verificando repositórios...' : 'Nenhum repositório Git encontrado'}
+                </div>
+              ) : (
+                gitRepos.map((repo) => {
+                  const isDirty = repo.changes.length > 0;
+                  return (
+                    <div key={repo.dir} style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {/* Repo Header Row */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%' }}>
+                        <div
+                          onClick={() => updateRepo(repo.dir, { collapsed: !repo.collapsed })}
+                          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', color: themeTokens.textSecondary, flexShrink: 0 }}
+                        >
+                          <ChevronRight
+                            size={13}
+                            style={{ transform: repo.collapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 0.15s ease' }}
+                          />
+                        </div>
+                        <span
+                          onClick={() => updateRepo(repo.dir, { collapsed: !repo.collapsed })}
+                          style={{
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            color: themeTokens.textPrimary,
+                            cursor: 'pointer',
+                            minWidth: 0,
+                            flexShrink: 1,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                          title={repo.dir}
+                        >
+                          {repo.name}
+                        </span>
+                        <span style={{ fontSize: 10, color: themeTokens.textSecondary, fontWeight: 500, flexShrink: 0 }}>
+                          {repo.branch}
+                          {isDirty ? '*' : ''}
+                        </span>
+                        <div style={{ flex: 1 }} />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+                          <button
+                            onClick={() => discoverAndRefreshRepos()}
+                            title="Atualizar"
+                            style={iconBtnStyle}
+                          >
+                            <RefreshCw size={11} />
+                          </button>
+                          <button
+                            onClick={() => handleGitSync(repo.dir, repo.name)}
+                            title="Sincronizar (Pull & Push)"
+                            style={iconBtnStyle}
+                          >
+                            <RotateCcw size={11} />
+                          </button>
+                          <button
+                            onClick={() =>
+                              window.electronAPI?.shell?.exec('git reset --hard && git clean -fd', repo.dir).then(() => discoverAndRefreshRepos())
+                            }
+                            title="Descartar todas as alterações"
+                            style={iconBtnStyle}
+                          >
+                            <Check size={11} />
+                          </button>
+                          <button
+                            onClick={() => onRunTerminalCommand(repo.name, `cd "${repo.dir}"`)}
+                            title="Mais ações"
+                            style={iconBtnStyle}
+                          >
+                            <MoreHorizontal size={13} />
+                          </button>
+                        </div>
+                      </div>
 
-          {/* Changes Header */}
-          <div style={{ alignSelf: 'stretch', justifyContent: 'space-between', alignItems: 'center', display: 'flex', marginTop: 4 }}>
-            <span style={{ fontSize: 10.5, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase' }}>
-              Alterações ({gitChanges.length})
-            </span>
-            {gitChanges.length > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <button
-                  onClick={() => window.electronAPI?.shell?.exec('git add -A', workspacePath).then(() => refreshGitStatus())}
-                  title="Adicionar todas as alterações (Stage All)"
-                  style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 2 }}
-                >
-                  <Plus size={12} />
-                </button>
-                <button
-                  onClick={() => window.electronAPI?.shell?.exec('git reset HEAD', workspacePath).then(() => refreshGitStatus())}
-                  title="Remover todas do stage (Unstage All)"
-                  style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 2 }}
-                >
-                  <Minus size={12} />
-                </button>
-              </div>
-            )}
-          </div>
+                      {!repo.collapsed && (
+                        <>
+                          {/* Commit Box */}
+                          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6, paddingLeft: 19, boxSizing: 'border-box' }}>
+                            <div style={{ position: 'relative', width: '100%' }}>
+                              <textarea
+                                value={repo.commitMsg}
+                                onChange={(e) => updateRepo(repo.dir, { commitMsg: e.target.value })}
+                                onKeyDown={(e) => {
+                                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                                    handleGitCommit(repo.dir);
+                                  }
+                                }}
+                                placeholder="Message (⌘Enter to commit)"
+                                rows={3}
+                                style={{
+                                  width: '100%',
+                                  background: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+                                  border: 'none',
+                                  borderRadius: 6,
+                                  padding: '7px 9px',
+                                  color: themeTokens.textPrimary,
+                                  fontSize: 11,
+                                  resize: 'none',
+                                  outline: 'none',
+                                  fontFamily: 'inherit',
+                                  boxSizing: 'border-box',
+                                }}
+                              />
+                              {!repo.commitMsg && (
+                                <button
+                                  onClick={() => handleGenerateCommitMsg(repo.dir)}
+                                  disabled={repo.isGenerating}
+                                  title="Gerar mensagem de commit com a IA selecionada no chat"
+                                  style={{
+                                    position: 'absolute',
+                                    right: 6,
+                                    bottom: 6,
+                                    background: hexToRgba(accentColor, 0.18),
+                                    border: 'none',
+                                    color: accentColor,
+                                    borderRadius: 5,
+                                    padding: '3px 7px',
+                                    fontSize: 10,
+                                    fontWeight: 600,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                    cursor: repo.isGenerating ? 'not-allowed' : 'pointer',
+                                    opacity: repo.isGenerating ? 0.6 : 1,
+                                  }}
+                                >
+                                  <Sparkles size={10} className={repo.isGenerating ? 'spin-animate' : ''} />
+                                  <span>{repo.isGenerating ? 'Gerando...' : 'Generate'}</span>
+                                </button>
+                              )}
+                            </div>
 
-          {/* Changes List */}
-          <div
-            className="no-scrollbar"
-            style={{ flex: 1, width: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}
-          >
-            {gitChanges.length === 0 ? (
-              <div style={{ padding: '20px 0', textAlign: 'center', color: themeTokens.textMuted, fontSize: 11 }}>
-                Nenhuma alteração pendente
-              </div>
-            ) : (
-              gitChanges.map((change, idx) => {
-                const fileName = change.path.split('/').pop() || change.path;
-                const statusColor =
-                  change.status === 'M'
-                    ? '#f59e0b'
-                    : change.status === 'A'
-                    ? '#10b981'
-                    : change.status === 'D'
-                    ? '#ef4444'
-                    : '#3b82f6';
-                const fullPath = change.path.startsWith('/') ? change.path : `${workspacePath}/${change.path}`;
-                return (
-                  <div
-                    key={idx}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '5px 6px',
-                      borderRadius: 6,
-                      border: 'none',
-                      cursor: 'pointer',
-                      transition: 'background 0.1s ease',
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                  >
-                    <div
-                      onClick={() => {
-                        if (onStartReview) {
-                          onStartReview([
-                            {
-                              path: fullPath,
-                              name: fileName,
-                              status: change.status === 'M' ? 'modified' : change.status === 'A' ? 'added' : 'deleted',
-                            },
-                          ]);
-                        } else {
-                          onOpenFile(fullPath, fileName);
-                        }
-                      }}
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1 }}
-                      title={`${change.path} (Clique para comparar)`}
-                    >
-                      <span style={{ fontSize: 9.5, fontWeight: 700, color: statusColor, minWidth: 14 }}>
-                        {change.status}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: 11,
-                          color: themeTokens.textPrimary,
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                        }}
-                      >
-                        {fileName}
-                      </span>
+                            <div style={{ display: 'flex', width: '100%' }}>
+                              <button
+                                onClick={() => handleGitCommit(repo.dir)}
+                                disabled={repo.isLoading || !repo.commitMsg.trim()}
+                                style={{
+                                  flex: 1,
+                                  background: accentColor,
+                                  color: accentTextColor,
+                                  border: 'none',
+                                  borderRadius: '6px 0 0 6px',
+                                  padding: '6px 10px',
+                                  cursor: repo.isLoading || !repo.commitMsg.trim() ? 'not-allowed' : 'pointer',
+                                  opacity: repo.isLoading || !repo.commitMsg.trim() ? 0.6 : 1,
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 6,
+                                  transition: 'opacity 0.15s ease',
+                                }}
+                              >
+                                <Check size={13} strokeWidth={2.5} />
+                                <span>Commit</span>
+                              </button>
+                              <button
+                                onClick={() => handleGitCommit(repo.dir).then(() => handleGitSync(repo.dir, repo.name))}
+                                disabled={repo.isLoading || !repo.commitMsg.trim()}
+                                title="Commit e sincronizar"
+                                style={{
+                                  background: accentColor,
+                                  color: accentTextColor,
+                                  border: 'none',
+                                  borderLeft: `1px solid ${hexToRgba('#000000', 0.18)}`,
+                                  borderRadius: '0 6px 6px 0',
+                                  padding: '6px 8px',
+                                  cursor: repo.isLoading || !repo.commitMsg.trim() ? 'not-allowed' : 'pointer',
+                                  opacity: repo.isLoading || !repo.commitMsg.trim() ? 0.6 : 1,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                }}
+                              >
+                                <ChevronDown size={12} />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Per-repo Changes Subsection */}
+                          <div style={{ width: '100%', paddingLeft: 19, boxSizing: 'border-box', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            <div
+                              onClick={() => updateRepo(repo.dir, { changesCollapsed: !repo.changesCollapsed })}
+                              style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '2px 0', userSelect: 'none' }}
+                            >
+                              <ChevronRight
+                                size={11}
+                                color={themeTokens.textSecondary}
+                                style={{ transform: repo.changesCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 0.15s ease' }}
+                              />
+                              <span style={{ fontSize: 10.5, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', flex: 1 }}>
+                                Alterações
+                              </span>
+                              {repo.changes.length > 0 && (
+                                <span
+                                  style={{
+                                    fontSize: 9.5,
+                                    fontWeight: 700,
+                                    color: themeTokens.textSecondary,
+                                    background: isEffectiveDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                                    borderRadius: 9,
+                                    padding: '1px 6px',
+                                    minWidth: 14,
+                                    textAlign: 'center',
+                                  }}
+                                >
+                                  {repo.changes.length}
+                                </span>
+                              )}
+                              {repo.changes.length > 0 && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 2 }} onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    onClick={() => window.electronAPI?.shell?.exec('git add -A', repo.dir).then(() => discoverAndRefreshRepos())}
+                                    title="Adicionar todas as alterações (Stage All)"
+                                    style={iconBtnStyle}
+                                  >
+                                    <Plus size={11} />
+                                  </button>
+                                  <button
+                                    onClick={() => window.electronAPI?.shell?.exec('git reset HEAD', repo.dir).then(() => discoverAndRefreshRepos())}
+                                    title="Remover todas do stage (Unstage All)"
+                                    style={iconBtnStyle}
+                                  >
+                                    <Minus size={11} />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+
+                            {!repo.changesCollapsed && (
+                              repo.changes.length === 0 ? (
+                                <div style={{ padding: '8px 0', color: themeTokens.textMuted, fontSize: 10.5 }}>
+                                  Nenhuma alteração pendente
+                                </div>
+                              ) : (
+                                repo.changes.map((change, idx) => {
+                                  const fileName = change.path.split('/').pop() || change.path;
+                                  const dirIdx = change.path.lastIndexOf('/');
+                                  const dirPart = dirIdx > -1 ? `${repo.name}/${change.path.substring(0, dirIdx)}` : repo.name;
+                                  const statusColor =
+                                    change.status === 'M'
+                                      ? '#e2c08d'
+                                      : change.status === 'A'
+                                      ? '#73c991'
+                                      : change.status === 'D'
+                                      ? '#f14c4c'
+                                      : '#73c991';
+                                  const fullPath = change.path.startsWith('/') ? change.path : `${repo.dir}/${change.path}`;
+                                  return (
+                                    <div
+                                      key={idx}
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        padding: '4px 4px',
+                                        borderRadius: 5,
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        transition: 'background 0.1s ease',
+                                      }}
+                                      onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+                                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                                    >
+                                      <div
+                                        onClick={() => {
+                                          if (onStartReview) {
+                                            onStartReview([
+                                              {
+                                                path: fullPath,
+                                                name: fileName,
+                                                status: change.status === 'M' ? 'modified' : change.status === 'A' ? 'added' : 'deleted',
+                                              },
+                                            ]);
+                                          } else {
+                                            onOpenFile(fullPath, fileName);
+                                          }
+                                        }}
+                                        style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1 }}
+                                        title={`${change.path} (Clique para comparar)`}
+                                      >
+                                        <FileIcon fileName={fileName} size={14} />
+                                        <span
+                                          style={{
+                                            fontSize: 11,
+                                            color: themeTokens.textPrimary,
+                                            whiteSpace: 'nowrap',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            flexShrink: 0,
+                                          }}
+                                        >
+                                          {fileName}
+                                        </span>
+                                        <span
+                                          style={{
+                                            fontSize: 10,
+                                            color: themeTokens.textMuted,
+                                            whiteSpace: 'nowrap',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            minWidth: 0,
+                                          }}
+                                        >
+                                          {dirPart}
+                                        </span>
+                                      </div>
+
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (onStartReview) {
+                                              onStartReview([
+                                                {
+                                                  path: fullPath,
+                                                  name: fileName,
+                                                  status: change.status === 'M' ? 'modified' : change.status === 'A' ? 'added' : 'deleted',
+                                                },
+                                              ]);
+                                            }
+                                          }}
+                                          title="Comparar com HEAD (Diff Review)"
+                                          style={iconBtnStyle}
+                                        >
+                                          <Eye size={11} />
+                                        </button>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleGitDiscard(repo.dir, change.path);
+                                          }}
+                                          title="Descartar alterações"
+                                          style={iconBtnStyle}
+                                        >
+                                          <RotateCcw size={10} />
+                                        </button>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            change.staged ? handleGitUnstage(repo.dir, change.path) : handleGitStage(repo.dir, change.path);
+                                          }}
+                                          title={change.staged ? 'Remover do Stage' : 'Adicionar ao Stage'}
+                                          style={{ ...iconBtnStyle, color: change.staged ? '#73c991' : themeTokens.textSecondary }}
+                                        >
+                                          {change.staged ? <Minus size={11} /> : <Plus size={11} />}
+                                        </button>
+                                        <span style={{ fontSize: 10, fontWeight: 700, color: statusColor, minWidth: 12, textAlign: 'center' }}>
+                                          {change.status}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                })
+                              )
+                            )}
+                          </div>
+                        </>
+                      )}
                     </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
-                      <button
-                        onClick={() => {
-                          if (onStartReview) {
-                            onStartReview([
-                              {
-                                path: fullPath,
-                                name: fileName,
-                                status: change.status === 'M' ? 'modified' : change.status === 'A' ? 'added' : 'deleted',
-                              },
-                            ]);
-                          }
-                        }}
-                        title="Comparar com HEAD (Diff Review)"
-                        style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 2 }}
-                      >
-                        <Eye size={12} />
-                      </button>
-                      <button
-                        onClick={() => handleGitDiscard(change.path)}
-                        title="Descartar alterações"
-                        style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 2 }}
-                      >
-                        <RotateCcw size={11} />
-                      </button>
-                      <button
-                        onClick={() => (change.staged ? handleGitUnstage(change.path) : handleGitStage(change.path))}
-                        title={change.staged ? 'Remover do Stage' : 'Adicionar ao Stage'}
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          color: change.staged ? '#10b981' : themeTokens.textSecondary,
-                          cursor: 'pointer',
-                          padding: 2,
-                        }}
-                      >
-                        {change.staged ? <Minus size={12} /> : <Plus size={12} />}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
+                  );
+                })
+              )
             )}
           </div>
         </div>
@@ -1889,7 +2016,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleToggleExtensionEnabled(ext.name, ext.namespace);
+                                onToggleExtensionEnabled(ext);
                               }}
                               title={installedItem?.enabled ? 'Desativar extensão' : 'Ativar extensão'}
                               style={{
@@ -1908,7 +2035,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleUninstallExtension(ext.name, ext.namespace);
+                                onUninstallExtension(ext);
                               }}
                               title="Desinstalar extensão"
                               style={{
@@ -1929,7 +2056,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleInstallExtension(ext);
+                              onInstallExtension(ext);
                             }}
                             style={{
                               background: accentColor,
