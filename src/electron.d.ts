@@ -89,6 +89,16 @@ export interface ElectronAPI {
     getIssues?: (workspacePath: string) => Promise<Array<any>>;
     createIssue?: (workspacePath: string, title: string, body?: string) => Promise<{ success: boolean; issue?: any; error?: string }>;
   };
+  github?: {
+    isAuthenticated: () => Promise<{ authenticated: boolean }>;
+    getUser: () => Promise<{ success: boolean; user?: { login: string; name: string | null; avatarUrl: string; htmlUrl: string }; error?: string }>;
+    logout: () => Promise<{ success: boolean }>;
+    startLogin: () => Promise<{ success: boolean; userCode?: string; verificationUri?: string; expiresIn?: number; error?: string }>;
+    cancelLogin: () => Promise<{ success: boolean }>;
+    fetchRepos: () => Promise<{ success: boolean; repos?: any[]; error?: string }>;
+    fetchProjects: () => Promise<{ success: boolean; projects?: any[]; error?: string }>;
+    onLoginResult: (callback: (result: { success: boolean; user?: { login: string; name: string | null; avatarUrl: string; htmlUrl: string }; error?: string }) => void) => () => void;
+  };
 }
 
 declare global {
@@ -98,6 +108,11 @@ declare global {
 }
 
 declare module '*.png' {
+  const src: string;
+  export default src;
+}
+
+declare module '*.svg' {
   const src: string;
   export default src;
 }

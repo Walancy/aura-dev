@@ -67,6 +67,7 @@ import { FileIcon, FolderIcon } from './components/FileIcon';
 import { PromptEditor, PromptEditorRef } from './components/PromptEditor';
 import { SidebarPanels } from './components/ide/SidebarPanels';
 import { ExtensionDetailsView } from './components/ide/ExtensionDetailsView';
+import { ProjectsSchedulerView } from './components/ProjectsSchedulerView';
 import {
   CodiconFiles,
   CodiconSearch,
@@ -99,6 +100,8 @@ import { ChatHistoryModal } from './components/modals/ChatHistoryModal';
 import { BranchModal } from './components/modals/BranchModal';
 import { IssuesModal } from './components/modals/IssuesModal';
 import { SettingsModal } from './components/modals/SettingsModal';
+import { GithubLoginScreen } from './components/auth/GithubLoginScreen';
+import type { GithubAuthenticatedUser } from './components/auth/GithubLoginScreen';
 import { renderMarkdownPreview } from './utils/markdown';
 import type {
   TerminalSessionItem,
@@ -118,7 +121,7 @@ import type {
 } from './types/ide';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'projetos' | 'daily' | 'equipmentos' | 'ide' | 'ports'>('ide');
+  const [activeTab, setActiveTab] = useState<'projetos' | 'daily' | 'equipmentos' | 'ide' | 'ports'>('projetos');
   const [activeTermTab, setActiveTermTab] = useState<'problems' | 'output' | 'debug' | 'terminal' | 'ports'>('terminal');
 
   // Code Review (Diff View) state
@@ -1539,6 +1542,40 @@ export const App: React.FC = () => {
     borderSubtle: 'transparent',
     hoverBg: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
   };
+
+  // GitHub login gate (Device Flow) — required before the workspace UI is shown
+  const [githubAuthStatus, setGithubAuthStatus] = useState<'checking' | 'unauthenticated' | 'authenticated'>('checking');
+  const [githubUser, setGithubUser] = useState<GithubAuthenticatedUser | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    window.electronAPI?.github
+      ?.isAuthenticated()
+      .then((res) => {
+        if (cancelled) return;
+        if (!res?.authenticated) {
+          setGithubAuthStatus('unauthenticated');
+          return;
+        }
+        window.electronAPI?.github
+          ?.getUser()
+          .then((userRes) => {
+            if (cancelled) return;
+            if (userRes?.success && userRes.user) {
+              setGithubUser(userRes.user);
+              setGithubAuthStatus('authenticated');
+            } else {
+              setGithubAuthStatus('unauthenticated');
+            }
+          })
+          .catch(() => !cancelled && setGithubAuthStatus('unauthenticated'));
+      })
+      .catch(() => !cancelled && setGithubAuthStatus('unauthenticated'));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const [explorerWidth, setExplorerWidth] = useState(() => {
     const saved = localStorage.getItem('ide_explorer_width');
     return saved ? parseInt(saved, 10) : 280;
@@ -5176,6 +5213,22 @@ ${prompt || userDisplayPrompt}`;
 
   const showTrafficLightSpacer = !isFullscreen;
 
+  if (githubAuthStatus === 'checking') {
+    return <div style={{ position: 'fixed', inset: 0, background: '#0a0a0b' }} />;
+  }
+
+  if (githubAuthStatus === 'unauthenticated') {
+    return (
+      <GithubLoginScreen
+        accentColor={accentColor}
+        onAuthenticated={(user) => {
+          setGithubUser(user);
+          setGithubAuthStatus('authenticated');
+        }}
+      />
+    );
+  }
+
   return (
     <div
       style={{
@@ -5300,188 +5353,192 @@ ${prompt || userDisplayPrompt}`;
 
         {/* Right: Layout Icons, Dividers, Profile */}
         <div style={{ justifyContent: 'center', alignItems: 'center', gap: 10, display: 'flex', WebkitAppRegion: 'no-drag' as any, flexShrink: 0 }}>
-          {/* Layout Controls: Customize Layout + 3 Panel Toggles */}
-          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }} ref={customizeLayoutRef}>
-            <div style={{ justifyContent: 'flex-start', alignItems: 'center', gap: 6, display: 'flex', WebkitAppRegion: 'no-drag' as any }}>
-              {/* 1. Customize Layout Button */}
+          {activeTab === 'ide' && (
+            <>
+              {/* Layout Controls: Customize Layout + 3 Panel Toggles */}
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }} ref={customizeLayoutRef}>
+                <div style={{ justifyContent: 'flex-start', alignItems: 'center', gap: 6, display: 'flex', WebkitAppRegion: 'no-drag' as any }}>
+                  {/* 1. Customize Layout Button */}
+                  <div
+                    onClick={() => setIsCustomizeLayoutOpen((prev) => !prev)}
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 5,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: isCustomizeLayoutOpen ? accentColor : themeTokens.textSecondary,
+                      background: isCustomizeLayoutOpen ? hexToRgba(accentColor, 0.12) : 'transparent',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                      WebkitAppRegion: 'no-drag' as any,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isCustomizeLayoutOpen) (e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary;
+                      (e.currentTarget as HTMLElement).style.background = isCustomizeLayoutOpen ? hexToRgba(accentColor, 0.2) : themeTokens.hoverBg;
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.color = isCustomizeLayoutOpen ? accentColor : themeTokens.textSecondary;
+                      (e.currentTarget as HTMLElement).style.background = isCustomizeLayoutOpen ? hexToRgba(accentColor, 0.12) : 'transparent';
+                    }}
+                    title="Personalizar Layout (Customize Layout)"
+                  >
+                    <CustomizeLayoutIcon size={17} />
+                  </div>
+
+                  {/* 2. Primary Sidebar (Explorer) */}
+                  <div
+                    onClick={() => setShowExplorer((prev) => !prev)}
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 5,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: showExplorer ? accentColor : themeTokens.textSecondary,
+                      background: showExplorer ? hexToRgba(accentColor, 0.12) : 'transparent',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                      WebkitAppRegion: 'no-drag' as any,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!showExplorer) (e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary;
+                      (e.currentTarget as HTMLElement).style.background = showExplorer ? hexToRgba(accentColor, 0.2) : themeTokens.hoverBg;
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.color = showExplorer ? accentColor : themeTokens.textSecondary;
+                      (e.currentTarget as HTMLElement).style.background = showExplorer ? hexToRgba(accentColor, 0.12) : 'transparent';
+                    }}
+                    title={showExplorer ? 'Ocultar Barra Lateral Primária (Explorer) ⌘B' : 'Mostrar Barra Lateral Primária (Explorer) ⌘B'}
+                  >
+                    <PanelLeft size={18} />
+                  </div>
+
+                  {/* 3. Bottom Panel (Terminal) */}
+                  <div
+                    onClick={() => setIsTerminalCollapsed((prev) => !prev)}
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 5,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: !isTerminalCollapsed ? accentColor : themeTokens.textSecondary,
+                      background: !isTerminalCollapsed ? hexToRgba(accentColor, 0.12) : 'transparent',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                      WebkitAppRegion: 'no-drag' as any,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (isTerminalCollapsed) (e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary;
+                      (e.currentTarget as HTMLElement).style.background = !isTerminalCollapsed ? hexToRgba(accentColor, 0.2) : themeTokens.hoverBg;
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.color = !isTerminalCollapsed ? accentColor : themeTokens.textSecondary;
+                      (e.currentTarget as HTMLElement).style.background = !isTerminalCollapsed ? hexToRgba(accentColor, 0.12) : 'transparent';
+                    }}
+                    title={!isTerminalCollapsed ? 'Ocultar Painel Inferior (Terminal) ⌘J' : 'Mostrar Painel Inferior (Terminal) ⌘J'}
+                  >
+                    <PanelBottom size={18} />
+                  </div>
+
+                  {/* 4. Secondary Sidebar (AI Assistant Panel) */}
+                  <div
+                    onClick={() => setShowAiPanel((prev) => !prev)}
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 5,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: showAiPanel ? accentColor : themeTokens.textSecondary,
+                      background: showAiPanel ? hexToRgba(accentColor, 0.12) : 'transparent',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                      WebkitAppRegion: 'no-drag' as any,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!showAiPanel) (e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary;
+                      (e.currentTarget as HTMLElement).style.background = showAiPanel ? hexToRgba(accentColor, 0.2) : themeTokens.hoverBg;
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.color = showAiPanel ? accentColor : themeTokens.textSecondary;
+                      (e.currentTarget as HTMLElement).style.background = showAiPanel ? hexToRgba(accentColor, 0.12) : 'transparent';
+                    }}
+                    title={showAiPanel ? 'Ocultar Painel de IA ⌘⇧A' : 'Mostrar Painel de IA ⌘⇧A'}
+                  >
+                    <PanelRight size={18} />
+                  </div>
+                </div>
+
+                {/* Customize Layout Menu Popup (Matches Image 1 & 2) */}
+                {isCustomizeLayoutOpen && (
+                  <CustomizeLayoutPopup
+                    themeTokens={themeTokens}
+                    accentColor={accentColor}
+                    onClose={() => setIsCustomizeLayoutOpen(false)}
+                    onReset={handleResetLayout}
+                    showActivityBar={showActivityBar}
+                    setShowActivityBar={setShowActivityBar}
+                    showExplorer={showExplorer}
+                    setShowExplorer={setShowExplorer}
+                    showAiPanel={showAiPanel}
+                    setShowAiPanel={setShowAiPanel}
+                    isTerminalCollapsed={isTerminalCollapsed}
+                    setIsTerminalCollapsed={setIsTerminalCollapsed}
+                    showStatusBar={showStatusBar}
+                    setShowStatusBar={setShowStatusBar}
+                    sidebarPosition={sidebarPosition}
+                    setSidebarPosition={setSidebarPosition}
+                    panelAlignment={panelAlignment}
+                    setPanelAlignment={setPanelAlignment}
+                    quickInputPosition={quickInputPosition}
+                    setQuickInputPosition={setQuickInputPosition}
+                    onToggleFullscreen={handleToggleFullscreen}
+                    onToggleZenMode={handleToggleZenMode}
+                    isZenMode={isZenMode}
+                    isCenteredLayout={isCenteredLayout}
+                    setIsCenteredLayout={setIsCenteredLayout}
+                  />
+                )}
+              </div>
+
+              {/* Vertical Divider */}
+              <div style={{ width: 1, height: 24, background: isEffectiveDark ? '#373737' : 'rgba(0, 0, 0, 0.1)' }} />
+
+              {/* Search file by name */}
               <div
-                onClick={() => setIsCustomizeLayoutOpen((prev) => !prev)}
+                onClick={() => {
+                  setIsQuickOpenOpen((prev) => !prev);
+                  setQuickOpenQuery('');
+                  setQuickOpenSelectedIndex(0);
+                }}
                 style={{
-                  width: 26,
-                  height: 26,
-                  borderRadius: 5,
+                  width: 24,
+                  height: 24,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  color: isCustomizeLayoutOpen ? accentColor : themeTokens.textSecondary,
-                  background: isCustomizeLayoutOpen ? hexToRgba(accentColor, 0.12) : 'transparent',
+                  color: isQuickOpenOpen ? accentColor : themeTokens.textSecondary,
                   cursor: 'pointer',
+                  borderRadius: 4,
                   transition: 'all 0.15s ease',
-                  WebkitAppRegion: 'no-drag' as any,
                 }}
-                onMouseEnter={(e) => {
-                  if (!isCustomizeLayoutOpen) (e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary;
-                  (e.currentTarget as HTMLElement).style.background = isCustomizeLayoutOpen ? hexToRgba(accentColor, 0.2) : themeTokens.hoverBg;
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.color = isCustomizeLayoutOpen ? accentColor : themeTokens.textSecondary;
-                  (e.currentTarget as HTMLElement).style.background = isCustomizeLayoutOpen ? hexToRgba(accentColor, 0.12) : 'transparent';
-                }}
-                title="Personalizar Layout (Customize Layout)"
+                onMouseEnter={(e) => (e.currentTarget.style.color = themeTokens.textPrimary)}
+                onMouseLeave={(e) => (e.currentTarget.style.color = isQuickOpenOpen ? accentColor : themeTokens.textSecondary)}
+                title="Search files by name (⌘P)"
               >
-                <CustomizeLayoutIcon size={17} />
+                <Search size={18} />
               </div>
+            </>
+          )}
 
-              {/* 2. Primary Sidebar (Explorer) */}
-              <div
-                onClick={() => setShowExplorer((prev) => !prev)}
-                style={{
-                  width: 26,
-                  height: 26,
-                  borderRadius: 5,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: showExplorer ? accentColor : themeTokens.textSecondary,
-                  background: showExplorer ? hexToRgba(accentColor, 0.12) : 'transparent',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                  WebkitAppRegion: 'no-drag' as any,
-                }}
-                onMouseEnter={(e) => {
-                  if (!showExplorer) (e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary;
-                  (e.currentTarget as HTMLElement).style.background = showExplorer ? hexToRgba(accentColor, 0.2) : themeTokens.hoverBg;
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.color = showExplorer ? accentColor : themeTokens.textSecondary;
-                  (e.currentTarget as HTMLElement).style.background = showExplorer ? hexToRgba(accentColor, 0.12) : 'transparent';
-                }}
-                title={showExplorer ? 'Ocultar Barra Lateral Primária (Explorer) ⌘B' : 'Mostrar Barra Lateral Primária (Explorer) ⌘B'}
-              >
-                <PanelLeft size={18} />
-              </div>
-
-              {/* 3. Bottom Panel (Terminal) */}
-              <div
-                onClick={() => setIsTerminalCollapsed((prev) => !prev)}
-                style={{
-                  width: 26,
-                  height: 26,
-                  borderRadius: 5,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: !isTerminalCollapsed ? accentColor : themeTokens.textSecondary,
-                  background: !isTerminalCollapsed ? hexToRgba(accentColor, 0.12) : 'transparent',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                  WebkitAppRegion: 'no-drag' as any,
-                }}
-                onMouseEnter={(e) => {
-                  if (isTerminalCollapsed) (e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary;
-                  (e.currentTarget as HTMLElement).style.background = !isTerminalCollapsed ? hexToRgba(accentColor, 0.2) : themeTokens.hoverBg;
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.color = !isTerminalCollapsed ? accentColor : themeTokens.textSecondary;
-                  (e.currentTarget as HTMLElement).style.background = !isTerminalCollapsed ? hexToRgba(accentColor, 0.12) : 'transparent';
-                }}
-                title={!isTerminalCollapsed ? 'Ocultar Painel Inferior (Terminal) ⌘J' : 'Mostrar Painel Inferior (Terminal) ⌘J'}
-              >
-                <PanelBottom size={18} />
-              </div>
-
-              {/* 4. Secondary Sidebar (AI Assistant Panel) */}
-              <div
-                onClick={() => setShowAiPanel((prev) => !prev)}
-                style={{
-                  width: 26,
-                  height: 26,
-                  borderRadius: 5,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: showAiPanel ? accentColor : themeTokens.textSecondary,
-                  background: showAiPanel ? hexToRgba(accentColor, 0.12) : 'transparent',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                  WebkitAppRegion: 'no-drag' as any,
-                }}
-                onMouseEnter={(e) => {
-                  if (!showAiPanel) (e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary;
-                  (e.currentTarget as HTMLElement).style.background = showAiPanel ? hexToRgba(accentColor, 0.2) : themeTokens.hoverBg;
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.color = showAiPanel ? accentColor : themeTokens.textSecondary;
-                  (e.currentTarget as HTMLElement).style.background = showAiPanel ? hexToRgba(accentColor, 0.12) : 'transparent';
-                }}
-                title={showAiPanel ? 'Ocultar Painel de IA ⌘⇧A' : 'Mostrar Painel de IA ⌘⇧A'}
-              >
-                <PanelRight size={18} />
-              </div>
-            </div>
-
-            {/* Customize Layout Menu Popup (Matches Image 1 & 2) */}
-            {isCustomizeLayoutOpen && (
-              <CustomizeLayoutPopup
-                themeTokens={themeTokens}
-                accentColor={accentColor}
-                onClose={() => setIsCustomizeLayoutOpen(false)}
-                onReset={handleResetLayout}
-                showActivityBar={showActivityBar}
-                setShowActivityBar={setShowActivityBar}
-                showExplorer={showExplorer}
-                setShowExplorer={setShowExplorer}
-                showAiPanel={showAiPanel}
-                setShowAiPanel={setShowAiPanel}
-                isTerminalCollapsed={isTerminalCollapsed}
-                setIsTerminalCollapsed={setIsTerminalCollapsed}
-                showStatusBar={showStatusBar}
-                setShowStatusBar={setShowStatusBar}
-                sidebarPosition={sidebarPosition}
-                setSidebarPosition={setSidebarPosition}
-                panelAlignment={panelAlignment}
-                setPanelAlignment={setPanelAlignment}
-                quickInputPosition={quickInputPosition}
-                setQuickInputPosition={setQuickInputPosition}
-                onToggleFullscreen={handleToggleFullscreen}
-                onToggleZenMode={handleToggleZenMode}
-                isZenMode={isZenMode}
-                isCenteredLayout={isCenteredLayout}
-                setIsCenteredLayout={setIsCenteredLayout}
-              />
-            )}
-          </div>
-
-          {/* Vertical Divider */}
-          <div style={{ width: 1, height: 24, background: '#373737' }} />
-
-          {/* Search and Settings */}
-          <div style={{ justifyContent: 'flex-start', alignItems: 'center', gap: 10, display: 'flex', WebkitAppRegion: 'no-drag' as any }}>
-            <div
-              onClick={() => {
-                setIsQuickOpenOpen((prev) => !prev);
-                setQuickOpenQuery('');
-                setQuickOpenSelectedIndex(0);
-              }}
-              style={{
-                width: 24,
-                height: 24,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: isQuickOpenOpen ? accentColor : themeTokens.textSecondary,
-                cursor: 'pointer',
-                borderRadius: 4,
-                transition: 'all 0.15s ease',
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = themeTokens.textPrimary)}
-              onMouseLeave={(e) => (e.currentTarget.style.color = isQuickOpenOpen ? accentColor : themeTokens.textSecondary)}
-              title="Search files by name (⌘P)"
-            >
-              <Search size={18} />
-            </div>
-            {/* Settings Gear Button & Dropdown Menu */}
-            <div style={{ position: 'relative' }} ref={settingsMenuRef}>
+          {/* Settings Gear Button & Dropdown Menu */}
+          <div style={{ position: 'relative' }} ref={settingsMenuRef}>
               <div
                 onClick={() => setIsSettingsMenuOpen((prev) => !prev)}
                 style={{
@@ -5490,13 +5547,13 @@ ${prompt || userDisplayPrompt}`;
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  color: isSettingsMenuOpen ? accentColor : '#858585',
+                  color: isSettingsMenuOpen ? accentColor : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
                   cursor: 'pointer',
                   borderRadius: 4,
                   transition: 'all 0.15s ease',
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = '#ffffff')}
-                onMouseLeave={(e) => (e.currentTarget.style.color = isSettingsMenuOpen ? accentColor : '#858585')}
+                onMouseEnter={(e) => (e.currentTarget.style.color = isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)}
+                onMouseLeave={(e) => (e.currentTarget.style.color = isSettingsMenuOpen ? accentColor : (isEffectiveDark ? '#858585' : themeTokens.textSecondary))}
                 title="Settings (⌘,)"
               >
                 <Settings size={18} />
@@ -5825,18 +5882,17 @@ ${prompt || userDisplayPrompt}`;
                 </div>
               )}
             </div>
-          </div>
 
           {/* Vertical Divider */}
-          <div style={{ width: 1, height: 24, background: '#373737' }} />
+          <div style={{ width: 1, height: 24, background: isEffectiveDark ? '#373737' : 'rgba(0, 0, 0, 0.1)' }} />
 
           {/* Profile: Walancy / Walancy + Avatar */}
           <div style={{ justifyContent: 'flex-start', alignItems: 'center', gap: 12, display: 'flex', whiteSpace: 'nowrap' }}>
             <div style={{ flexDirection: 'column', justifyContent: 'flex-start', alignItems: 'flex-end', display: 'inline-flex' }}>
-              <div style={{ color: 'white', fontSize: 13, fontFamily: 'Poppins', fontWeight: '400', lineHeight: '14px', whiteSpace: 'nowrap' }}>
+              <div style={{ color: isEffectiveDark ? '#ffffff' : themeTokens.textPrimary, fontSize: 13, fontFamily: 'Poppins', fontWeight: '400', lineHeight: '14px', whiteSpace: 'nowrap' }}>
                 Walancy
               </div>
-              <div style={{ textAlign: 'right', color: '#727272', fontSize: 11, fontFamily: 'Poppins', fontWeight: '500', lineHeight: '15px', whiteSpace: 'nowrap' }}>
+              <div style={{ textAlign: 'right', color: isEffectiveDark ? '#727272' : themeTokens.textSecondary, fontSize: 11, fontFamily: 'Poppins', fontWeight: '500', lineHeight: '15px', whiteSpace: 'nowrap' }}>
                 Walancy
               </div>
             </div>
@@ -5848,7 +5904,7 @@ ${prompt || userDisplayPrompt}`;
                 borderRadius: 9999,
                 overflow: 'hidden',
                 flexShrink: 0,
-                background: '#1e1e1e',
+                background: isEffectiveDark ? '#1e1e1e' : 'rgba(0, 0, 0, 0.06)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -12255,6 +12311,12 @@ ${prompt || userDisplayPrompt}`;
             </>
           )}
         </div>
+      ) : activeTab === 'projetos' ? (
+        <ProjectsSchedulerView
+          accentColor={accentColor}
+          isEffectiveDark={isEffectiveDark}
+          themeTokens={themeTokens}
+        />
       ) : (
         /* Empty container for other tabs as requested */
         <div style={{ alignSelf: 'stretch', flex: '1 1 0', background: 'black', borderRadius: 10, border: 'none' }} />
@@ -12263,7 +12325,7 @@ ${prompt || userDisplayPrompt}`;
       {/* ============================================================ */}
       {/* 3. BOTTOM STATUS BAR (RESPONSIVE NO-WRAP LAYOUT)             */}
       {/* ============================================================ */}
-      {showStatusBar && !isZenMode && (
+      {showStatusBar && !isZenMode && activeTab === 'ide' && (
         <div
           style={{
             alignSelf: 'stretch',

@@ -1,6 +1,7 @@
 import { execSync, exec } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { githubAuthService } from './github-auth-service';
 
 export interface WorkspaceGitInfo {
   isGit: boolean;
@@ -26,6 +27,10 @@ export class GitService {
    * Retrieves GitHub personal access token or CLI auth token.
    */
   public getGitHubToken(): string | null {
+    const loggedInToken = githubAuthService.getToken();
+    if (loggedInToken) {
+      return loggedInToken;
+    }
     if (this.cachedGhToken && Date.now() - this.cachedGhToken.timestamp < 3600000) {
       return this.cachedGhToken.token;
     }

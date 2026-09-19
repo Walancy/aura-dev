@@ -12,6 +12,7 @@ import { modelService } from './model-service';
 import { gitService } from './git-service';
 import { extensionsService } from './extensions-service';
 import { chatHistoryService } from './chat-history-service';
+import { githubAuthService } from './github-auth-service';
 
 // Set macOS application name
 app.name = 'Ainaobra IDE';
@@ -838,6 +839,74 @@ ipcMain.handle('shell:openInSystemTerminal', async (_event, { command, cwd }: { 
         resolve({ success: !err, error: err?.message });
       });
     });
+  }
+});
+
+// GitHub OAuth Device Flow login
+ipcMain.handle('github:isAuthenticated', () => {
+  return { authenticated: githubAuthService.isAuthenticated() };
+});
+
+ipcMain.handle('github:getUser', async () => {
+  try {
+    const user = await githubAuthService.fetchUser();
+    return { success: true, user };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:logout', () => {
+  githubAuthService.logout();
+  return { success: true };
+});
+
+ipcMain.handle('github:startLogin', async () => {
+  try {
+    const deviceInfo = await githubAuthService.requestDeviceCode();
+    shell.openExternal(deviceInfo.verification_uri).catch(() => {});
+    githubAuthService.pollForToken(
+      deviceInfo.device_code,
+      deviceInfo.interval,
+      deviceInfo.expires_in,
+      (user) => {
+        mainWindow?.webContents.send('github:loginResult', { success: true, user });
+      },
+      (error) => {
+        mainWindow?.webContents.send('github:loginResult', { success: false, error });
+      },
+    );
+    return {
+      success: true,
+      userCode: deviceInfo.user_code,
+      verificationUri: deviceInfo.verification_uri,
+      expiresIn: deviceInfo.expires_in,
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:cancelLogin', () => {
+  githubAuthService.stopPolling();
+  return { success: true };
+});
+
+ipcMain.handle('github:fetchRepos', async () => {
+  try {
+    const repos = await githubAuthService.fetchRepos();
+    return { success: true, repos };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:fetchProjects', async () => {
+  try {
+    const projects = await githubAuthService.fetchProjects();
+    return { success: true, projects };
+  } catch (err: any) {
+    return { success: false, error: err.message };
   }
 });
 

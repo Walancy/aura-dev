@@ -169,4 +169,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     createIssue: (workspacePath: string, title: string, body?: string) =>
       ipcRenderer.invoke('git:createIssue', { workspacePath, title, body }),
   },
+
+  // GitHub OAuth Device Flow login
+  github: {
+    isAuthenticated: () => ipcRenderer.invoke('github:isAuthenticated'),
+    getUser: () => ipcRenderer.invoke('github:getUser'),
+    logout: () => ipcRenderer.invoke('github:logout'),
+    startLogin: () => ipcRenderer.invoke('github:startLogin'),
+    cancelLogin: () => ipcRenderer.invoke('github:cancelLogin'),
+    fetchRepos: () => ipcRenderer.invoke('github:fetchRepos'),
+    fetchProjects: () => ipcRenderer.invoke('github:fetchProjects'),
+    onLoginResult: (callback: (result: { success: boolean; user?: any; error?: string }) => void) => {
+      const handler = (_event: any, result: any) => callback(result);
+      ipcRenderer.on('github:loginResult', handler);
+      return () => ipcRenderer.removeListener('github:loginResult', handler);
+    },
+  },
 });
