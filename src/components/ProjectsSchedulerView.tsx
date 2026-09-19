@@ -3065,12 +3065,11 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 boxSizing: 'border-box',
               }}
             >
-              {/* Cabeçalho superior: Título e botão New Issue */}
+              {/* Cabeçalho superior: Título */}
               <div
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'space-between',
                   padding: '2px 4px',
                   width: '100%',
                 }}
@@ -3101,105 +3100,8 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                     </span>
                   )}
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => setIsAddTaskModalOpen(true)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    background: accentColor,
-                    border: 'none',
-                    borderRadius: 8,
-                    padding: '6px 14px',
-                    color: accentContrastText,
-                    fontSize: 12,
-                    fontWeight: '400',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.opacity = '0.88';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.opacity = '1';
-                  }}
-                >
-                  <Plus size={13.5} color={accentContrastText} />
-                  <span>Nova Issue</span>
-                </button>
               </div>
 
-              {/* Barra de Filtro e Busca com Sintaxe do GitHub */}
-              <div
-                style={{
-                  background: theme.viewCanvasBg,
-                  borderRadius: 8,
-                  padding: '5px 10px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  width: '100%',
-                  boxSizing: 'border-box',
-                }}
-              >
-                {/* Tag de sintaxe GitHub: is:issue state:open/closed */}
-                <div
-                  onClick={() => setIssuesStateFilter(issuesStateFilter === 'open' ? 'closed' : 'open')}
-                  title="Clique para alternar entre Open e Closed"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 5,
-                    background: isEffectiveDark ? '#222222' : '#e2e8f0',
-                    borderRadius: 4,
-                    padding: '3px 8px',
-                    fontSize: 11.5,
-                    fontFamily: 'ui-monospace, monospace',
-                    color: theme.textPrimary,
-                    cursor: 'pointer',
-                    userSelect: 'none',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  <span style={{ color: theme.textSecondary }}>is:</span>
-                  <span>issue</span>
-                  <span style={{ color: theme.textSecondary, marginLeft: 2 }}>state:</span>
-                  <span style={{ color: issuesStateFilter === 'open' ? '#22c55e' : '#a855f7' }}>
-                    {issuesStateFilter}
-                  </span>
-                </div>
-
-                {/* Input de texto livre para busca de issues */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
-                  <input
-                    type="text"
-                    value={issuesSearchQuery}
-                    onChange={(e) => setIssuesSearchQuery(e.target.value)}
-                    placeholder="Search all issues or type query..."
-                    style={{
-                      background: 'transparent',
-                      border: 'none',
-                      color: theme.textPrimary,
-                      fontSize: 12.5,
-                      fontWeight: '400',
-                      outline: 'none',
-                      width: '100%',
-                    }}
-                  />
-                  {issuesSearchQuery ? (
-                    <X
-                      size={13}
-                      color={theme.textSecondary}
-                      style={{ cursor: 'pointer' }}
-                      onClick={() => setIssuesSearchQuery('')}
-                    />
-                  ) : (
-                    <Search size={13} color={theme.textSecondary} />
-                  )}
-                </div>
-              </div>
 
               {/* Tabela de Issues (Contêiner no Design de Tarefas) */}
               <div
@@ -3751,6 +3653,35 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                         </div>
                       )}
                     </div>
+
+                    {/* Botão Nova Issue */}
+                    <button
+                      type="button"
+                      onClick={() => setIsAddTaskModalOpen(true)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        background: accentColor,
+                        border: 'none',
+                        borderRadius: 6,
+                        padding: '5px 12px',
+                        color: accentContrastText,
+                        fontSize: 12,
+                        fontWeight: '400',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.opacity = '0.88';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.opacity = '1';
+                      }}
+                    >
+                      <Plus size={13} color={accentContrastText} />
+                      <span>Nova Issue</span>
+                    </button>
                   </div>
                 </div>
 
