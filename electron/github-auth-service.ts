@@ -22,32 +22,47 @@ export interface GithubUser {
   htmlUrl: string;
 }
 
+interface StoredTokenData {
+  accessToken: string;
+  refreshToken?: string;
+  accessTokenExpiresAt?: number;
+  refreshTokenExpiresAt?: number;
+}
+
 class GithubAuthService {
-  private cachedToken: string | null = null;
+  private cachedTokenData: StoredTokenData | null = null;
   private pollTimer: NodeJS.Timeout | null = null;
 
   private get tokenFilePath(): string {
     return path.join(app.getPath('userData'), 'github-auth.enc');
   }
 
-  private readToken(): string | null {
-    if (this.cachedToken) return this.cachedToken;
+  private readTokenData(): StoredTokenData | null {
+    if (this.cachedTokenData) return this.cachedTokenData;
     try {
       if (!fs.existsSync(this.tokenFilePath)) return null;
       if (!safeStorage.isEncryptionAvailable()) return null;
       const encrypted = fs.readFileSync(this.tokenFilePath);
-      const token = safeStorage.decryptString(encrypted);
-      this.cachedToken = token;
-      return token;
+      const decrypted = safeStorage.decryptString(encrypted);
+      let data: StoredTokenData;
+      try {
+        const parsed = JSON.parse(decrypted);
+        data = parsed && parsed.accessToken ? parsed : { accessToken: decrypted };
+      } catch {
+        // Backward compatibility: older versions stored the raw access token string.
+        data = { accessToken: decrypted };
+      }
+      this.cachedTokenData = data;
+      return data;
     } catch {
       return null;
     }
   }
 
-  private writeToken(token: string): void {
-    this.cachedToken = token;
+  private writeTokenData(data: StoredTokenData): void {
+    this.cachedTokenData = data;
     try {
-      const encrypted = safeStorage.encryptString(token);
+      const encrypted = safeStorage.encryptString(JSON.stringify(data));
       fs.writeFileSync(this.tokenFilePath, encrypted);
     } catch (err) {
       console.error('[GithubAuth] Failed to persist token:', err);
@@ -55,16 +70,17 @@ class GithubAuthService {
   }
 
   public isAuthenticated(): boolean {
-    return !!this.readToken();
+    return !!this.readTokenData()?.accessToken;
   }
 
+  /** Best-effort synchronous accessor for other services (e.g. git-service.ts). May be stale if expired. */
   public getToken(): string | null {
-    return this.readToken();
+    return this.readTokenData()?.accessToken || null;
   }
 
   public logout(): void {
     this.stopPolling();
-    this.cachedToken = null;
+    this.cachedTokenData = null;
     try {
       if (fs.existsSync(this.tokenFilePath)) fs.unlinkSync(this.tokenFilePath);
     } catch {}
@@ -75,6 +91,81 @@ class GithubAuthService {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+  }
+
+  private storeAccessTokenResponse(data: any, fallbackRefreshToken?: string): StoredTokenData {
+    const now = Date.now();
+    const tokenData: StoredTokenData = {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token || fallbackRefreshToken,
+      accessTokenExpiresAt: data.expires_in ? now + data.expires_in * 1000 : undefined,
+      refreshTokenExpiresAt: data.refresh_token_expires_in ? now + data.refresh_token_expires_in * 1000 : undefined,
+    };
+    this.writeTokenData(tokenData);
+    return tokenData;
+  }
+
+  private async refreshAccessToken(refreshToken: string): Promise<StoredTokenData | null> {
+    try {
+      const res = await fetch(ACCESS_TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          client_id: GITHUB_CLIENT_ID,
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken,
+        }),
+      });
+      const data: any = await res.json();
+      if (!res.ok || data.error || !data.access_token) {
+        console.error('[GithubAuth] refresh failed:', data.error || res.status);
+        return null;
+      }
+      return this.storeAccessTokenResponse(data, refreshToken);
+    } catch (err) {
+      console.error('[GithubAuth] refresh error:', err);
+      return null;
+    }
+  }
+
+  /** Resolves a usable access token, proactively refreshing it if it looks expired. */
+  private async getValidAccessToken(): Promise<string> {
+    const data = this.readTokenData();
+    if (!data?.accessToken) throw new Error('not authenticated');
+    const SAFETY_MARGIN_MS = 60_000;
+    const looksExpired = data.accessTokenExpiresAt != null && data.accessTokenExpiresAt - SAFETY_MARGIN_MS < Date.now();
+    if (!looksExpired) return data.accessToken;
+    if (data.refreshToken) {
+      const refreshed = await this.refreshAccessToken(data.refreshToken);
+      if (refreshed) return refreshed.accessToken;
+    }
+    this.logout();
+    throw new Error('reauth_required');
+  }
+
+  /** Authenticated fetch wrapper: proactively refreshes near-expired tokens and retries once on a 401. */
+  private async authedFetch(url: string, init: RequestInit = {}): Promise<Response> {
+    const token = await this.getValidAccessToken();
+    const withAuth = (t: string): RequestInit => ({
+      ...init,
+      headers: { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${t}` },
+    });
+
+    let res = await fetch(url, withAuth(token));
+    if (res.status === 401) {
+      const data = this.readTokenData();
+      if (data?.refreshToken) {
+        const refreshed = await this.refreshAccessToken(data.refreshToken);
+        if (refreshed) {
+          res = await fetch(url, withAuth(refreshed.accessToken));
+        } else {
+          this.logout();
+        }
+      } else {
+        this.logout();
+      }
+    }
+    return res;
   }
 
   public async requestDeviceCode(): Promise<GithubDeviceCodeResponse> {
@@ -121,7 +212,7 @@ class GithubAuthService {
 
         if (data.access_token) {
           this.stopPolling();
-          this.writeToken(data.access_token);
+          this.storeAccessTokenResponse(data);
           try {
             const user = await this.fetchUser(data.access_token);
             onSuccess(user);
@@ -155,11 +246,9 @@ class GithubAuthService {
   }
 
   public async fetchUser(token?: string): Promise<GithubUser> {
-    const t = token || this.readToken();
-    if (!t) throw new Error('not authenticated');
-    const res = await fetch('https://api.github.com/user', {
-      headers: { Authorization: `Bearer ${t}`, Accept: 'application/vnd.github+json' },
-    });
+    const res = token
+      ? await fetch('https://api.github.com/user', { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' } })
+      : await this.authedFetch('https://api.github.com/user', { headers: { Accept: 'application/vnd.github+json' } });
     if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
     const data: any = await res.json();
     return {
@@ -171,19 +260,15 @@ class GithubAuthService {
   }
 
   public async fetchRepos(): Promise<any[]> {
-    const token = this.readToken();
-    if (!token) throw new Error('not authenticated');
-    const res = await fetch(
+    const res = await this.authedFetch(
       'https://api.github.com/user/repos?sort=updated&per_page=100&affiliation=owner,collaborator,organization_member',
-      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' } },
+      { headers: { Accept: 'application/vnd.github+json' } },
     );
     if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
     return res.json();
   }
 
   public async fetchProjects(): Promise<any[]> {
-    const token = this.readToken();
-    if (!token) throw new Error('not authenticated');
     const query = `
       query {
         viewer {
@@ -201,9 +286,9 @@ class GithubAuthService {
         }
       }
     `;
-    const res = await fetch('https://api.github.com/graphql', {
+    const res = await this.authedFetch('https://api.github.com/graphql', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query }),
     });
     if (!res.ok) throw new Error(`GitHub GraphQL respondeu ${res.status}`);
@@ -213,10 +298,8 @@ class GithubAuthService {
   }
 
   public async fetchOrgs(): Promise<Array<{ login: string; avatarUrl: string }>> {
-    const token = this.readToken();
-    if (!token) throw new Error('not authenticated');
-    const res = await fetch('https://api.github.com/user/orgs?per_page=100', {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+    const res = await this.authedFetch('https://api.github.com/user/orgs?per_page=100', {
+      headers: { Accept: 'application/vnd.github+json' },
     });
     if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
     const data: any[] = await res.json();
@@ -224,11 +307,9 @@ class GithubAuthService {
   }
 
   public async fetchRepoIssues(owner: string, repo: string): Promise<any[]> {
-    const token = this.readToken();
-    if (!token) throw new Error('not authenticated');
-    const res = await fetch(
+    const res = await this.authedFetch(
       `https://api.github.com/repos/${owner}/${repo}/issues?state=all&per_page=100&sort=created&direction=desc`,
-      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' } },
+      { headers: { Accept: 'application/vnd.github+json' } },
     );
     if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
     const data: any[] = await res.json();
@@ -237,43 +318,37 @@ class GithubAuthService {
   }
 
   public async fetchRepoPulls(owner: string, repo: string): Promise<any[]> {
-    const token = this.readToken();
-    if (!token) throw new Error('not authenticated');
-    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls?state=all&per_page=50`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+    const res = await this.authedFetch(`https://api.github.com/repos/${owner}/${repo}/pulls?state=all&per_page=50`, {
+      headers: { Accept: 'application/vnd.github+json' },
     });
     if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
     return res.json();
   }
 
   public async fetchRepoMilestones(owner: string, repo: string): Promise<any[]> {
-    const token = this.readToken();
-    if (!token) throw new Error('not authenticated');
-    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/milestones?state=all&per_page=100`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+    const res = await this.authedFetch(`https://api.github.com/repos/${owner}/${repo}/milestones?state=all&per_page=100`, {
+      headers: { Accept: 'application/vnd.github+json' },
     });
     if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
     return res.json();
   }
 
   public async fetchRepoReleases(owner: string, repo: string): Promise<any[]> {
-    const token = this.readToken();
-    if (!token) throw new Error('not authenticated');
-    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases?per_page=30`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+    const res = await this.authedFetch(`https://api.github.com/repos/${owner}/${repo}/releases?per_page=30`, {
+      headers: { Accept: 'application/vnd.github+json' },
     });
     if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
     return res.json();
   }
 
-  private async ensureLabelExists(owner: string, repo: string, token: string, name: string, color: string): Promise<void> {
-    const checkRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/labels/${encodeURIComponent(name)}`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+  private async ensureLabelExists(owner: string, repo: string, name: string, color: string): Promise<void> {
+    const checkRes = await this.authedFetch(`https://api.github.com/repos/${owner}/${repo}/labels/${encodeURIComponent(name)}`, {
+      headers: { Accept: 'application/vnd.github+json' },
     });
     if (checkRes.ok) return;
-    await fetch(`https://api.github.com/repos/${owner}/${repo}/labels`, {
+    await this.authedFetch(`https://api.github.com/repos/${owner}/${repo}/labels`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
+      headers: { 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
       body: JSON.stringify({ name, color }),
     }).catch(() => {});
   }
@@ -283,14 +358,12 @@ class GithubAuthService {
     repo: string,
     input: { title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[] },
   ): Promise<any> {
-    const token = this.readToken();
-    if (!token) throw new Error('not authenticated');
     for (const label of input.labels || []) {
-      await this.ensureLabelExists(owner, repo, token, label.name, label.color);
+      await this.ensureLabelExists(owner, repo, label.name, label.color);
     }
-    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues`, {
+    const res = await this.authedFetch(`https://api.github.com/repos/${owner}/${repo}/issues`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
+      headers: { 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
       body: JSON.stringify({
         title: input.title,
         body: input.body || '',
@@ -308,11 +381,9 @@ class GithubAuthService {
     issueNumber: number,
     input: { state?: 'open' | 'closed'; labels?: string[] },
   ): Promise<any> {
-    const token = this.readToken();
-    if (!token) throw new Error('not authenticated');
-    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
+    const res = await this.authedFetch(`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
       method: 'PATCH',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
+      headers: { 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
       body: JSON.stringify(input),
     });
     if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);

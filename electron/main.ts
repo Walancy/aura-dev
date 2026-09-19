@@ -852,6 +852,7 @@ ipcMain.handle('github:getUser', async () => {
     const user = await githubAuthService.fetchUser();
     return { success: true, user };
   } catch (err: any) {
+    console.error('[github:getUser] error:', err.message);
     return { success: false, error: err.message };
   }
 });
@@ -897,6 +898,7 @@ ipcMain.handle('github:fetchRepos', async () => {
     const repos = await githubAuthService.fetchRepos();
     return { success: true, repos };
   } catch (err: any) {
+    console.error('[github:fetchRepos] error:', err.message);
     return { success: false, error: err.message };
   }
 });
@@ -915,6 +917,7 @@ ipcMain.handle('github:fetchOrgs', async () => {
     const orgs = await githubAuthService.fetchOrgs();
     return { success: true, orgs };
   } catch (err: any) {
+    console.error('[github:fetchOrgs] error:', err.message);
     return { success: false, error: err.message };
   }
 });
@@ -924,6 +927,7 @@ ipcMain.handle('github:fetchRepoIssues', async (_event, { owner, repo }: { owner
     const issues = await githubAuthService.fetchRepoIssues(owner, repo);
     return { success: true, issues };
   } catch (err: any) {
+    console.error(`[github:fetchRepoIssues] ${owner}/${repo} error:`, err.message);
     return { success: false, error: err.message };
   }
 });
@@ -933,6 +937,7 @@ ipcMain.handle('github:fetchRepoPulls', async (_event, { owner, repo }: { owner:
     const pulls = await githubAuthService.fetchRepoPulls(owner, repo);
     return { success: true, pulls };
   } catch (err: any) {
+    console.error(`[github:fetchRepoPulls] ${owner}/${repo} error:`, err.message);
     return { success: false, error: err.message };
   }
 });
