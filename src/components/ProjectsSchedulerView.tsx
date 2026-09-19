@@ -17,6 +17,8 @@ import {
   GitPullRequest,
   GitBranch,
   Tag,
+  Copy,
+  ExternalLink,
   Building2,
 } from 'lucide-react';
 import { getContrastTextColor, hexToRgba } from '../utils/color';
@@ -454,12 +456,27 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   const [selectedAssignee, setSelectedAssignee] = useState<string | null>(null);
   const [isReleaseNotesModalOpen, setIsReleaseNotesModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [openIssueMenuId, setOpenIssueMenuId] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
       setToastMessage((current) => (current === msg ? null : current));
     }, 3200);
+  };
+
+  const handleOpenIssueInGithub = (issue: ProjectIssue) => {
+    if (!issue.htmlUrl) {
+      showToast('Link da issue indispon\u00edvel.');
+      return;
+    }
+    window.electronAPI?.shell?.openExternal?.(issue.htmlUrl);
+  };
+
+  const handleCopyIssueLink = (issue: ProjectIssue) => {
+    if (!issue.htmlUrl) return;
+    navigator.clipboard?.writeText(issue.htmlUrl);
+    showToast('Link da issue copiado.');
   };
 
   const handleCreateOrCopyBranch = (issue: ProjectIssue) => {
@@ -713,6 +730,100 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     }
   };
 
+  const nextStatusLabel = (issue: ProjectIssue) =>
+    issue.status === 'A Fazer' ? 'Marcar como Em Progresso' : issue.status === 'Em Progresso' ? 'Marcar como Concluída' : 'Reabrir tarefa';
+
+  const renderIssueOptionsButton = (issue: ProjectIssue, iconSize: number) => (
+    <div style={{ position: 'relative', flexShrink: 0 }}>
+      <div
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpenIssueMenuId((prev) => (prev === issue.id ? null : issue.id));
+        }}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 2, borderRadius: 4, cursor: 'pointer' }}
+        onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')}
+        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+      >
+        <MoreVertical size={iconSize} color={theme.textSecondary} />
+      </div>
+      {openIssueMenuId === issue.id && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 4px)',
+            right: 0,
+            background: theme.dropdownBg,
+            borderRadius: 8,
+            padding: 5,
+            zIndex: 2000,
+            minWidth: 200,
+            boxShadow: theme.dropdownShadow,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 1,
+            border: theme.dropdownBorder,
+          }}
+        >
+          {[
+            {
+              label: nextStatusLabel(issue),
+              icon: <CheckCircle2 size={13} />,
+              onClick: () => handleToggleIssueStatus(issue.id),
+              disabled: false,
+            },
+            {
+              label: 'Copiar comando da branch',
+              icon: <GitBranch size={13} />,
+              onClick: () => handleCreateOrCopyBranch(issue),
+              disabled: false,
+            },
+            {
+              label: 'Copiar link da issue',
+              icon: <Copy size={13} />,
+              onClick: () => handleCopyIssueLink(issue),
+              disabled: !issue.htmlUrl,
+            },
+            {
+              label: 'Abrir no GitHub',
+              icon: <ExternalLink size={13} />,
+              onClick: () => handleOpenIssueInGithub(issue),
+              disabled: !issue.htmlUrl,
+            },
+          ].map((item) => (
+            <div
+              key={item.label}
+              onClick={() => {
+                if (item.disabled) return;
+                item.onClick();
+                setOpenIssueMenuId(null);
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '7px 9px',
+                borderRadius: 6,
+                fontSize: 12,
+                color: item.disabled ? theme.textMuted : theme.textPrimary,
+                cursor: item.disabled ? 'default' : 'pointer',
+                opacity: item.disabled ? 0.5 : 1,
+                whiteSpace: 'nowrap',
+              }}
+              onMouseEnter={(e) => {
+                if (!item.disabled) e.currentTarget.style.background = theme.dropdownItemHover;
+              }}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div
       style={{
@@ -739,6 +850,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
         if (versionDropdownOpen) setVersionDropdownOpen(false);
         if (orgDropdownOpen) setOrgDropdownOpen(false);
         if (filterDropdownOpen) setFilterDropdownOpen(false);
+        if (openIssueMenuId) setOpenIssueMenuId(null);
       }}
     >
       {/* Bloco Unificado: Controles diretamente em cima da div dos cards */}
@@ -2202,7 +2314,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                             >
                               {issue.title}
                             </span>
-                            <MoreVertical size={13} color={theme.textSecondary} style={{ flexShrink: 0 }} />
+                            {renderIssueOptionsButton(issue, 13)}
                           </div>
                         );
                       }
@@ -2277,7 +2389,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                                 </span>
                               </div>
                             </div>
-                            <MoreVertical size={14} color={theme.textSecondary} style={{ flexShrink: 0, marginTop: 2 }} />
+                            {renderIssueOptionsButton(issue, 14)}
                           </div>
 
                           {/* Rodapé do Card */}
