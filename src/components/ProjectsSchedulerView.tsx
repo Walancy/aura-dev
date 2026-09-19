@@ -2119,6 +2119,8 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
             const isHovered = hoveredSectionId === section.id;
             const Icon = section.icon;
             const opacity = isSelected ? 1 : isHovered ? 0.8 : 0.5;
+            const iconColor = isSelected ? accentColor : theme.textPrimary;
+            const labelColor = isSelected ? (isEffectiveDark ? '#ffffff' : '#0f172a') : theme.textPrimary;
             return (
               <div
                 key={section.id}
@@ -2136,18 +2138,17 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                   minWidth: 0,
                   height: 60,
                   borderLeft: index > 0 ? `1px solid ${hexToRgba(theme.textSecondary, 0.15)}` : 'none',
-                  borderBottom: isSelected ? `2px solid ${accentColor}` : '2px solid transparent',
-                  color: theme.textPrimary,
                   opacity,
                   cursor: 'pointer',
-                  transition: 'opacity 0.15s ease, border-color 0.15s ease',
+                  transition: 'opacity 0.15s ease',
                 }}
               >
-                <Icon size={16} />
+                <Icon size={16} color={iconColor} />
                 <span
                   style={{
                     fontSize: 10,
                     fontWeight: isSelected ? 500 : 400,
+                    color: labelColor,
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
