@@ -27,14 +27,11 @@ import {
   RefreshCw,
   XCircle,
   CheckCircle2,
-  Tag,
   Radio,
   ExternalLink,
-  Sidebar,
   PanelLeft,
   PanelBottom,
   PanelRight,
-  LayoutGrid,
   SquareTerminal,
   AtSign,
   Save,
@@ -51,36 +48,19 @@ import {
   RotateCcw,
   Eye,
   GitPullRequest,
-  Palette,
-  Sun,
-  Moon,
-  Sliders,
-  Keyboard,
-  Code,
   Clock,
-  GitCommit,
   Pencil,
   BookOpen,
   ChevronUp,
   Copy,
   FileCode,
-  Lock,
   KeyRound,
-  ThumbsUp,
-  ThumbsDown,
-  Paperclip,
   Image as ImageIcon,
   Scissors,
   ClipboardPaste,
   Bug,
   GitCompare,
   History,
-  Puzzle,
-  Zap,
-  ListChecks,
-  Bot,
-  Cpu,
-  GaugeCircle,
 } from 'lucide-react';
 import avatarImg from './avatar.png';
 import { FileIcon, FolderIcon } from './components/FileIcon';
@@ -98,10 +78,9 @@ import {
   CodiconSettingsGear,
 } from './components/Codicons';
 
-import { CustomizeLayoutIcon, GitDiamondIcon, KbdBadge } from './components/icons/MiscIcons';
+import { CustomizeLayoutIcon, GitDiamondIcon } from './components/icons/MiscIcons';
 import { ClaudeIcon, AntigravityIcon, GeminiIcon, OllamaIcon, CodexIcon, renderAiIcon } from './components/icons/AiProviderIcons';
 import { getContrastTextColor, hexToRgba, hexToRgb, rgbToHex, rgbToHsv, hsvToRgb, hexToHsv } from './utils/color';
-import { DevFlowColorPicker } from './components/ui/DevFlowColorPicker';
 import { MiniSwitch } from './components/ui/MiniSwitch';
 import { extractDocumentSymbols, getFileLanguage, isMarkdownFile } from './utils/editor';
 import type { DocumentSymbol } from './utils/editor';
@@ -119,6 +98,7 @@ import { QuickOpenModal } from './components/modals/QuickOpenModal';
 import { ChatHistoryModal } from './components/modals/ChatHistoryModal';
 import { BranchModal } from './components/modals/BranchModal';
 import { IssuesModal } from './components/modals/IssuesModal';
+import { SettingsModal } from './components/modals/SettingsModal';
 import { renderMarkdownPreview } from './utils/markdown';
 import type {
   TerminalSessionItem,
@@ -12933,993 +12913,70 @@ ${prompt || userDisplayPrompt}`;
 
         {/* Settings & Appearance Modal (VS Code & Antigravity Style) */}
         {isSettingsModalOpen && (
-          <>
-            {/* Backdrop */}
-            <div
-              onClick={() => setIsSettingsModalOpen(false)}
-              style={{
-                position: 'fixed',
-                inset: 0,
-                background: 'rgba(0, 0, 0, 0.55)',
-                zIndex: 999998,
-                backdropFilter: 'blur(3px)',
-                animation: 'fadeIn 0.12s ease-out',
-              }}
-            />
-
-            {/* Modal Dialog */}
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                position: 'fixed',
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
-                width: 920,
-                maxWidth: 'calc(100vw - 32px)',
-                height: '82vh',
-                minHeight: 560,
-                maxHeight: 'calc(100vh - 48px)',
-                background: isEffectiveDark ? '#141416' : '#ffffff',
-                border: `1px solid ${themeTokens.border}`,
-                borderRadius: 10,
-                boxShadow: '0 24px 64px rgba(0, 0, 0, 0.85)',
-                zIndex: 999999,
-                display: 'flex',
-                flexDirection: 'column',
-                overflow: 'hidden',
-                boxSizing: 'border-box',
-                animation: 'fadeIn 0.12s ease-out',
-                color: themeTokens.textPrimary,
-                fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
-              {/* Header */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '14px 18px',
-                  borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
-                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
-                  flexShrink: 0,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: 8,
-                      background: hexToRgba(accentColor, 0.12),
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <Settings size={17} color={accentColor} />
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 14, color: themeTokens.textPrimary }}>
-                      Configurações
-                    </div>
-                    <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>
-                      Estilização, editor, atalhos e extensões do DevFlow IDE
-                    </div>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setIsSettingsModalOpen(false)}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    color: themeTokens.textSecondary,
-                    padding: 4,
-                    display: 'flex',
-                    borderRadius: 4,
-                    transition: 'background 0.15s ease',
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                  title="Fechar (Esc)"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-
-              {/* Body */}
-              <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-                {/* Left Sidebar Tabs */}
-                <div
-                  style={{
-                    width: 230,
-                    flexShrink: 0,
-                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.015)' : 'rgba(0, 0, 0, 0.015)',
-                    borderRight: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'}`,
-                    padding: '14px 10px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    overflowY: 'auto',
-                  }}
-                >
-                  <div style={{ fontSize: 10, fontWeight: 700, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6, padding: '0 10px', marginBottom: 6 }}>
-                    Configurações
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                    {[
-                      { id: 'general', label: 'Geral', icon: <GaugeCircle size={15} /> },
-                      { id: 'appearance', label: 'Estilização & Temas', icon: <Palette size={15} /> },
-                      { id: 'editor', label: 'Configurações Editor', icon: <Code size={15} /> },
-                      { id: 'terminal', label: 'Terminal', icon: <SquareTerminal size={15} /> },
-                      { id: 'ai', label: 'IA & Agentes', icon: <Bot size={15} /> },
-                      { id: 'shortcuts', label: 'Atalhos de Teclado', icon: <Keyboard size={15} /> },
-                      { id: 'extensions', label: 'Extensões & Status', icon: <Blocks size={15} /> },
-                    ].map((tab) => {
-                      const active = settingsActiveTab === tab.id;
-                      return (
-                        <div
-                          key={tab.id}
-                          onClick={() => setSettingsActiveTab(tab.id as any)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 9,
-                            padding: '8px 12px',
-                            borderRadius: 6,
-                            cursor: 'pointer',
-                            fontSize: 12.5,
-                            fontWeight: active ? 600 : 400,
-                            color: active ? themeTokens.textPrimary : themeTokens.textSecondary,
-                            background: active ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)') : 'transparent',
-                            transition: 'all 0.12s ease',
-                          }}
-                        >
-                          <div style={{ color: 'inherit' }}>{tab.icon}</div>
-                          <span>{tab.label}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Workspace group (real, live data — not decorative) */}
-                  {workspacePath && (
-                    <>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6, padding: '0 10px', marginTop: 18, marginBottom: 6 }}>
-                        Workspace
-                      </div>
-                      <div
-                        onClick={() => {
-                          setIsSettingsModalOpen(false);
-                          setIsBranchModalOpen(true);
-                        }}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 9,
-                          padding: '8px 12px',
-                          borderRadius: 6,
-                          cursor: 'pointer',
-                          fontSize: 12,
-                          color: themeTokens.textSecondary,
-                        }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)')}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                        title="Abrir gerenciador de branches"
-                      >
-                        <Folder size={14} />
-                        <div style={{ minWidth: 0, overflow: 'hidden' }}>
-                          <div style={{ color: themeTokens.textPrimary, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {workspacePath.split('/').filter(Boolean).pop()}
-                          </div>
-                          {currentBranch && (
-                            <div style={{ fontSize: 10.5, display: 'flex', alignItems: 'center', gap: 4 }}>
-                              <GitBranch size={9} />
-                              {currentBranch}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  <div style={{ flex: 1 }} />
-
-                  {/* Footer */}
-                  <div style={{ borderTop: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'}`, paddingTop: 10, marginTop: 10, padding: '10px 10px 0 10px' }}>
-                    <div style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>DevFlow IDE • v1.0.0</div>
-                  </div>
-                </div>
-
-                {/* Right Content Pane */}
-                <div style={{ flex: 1, padding: '22px 26px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 26 }}>
-                  {/* TAB 0: GENERAL */}
-                  {settingsActiveTab === 'general' && (
-                    <>
-                      <div>
-                        <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>Geral</div>
-                        <div style={{ fontSize: 12.5, color: themeTokens.textSecondary }}>
-                          Layout, comportamento de abertura e integração com o Git.
-                        </div>
-                      </div>
-
-                      <div>
-                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Posição da Barra Lateral</div>
-                        <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 10 }}>
-                          Define de que lado da janela o Explorer, Busca e demais painéis são exibidos.
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, maxWidth: 420 }}>
-                          {[
-                            { id: 'left', label: 'Esquerda', desc: 'Padrão do VS Code', icon: <PanelLeft size={18} /> },
-                            { id: 'right', label: 'Direita', desc: 'Estilo Antigravity', icon: <PanelRight size={18} /> },
-                          ].map((s) => {
-                            const isSelected = sidebarPosition === s.id;
-                            return (
-                              <div
-                                key={s.id}
-                                onClick={() => setSidebarPosition(s.id as 'left' | 'right')}
-                                style={{
-                                  padding: '14px 12px',
-                                  borderRadius: 8,
-                                  cursor: 'pointer',
-                                  border: isSelected ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
-                                  background: isSelected ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)') : 'transparent',
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  gap: 6,
-                                  transition: 'all 0.15s ease',
-                                }}
-                              >
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                  <div style={{ color: isSelected ? accentColor : 'inherit' }}>{s.icon}</div>
-                                  <div
-                                    style={{
-                                      width: 14,
-                                      height: 14,
-                                      borderRadius: '50%',
-                                      border: isSelected ? `4px solid ${accentColor}` : `2px solid ${themeTokens.textSecondary}`,
-                                      background: isSelected ? accentColor : 'transparent',
-                                    }}
-                                  />
-                                </div>
-                                <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>{s.label}</div>
-                                <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>{s.desc}</div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Comportamento</div>
-                        {[
-                          {
-                            label: 'Layout Centralizado',
-                            desc: 'Restringe a largura do editor e o centraliza na janela, como no Zen Mode',
-                            checked: isCenteredLayout,
-                            onChange: () => setIsCenteredLayout(!isCenteredLayout),
-                          },
-                          {
-                            label: 'Restaurar Último Workspace ao Abrir',
-                            desc: 'Reabre automaticamente a última pasta de projeto utilizada',
-                            checked: restoreLastWorkspace,
-                            onChange: () => setRestoreLastWorkspace(!restoreLastWorkspace),
-                          },
-                          {
-                            label: 'Confirmar Antes de Fechar Abas Não Salvas',
-                            desc: 'Evita perda acidental de alterações ao fechar arquivos com edições pendentes',
-                            checked: confirmBeforeClosingUnsaved,
-                            onChange: () => setConfirmBeforeClosingUnsaved(!confirmBeforeClosingUnsaved),
-                          },
-                          {
-                            label: 'Atualizar Status do Git Automaticamente',
-                            desc: 'Consulta periodicamente alterações, branch e contagem de arquivos modificados',
-                            checked: autoRefreshGitStatus,
-                            onChange: () => setAutoRefreshGitStatus(!autoRefreshGitStatus),
-                          },
-                        ].map((row) => (
-                          <div
-                            key={row.label}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              gap: 12,
-                              padding: '9px 10px',
-                              borderRadius: 8,
-                              transition: 'background 0.15s ease',
-                            }}
-                            onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)')}
-                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                          >
-                            <div>
-                              <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>{row.label}</div>
-                              <div style={{ fontSize: 11.5, color: themeTokens.textSecondary }}>{row.desc}</div>
-                            </div>
-                            <MiniSwitch checked={row.checked} onChange={row.onChange} accentColor={accentColor} />
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-
-                  {/* TAB 1: APPEARANCE */}
-                  {settingsActiveTab === 'appearance' && (
-                    <>
-                      <div>
-                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Tema de Exibição</div>
-                        <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 14 }}>
-                          Alterne entre os modos escuro, claro ou sincronizado com o sistema operacional.
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-                          {[
-                            { id: 'dark', label: 'Dark', desc: 'Modo escuro imersivo', icon: <Moon size={18} /> },
-                            { id: 'light', label: 'Light', desc: 'Modo claro clean', icon: <Sun size={18} /> },
-                            { id: 'system', label: 'Sistema', desc: 'Segue o sistema do SO', icon: <Monitor size={18} /> },
-                          ].map((t) => {
-                            const isSelected = themeMode === t.id;
-                            return (
-                              <div
-                                key={t.id}
-                                onClick={() => setThemeMode(t.id as any)}
-                                style={{
-                                  padding: '14px 12px',
-                                  borderRadius: 8,
-                                  cursor: 'pointer',
-                                  border: isSelected ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
-                                  background: isSelected ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)') : 'transparent',
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  gap: 6,
-                                  transition: 'all 0.15s ease',
-                                }}
-                              >
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                  <div style={{ color: isSelected ? accentColor : 'inherit' }}>{t.icon}</div>
-                                  <div
-                                    style={{
-                                      width: 14,
-                                      height: 14,
-                                      borderRadius: '50%',
-                                      border: isSelected ? `4px solid ${accentColor}` : `2px solid ${themeTokens.textSecondary}`,
-                                      background: isSelected ? accentColor : 'transparent',
-                                    }}
-                                  />
-                                </div>
-                                <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>{t.label}</div>
-                                <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>{t.desc}</div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Accent Color Selection */}
-                      <div>
-                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Cor Principal de Destaque (Accent Color)</div>
-                        <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 14 }}>
-                          A cor escolhida é aplicada aos botões principais, abas ativas, tags, bordas e destaques da IDE.
-                        </div>
-
-                        {/* Presets */}
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
-                          {[
-                            { name: 'Laranja DevFlow', color: '#FF6A00' },
-                            { name: 'Azul VS Code', color: '#007ACC' },
-                            { name: 'Verde Esmeralda', color: '#10B981' },
-                            { name: 'Roxo Ultraviolet', color: '#8B5CF6' },
-                            { name: 'Vermelho Coral', color: '#EF4444' },
-                            { name: 'Dourado Solar', color: '#F59E0B' },
-                            { name: 'Ciano Elétrico', color: '#06B6D4' },
-                            { name: 'Rosa Magenta', color: '#EC4899' },
-                          ].map((c) => {
-                            const isSelected = accentColor.toUpperCase() === c.color.toUpperCase();
-                            return (
-                              <div
-                                key={c.color}
-                                onClick={() => setAccentColor(c.color)}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 7,
-                                  padding: '6px 12px',
-                                  borderRadius: 20,
-                                  cursor: 'pointer',
-                                  border: isSelected ? `2px solid ${c.color}` : `1px solid ${themeTokens.border}`,
-                                  background: isSelected ? hexToRgba(c.color, 0.12) : 'transparent',
-                                  transition: 'all 0.15s ease',
-                                }}
-                              >
-                                <span style={{ width: 14, height: 14, borderRadius: '50%', background: c.color, flexShrink: 0 }} />
-                                <span style={{ fontSize: 12, fontWeight: isSelected ? 600 : 400, color: themeTokens.textPrimary }}>{c.name}</span>
-                                {isSelected && <Check size={12} color={c.color} />}
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        {/* Custom Color Picker */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 14 }}>
-                          <span style={{ fontSize: 11, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                            Cor Personalizada
-                          </span>
-                          <div style={{ maxWidth: 300 }}>
-                            <DevFlowColorPicker
-                              color={accentColor}
-                              onChange={setAccentColor}
-                              isDark={isEffectiveDark}
-                            />
-                          </div>
-                        </div>
-
-                        {/* Option: Sincronizar cor da div de chat com a IA ativa */}
-                        <div
-                          style={{
-                            marginTop: 18,
-                            padding: '12px 14px',
-                            borderRadius: 8,
-                            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f8fafc',
-                            border: 'none',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                          }}
-                        >
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <span style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>
-                                Cor da IA no Chat
-                              </span>
-                              <span
-                                style={{
-                                  fontSize: 10,
-                                  fontWeight: 600,
-                                  padding: '2px 7px',
-                                  borderRadius: 4,
-                                  background: hexToRgba(AI_BRAND_COLORS[selectedAiProvider] || accentColor, 0.18),
-                                  color: AI_BRAND_COLORS[selectedAiProvider] || accentColor,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 4,
-                                }}
-                              >
-                                <span style={{ width: 6, height: 6, borderRadius: '50%', background: AI_BRAND_COLORS[selectedAiProvider] || accentColor }} />
-                                {AI_PROVIDERS.find((p) => p.id === selectedAiProvider)?.name} ({AI_BRAND_COLORS[selectedAiProvider] || accentColor})
-                              </span>
-                            </div>
-                            <span style={{ fontSize: 11.5, color: themeTokens.textSecondary }}>
-                              Aplica dinamicamente a cor da IA selecionada ao degradê do chat: Claude (#FF8B67), Antigravity (#69C2FD), Codex (#8975B9), Gemini (#589EFF).
-                            </span>
-                          </div>
-                          <MiniSwitch
-                            checked={useAiChatThemeColor}
-                            onChange={() => setUseAiChatThemeColor(!useAiChatThemeColor)}
-                            accentColor={AI_BRAND_COLORS[selectedAiProvider] || accentColor}
-                          />
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  {/* TAB 2: EDITOR */}
-                  {settingsActiveTab === 'editor' && (
-                    <>
-                      <div>
-                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Tamanho da Fonte (Font Size)</div>
-                        <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 10 }}>
-                          Ajusta a escala tipográfica do editor de código Monaco.
-                        </div>
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          {[12, 13, 14, 15, 16, 18].map((size) => (
-                            <button
-                              key={size}
-                              type="button"
-                              onClick={() => setEditorFontSize(size)}
-                              style={{
-                                padding: '6px 14px',
-                                borderRadius: 6,
-                                border: editorFontSize === size ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
-                                background: editorFontSize === size ? hexToRgba(accentColor, 0.15) : 'transparent',
-                                color: editorFontSize === size ? accentColor : themeTokens.textPrimary,
-                                fontSize: 12,
-                                fontWeight: editorFontSize === size ? 600 : 400,
-                                cursor: 'pointer',
-                              }}
-                            >
-                              {size}px
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Tamanho da Tabulação (Tab Size)</div>
-                        <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 10 }}>
-                          Número de espaços inseridos ao pressionar a tecla Tab.
-                        </div>
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          {[2, 4].map((size) => (
-                            <button
-                              key={size}
-                              type="button"
-                              onClick={() => setEditorTabSize(size)}
-                              style={{
-                                padding: '6px 14px',
-                                borderRadius: 6,
-                                border: editorTabSize === size ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
-                                background: editorTabSize === size ? hexToRgba(accentColor, 0.15) : 'transparent',
-                                color: editorTabSize === size ? accentColor : themeTokens.textPrimary,
-                                fontSize: 12,
-                                fontWeight: editorTabSize === size ? 600 : 400,
-                                cursor: 'pointer',
-                              }}
-                            >
-                              {size} espaços
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {[
-                          {
-                            label: 'Quebra Automática de Linha (Word Wrap)',
-                            desc: 'Quebra linhas longas sem necessidade de rolagem horizontal',
-                            checked: editorWordWrap,
-                            onChange: () => setEditorWordWrap(!editorWordWrap),
-                          },
-                          {
-                            label: 'Minimapa de Código (Minimap)',
-                            desc: 'Exibe a visão geral em miniatura do arquivo no lado direito',
-                            checked: editorMinimap,
-                            onChange: () => setEditorMinimap(!editorMinimap),
-                          },
-                          {
-                            label: 'Números de Linha (Line Numbers)',
-                            desc: 'Exibe a numeração de linhas na margem esquerda do editor',
-                            checked: editorLineNumbers,
-                            onChange: () => setEditorLineNumbers(!editorLineNumbers),
-                          },
-                          {
-                            label: 'Rolagem Suave (Smooth Scrolling)',
-                            desc: 'Anima a rolagem do editor em vez de saltos instantâneos',
-                            checked: editorSmoothScrolling,
-                            onChange: () => setEditorSmoothScrolling(!editorSmoothScrolling),
-                          },
-                          {
-                            label: 'Colorização de Pares de Colchetes',
-                            desc: 'Colore pares correspondentes de (), [] e {} para facilitar a leitura',
-                            checked: editorBracketColorization,
-                            onChange: () => setEditorBracketColorization(!editorBracketColorization),
-                          },
-                          {
-                            label: 'Renderizar Espaços em Branco',
-                            desc: 'Exibe pontos e setas para espaços e tabulações no código',
-                            checked: editorRenderWhitespace,
-                            onChange: () => setEditorRenderWhitespace(!editorRenderWhitespace),
-                          },
-                        ].map((row) => (
-                          <div
-                            key={row.label}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              gap: 12,
-                              padding: '9px 10px',
-                              borderRadius: 8,
-                              transition: 'background 0.15s ease',
-                            }}
-                            onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)')}
-                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                          >
-                            <div>
-                              <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>{row.label}</div>
-                              <div style={{ fontSize: 11.5, color: themeTokens.textSecondary }}>{row.desc}</div>
-                            </div>
-                            <MiniSwitch checked={row.checked} onChange={row.onChange} accentColor={accentColor} />
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-
-                  {/* TAB: TERMINAL */}
-                  {settingsActiveTab === 'terminal' && (
-                    <>
-                      <div>
-                        <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>Terminal</div>
-                        <div style={{ fontSize: 12.5, color: themeTokens.textSecondary }}>
-                          Fonte, cursor e comportamento dos terminais nativos integrados.
-                        </div>
-                      </div>
-
-                      <div>
-                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Tamanho da Fonte</div>
-                        <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 10 }}>
-                          Ajusta a escala tipográfica de todas as sessões de terminal (xterm.js).
-                        </div>
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          {[10, 11, 12, 13, 14, 16].map((size) => (
-                            <button
-                              key={size}
-                              type="button"
-                              onClick={() => setTerminalFontSize(size)}
-                              style={{
-                                padding: '6px 14px',
-                                borderRadius: 6,
-                                border: terminalFontSize === size ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
-                                background: terminalFontSize === size ? hexToRgba(accentColor, 0.15) : 'transparent',
-                                color: terminalFontSize === size ? accentColor : themeTokens.textPrimary,
-                                fontSize: 12,
-                                fontWeight: terminalFontSize === size ? 600 : 400,
-                                cursor: 'pointer',
-                              }}
-                            >
-                              {size}px
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Estilo do Cursor</div>
-                        <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 10 }}>
-                          Formato do cursor de texto exibido dentro do terminal.
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, maxWidth: 480 }}>
-                          {[
-                            { id: 'block', label: 'Block', preview: '█' },
-                            { id: 'bar', label: 'Bar', preview: '│' },
-                            { id: 'underline', label: 'Underline', preview: '_' },
-                          ].map((c) => {
-                            const isSelected = terminalCursorStyle === c.id;
-                            return (
-                              <div
-                                key={c.id}
-                                onClick={() => setTerminalCursorStyle(c.id as 'block' | 'bar' | 'underline')}
-                                style={{
-                                  padding: '12px',
-                                  borderRadius: 8,
-                                  cursor: 'pointer',
-                                  border: isSelected ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
-                                  background: isSelected ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)') : 'transparent',
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  alignItems: 'center',
-                                  gap: 6,
-                                  transition: 'all 0.15s ease',
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    fontFamily: 'JetBrains Mono, Menlo, monospace',
-                                    fontSize: 18,
-                                    lineHeight: 1,
-                                    color: isSelected ? accentColor : themeTokens.textPrimary,
-                                  }}
-                                >
-                                  devflow{c.preview}
-                                </div>
-                                <div style={{ fontSize: 11.5, fontWeight: isSelected ? 600 : 400, color: isSelected ? accentColor : themeTokens.textSecondary }}>
-                                  {c.label}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Histórico de Rolagem (Scrollback)</div>
-                        <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 10 }}>
-                          Número de linhas mantidas em memória para rolar para cima no terminal.
-                        </div>
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          {[1000, 5000, 10000, 50000].map((n) => (
-                            <button
-                              key={n}
-                              type="button"
-                              onClick={() => setTerminalScrollback(n)}
-                              style={{
-                                padding: '6px 14px',
-                                borderRadius: 6,
-                                border: terminalScrollback === n ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
-                                background: terminalScrollback === n ? hexToRgba(accentColor, 0.15) : 'transparent',
-                                color: terminalScrollback === n ? accentColor : themeTokens.textPrimary,
-                                fontSize: 12,
-                                fontWeight: terminalScrollback === n ? 600 : 400,
-                                cursor: 'pointer',
-                              }}
-                            >
-                              {n.toLocaleString('pt-BR')}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {[
-                          {
-                            label: 'Cursor Piscante (Cursor Blink)',
-                            desc: 'Faz o cursor do terminal piscar periodicamente',
-                            checked: terminalCursorBlink,
-                            onChange: () => setTerminalCursorBlink(!terminalCursorBlink),
-                          },
-                          {
-                            label: 'Copiar ao Selecionar Texto',
-                            desc: 'Copia automaticamente para a área de transferência ao selecionar texto no terminal',
-                            checked: terminalCopyOnSelect,
-                            onChange: () => setTerminalCopyOnSelect(!terminalCopyOnSelect),
-                          },
-                        ].map((row) => (
-                          <div
-                            key={row.label}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              gap: 12,
-                              padding: '9px 10px',
-                              borderRadius: 8,
-                              transition: 'background 0.15s ease',
-                            }}
-                            onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)')}
-                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                          >
-                            <div>
-                              <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>{row.label}</div>
-                              <div style={{ fontSize: 11.5, color: themeTokens.textSecondary }}>{row.desc}</div>
-                            </div>
-                            <MiniSwitch checked={row.checked} onChange={row.onChange} accentColor={accentColor} />
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-
-                  {/* TAB: IA & AGENTES */}
-                  {settingsActiveTab === 'ai' && (
-                    <>
-                      <div>
-                        <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>IA & Agentes</div>
-                        <div style={{ fontSize: 12.5, color: themeTokens.textSecondary }}>
-                          Provedor e modo padrão usados ao abrir o painel de IA, e regras de segurança para execução de agentes.
-                        </div>
-                      </div>
-
-                      <div>
-                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Provedor de IA Padrão</div>
-                        <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 10 }}>
-                          CLI utilizada por padrão ao iniciar uma nova conversa no painel de IA.
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10 }}>
-                          {AI_PROVIDERS.map((p) => {
-                            const isSelected = selectedAiProvider === p.id;
-                            const iconMap: Record<string, React.ReactNode> = {
-                              claude: <ClaudeIcon size={16} />,
-                              antigravity: <AntigravityIcon size={16} />,
-                              codex: <CodexIcon size={16} />,
-                              gemini: <GeminiIcon size={16} />,
-                              ollama: <OllamaIcon size={16} />,
-                            };
-                            return (
-                              <div
-                                key={p.id}
-                                onClick={() => setSelectedAiProvider(p.id)}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 8,
-                                  padding: '10px 12px',
-                                  borderRadius: 8,
-                                  cursor: 'pointer',
-                                  border: isSelected ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
-                                  background: isSelected ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)') : 'transparent',
-                                  transition: 'all 0.15s ease',
-                                }}
-                              >
-                                {iconMap[p.id]}
-                                <span style={{ fontSize: 12.5, fontWeight: isSelected ? 600 : 400, color: isSelected ? accentColor : themeTokens.textPrimary }}>
-                                  {p.name}
-                                </span>
-                                {isSelected && <Check size={12} color={accentColor} style={{ marginLeft: 'auto' }} />}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Modo Padrão do Agente</div>
-                        <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 10 }}>
-                          Comportamento aplicado a novas conversas: execução autônoma, planejamento, agente interativo ou apenas respostas.
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
-                          {AI_MODES.map((m) => {
-                            const isSelected = aiMode === m.id;
-                            const iconMap: Record<string, React.ReactNode> = {
-                              Zap: <Zap size={16} />,
-                              ListChecks: <ListChecks size={16} />,
-                              Bot: <Bot size={16} />,
-                              MessageSquare: <MessageSquare size={16} />,
-                            };
-                            return (
-                              <div
-                                key={m.id}
-                                onClick={() => setAiMode(m.id)}
-                                style={{
-                                  padding: '12px',
-                                  borderRadius: 8,
-                                  cursor: 'pointer',
-                                  border: isSelected ? `1.5px solid ${accentColor}` : `1px solid ${themeTokens.border}`,
-                                  background: isSelected ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)') : 'transparent',
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  gap: 6,
-                                  transition: 'all 0.15s ease',
-                                }}
-                              >
-                                <div style={{ color: isSelected ? accentColor : 'inherit' }}>{iconMap[m.iconName]}</div>
-                                <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>{m.name}</div>
-                                <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>{m.description}</div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Segurança</div>
-                        <div
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: 12,
-                            padding: '9px 10px',
-                            borderRadius: 8,
-                          }}
-                        >
-                          <div>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>Auto-aprovar Comandos do Agente</div>
-                            <div style={{ fontSize: 11.5, color: themeTokens.textSecondary, maxWidth: 460 }}>
-                              Executa comandos sugeridos pela IA sem pedir confirmação manual antes de cada ação.
-                            </div>
-                            {aiAutoApprove && (
-                              <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
-                                <AlertTriangle size={11} />
-                                Cuidado: comandos podem alterar ou apagar arquivos sem revisão prévia.
-                              </div>
-                            )}
-                          </div>
-                          <MiniSwitch checked={aiAutoApprove} onChange={() => setAiAutoApprove(!aiAutoApprove)} accentColor={accentColor} />
-                        </div>
-                        <div
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: 12,
-                            padding: '9px 10px',
-                            borderRadius: 8,
-                          }}
-                        >
-                          <div>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>Confirmar Antes de Excluir Arquivos</div>
-                            <div style={{ fontSize: 11.5, color: themeTokens.textSecondary }}>
-                              Pede confirmação sempre que um agente tentar deletar arquivos do projeto.
-                            </div>
-                          </div>
-                          <MiniSwitch checked={aiConfirmBeforeDelete} onChange={() => setAiConfirmBeforeDelete(!aiConfirmBeforeDelete)} accentColor={accentColor} />
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  {/* TAB 3: SHORTCUTS */}
-                  {settingsActiveTab === 'shortcuts' && (
-                    <div>
-                      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Atalhos de Teclado Principais</div>
-                      <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 14 }}>
-                        Guia de atalhos rápidos disponíveis na interface estilo Antigravity / VS Code.
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {[
-                          { action: 'Quick Open (Abrir Arquivo)', keys: ['⌘', 'P'] },
-                          { action: 'Command Palette (Executar Comandos)', keys: ['⇧', '⌘', 'P'] },
-                          { action: 'Ir para Símbolo no Arquivo', keys: ['⇧', '⌘', 'O'] },
-                          { action: 'Abrir Configurações do Sistema', keys: ['⌘', ','] },
-                          { action: 'Alternar Barra Lateral (Explorer)', keys: ['⌘', 'B'] },
-                          { action: 'Explorer', keys: ['⇧', '⌘', 'E'] },
-                          { action: 'Buscar nos Arquivos', keys: ['⇧', '⌘', 'F'] },
-                          { action: 'Controle de Versão (Git)', keys: ['⇧', '⌘', 'G'] },
-                          { action: 'Executar e Depurar', keys: ['⇧', '⌘', 'D'] },
-                          { action: 'Gerenciador de Extensões', keys: ['⇧', '⌘', 'X'] },
-                          { action: 'Alternar Painel Inferior (Terminal)', keys: ['⌘', 'J'] },
-                          { action: 'Alternar Painel Lateral de IA', keys: ['⇧', '⌘', 'A'] },
-                          { action: 'Histórico de Conversas com IA', keys: ['⇧', '⌘', 'H'] },
-                          { action: 'Modo Tela Cheia (Fullscreen)', keys: ['⌃', '⌘', 'F'] },
-                          { action: 'Modo Zen (Foco Limpo)', keys: ['⌘', 'K', 'Z'] },
-                          { action: 'Salvar Arquivo Ativo', keys: ['⌘', 'S'] },
-                        ].map((s, idx) => (
-                          <div
-                            key={idx}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              padding: '8px 10px',
-                              borderRadius: 8,
-                              transition: 'background 0.15s ease',
-                            }}
-                            onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)')}
-                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                          >
-                            <span style={{ fontSize: 12.5, color: themeTokens.textPrimary }}>{s.action}</span>
-                            <div style={{ display: 'flex', gap: 3 }}>
-                              {s.keys.map((k, kIdx) => (
-                                <KbdBadge key={kIdx}>{k}</KbdBadge>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* TAB 4: EXTENSIONS */}
-                  {settingsActiveTab === 'extensions' && (
-                    <div>
-                      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Extensões & Status do Sistema</div>
-                      <div style={{ fontSize: 12, color: themeTokens.textSecondary, marginBottom: 14 }}>
-                        Recursos nativos integrados ao DevFlow Desktop.
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {[
-                          { name: 'VS Code Material & Symbols Icon Theme', desc: 'Ícones oficiais para mais de 100 formatos de arquivos e pastas', status: 'Ativo' },
-                          { name: 'Claude Code Agent CLI', desc: 'Assistente e motor de execução CLI oficial Claude', status: installedClis.claude ? 'Instalado & Pronto' : 'Não instalado' },
-                          { name: 'Google Antigravity Agent (AGY)', desc: 'Motor de agentes inteligentes e sub-agentes Antigravity', status: installedClis.antigravity ? 'Instalado & Pronto' : 'Não instalado' },
-                          { name: 'Native PTY Terminal Service', desc: 'Sessões de terminal interativo com zsh / bash integrado', status: 'Ativo' },
-                          { name: 'Monaco Editor Engine', desc: 'Motor de código de alta performance da Microsoft com LSP', status: 'Ativo' },
-                        ].map((ext, idx) => (
-                          <div
-                            key={idx}
-                            style={{
-                              padding: '10px 14px',
-                              borderRadius: 8,
-                              background: isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                            }}
-                          >
-                            <div>
-                              <div style={{ fontSize: 13, fontWeight: 600, color: themeTokens.textPrimary }}>{ext.name}</div>
-                              <div style={{ fontSize: 11.5, color: themeTokens.textSecondary }}>{ext.desc}</div>
-                            </div>
-                            <span
-                              style={{
-                                padding: '2px 8px',
-                                borderRadius: 4,
-                                fontSize: 11,
-                                fontWeight: 600,
-                                background: ext.status.includes('Ativo') || ext.status.includes('Pronto') ? hexToRgba(accentColor, 0.15) : (isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'),
-                                color: ext.status.includes('Ativo') || ext.status.includes('Pronto') ? accentColor : themeTokens.textSecondary,
-                              }}
-                            >
-                              {ext.status}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </>
+          <SettingsModal
+            themeTokens={themeTokens}
+            isEffectiveDark={isEffectiveDark}
+            accentColor={accentColor}
+            onClose={() => setIsSettingsModalOpen(false)}
+            settingsActiveTab={settingsActiveTab}
+            setSettingsActiveTab={setSettingsActiveTab}
+            workspacePath={workspacePath}
+            currentBranch={currentBranch}
+            onOpenBranchManager={() => {
+              setIsSettingsModalOpen(false);
+              setIsBranchModalOpen(true);
+            }}
+            sidebarPosition={sidebarPosition}
+            setSidebarPosition={setSidebarPosition}
+            isCenteredLayout={isCenteredLayout}
+            setIsCenteredLayout={setIsCenteredLayout}
+            restoreLastWorkspace={restoreLastWorkspace}
+            setRestoreLastWorkspace={setRestoreLastWorkspace}
+            confirmBeforeClosingUnsaved={confirmBeforeClosingUnsaved}
+            setConfirmBeforeClosingUnsaved={setConfirmBeforeClosingUnsaved}
+            autoRefreshGitStatus={autoRefreshGitStatus}
+            setAutoRefreshGitStatus={setAutoRefreshGitStatus}
+            setAccentColor={setAccentColor}
+            themeMode={themeMode}
+            setThemeMode={setThemeMode}
+            useAiChatThemeColor={useAiChatThemeColor}
+            setUseAiChatThemeColor={setUseAiChatThemeColor}
+            editorFontSize={editorFontSize}
+            setEditorFontSize={setEditorFontSize}
+            editorTabSize={editorTabSize}
+            setEditorTabSize={setEditorTabSize}
+            editorWordWrap={editorWordWrap}
+            setEditorWordWrap={setEditorWordWrap}
+            editorMinimap={editorMinimap}
+            setEditorMinimap={setEditorMinimap}
+            editorLineNumbers={editorLineNumbers}
+            setEditorLineNumbers={setEditorLineNumbers}
+            editorSmoothScrolling={editorSmoothScrolling}
+            setEditorSmoothScrolling={setEditorSmoothScrolling}
+            editorBracketColorization={editorBracketColorization}
+            setEditorBracketColorization={setEditorBracketColorization}
+            editorRenderWhitespace={editorRenderWhitespace}
+            setEditorRenderWhitespace={setEditorRenderWhitespace}
+            terminalFontSize={terminalFontSize}
+            setTerminalFontSize={setTerminalFontSize}
+            terminalCursorStyle={terminalCursorStyle}
+            setTerminalCursorStyle={setTerminalCursorStyle}
+            terminalScrollback={terminalScrollback}
+            setTerminalScrollback={setTerminalScrollback}
+            terminalCursorBlink={terminalCursorBlink}
+            setTerminalCursorBlink={setTerminalCursorBlink}
+            terminalCopyOnSelect={terminalCopyOnSelect}
+            setTerminalCopyOnSelect={setTerminalCopyOnSelect}
+            selectedAiProvider={selectedAiProvider}
+            setSelectedAiProvider={setSelectedAiProvider}
+            aiMode={aiMode}
+            setAiMode={setAiMode}
+            aiAutoApprove={aiAutoApprove}
+            setAiAutoApprove={setAiAutoApprove}
+            aiConfirmBeforeDelete={aiConfirmBeforeDelete}
+            setAiConfirmBeforeDelete={setAiConfirmBeforeDelete}
+            installedClis={installedClis}
+          />
         )}
 
         {/* ======================================================= */}
