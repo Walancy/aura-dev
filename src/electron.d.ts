@@ -102,14 +102,15 @@ export interface ElectronAPI {
     fetchRepoPulls: (owner: string, repo: string) => Promise<{ success: boolean; pulls?: any[]; error?: string }>;
     fetchRepoMilestones: (owner: string, repo: string) => Promise<{ success: boolean; milestones?: any[]; error?: string }>;
     fetchRepoReleases: (owner: string, repo: string) => Promise<{ success: boolean; releases?: any[]; error?: string }>;
-    createIssue: (owner: string, repo: string, input: { title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[] }) => Promise<{ success: boolean; issue?: any; error?: string }>;
+    createIssue: (owner: string, repo: string, input: { title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[]; milestone?: number }) => Promise<{ success: boolean; issue?: any; error?: string }>;
     updateIssue: (
       owner: string,
       repo: string,
       issueNumber: number,
-      input: { title?: string; body?: string; state?: 'open' | 'closed'; labels?: string[]; ensureLabels?: Array<{ name: string; color: string }> },
+      input: { title?: string; body?: string; state?: 'open' | 'closed'; labels?: string[]; ensureLabels?: Array<{ name: string; color: string }>; milestone?: number | null },
     ) => Promise<{ success: boolean; issue?: any; error?: string }>;
     deleteIssue: (nodeId: string) => Promise<{ success: boolean; error?: string }>;
+    createMilestone: (owner: string, repo: string, input: { title: string; description?: string; due_on?: string }) => Promise<{ success: boolean; milestone?: any; error?: string }>;
     onLoginResult: (callback: (result: { success: boolean; user?: { login: string; name: string | null; avatarUrl: string; htmlUrl: string }; error?: string }) => void) => () => void;
   };
 }

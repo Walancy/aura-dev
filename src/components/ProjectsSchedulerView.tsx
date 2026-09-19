@@ -22,6 +22,15 @@ import {
   Pencil,
   Trash2,
   Building2,
+  CircleDot,
+  Zap,
+  AlertTriangle,
+  Milestone,
+  ListChecks,
+  BarChart2,
+  Link2,
+  Users,
+  Settings,
 } from 'lucide-react';
 import { getContrastTextColor, hexToRgba } from '../utils/color';
 import { DatePickerField } from './ui/DatePickerField';
@@ -73,8 +82,10 @@ export interface ProjectIssue {
   dateStr: string;
   createdAtIso: string; // data real de criação, usada como posição de fallback na timeline
   durationDays: number; // dias em aberto (mínimo 1), largura de fallback na timeline
-  startDateIso?: string; // YYYY-MM-DD definida pelo usuário (guardada no corpo da issue)
-  dueDateIso?: string; // YYYY-MM-DD definida pelo usuário (guardada no corpo da issue)
+  startDateIso?: string; // YYYY-MM-DD, derivada da sprint (milestone) atribuída à issue
+  dueDateIso?: string; // YYYY-MM-DD, derivada da sprint (milestone) atribuída à issue
+  milestoneNumber?: number;
+  milestoneTitle?: string;
   tag: string;
   tagColor: { bg: string; text: string };
   priority: 'Baixa' | 'Média' | 'Alta' | 'Urgente';
@@ -107,6 +118,16 @@ interface GithubRepoSummary {
   language: string | null;
   owner: { login: string; avatar_url?: string };
   html_url: string;
+}
+
+// Sprint = um milestone real do GitHub. O GitHub não tem campo nativo de "início",
+// então guardamos isso como um comentário HTML invisível na descrição do milestone.
+export interface SprintOption {
+  number: number;
+  title: string;
+  state: 'open' | 'closed';
+  startDateIso?: string;
+  dueDateIso?: string;
 }
 
 export interface ProjectRelease {
@@ -175,31 +196,39 @@ const PRIORITY_LABELS: Record<'Baixa' | 'Média' | 'Alta' | 'Urgente', { name: s
 
 const IN_PROGRESS_LABEL = { name: 'em-progresso', color: '0ea5e9' };
 
-// GitHub não tem campos nativos de data de início/término por issue, então guardamos
-// como comentários HTML invisíveis no corpo da issue (não aparecem ao ver a issue no GitHub.com).
-const START_DATE_MARKER = /<!--\s*devflow:start=([\d-]+)\s*-->/;
-const DUE_DATE_MARKER = /<!--\s*devflow:due=([\d-]+)\s*-->/;
+// GitHub Milestones não têm campo nativo de "data de início" (só due_on), então guardamos
+// isso como um comentário HTML invisível na descrição do milestone (não aparece no GitHub.com).
+const SPRINT_START_MARKER = /<!--\s*devflow:start=([\d-]+)\s*-->/;
 
-function encodeIssueBody(description: string, startDate?: string, dueDate?: string): string {
-  const parts = [description.trim()];
-  if (startDate) parts.push(`<!-- devflow:start=${startDate} -->`);
-  if (dueDate) parts.push(`<!-- devflow:due=${dueDate} -->`);
+function encodeSprintDescription(description: string, startDate: string): string {
+  const parts = [description.trim(), `<!-- devflow:start=${startDate} -->`];
   return parts.join('\n\n').trim();
 }
 
-function parseIssueBody(rawBody: string | null | undefined): { description: string; startDateIso?: string; dueDateIso?: string } {
-  const body = rawBody || '';
-  const startMatch = body.match(START_DATE_MARKER);
-  const dueMatch = body.match(DUE_DATE_MARKER);
-  const description = body.replace(START_DATE_MARKER, '').replace(DUE_DATE_MARKER, '').trim();
-  return {
-    description,
-    startDateIso: startMatch ? startMatch[1] : undefined,
-    dueDateIso: dueMatch ? dueMatch[1] : undefined,
-  };
+function parseSprintStart(rawDescription: string | null | undefined): string | undefined {
+  const match = (rawDescription || '').match(SPRINT_START_MARKER);
+  return match ? match[1] : undefined;
+}
+
+function toIsoDateOnly(iso: string): string {
+  return iso.slice(0, 10);
 }
 
 const WEEKDAY_LABELS_PT = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
+
+const PROJECT_SECTIONS = [
+  { id: 'issues', label: 'Issues', icon: CircleDot },
+  { id: 'sprints', label: 'Sprints', icon: Zap },
+  { id: 'riscos', label: 'Riscos', icon: AlertTriangle },
+  { id: 'marcos', label: 'Marcos', icon: Milestone },
+  { id: 'tarefas', label: 'Tarefas', icon: ListChecks },
+  { id: 'relatorio', label: 'Relatório', icon: BarChart2 },
+  { id: 'links', label: 'Links', icon: Link2 },
+  { id: 'time', label: 'Time', icon: Users },
+  { id: 'configuracoes', label: 'Configurações', icon: Settings },
+] as const;
+
+type ProjectSectionId = (typeof PROJECT_SECTIONS)[number]['id'];
 
 function formatShortDate(iso: string): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
@@ -212,6 +241,12 @@ function formatIssueDateRange(issue: ProjectIssue): string {
   if (issue.startDateIso) return `Início: ${formatShortDate(issue.startDateIso)}`;
   if (issue.dueDateIso) return `Prazo: ${formatShortDate(issue.dueDateIso)}`;
   return issue.dateStr;
+}
+
+function getStatusBarColor(status: ProjectIssue['status'], isEffectiveDark: boolean): string {
+  if (status === 'Concluído') return '#10b981';
+  if (status === 'Em Progresso') return '#f59e0b';
+  return isEffectiveDark ? '#444444' : '#cbd5e1';
 }
 
 function mapGithubIssueToProjectIssue(gh: any, projectId: number, pulls: any[]): ProjectIssue {
@@ -275,7 +310,10 @@ function mapGithubIssueToProjectIssue(gh: any, projectId: number, pulls: any[]):
       }
     : undefined;
 
-  const { description, startDateIso, dueDateIso } = parseIssueBody(gh.body);
+  // Datas de início/término vêm da sprint (milestone) atribuída à issue, não da própria issue.
+  const milestone = gh.milestone;
+  const startDateIso = milestone ? parseSprintStart(milestone.description) : undefined;
+  const dueDateIso = milestone?.due_on ? toIsoDateOnly(milestone.due_on) : undefined;
 
   return {
     id: `#${gh.number}`,
@@ -285,12 +323,14 @@ function mapGithubIssueToProjectIssue(gh: any, projectId: number, pulls: any[]):
     htmlUrl: gh.html_url,
     rawLabels: labelNames,
     title: gh.title,
-    description,
+    description: gh.body || '',
     dateStr: createdAt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }),
     createdAtIso: createdAt.toISOString(),
     durationDays: daysOpen,
     startDateIso,
     dueDateIso,
+    milestoneNumber: milestone?.number,
+    milestoneTitle: milestone?.title,
     tag: tagName,
     tagColor,
     priority,
@@ -351,6 +391,8 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   };
   const [hoveredCardId, setHoveredCardId] = useState<number | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<number | null>(null);
+  const [selectedSection, setSelectedSection] = useState<ProjectSectionId>('tarefas');
+  const [hoveredSectionId, setHoveredSectionId] = useState<ProjectSectionId | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSprint, setSelectedSprint] = useState('Todas as Linguagens');
   const [selectedStatus, setSelectedStatus] = useState('Todos os Projetos');
@@ -364,9 +406,9 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   const [isLoadingRepos, setIsLoadingRepos] = useState(true);
   const [reposError, setReposError] = useState<string | null>(null);
 
-  // Cache de issues por repositório (chave = "owner/repo"), carregado sob demanda ao selecionar um card
+  // Cache de issues/sprints por repositório (chave = "owner/repo"), carregado sob demanda ao selecionar um card
   const [repoDetailsCache, setRepoDetailsCache] = useState<
-    Record<string, { issues: ProjectIssue[]; isLoading: boolean; error: string | null }>
+    Record<string, { issues: ProjectIssue[]; sprints: SprintOption[]; isLoading: boolean; error: string | null }>
   >({});
 
   useEffect(() => {
@@ -476,22 +518,34 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     const fullName = card.fullName;
     const owner = card.owner;
     const repoName = card.repoName;
-    setRepoDetailsCache((prev) => ({ ...prev, [fullName]: { issues: [], isLoading: true, error: null } }));
+    setRepoDetailsCache((prev) => ({ ...prev, [fullName]: { issues: [], sprints: [], isLoading: true, error: null } }));
 
     (async () => {
       try {
-        const [issuesRes, pullsRes] = await Promise.all([
+        const [issuesRes, pullsRes, milestonesRes] = await Promise.all([
           window.electronAPI?.github?.fetchRepoIssues?.(owner, repoName),
           window.electronAPI?.github?.fetchRepoPulls?.(owner, repoName),
+          window.electronAPI?.github?.fetchRepoMilestones?.(owner, repoName),
         ]);
         if (!issuesRes?.success) throw new Error(issuesRes?.error || 'Falha ao buscar issues do repositório.');
         const pulls = pullsRes?.success ? pullsRes.pulls || [] : [];
         const mapped = (issuesRes.issues || []).map((gh: any) => mapGithubIssueToProjectIssue(gh, card.id, pulls));
-        setRepoDetailsCache((prev) => ({ ...prev, [fullName]: { issues: mapped, isLoading: false, error: null } }));
+        const sprints: SprintOption[] = milestonesRes?.success
+          ? (milestonesRes.milestones || [])
+              .filter((m: any) => m.state === 'open')
+              .map((m: any) => ({
+                number: m.number,
+                title: m.title,
+                state: m.state,
+                startDateIso: parseSprintStart(m.description),
+                dueDateIso: m.due_on ? toIsoDateOnly(m.due_on) : undefined,
+              }))
+          : [];
+        setRepoDetailsCache((prev) => ({ ...prev, [fullName]: { issues: mapped, sprints, isLoading: false, error: null } }));
       } catch (err: any) {
         setRepoDetailsCache((prev) => ({
           ...prev,
-          [fullName]: { issues: [], isLoading: false, error: err?.message || 'Erro ao buscar dados do repositório.' },
+          [fullName]: { issues: [], sprints: [], isLoading: false, error: err?.message || 'Erro ao buscar dados do repositório.' },
         }));
       }
     })();
@@ -634,8 +688,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   const [newTaskTag, setNewTaskTag] = useState('Research');
   const [newTaskPriority, setNewTaskPriority] = useState<'Baixa' | 'Média' | 'Alta' | 'Urgente'>('Média');
   const [newTaskStatus, setNewTaskStatus] = useState<'A Fazer' | 'Em Progresso' | 'Concluído'>('Em Progresso');
-  const [newTaskStartDate, setNewTaskStartDate] = useState('');
-  const [newTaskDueDate, setNewTaskDueDate] = useState('');
+  const [newTaskMilestoneNumber, setNewTaskMilestoneNumber] = useState<number | null>(null);
   const [isCreatingTask, setIsCreatingTask] = useState(false);
 
   // Edição de tarefa existente
@@ -644,9 +697,19 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   const [editIssueDescription, setEditIssueDescription] = useState('');
   const [editIssueTag, setEditIssueTag] = useState('Research');
   const [editIssuePriority, setEditIssuePriority] = useState<'Baixa' | 'Média' | 'Alta' | 'Urgente'>('Média');
-  const [editIssueStartDate, setEditIssueStartDate] = useState('');
-  const [editIssueDueDate, setEditIssueDueDate] = useState('');
+  const [editIssueMilestoneNumber, setEditIssueMilestoneNumber] = useState<number | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  // Criação de nova sprint (milestone real do GitHub)
+  const [isCreateSprintModalOpen, setIsCreateSprintModalOpen] = useState(false);
+  const [sprintCreationContext, setSprintCreationContext] = useState<'create' | 'edit' | null>(null);
+  const [newSprintTitle, setNewSprintTitle] = useState('');
+  const [newSprintDuration, setNewSprintDuration] = useState<7 | 15>(7);
+  const [newSprintStartDate, setNewSprintStartDate] = useState(() => {
+    const t = new Date();
+    return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+  });
+  const [isCreatingSprint, setIsCreatingSprint] = useState(false);
 
   // Filtragem dinâmica de cards do shelf superior (agora repositórios reais)
   const filteredCards = allCards.filter((card) => {
@@ -681,6 +744,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   const isLoadingProjectIssues = !!selectedRepoDetail?.isLoading;
   const projectIssuesError = selectedRepoDetail?.error || null;
   const rawProjectIssues = selectedRepoDetail?.issues || [];
+  const sprintsForSelectedRepo = selectedRepoDetail?.sprints || [];
 
   // Issues filtradas para o projeto selecionado
   const projectIssues = useMemo(() => {
@@ -715,8 +779,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     setNewTaskTag('Research');
     setNewTaskPriority('Média');
     setNewTaskStatus('Em Progresso');
-    setNewTaskStartDate('');
-    setNewTaskDueDate('');
+    setNewTaskMilestoneNumber(null);
   };
 
   const handleCreateTask = async () => {
@@ -726,16 +789,11 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
       showToast('Selecione um repositório antes de criar uma tarefa.');
       return;
     }
-    if (newTaskStartDate && newTaskDueDate && newTaskDueDate < newTaskStartDate) {
-      showToast('A data de término não pode ser antes da data de início.');
-      return;
-    }
     const fullName = card.fullName;
     const owner = card.owner;
     const repoName = card.repoName;
     const title = newTaskTitle.trim();
     const status = newTaskStatus;
-    const body = encodeIssueBody(newTaskDescription, newTaskStartDate || undefined, newTaskDueDate || undefined);
     const labels = [
       { name: newTaskTag, color: TAG_LABEL_COLOR[newTaskTag] || '3b82f6' },
       PRIORITY_LABELS[newTaskPriority],
@@ -746,9 +804,10 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     try {
       const res = await window.electronAPI?.github?.createIssue?.(owner, repoName, {
         title,
-        body,
+        body: newTaskDescription.trim(),
         labels,
         assignees: currentUser ? [currentUser.login] : [],
+        milestone: newTaskMilestoneNumber ?? undefined,
       });
       if (!res?.success || !res.issue) throw new Error(res?.error || 'Falha ao criar issue no GitHub.');
 
@@ -761,7 +820,12 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
       const mapped = mapGithubIssueToProjectIssue(ghIssue, card.id, []);
       setRepoDetailsCache((prev) => ({
         ...prev,
-        [fullName]: { issues: [mapped, ...(prev[fullName]?.issues || [])], isLoading: false, error: null },
+        [fullName]: {
+          issues: [mapped, ...(prev[fullName]?.issues || [])],
+          sprints: prev[fullName]?.sprints || [],
+          isLoading: false,
+          error: null,
+        },
       }));
       showToast(`Issue #${ghIssue.number} criada no GitHub.`);
       setIsAddTaskModalOpen(false);
@@ -803,6 +867,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 }
               : i
           ),
+          sprints: prev[fullName]?.sprints || [],
           isLoading: false,
           error: null,
         },
@@ -826,25 +891,20 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     setEditIssueDescription(issue.description);
     setEditIssueTag(issue.tag);
     setEditIssuePriority(issue.priority);
-    setEditIssueStartDate(issue.startDateIso || '');
-    setEditIssueDueDate(issue.dueDateIso || '');
+    setEditIssueMilestoneNumber(issue.milestoneNumber ?? null);
   };
 
   const handleSaveEditIssue = async () => {
     if (!editingIssue || !editIssueTitle.trim() || isSavingEdit) return;
     const card = allCards.find((c) => c.id === editingIssue.projectId);
     if (!card || !card.owner || !card.repoName || !card.fullName || editingIssue.githubNumber == null) return;
-    if (editIssueStartDate && editIssueDueDate && editIssueDueDate < editIssueStartDate) {
-      showToast('A data de término não pode ser antes da data de início.');
-      return;
-    }
 
     const fullName = card.fullName;
     const owner = card.owner;
     const repoName = card.repoName;
     const issueNumber = editingIssue.githubNumber;
     const title = editIssueTitle.trim();
-    const body = encodeIssueBody(editIssueDescription, editIssueStartDate || undefined, editIssueDueDate || undefined);
+    const body = editIssueDescription.trim();
 
     // Substitui a label de tag/prioridade antigas pelas novas, preservando as demais (ex.: em-progresso)
     const preservedLabels = (editingIssue.rawLabels || []).filter((l) => {
@@ -864,6 +924,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
         body,
         labels: nextLabels,
         ensureLabels,
+        milestone: editIssueMilestoneNumber,
       });
       if (!res?.success || !res.issue) throw new Error(res?.error || 'Falha ao salvar alterações no GitHub.');
 
@@ -872,6 +933,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
         ...prev,
         [fullName]: {
           issues: (prev[fullName]?.issues || []).map((i) => (i.id === editingIssue.id ? mapped : i)),
+          sprints: prev[fullName]?.sprints || [],
           isLoading: false,
           error: null,
         },
@@ -902,6 +964,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
         ...prev,
         [fullName]: {
           issues: (prev[fullName]?.issues || []).filter((i) => i.id !== issue.id),
+          sprints: prev[fullName]?.sprints || [],
           isLoading: false,
           error: null,
         },
@@ -909,6 +972,74 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
       showToast(`Issue ${issue.id} excluída.`);
     } catch (err: any) {
       showToast(err?.message || 'Erro ao excluir a issue no GitHub.');
+    }
+  };
+
+  const openCreateSprintModal = (context: 'create' | 'edit') => {
+    const t = new Date();
+    setNewSprintTitle('');
+    setNewSprintDuration(7);
+    setNewSprintStartDate(`${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`);
+    setSprintCreationContext(context);
+    setIsCreateSprintModalOpen(true);
+  };
+
+  const handleCreateSprint = async () => {
+    if (isCreatingSprint) return;
+    const card = selectedProject;
+    if (!card || !card.owner || !card.repoName || !card.fullName) {
+      showToast('Selecione um repositório antes de criar uma sprint.');
+      return;
+    }
+    const fullName = card.fullName;
+    const owner = card.owner;
+    const repoName = card.repoName;
+
+    const startDate = new Date(`${newSprintStartDate}T00:00:00`);
+    const dueDate = new Date(startDate);
+    dueDate.setDate(dueDate.getDate() + newSprintDuration - 1);
+    const dueDateIso = `${dueDate.getFullYear()}-${String(dueDate.getMonth() + 1).padStart(2, '0')}-${String(dueDate.getDate()).padStart(2, '0')}`;
+    const title =
+      newSprintTitle.trim() ||
+      `Sprint ${formatShortDate(newSprintStartDate)} - ${formatShortDate(dueDateIso)}`;
+    const description = encodeSprintDescription(`Sprint de ${newSprintDuration} dias.`, newSprintStartDate);
+
+    setIsCreatingSprint(true);
+    try {
+      const res = await window.electronAPI?.github?.createMilestone?.(owner, repoName, {
+        title,
+        description,
+        due_on: dueDate.toISOString(),
+      });
+      if (!res?.success || !res.milestone) throw new Error(res?.error || 'Falha ao criar sprint no GitHub.');
+
+      const sprint: SprintOption = {
+        number: res.milestone.number,
+        title: res.milestone.title,
+        state: 'open',
+        startDateIso: newSprintStartDate,
+        dueDateIso,
+      };
+      setRepoDetailsCache((prev) => ({
+        ...prev,
+        [fullName]: {
+          issues: prev[fullName]?.issues || [],
+          sprints: [...(prev[fullName]?.sprints || []), sprint],
+          isLoading: false,
+          error: null,
+        },
+      }));
+
+      if (sprintCreationContext === 'create') setNewTaskMilestoneNumber(sprint.number);
+      if (sprintCreationContext === 'edit') setEditIssueMilestoneNumber(sprint.number);
+
+      showToast(`Sprint "${sprint.title}" criada.`);
+      setIsCreateSprintModalOpen(false);
+      setSprintCreationContext(null);
+    } catch (err: any) {
+      showToast(err?.message || 'Erro ao criar a sprint no GitHub.');
+    } finally {
+      setIsCreatingSprint(false);
     }
   };
 
@@ -1965,6 +2096,88 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
         </div>
 
         {/* ========================================================================= */}
+        {/* NAVEGAÇÃO DE SEÇÕES DO PROJETO (Issues, Sprints, Riscos, Marcos, etc.)     */}
+        {/* ========================================================================= */}
+        <div
+          style={{
+            width: 'fit-content',
+            maxWidth: '100%',
+            alignSelf: 'center',
+            padding: 5,
+            background: theme.bgShelf,
+            borderRadius: 10,
+            border: theme.shelfBorder,
+            boxShadow: theme.shelfShadow,
+            display: 'flex',
+            alignItems: 'stretch',
+            gap: 5,
+            boxSizing: 'border-box',
+            overflowX: 'auto',
+          }}
+          className="no-scrollbar"
+        >
+          {PROJECT_SECTIONS.map((section) => {
+            const isSelected = selectedSection === section.id;
+            const isHovered = hoveredSectionId === section.id;
+            const Icon = section.icon;
+            const bg = isSelected ? accentColor : isHovered ? theme.cardHoverBg : theme.cardBg;
+            const fg = isSelected ? accentContrastText : isHovered ? theme.textPrimary : theme.textSecondary;
+            return (
+              <div
+                key={section.id}
+                onClick={() => setSelectedSection(section.id)}
+                onMouseEnter={() => setHoveredSectionId(section.id)}
+                onMouseLeave={() => setHoveredSectionId(null)}
+                title={section.label}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  width: isSelected ? 'auto' : 40,
+                  height: 40,
+                  padding: isSelected ? '0 16px' : 0,
+                  borderRadius: 8,
+                  background: bg,
+                  color: fg,
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                  whiteSpace: 'nowrap',
+                  transition: 'background 0.15s ease, width 0.15s ease, padding 0.15s ease',
+                }}
+              >
+                <Icon size={16} />
+                {isSelected && (
+                  <span style={{ fontSize: 12.5, fontWeight: 500 }}>{section.label}</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {selectedSection !== 'tarefas' ? (
+          <div
+            style={{
+              width: '100%',
+              background: theme.bgShelf,
+              borderRadius: 10,
+              border: theme.shelfBorder,
+              boxShadow: theme.shelfShadow,
+              flex: 1,
+              minHeight: 360,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: theme.textSecondary,
+              fontSize: 13,
+              fontWeight: '300',
+            }}
+          >
+            {PROJECT_SECTIONS.find((s) => s.id === selectedSection)?.label} — em breve.
+          </div>
+        ) : (
+        <>
+        {/* ========================================================================= */}
         {/* CONTAINER UNIFICADO: Controles + Visualizador (Timeline, Kanban, Planilha) */}
         {/* ========================================================================= */}
         <div
@@ -2495,7 +2708,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                                 width: 3,
                                 height: 16,
                                 borderRadius: 2,
-                                background: issue.status === 'Concluído' ? '#10b981' : (isEffectiveDark ? '#444444' : '#cbd5e1'),
+                                background: getStatusBarColor(issue.status, isEffectiveDark),
                                 flexShrink: 0,
                               }}
                             />
@@ -2565,7 +2778,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                                   width: 3.5,
                                   height: 28,
                                   borderRadius: 2,
-                                  background: issue.status === 'Concluído' ? '#10b981' : (isEffectiveDark ? '#444444' : '#cbd5e1'),
+                                  background: getStatusBarColor(issue.status, isEffectiveDark),
                                   flexShrink: 0,
                                   marginTop: 2,
                                 }}
@@ -3172,6 +3385,8 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
             </div>
           )}
         </div>
+        </>
+        )}
 
         {/* Modal de Nova Tarefa (fluxo inspirado no "Create new issue" do GitHub) */}
         {isAddTaskModalOpen && (
@@ -3344,44 +3559,40 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 </div>
               </div>
 
-              {/* Linha com Data de Início e Data de Término */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Data de início</label>
-                  <DatePickerField
-                    value={newTaskStartDate}
-                    onChange={setNewTaskStartDate}
-                    accentColor={accentColor}
-                    isEffectiveDark={isEffectiveDark}
-                    inputBg={theme.modalInputBg}
-                    inputBorder={theme.modalInputBorder}
-                    textPrimary={theme.textPrimary}
-                    textSecondary={theme.textSecondary}
-                    dropdownBg={theme.dropdownBg}
-                    dropdownShadow={theme.dropdownShadow}
-                    dropdownBorder={theme.dropdownBorder}
-                    dropdownItemHover={theme.dropdownItemHover}
-                    showTodayShortcut
-                  />
+              {/* Sprint */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Sprint</label>
+                  <button
+                    type="button"
+                    onClick={() => openCreateSprintModal('create')}
+                    style={{ background: 'none', border: 'none', color: accentColor, fontSize: 11, cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}
+                  >
+                    <Plus size={11} /> Nova Sprint
+                  </button>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Data de término</label>
-                  <DatePickerField
-                    value={newTaskDueDate}
-                    onChange={setNewTaskDueDate}
-                    min={newTaskStartDate || undefined}
-                    accentColor={accentColor}
-                    isEffectiveDark={isEffectiveDark}
-                    inputBg={theme.modalInputBg}
-                    inputBorder={theme.modalInputBorder}
-                    textPrimary={theme.textPrimary}
-                    textSecondary={theme.textSecondary}
-                    dropdownBg={theme.dropdownBg}
-                    dropdownShadow={theme.dropdownShadow}
-                    dropdownBorder={theme.dropdownBorder}
-                    dropdownItemHover={theme.dropdownItemHover}
-                  />
-                </div>
+                <select
+                  value={newTaskMilestoneNumber ?? ''}
+                  onChange={(e) => setNewTaskMilestoneNumber(e.target.value ? Number(e.target.value) : null)}
+                  style={{
+                    background: theme.modalInputBg,
+                    border: theme.modalInputBorder,
+                    borderRadius: 6,
+                    padding: '8px 10px',
+                    color: theme.textPrimary,
+                    fontSize: 12.5,
+                    fontWeight: '300',
+                    outline: 'none',
+                  }}
+                >
+                  <option value="">Sem sprint</option>
+                  {sprintsForSelectedRepo.map((s) => (
+                    <option key={s.number} value={s.number}>
+                      {s.title}
+                      {s.dueDateIso ? ` (até ${formatShortDate(s.dueDateIso)})` : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {/* Status Inicial */}
@@ -3622,43 +3833,42 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Data de início</label>
-                  <DatePickerField
-                    value={editIssueStartDate}
-                    onChange={setEditIssueStartDate}
-                    accentColor={accentColor}
-                    isEffectiveDark={isEffectiveDark}
-                    inputBg={theme.modalInputBg}
-                    inputBorder={theme.modalInputBorder}
-                    textPrimary={theme.textPrimary}
-                    textSecondary={theme.textSecondary}
-                    dropdownBg={theme.dropdownBg}
-                    dropdownShadow={theme.dropdownShadow}
-                    dropdownBorder={theme.dropdownBorder}
-                    dropdownItemHover={theme.dropdownItemHover}
-                    showTodayShortcut
-                  />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Sprint</label>
+                  <button
+                    type="button"
+                    onClick={() => openCreateSprintModal('edit')}
+                    style={{ background: 'none', border: 'none', color: accentColor, fontSize: 11, cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}
+                  >
+                    <Plus size={11} /> Nova Sprint
+                  </button>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Data de término</label>
-                  <DatePickerField
-                    value={editIssueDueDate}
-                    onChange={setEditIssueDueDate}
-                    min={editIssueStartDate || undefined}
-                    accentColor={accentColor}
-                    isEffectiveDark={isEffectiveDark}
-                    inputBg={theme.modalInputBg}
-                    inputBorder={theme.modalInputBorder}
-                    textPrimary={theme.textPrimary}
-                    textSecondary={theme.textSecondary}
-                    dropdownBg={theme.dropdownBg}
-                    dropdownShadow={theme.dropdownShadow}
-                    dropdownBorder={theme.dropdownBorder}
-                    dropdownItemHover={theme.dropdownItemHover}
-                  />
-                </div>
+                <select
+                  value={editIssueMilestoneNumber ?? ''}
+                  onChange={(e) => setEditIssueMilestoneNumber(e.target.value ? Number(e.target.value) : null)}
+                  style={{
+                    background: theme.modalInputBg,
+                    border: theme.modalInputBorder,
+                    borderRadius: 6,
+                    padding: '8px 10px',
+                    color: theme.textPrimary,
+                    fontSize: 12.5,
+                    fontWeight: '300',
+                    outline: 'none',
+                  }}
+                >
+                  <option value="">Sem sprint</option>
+                  {sprintsForSelectedRepo.map((s) => (
+                    <option key={s.number} value={s.number}>
+                      {s.title}
+                      {s.dueDateIso ? ` (até ${formatShortDate(s.dueDateIso)})` : ''}
+                    </option>
+                  ))}
+                  {editIssueMilestoneNumber != null && !sprintsForSelectedRepo.some((s) => s.number === editIssueMilestoneNumber) && (
+                    <option value={editIssueMilestoneNumber}>{editingIssue?.milestoneTitle || 'Sprint atual'}</option>
+                  )}
+                </select>
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 6 }}>
@@ -3697,6 +3907,169 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                   }}
                 >
                   {isSavingEdit ? 'Salvando...' : 'Salvar Alterações'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Criar Sprint (milestone real do GitHub) */}
+        {isCreateSprintModalOpen && (
+          <div
+            onClick={() => !isCreatingSprint && setIsCreateSprintModalOpen(false)}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: theme.modalOverlay,
+              backdropFilter: 'blur(6px)',
+              zIndex: 100001,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 20,
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: '100%',
+                maxWidth: 420,
+                background: theme.modalBg,
+                borderRadius: 10,
+                border: theme.modalBorder,
+                padding: 22,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 16,
+                boxShadow: theme.modalShadow,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Plus size={16} color={accentColor} />
+                  <span style={{ fontSize: 14, fontWeight: '400', color: theme.textPrimary }}>Nova Sprint</span>
+                </div>
+                <div
+                  onClick={() => setIsCreateSprintModalOpen(false)}
+                  style={{ width: 24, height: 24, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: theme.textSecondary }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = theme.textPrimary)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = theme.textSecondary)}
+                >
+                  <X size={16} />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Título (opcional)</label>
+                <input
+                  type="text"
+                  value={newSprintTitle}
+                  onChange={(e) => setNewSprintTitle(e.target.value)}
+                  placeholder={`Sprint ${formatShortDate(newSprintStartDate)} - ...`}
+                  style={{
+                    background: theme.modalInputBg,
+                    border: theme.modalInputBorder,
+                    borderRadius: 6,
+                    padding: '8px 12px',
+                    color: theme.textPrimary,
+                    fontSize: 13,
+                    fontWeight: '300',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Duração</label>
+                <div style={{ display: 'inline-flex', background: theme.controlBg, borderRadius: 8, padding: 3, gap: 2, alignSelf: 'flex-start' }}>
+                  {([7, 15] as const).map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setNewSprintDuration(d)}
+                      style={{
+                        padding: '6px 16px',
+                        borderRadius: 6,
+                        background: newSprintDuration === d ? accentColor : 'transparent',
+                        color: newSprintDuration === d ? accentContrastText : theme.textSecondary,
+                        fontSize: 12.5,
+                        fontWeight: newSprintDuration === d ? 500 : 300,
+                        border: 'none',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      {d} dias
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Data de início</label>
+                <DatePickerField
+                  value={newSprintStartDate}
+                  onChange={(v) => v && setNewSprintStartDate(v)}
+                  accentColor={accentColor}
+                  isEffectiveDark={isEffectiveDark}
+                  inputBg={theme.modalInputBg}
+                  inputBorder={theme.modalInputBorder}
+                  textPrimary={theme.textPrimary}
+                  textSecondary={theme.textSecondary}
+                  dropdownBg={theme.dropdownBg}
+                  dropdownShadow={theme.dropdownShadow}
+                  dropdownBorder={theme.dropdownBorder}
+                  dropdownItemHover={theme.dropdownItemHover}
+                  showTodayShortcut
+                />
+                <span style={{ fontSize: 11, color: theme.textSecondary }}>
+                  Termina em {formatShortDate((() => {
+                    const d = new Date(`${newSprintStartDate}T00:00:00`);
+                    d.setDate(d.getDate() + newSprintDuration - 1);
+                    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                  })())}
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => setIsCreateSprintModalOpen(false)}
+                  disabled={isCreatingSprint}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    borderRadius: 6,
+                    padding: '8px 16px',
+                    color: theme.textSecondary,
+                    fontSize: 12.5,
+                    fontWeight: '300',
+                    cursor: isCreatingSprint ? 'default' : 'pointer',
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateSprint}
+                  disabled={isCreatingSprint}
+                  style={{
+                    background: accentColor,
+                    border: 'none',
+                    borderRadius: 6,
+                    padding: '8px 18px',
+                    color: accentContrastText,
+                    fontSize: 12.5,
+                    fontWeight: '400',
+                    cursor: isCreatingSprint ? 'default' : 'pointer',
+                    opacity: isCreatingSprint ? 0.6 : 1,
+                    transition: 'opacity 0.15s ease',
+                  }}
+                >
+                  {isCreatingSprint ? 'Criando...' : 'Criar Sprint'}
                 </button>
               </div>
             </div>

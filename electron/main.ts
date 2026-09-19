@@ -964,10 +964,10 @@ ipcMain.handle(
   'github:createIssue',
   async (
     _event,
-    { owner, repo, title, body, labels, assignees }: { owner: string; repo: string; title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[] },
+    { owner, repo, title, body, labels, assignees, milestone }: { owner: string; repo: string; title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[]; milestone?: number },
   ) => {
     try {
-      const issue = await githubAuthService.createIssue(owner, repo, { title, body, labels, assignees });
+      const issue = await githubAuthService.createIssue(owner, repo, { title, body, labels, assignees, milestone });
       return { success: true, issue };
     } catch (err: any) {
       return { success: false, error: err.message };
@@ -979,7 +979,7 @@ ipcMain.handle(
   'github:updateIssue',
   async (
     _event,
-    { owner, repo, issueNumber, title, body, state, labels, ensureLabels }: {
+    { owner, repo, issueNumber, title, body, state, labels, ensureLabels, milestone }: {
       owner: string;
       repo: string;
       issueNumber: number;
@@ -988,10 +988,11 @@ ipcMain.handle(
       state?: 'open' | 'closed';
       labels?: string[];
       ensureLabels?: Array<{ name: string; color: string }>;
+      milestone?: number | null;
     },
   ) => {
     try {
-      const issue = await githubAuthService.updateIssue(owner, repo, issueNumber, { title, body, state, labels, ensureLabels });
+      const issue = await githubAuthService.updateIssue(owner, repo, issueNumber, { title, body, state, labels, ensureLabels, milestone });
       return { success: true, issue };
     } catch (err: any) {
       return { success: false, error: err.message };
@@ -1007,6 +1008,21 @@ ipcMain.handle('github:deleteIssue', async (_event, { nodeId }: { nodeId: string
     return { success: false, error: err.message };
   }
 });
+
+ipcMain.handle(
+  'github:createMilestone',
+  async (
+    _event,
+    { owner, repo, title, description, due_on }: { owner: string; repo: string; title: string; description?: string; due_on?: string },
+  ) => {
+    try {
+      const milestone = await githubAuthService.createMilestone(owner, repo, { title, description, due_on });
+      return { success: true, milestone };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  },
+);
 
 app.whenReady().then(() => {
   if (process.platform === 'darwin' && appIconImage && app.dock) {

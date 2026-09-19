@@ -184,15 +184,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     fetchRepoPulls: (owner: string, repo: string) => ipcRenderer.invoke('github:fetchRepoPulls', { owner, repo }),
     fetchRepoMilestones: (owner: string, repo: string) => ipcRenderer.invoke('github:fetchRepoMilestones', { owner, repo }),
     fetchRepoReleases: (owner: string, repo: string) => ipcRenderer.invoke('github:fetchRepoReleases', { owner, repo }),
-    createIssue: (owner: string, repo: string, input: { title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[] }) =>
+    createIssue: (owner: string, repo: string, input: { title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[]; milestone?: number }) =>
       ipcRenderer.invoke('github:createIssue', { owner, repo, ...input }),
     updateIssue: (
       owner: string,
       repo: string,
       issueNumber: number,
-      input: { title?: string; body?: string; state?: 'open' | 'closed'; labels?: string[]; ensureLabels?: Array<{ name: string; color: string }> },
+      input: { title?: string; body?: string; state?: 'open' | 'closed'; labels?: string[]; ensureLabels?: Array<{ name: string; color: string }>; milestone?: number | null },
     ) => ipcRenderer.invoke('github:updateIssue', { owner, repo, issueNumber, ...input }),
     deleteIssue: (nodeId: string) => ipcRenderer.invoke('github:deleteIssue', { nodeId }),
+    createMilestone: (owner: string, repo: string, input: { title: string; description?: string; due_on?: string }) =>
+      ipcRenderer.invoke('github:createMilestone', { owner, repo, ...input }),
     onLoginResult: (callback: (result: { success: boolean; user?: any; error?: string }) => void) => {
       const handler = (_event: any, result: any) => callback(result);
       ipcRenderer.on('github:loginResult', handler);

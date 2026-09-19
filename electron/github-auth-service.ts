@@ -341,6 +341,20 @@ class GithubAuthService {
     return res.json();
   }
 
+  public async createMilestone(
+    owner: string,
+    repo: string,
+    input: { title: string; description?: string; due_on?: string },
+  ): Promise<any> {
+    const res = await this.authedFetch(`https://api.github.com/repos/${owner}/${repo}/milestones`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
+    return res.json();
+  }
+
   private async ensureLabelExists(owner: string, repo: string, name: string, color: string): Promise<void> {
     const checkRes = await this.authedFetch(`https://api.github.com/repos/${owner}/${repo}/labels/${encodeURIComponent(name)}`, {
       headers: { Accept: 'application/vnd.github+json' },
@@ -356,7 +370,7 @@ class GithubAuthService {
   public async createIssue(
     owner: string,
     repo: string,
-    input: { title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[] },
+    input: { title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[]; milestone?: number },
   ): Promise<any> {
     for (const label of input.labels || []) {
       await this.ensureLabelExists(owner, repo, label.name, label.color);
@@ -369,6 +383,7 @@ class GithubAuthService {
         body: input.body || '',
         labels: (input.labels || []).map((l) => l.name),
         assignees: input.assignees || [],
+        ...(input.milestone != null ? { milestone: input.milestone } : {}),
       }),
     });
     if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
@@ -385,6 +400,7 @@ class GithubAuthService {
       state?: 'open' | 'closed';
       labels?: string[];
       ensureLabels?: Array<{ name: string; color: string }>;
+      milestone?: number | null;
     },
   ): Promise<any> {
     for (const label of input.ensureLabels || []) {
