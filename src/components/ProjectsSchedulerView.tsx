@@ -2131,25 +2131,33 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 title={section.label}
                 style={{
                   display: 'flex',
+                  flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: 8,
-                  width: isSelected ? 'auto' : 40,
-                  height: 40,
-                  padding: isSelected ? '0 16px' : 0,
+                  gap: 5,
+                  width: 68,
+                  height: 60,
                   borderRadius: 8,
                   background: bg,
                   color: fg,
                   cursor: 'pointer',
                   flexShrink: 0,
-                  whiteSpace: 'nowrap',
-                  transition: 'background 0.15s ease, width 0.15s ease, padding 0.15s ease',
+                  transition: 'background 0.15s ease',
                 }}
               >
                 <Icon size={16} />
-                {isSelected && (
-                  <span style={{ fontSize: 12.5, fontWeight: 500 }}>{section.label}</span>
-                )}
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: isSelected ? 500 : 400,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    maxWidth: '100%',
+                  }}
+                >
+                  {section.label}
+                </span>
               </div>
             );
           })}
