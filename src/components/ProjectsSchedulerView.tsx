@@ -42,6 +42,10 @@ import {
   Archive,
   Repeat,
   MoreHorizontal,
+  Star,
+  Lock,
+  Globe,
+  GitFork,
 } from 'lucide-react';
 import { getContrastTextColor, hexToRgba } from '../utils/color';
 import { DatePickerField } from './ui/DatePickerField';
@@ -133,6 +137,17 @@ interface GithubRepoSummary {
   language: string | null;
   owner: { login: string; avatar_url?: string };
   html_url: string;
+  private?: boolean;
+  default_branch?: string;
+  homepage?: string | null;
+  ssh_url?: string;
+  clone_url?: string;
+  stargazers_count?: number;
+  forks_count?: number;
+  topics?: string[];
+  created_at?: string;
+  updated_at?: string;
+  pushed_at?: string;
 }
 
 // Sprint = um milestone real do GitHub. O GitHub não tem campo nativo de "início",
@@ -143,6 +158,15 @@ export interface SprintOption {
   state: 'open' | 'closed';
   startDateIso?: string;
   dueDateIso?: string;
+  openIssues: number;
+  closedIssues: number;
+}
+
+export interface RepoCollaborator {
+  login: string;
+  avatarUrl: string;
+  htmlUrl: string;
+  contributions?: number;
 }
 
 export interface ProjectRelease {
@@ -791,9 +815,12 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   const [isLoadingRepos, setIsLoadingRepos] = useState(true);
   const [reposError, setReposError] = useState<string | null>(null);
 
-  // Cache de issues/sprints por repositório (chave = "owner/repo"), carregado sob demanda ao selecionar um card
+  // Cache de issues/sprints/time por repositório (chave = "owner/repo"), carregado sob demanda ao selecionar um card
   const [repoDetailsCache, setRepoDetailsCache] = useState<
-    Record<string, { issues: ProjectIssue[]; sprints: SprintOption[]; isLoading: boolean; error: string | null }>
+    Record<
+      string,
+      { issues: ProjectIssue[]; sprints: SprintOption[]; collaborators: RepoCollaborator[]; isLoading: boolean; error: string | null }
+    >
   >({});
 
   useEffect(() => {
@@ -903,34 +930,49 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     const fullName = card.fullName;
     const owner = card.owner;
     const repoName = card.repoName;
-    setRepoDetailsCache((prev) => ({ ...prev, [fullName]: { issues: [], sprints: [], isLoading: true, error: null } }));
+    setRepoDetailsCache((prev) => ({
+      ...prev,
+      [fullName]: { issues: [], sprints: [], collaborators: [], isLoading: true, error: null },
+    }));
 
     (async () => {
       try {
-        const [issuesRes, pullsRes, milestonesRes] = await Promise.all([
+        const [issuesRes, pullsRes, milestonesRes, collaboratorsRes] = await Promise.all([
           window.electronAPI?.github?.fetchRepoIssues?.(owner, repoName),
           window.electronAPI?.github?.fetchRepoPulls?.(owner, repoName),
           window.electronAPI?.github?.fetchRepoMilestones?.(owner, repoName),
+          window.electronAPI?.github?.fetchRepoCollaborators?.(owner, repoName),
         ]);
         if (!issuesRes?.success) throw new Error(issuesRes?.error || 'Falha ao buscar issues do repositório.');
         const pulls = pullsRes?.success ? pullsRes.pulls || [] : [];
         const mapped = (issuesRes.issues || []).map((gh: any) => mapGithubIssueToProjectIssue(gh, card.id, pulls));
         const sprints: SprintOption[] = milestonesRes?.success
-          ? (milestonesRes.milestones || [])
-              .filter((m: any) => m.state === 'open')
-              .map((m: any) => ({
-                number: m.number,
-                title: m.title,
-                state: m.state,
-                startDateIso: parseSprintStart(m.description),
-                dueDateIso: m.due_on ? toIsoDateOnly(m.due_on) : undefined,
-              }))
+          ? (milestonesRes.milestones || []).map((m: any) => ({
+              number: m.number,
+              title: m.title,
+              state: m.state,
+              startDateIso: parseSprintStart(m.description),
+              dueDateIso: m.due_on ? toIsoDateOnly(m.due_on) : undefined,
+              openIssues: m.open_issues ?? 0,
+              closedIssues: m.closed_issues ?? 0,
+            }))
           : [];
-        setRepoDetailsCache((prev) => ({ ...prev, [fullName]: { issues: mapped, sprints, isLoading: false, error: null } }));
+        const collaborators: RepoCollaborator[] = collaboratorsRes?.success
+          ? (collaboratorsRes.collaborators || []).map((c: any) => ({
+              login: c.login,
+              avatarUrl: c.avatar_url,
+              htmlUrl: c.html_url,
+              contributions: c.contributions,
+            }))
+          : [];
+        setRepoDetailsCache((prev) => ({
+          ...prev,
+          [fullName]: { issues: mapped, sprints, collaborators, isLoading: false, error: null },
+        }));
       } catch (err: any) {
         setRepoDetailsCache((prev) => ({
           ...prev,
-          [fullName]: { issues: [], sprints: [], isLoading: false, error: err?.message || 'Erro ao buscar dados do repositório.' },
+          [fullName]: { issues: [], sprints: [], collaborators: [], isLoading: false, error: err?.message || 'Erro ao buscar dados do repositório.' },
         }));
       }
     })();
@@ -1130,6 +1172,48 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   const projectIssuesError = selectedRepoDetail?.error || null;
   const rawProjectIssues = selectedRepoDetail?.issues || [];
   const sprintsForSelectedRepo = selectedRepoDetail?.sprints || [];
+  const collaboratorsForSelectedRepo = selectedRepoDetail?.collaborators || [];
+  const selectedRepoRaw = repos.find((r) => r.full_name === selectedProject?.fullName);
+
+  // Riscos = issues abertas com prioridade Alta ou Urgente (não existe conceito nativo de "risco" no GitHub)
+  const riskIssues = useMemo(
+    () => rawProjectIssues.filter((i) => i.status !== 'Concluído' && (i.priority === 'Alta' || i.priority === 'Urgente')),
+    [rawProjectIssues]
+  );
+
+  // Links customizados por repositório, persistidos localmente (GitHub não tem um conceito de "links do projeto")
+  const [customLinks, setCustomLinks] = useState<Record<string, Array<{ id: string; label: string; url: string }>>>(() => {
+    try {
+      const saved = localStorage.getItem('ide_project_custom_links');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [newLinkLabel, setNewLinkLabel] = useState('');
+  const [newLinkUrl, setNewLinkUrl] = useState('');
+
+  const persistCustomLinks = (next: Record<string, Array<{ id: string; label: string; url: string }>>) => {
+    setCustomLinks(next);
+    try {
+      localStorage.setItem('ide_project_custom_links', JSON.stringify(next));
+    } catch {}
+  };
+
+  const handleAddCustomLink = () => {
+    if (!newLinkLabel.trim() || !newLinkUrl.trim() || !selectedProject?.fullName) return;
+    const key = selectedProject.fullName;
+    const entry = { id: `${Date.now()}`, label: newLinkLabel.trim(), url: newLinkUrl.trim() };
+    persistCustomLinks({ ...customLinks, [key]: [...(customLinks[key] || []), entry] });
+    setNewLinkLabel('');
+    setNewLinkUrl('');
+  };
+
+  const handleRemoveCustomLink = (id: string) => {
+    if (!selectedProject?.fullName) return;
+    const key = selectedProject.fullName;
+    persistCustomLinks({ ...customLinks, [key]: (customLinks[key] || []).filter((l) => l.id !== id) });
+  };
 
   // Issues filtradas para o projeto selecionado
   const projectIssues = useMemo(() => {
@@ -1430,6 +1514,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
         [fullName]: {
           issues: [mapped, ...(prev[fullName]?.issues || [])],
           sprints: prev[fullName]?.sprints || [],
+          collaborators: prev[fullName]?.collaborators || [],
           isLoading: false,
           error: null,
         },
@@ -1475,6 +1560,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
               : i
           ),
           sprints: prev[fullName]?.sprints || [],
+          collaborators: prev[fullName]?.collaborators || [],
           isLoading: false,
           error: null,
         },
@@ -1541,6 +1627,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
         [fullName]: {
           issues: (prev[fullName]?.issues || []).map((i) => (i.id === editingIssue.id ? mapped : i)),
           sprints: prev[fullName]?.sprints || [],
+          collaborators: prev[fullName]?.collaborators || [],
           isLoading: false,
           error: null,
         },
@@ -1572,6 +1659,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
         [fullName]: {
           issues: (prev[fullName]?.issues || []).filter((i) => i.id !== issue.id),
           sprints: prev[fullName]?.sprints || [],
+          collaborators: prev[fullName]?.collaborators || [],
           isLoading: false,
           error: null,
         },
@@ -1626,12 +1714,15 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
         state: 'open',
         startDateIso: newSprintStartDate,
         dueDateIso,
+        openIssues: 0,
+        closedIssues: 0,
       };
       setRepoDetailsCache((prev) => ({
         ...prev,
         [fullName]: {
           issues: prev[fullName]?.issues || [],
           sprints: [...(prev[fullName]?.sprints || []), sprint],
+          collaborators: prev[fullName]?.collaborators || [],
           isLoading: false,
           error: null,
         },
@@ -3962,7 +4053,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 width: '100%',
                 background: theme.viewCanvasBg,
                 borderRadius: 8,
-                padding: '22px 26px',
+                padding: 5,
                 display: 'flex',
                 flexDirection: 'column',
                 boxSizing: 'border-box',
@@ -4452,7 +4543,10 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
               </div>
             </div>
           </div>
-        ) : selectedSection !== 'tarefas' ? (
+        ) : selectedSection === 'riscos' ? (
+          /* ========================================================================= */
+          /* TELA DE RISCOS: issues abertas com prioridade Alta/Urgente                */
+          /* ========================================================================= */
           <div
             style={{
               width: '100%',
@@ -4460,17 +4554,734 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
               borderRadius: 10,
               border: theme.shelfBorder,
               boxShadow: theme.shelfShadow,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 5,
+              padding: 5,
+              boxSizing: 'border-box',
+              marginTop: 4,
               flex: 1,
               minHeight: 360,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: theme.textSecondary,
-              fontSize: 13,
-              fontWeight: '300',
             }}
           >
-            {PROJECT_SECTIONS.find((s) => s.id === selectedSection)?.label} — em breve.
+            <div
+              style={{
+                background: theme.viewCanvasBg,
+                borderRadius: 8,
+                padding: 16,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 14,
+                flex: 1,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <AlertTriangle size={17} color="#ef4444" />
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: theme.textPrimary }}>Riscos do Projeto</div>
+                  <div style={{ fontSize: 11.5, color: theme.textSecondary }}>
+                    Issues abertas com prioridade Alta ou Urgente em {selectedProject?.title || 'repositório'}
+                  </div>
+                </div>
+                <span
+                  style={{
+                    marginLeft: 'auto',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    padding: '3px 10px',
+                    borderRadius: 12,
+                    background: riskIssues.length > 0 ? 'rgba(239, 68, 68, 0.15)' : theme.controlBg,
+                    color: riskIssues.length > 0 ? '#ef4444' : theme.textSecondary,
+                  }}
+                >
+                  {riskIssues.length}
+                </span>
+              </div>
+
+              {isLoadingProjectIssues ? (
+                <div style={{ padding: '40px 0', textAlign: 'center', color: theme.textSecondary, fontSize: 13 }}>
+                  Carregando issues do repositório...
+                </div>
+              ) : riskIssues.length === 0 ? (
+                <div style={{ padding: '40px 0', textAlign: 'center', color: theme.textSecondary, fontSize: 13 }}>
+                  Nenhum risco identificado. Issues com prioridade Alta ou Urgente aparecem aqui automaticamente.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {riskIssues.map((issue) => (
+                    <div
+                      key={issue.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: '10px 12px',
+                        borderRadius: 8,
+                        background: theme.viewCardBg,
+                      }}
+                    >
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: issue.priorityColor, flexShrink: 0 }} />
+                      <span style={{ fontSize: 11, color: theme.textSecondary, fontFamily: 'monospace', flexShrink: 0 }}>{issue.id}</span>
+                      <span
+                        style={{
+                          fontSize: 13,
+                          color: theme.textPrimary,
+                          fontWeight: 400,
+                          flex: 1,
+                          minWidth: 0,
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                        }}
+                      >
+                        {issue.title}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 10.5,
+                          fontWeight: 600,
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                          background: hexToRgba(issue.priorityColor, 0.15),
+                          color: issue.priorityColor,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {issue.priority}
+                      </span>
+                      <span style={{ fontSize: 11, color: theme.textSecondary, flexShrink: 0, minWidth: 90 }}>{issue.status}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                        {issue.assignees.slice(0, 3).map((a, i) => (
+                          <div
+                            key={i}
+                            title={a.name}
+                            style={{
+                              width: 20,
+                              height: 20,
+                              borderRadius: '50%',
+                              background: a.avatarBg,
+                              color: '#ffffff',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: 9.5,
+                              marginLeft: i > 0 ? -5 : 0,
+                              border: `1.5px solid ${theme.viewCardBg}`,
+                              overflow: 'hidden',
+                            }}
+                          >
+                            {a.avatarUrl ? <img src={a.avatarUrl} alt={a.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : a.initial}
+                          </div>
+                        ))}
+                      </div>
+                      {issue.htmlUrl && (
+                        <ExternalLink
+                          size={13}
+                          color={theme.textSecondary}
+                          style={{ cursor: 'pointer', flexShrink: 0 }}
+                          onClick={() => window.electronAPI?.shell?.openExternal?.(issue.htmlUrl!)}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : selectedSection === 'marcos' ? (
+          /* ========================================================================= */
+          /* TELA DE MARCOS: roadmap de todos os milestones (sprints) do repositório    */
+          /* ========================================================================= */
+          <div
+            style={{
+              width: '100%',
+              background: theme.bgShelf,
+              borderRadius: 10,
+              border: theme.shelfBorder,
+              boxShadow: theme.shelfShadow,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 5,
+              padding: 5,
+              boxSizing: 'border-box',
+              marginTop: 4,
+              flex: 1,
+              minHeight: 360,
+            }}
+          >
+            <div
+              style={{
+                background: theme.viewCanvasBg,
+                borderRadius: 8,
+                padding: 16,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 14,
+                flex: 1,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Milestone size={17} color={accentColor} />
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: theme.textPrimary }}>Marcos do Projeto</div>
+                  <div style={{ fontSize: 11.5, color: theme.textSecondary }}>Roadmap dos milestones de {selectedProject?.title || 'repositório'}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openCreateSprintModal('create')}
+                  style={{
+                    marginLeft: 'auto',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    background: accentColor,
+                    border: 'none',
+                    borderRadius: 8,
+                    padding: '6px 14px',
+                    color: accentContrastText,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <Plus size={13.5} color={accentContrastText} />
+                  <span>Novo Marco</span>
+                </button>
+              </div>
+
+              {sprintsForSelectedRepo.length === 0 ? (
+                <div style={{ padding: '40px 0', textAlign: 'center', color: theme.textSecondary, fontSize: 13 }}>
+                  Nenhum marco criado ainda para este repositório.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {[...sprintsForSelectedRepo]
+                    .sort((a, b) => (a.dueDateIso || '9999').localeCompare(b.dueDateIso || '9999'))
+                    .map((sprint) => {
+                      const total = sprint.openIssues + sprint.closedIssues;
+                      const percent = total > 0 ? Math.round((sprint.closedIssues / total) * 100) : 0;
+                      return (
+                        <div
+                          key={sprint.number}
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 8,
+                            padding: '12px 14px',
+                            borderRadius: 8,
+                            background: theme.viewCardBg,
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <span style={{ fontSize: 13, fontWeight: 500, color: theme.textPrimary, flex: 1, minWidth: 0 }}>{sprint.title}</span>
+                            <span
+                              style={{
+                                fontSize: 10.5,
+                                fontWeight: 600,
+                                padding: '2px 8px',
+                                borderRadius: 4,
+                                background: sprint.state === 'closed' ? 'rgba(16, 185, 129, 0.15)' : hexToRgba(accentColor, 0.15),
+                                color: sprint.state === 'closed' ? '#10b981' : accentColor,
+                              }}
+                            >
+                              {sprint.state === 'closed' ? 'Concluído' : 'Aberto'}
+                            </span>
+                            {sprint.dueDateIso && (
+                              <span style={{ fontSize: 11, color: theme.textSecondary }}>até {formatShortDate(sprint.dueDateIso)}</span>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{ flex: 1, height: 5, borderRadius: 3, background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', overflow: 'hidden' }}>
+                              <div style={{ width: `${percent}%`, height: '100%', background: percent === 100 ? '#10b981' : accentColor, borderRadius: 3 }} />
+                            </div>
+                            <span style={{ fontSize: 11, color: theme.textSecondary, minWidth: 70, textAlign: 'right' }}>
+                              {sprint.closedIssues}/{total} issues
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : selectedSection === 'relatorio' ? (
+          /* ========================================================================= */
+          /* TELA DE RELATÓRIO: dashboard agregando os dados reais já carregados       */
+          /* ========================================================================= */
+          <div
+            style={{
+              width: '100%',
+              background: theme.bgShelf,
+              borderRadius: 10,
+              border: theme.shelfBorder,
+              boxShadow: theme.shelfShadow,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 5,
+              padding: 5,
+              boxSizing: 'border-box',
+              marginTop: 4,
+              flex: 1,
+              minHeight: 360,
+            }}
+          >
+            <div
+              style={{
+                background: theme.viewCanvasBg,
+                borderRadius: 8,
+                padding: 16,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 18,
+                flex: 1,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <BarChart2 size={17} color={accentColor} />
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: theme.textPrimary }}>Relatório do Projeto</div>
+                  <div style={{ fontSize: 11.5, color: theme.textSecondary }}>{selectedProject?.title || 'repositório'}</div>
+                </div>
+              </div>
+
+              {(() => {
+                const total = rawProjectIssues.length;
+                const done = rawProjectIssues.filter((i) => i.status === 'Concluído').length;
+                const inProgress = rawProjectIssues.filter((i) => i.status === 'Em Progresso').length;
+                const todo = rawProjectIssues.filter((i) => i.status === 'A Fazer').length;
+                const priorityCounts: Record<string, number> = { Baixa: 0, Média: 0, Alta: 0, Urgente: 0 };
+                rawProjectIssues.forEach((i) => { priorityCounts[i.priority] = (priorityCounts[i.priority] || 0) + 1; });
+                const assigneeCounts = new Map<string, { count: number; avatarUrl?: string }>();
+                rawProjectIssues.forEach((i) => {
+                  i.assignees.forEach((a) => {
+                    const entry = assigneeCounts.get(a.name) || { count: 0, avatarUrl: a.avatarUrl };
+                    entry.count += 1;
+                    assigneeCounts.set(a.name, entry);
+                  });
+                });
+                const topAssignees = Array.from(assigneeCounts.entries())
+                  .sort((a, b) => b[1].count - a[1].count)
+                  .slice(0, 5);
+
+                return (
+                  <>
+                    {/* Cards de resumo */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
+                      {[
+                        { label: 'Total de Issues', value: total, color: theme.textPrimary },
+                        { label: 'Concluídas', value: done, color: '#10b981' },
+                        { label: 'Em Progresso', value: inProgress, color: '#f59e0b' },
+                        { label: 'Abertas', value: todo, color: '#3b82f6' },
+                        { label: 'Sprints Ativas', value: activeSprintsCount, color: accentColor },
+                      ].map((stat) => (
+                        <div key={stat.label} style={{ background: theme.viewCardBg, borderRadius: 8, padding: '12px 14px' }}>
+                          <div style={{ fontSize: 22, fontWeight: 600, color: stat.color }}>{stat.value}</div>
+                          <div style={{ fontSize: 11, color: theme.textSecondary, marginTop: 2 }}>{stat.label}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Distribuição por prioridade */}
+                    <div>
+                      <div style={{ fontSize: 12.5, fontWeight: 500, color: theme.textPrimary, marginBottom: 8 }}>Distribuição por Prioridade</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {(['Urgente', 'Alta', 'Média', 'Baixa'] as const).map((p) => {
+                          const count = priorityCounts[p] || 0;
+                          const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                          const color = p === 'Urgente' ? '#dc2626' : p === 'Alta' ? '#ef4444' : p === 'Média' ? '#f59e0b' : '#22c55e';
+                          return (
+                            <div key={p} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ fontSize: 11, color: theme.textSecondary, width: 60 }}>{p}</span>
+                              <div style={{ flex: 1, height: 6, borderRadius: 3, background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', overflow: 'hidden' }}>
+                                <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 3 }} />
+                              </div>
+                              <span style={{ fontSize: 11, color: theme.textSecondary, width: 30, textAlign: 'right' }}>{count}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Top responsáveis */}
+                    {topAssignees.length > 0 && (
+                      <div>
+                        <div style={{ fontSize: 12.5, fontWeight: 500, color: theme.textPrimary, marginBottom: 8 }}>Responsáveis com Mais Issues</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {topAssignees.map(([name, info]) => (
+                            <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <div style={{ width: 22, height: 22, borderRadius: '50%', overflow: 'hidden', background: accentColor, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 10 }}>
+                                {info.avatarUrl ? <img src={info.avatarUrl} alt={name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : name.charAt(0).toUpperCase()}
+                              </div>
+                              <span style={{ fontSize: 12, color: theme.textPrimary, flex: 1 }}>{name}</span>
+                              <span style={{ fontSize: 11, color: theme.textSecondary }}>{info.count} issue(s)</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+        ) : selectedSection === 'links' ? (
+          /* ========================================================================= */
+          /* TELA DE LINKS: URLs reais do repositório + links customizados locais       */
+          /* ========================================================================= */
+          <div
+            style={{
+              width: '100%',
+              background: theme.bgShelf,
+              borderRadius: 10,
+              border: theme.shelfBorder,
+              boxShadow: theme.shelfShadow,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 5,
+              padding: 5,
+              boxSizing: 'border-box',
+              marginTop: 4,
+              flex: 1,
+              minHeight: 360,
+            }}
+          >
+            <div
+              style={{
+                background: theme.viewCanvasBg,
+                borderRadius: 8,
+                padding: 16,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 18,
+                flex: 1,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Link2 size={17} color={accentColor} />
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: theme.textPrimary }}>Links do Projeto</div>
+                  <div style={{ fontSize: 11.5, color: theme.textSecondary }}>{selectedProject?.title || 'repositório'}</div>
+                </div>
+              </div>
+
+              {/* Links reais do repositório */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {[
+                  { label: 'Repositório no GitHub', url: selectedProject?.htmlUrl },
+                  { label: 'Clone (HTTPS)', url: selectedRepoRaw?.clone_url },
+                  { label: 'Clone (SSH)', url: selectedRepoRaw?.ssh_url },
+                  { label: 'Homepage', url: selectedRepoRaw?.homepage || undefined },
+                ]
+                  .filter((l) => l.url)
+                  .map((l) => (
+                    <div
+                      key={l.label}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: '9px 12px',
+                        borderRadius: 8,
+                        background: theme.viewCardBg,
+                      }}
+                    >
+                      <span style={{ fontSize: 12.5, color: theme.textPrimary, fontWeight: 500, minWidth: 150 }}>{l.label}</span>
+                      <span style={{ fontSize: 11.5, color: theme.textSecondary, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {l.url}
+                      </span>
+                      <Copy
+                        size={13}
+                        color={theme.textSecondary}
+                        style={{ cursor: 'pointer', flexShrink: 0 }}
+                        title="Copiar link"
+                        onClick={() => {
+                          navigator.clipboard?.writeText(l.url!);
+                          showToast('Link copiado.');
+                        }}
+                      />
+                      <ExternalLink
+                        size={13}
+                        color={theme.textSecondary}
+                        style={{ cursor: 'pointer', flexShrink: 0 }}
+                        title="Abrir"
+                        onClick={() => window.electronAPI?.shell?.openExternal?.(l.url!)}
+                      />
+                    </div>
+                  ))}
+              </div>
+
+              {/* Links customizados */}
+              <div>
+                <div style={{ fontSize: 12.5, fontWeight: 500, color: theme.textPrimary, marginBottom: 8 }}>Links Personalizados</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+                  {(customLinks[selectedProject?.fullName || ''] || []).map((link) => (
+                    <div
+                      key={link.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: '9px 12px',
+                        borderRadius: 8,
+                        background: theme.viewCardBg,
+                      }}
+                    >
+                      <span style={{ fontSize: 12.5, color: theme.textPrimary, fontWeight: 500, minWidth: 150 }}>{link.label}</span>
+                      <span style={{ fontSize: 11.5, color: theme.textSecondary, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {link.url}
+                      </span>
+                      <ExternalLink
+                        size={13}
+                        color={theme.textSecondary}
+                        style={{ cursor: 'pointer', flexShrink: 0 }}
+                        onClick={() => window.electronAPI?.shell?.openExternal?.(link.url)}
+                      />
+                      <Trash2
+                        size={13}
+                        color="#ef4444"
+                        style={{ cursor: 'pointer', flexShrink: 0 }}
+                        onClick={() => handleRemoveCustomLink(link.id)}
+                      />
+                    </div>
+                  ))}
+                  {(customLinks[selectedProject?.fullName || ''] || []).length === 0 && (
+                    <div style={{ fontSize: 12, color: theme.textSecondary, padding: '6px 2px' }}>Nenhum link personalizado ainda.</div>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <input
+                    type="text"
+                    value={newLinkLabel}
+                    onChange={(e) => setNewLinkLabel(e.target.value)}
+                    placeholder="Nome (ex: Figma, Documentação)"
+                    style={{ background: theme.controlBg, border: 'none', borderRadius: 6, padding: '7px 10px', color: theme.textPrimary, fontSize: 12, outline: 'none', flex: '1 1 160px' }}
+                  />
+                  <input
+                    type="text"
+                    value={newLinkUrl}
+                    onChange={(e) => setNewLinkUrl(e.target.value)}
+                    placeholder="https://..."
+                    style={{ background: theme.controlBg, border: 'none', borderRadius: 6, padding: '7px 10px', color: theme.textPrimary, fontSize: 12, outline: 'none', flex: '2 1 220px' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddCustomLink}
+                    disabled={!newLinkLabel.trim() || !newLinkUrl.trim()}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      background: accentColor,
+                      border: 'none',
+                      borderRadius: 6,
+                      padding: '7px 14px',
+                      color: accentContrastText,
+                      fontSize: 12,
+                      cursor: !newLinkLabel.trim() || !newLinkUrl.trim() ? 'default' : 'pointer',
+                      opacity: !newLinkLabel.trim() || !newLinkUrl.trim() ? 0.5 : 1,
+                    }}
+                  >
+                    <Plus size={13} color={accentContrastText} />
+                    <span>Adicionar</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : selectedSection === 'time' ? (
+          /* ========================================================================= */
+          /* TELA DE TIME: colaboradores reais do repositório                          */
+          /* ========================================================================= */
+          <div
+            style={{
+              width: '100%',
+              background: theme.bgShelf,
+              borderRadius: 10,
+              border: theme.shelfBorder,
+              boxShadow: theme.shelfShadow,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 5,
+              padding: 5,
+              boxSizing: 'border-box',
+              marginTop: 4,
+              flex: 1,
+              minHeight: 360,
+            }}
+          >
+            <div
+              style={{
+                background: theme.viewCanvasBg,
+                borderRadius: 8,
+                padding: 16,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 14,
+                flex: 1,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Users size={17} color={accentColor} />
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: theme.textPrimary }}>Time do Projeto</div>
+                  <div style={{ fontSize: 11.5, color: theme.textSecondary }}>Colaboradores de {selectedProject?.title || 'repositório'}</div>
+                </div>
+              </div>
+
+              {isLoadingProjectIssues && collaboratorsForSelectedRepo.length === 0 ? (
+                <div style={{ padding: '40px 0', textAlign: 'center', color: theme.textSecondary, fontSize: 13 }}>Carregando time...</div>
+              ) : collaboratorsForSelectedRepo.length === 0 ? (
+                <div style={{ padding: '40px 0', textAlign: 'center', color: theme.textSecondary, fontSize: 13 }}>
+                  Nenhum colaborador encontrado para este repositório.
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
+                  {collaboratorsForSelectedRepo.map((c) => (
+                    <div
+                      key={c.login}
+                      onClick={() => window.electronAPI?.shell?.openExternal?.(c.htmlUrl)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: '10px 12px',
+                        borderRadius: 8,
+                        background: theme.viewCardBg,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <div style={{ width: 32, height: 32, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: accentColor }}>
+                        {c.avatarUrl && <img src={c.avatarUrl} alt={c.login} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 500, color: theme.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {c.login}
+                        </div>
+                        {typeof c.contributions === 'number' && (
+                          <div style={{ fontSize: 10.5, color: theme.textSecondary }}>{c.contributions} contribuições</div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : selectedSection === 'configuracoes' ? (
+          /* ========================================================================= */
+          /* TELA DE CONFIGURAÇÕES: metadados reais do repositório selecionado         */
+          /* ========================================================================= */
+          <div
+            style={{
+              width: '100%',
+              background: theme.bgShelf,
+              borderRadius: 10,
+              border: theme.shelfBorder,
+              boxShadow: theme.shelfShadow,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 5,
+              padding: 5,
+              boxSizing: 'border-box',
+              marginTop: 4,
+              flex: 1,
+              minHeight: 360,
+            }}
+          >
+            <div
+              style={{
+                background: theme.viewCanvasBg,
+                borderRadius: 8,
+                padding: 16,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 16,
+                flex: 1,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Settings size={17} color={accentColor} />
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: theme.textPrimary }}>Configurações do Repositório</div>
+                  <div style={{ fontSize: 11.5, color: theme.textSecondary }}>{selectedRepoRaw?.full_name || selectedProject?.title}</div>
+                </div>
+                {selectedProject?.htmlUrl && (
+                  <button
+                    type="button"
+                    onClick={() => window.electronAPI?.shell?.openExternal?.(`${selectedProject.htmlUrl}/settings`)}
+                    style={{
+                      marginLeft: 'auto',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      background: theme.controlBg,
+                      border: 'none',
+                      borderRadius: 8,
+                      padding: '6px 14px',
+                      color: theme.textPrimary,
+                      fontSize: 12,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <ExternalLink size={13} />
+                    <span>Editar no GitHub</span>
+                  </button>
+                )}
+              </div>
+
+              {selectedRepoRaw?.description && (
+                <div style={{ fontSize: 12.5, color: theme.textSecondary, lineHeight: 1.5 }}>{selectedRepoRaw.description}</div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
+                <div style={{ background: theme.viewCardBg, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {selectedRepoRaw?.private ? <Lock size={14} color={theme.textSecondary} /> : <Globe size={14} color={theme.textSecondary} />}
+                  <span style={{ fontSize: 12, color: theme.textPrimary }}>{selectedRepoRaw?.private ? 'Privado' : 'Público'}</span>
+                </div>
+                <div style={{ background: theme.viewCardBg, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <GitBranch size={14} color={theme.textSecondary} />
+                  <span style={{ fontSize: 12, color: theme.textPrimary }}>{selectedRepoRaw?.default_branch || 'main'}</span>
+                </div>
+                <div style={{ background: theme.viewCardBg, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Star size={14} color={theme.textSecondary} />
+                  <span style={{ fontSize: 12, color: theme.textPrimary }}>{selectedRepoRaw?.stargazers_count ?? 0} stars</span>
+                </div>
+                <div style={{ background: theme.viewCardBg, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <GitFork size={14} color={theme.textSecondary} />
+                  <span style={{ fontSize: 12, color: theme.textPrimary }}>{selectedRepoRaw?.forks_count ?? 0} forks</span>
+                </div>
+                {selectedRepoRaw?.language && (
+                  <div style={{ background: theme.viewCardBg, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Tag size={14} color={theme.textSecondary} />
+                    <span style={{ fontSize: 12, color: theme.textPrimary }}>{selectedRepoRaw.language}</span>
+                  </div>
+                )}
+                {selectedRepoRaw?.updated_at && (
+                  <div style={{ background: theme.viewCardBg, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Clock size={14} color={theme.textSecondary} />
+                    <span style={{ fontSize: 12, color: theme.textPrimary }}>
+                      Atualizado {new Date(selectedRepoRaw.updated_at).toLocaleDateString('pt-BR')}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {selectedRepoRaw?.topics && selectedRepoRaw.topics.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 12.5, fontWeight: 500, color: theme.textPrimary, marginBottom: 8 }}>Topics</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {selectedRepoRaw.topics.map((topic) => (
+                      <span
+                        key={topic}
+                        style={{ fontSize: 11, padding: '3px 9px', borderRadius: 12, background: hexToRgba(accentColor, 0.15), color: accentColor }}
+                      >
+                        {topic}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         ) : (
         <>
@@ -5883,7 +6694,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                   }}
                 >
                   <option value="">Sem sprint</option>
-                  {sprintsForSelectedRepo.map((s) => (
+                  {sprintsForSelectedRepo.filter((s) => s.state === 'open').map((s) => (
                     <option key={s.number} value={s.number}>
                       {s.title}
                       {s.dueDateIso ? ` (até ${formatShortDate(s.dueDateIso)})` : ''}
@@ -6156,7 +6967,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                   }}
                 >
                   <option value="">Sem sprint</option>
-                  {sprintsForSelectedRepo.map((s) => (
+                  {sprintsForSelectedRepo.filter((s) => s.state === 'open').map((s) => (
                     <option key={s.number} value={s.number}>
                       {s.title}
                       {s.dueDateIso ? ` (até ${formatShortDate(s.dueDateIso)})` : ''}

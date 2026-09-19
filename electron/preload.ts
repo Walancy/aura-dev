@@ -184,6 +184,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     fetchRepoPulls: (owner: string, repo: string) => ipcRenderer.invoke('github:fetchRepoPulls', { owner, repo }),
     fetchRepoMilestones: (owner: string, repo: string) => ipcRenderer.invoke('github:fetchRepoMilestones', { owner, repo }),
     fetchRepoReleases: (owner: string, repo: string) => ipcRenderer.invoke('github:fetchRepoReleases', { owner, repo }),
+    fetchRepoCollaborators: (owner: string, repo: string) => ipcRenderer.invoke('github:fetchRepoCollaborators', { owner, repo }),
     createIssue: (owner: string, repo: string, input: { title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[]; milestone?: number }) =>
       ipcRenderer.invoke('github:createIssue', { owner, repo, ...input }),
     updateIssue: (

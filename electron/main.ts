@@ -960,6 +960,15 @@ ipcMain.handle('github:fetchRepoReleases', async (_event, { owner, repo }: { own
   }
 });
 
+ipcMain.handle('github:fetchRepoCollaborators', async (_event, { owner, repo }: { owner: string; repo: string }) => {
+  try {
+    const collaborators = await githubAuthService.fetchRepoCollaborators(owner, repo);
+    return { success: true, collaborators };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMain.handle(
   'github:createIssue',
   async (

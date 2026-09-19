@@ -341,6 +341,19 @@ class GithubAuthService {
     return res.json();
   }
 
+  public async fetchRepoCollaborators(owner: string, repo: string): Promise<any[]> {
+    const res = await this.authedFetch(`https://api.github.com/repos/${owner}/${repo}/collaborators?per_page=100`, {
+      headers: { Accept: 'application/vnd.github+json' },
+    });
+    if (res.ok) return res.json();
+    // Sem permissão de admin para listar colaboradores (comum em repos de terceiros) — cai para contribuidores.
+    const fallback = await this.authedFetch(`https://api.github.com/repos/${owner}/${repo}/contributors?per_page=100`, {
+      headers: { Accept: 'application/vnd.github+json' },
+    });
+    if (!fallback.ok) throw new Error(`GitHub API respondeu ${fallback.status}`);
+    return fallback.json();
+  }
+
   public async createMilestone(
     owner: string,
     repo: string,

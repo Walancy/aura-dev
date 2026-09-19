@@ -102,6 +102,7 @@ export interface ElectronAPI {
     fetchRepoPulls: (owner: string, repo: string) => Promise<{ success: boolean; pulls?: any[]; error?: string }>;
     fetchRepoMilestones: (owner: string, repo: string) => Promise<{ success: boolean; milestones?: any[]; error?: string }>;
     fetchRepoReleases: (owner: string, repo: string) => Promise<{ success: boolean; releases?: any[]; error?: string }>;
+    fetchRepoCollaborators: (owner: string, repo: string) => Promise<{ success: boolean; collaborators?: any[]; error?: string }>;
     createIssue: (owner: string, repo: string, input: { title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[]; milestone?: number }) => Promise<{ success: boolean; issue?: any; error?: string }>;
     updateIssue: (
       owner: string,
