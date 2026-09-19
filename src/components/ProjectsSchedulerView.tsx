@@ -397,7 +397,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   const [selectedSprint, setSelectedSprint] = useState('Todas as Linguagens');
   const [selectedStatus, setSelectedStatus] = useState('Todos os Projetos');
   const [selectedVersion, setSelectedVersion] = useState('v2.4 - Produção');
-  const [selectedOrg, setSelectedOrg] = useState('Todas as Organizações');
+  const [selectedOrg, setSelectedOrg] = useState('Todas');
 
   // Dados reais do GitHub (usuário, repositórios e organizações)
   const [currentUser, setCurrentUser] = useState<{ login: string; avatarUrl: string } | null>(null);
@@ -485,7 +485,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
 
   // Organizações reais do usuário + conta pessoal
   const organizationOptions: OrganizationOption[] = useMemo(() => {
-    const list: OrganizationOption[] = [{ id: 'all', name: 'Todas as Organizações', slug: 'all', avatarColor: '#6366f1' }];
+    const list: OrganizationOption[] = [{ id: 'all', name: 'Todas', slug: 'all', avatarColor: '#6366f1' }];
     if (currentUser) {
       list.push({
         id: currentUser.login,
@@ -731,7 +731,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
       if (card.percentValue < 90) return false;
     }
 
-    if (selectedOrg !== 'Todas as Organizações') {
+    if (selectedOrg !== 'Todas') {
       if (card.org && card.org !== selectedOrg) return false;
     }
 
@@ -1399,7 +1399,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                     onMouseLeave={(e) => (e.currentTarget.style.background = theme.controlBg)}
                   >
                     {/* Tiny Org avatar / icon */}
-                    {selectedOrg !== 'Todas as Organizações' ? (
+                    {selectedOrg !== 'Todas' ? (
                       <div
                         style={{
                           width: 16,
@@ -2100,9 +2100,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
         {/* ========================================================================= */}
         <div
           style={{
-            width: 'fit-content',
-            maxWidth: '100%',
-            alignSelf: 'center',
+            width: '100%',
             padding: 5,
             background: theme.bgShelf,
             borderRadius: 10,
@@ -2135,13 +2133,13 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: 5,
-                  width: 68,
+                  flex: '1 1 0',
+                  minWidth: 0,
                   height: 60,
                   borderRadius: 8,
                   background: bg,
                   color: fg,
                   cursor: 'pointer',
-                  flexShrink: 0,
                   transition: 'background 0.15s ease',
                 }}
               >
