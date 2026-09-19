@@ -2788,7 +2788,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
               boxSizing: 'border-box',
               marginTop: 4,
               flex: 1,
-              minHeight: 520,
+              minHeight: 360,
             }}
           >
             {/* ----------------------------------------------------------------- */}
@@ -3954,7 +3954,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
               boxSizing: 'border-box',
               marginTop: 4,
               flex: 1,
-              minHeight: 520,
+              minHeight: 360,
             }}
           >
             <div
