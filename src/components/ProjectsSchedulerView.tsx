@@ -217,11 +217,11 @@ function toIsoDateOnly(iso: string): string {
 const WEEKDAY_LABELS_PT = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
 
 const PROJECT_SECTIONS = [
+  { id: 'tarefas', label: 'Tarefas', icon: ListChecks },
   { id: 'issues', label: 'Issues', icon: CircleDot },
   { id: 'sprints', label: 'Sprints', icon: Zap },
   { id: 'riscos', label: 'Riscos', icon: AlertTriangle },
   { id: 'marcos', label: 'Marcos', icon: Milestone },
-  { id: 'tarefas', label: 'Tarefas', icon: ListChecks },
   { id: 'relatorio', label: 'Relatório', icon: BarChart2 },
   { id: 'links', label: 'Links', icon: Link2 },
   { id: 'time', label: 'Time', icon: Users },
@@ -2114,12 +2114,11 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
           }}
           className="no-scrollbar"
         >
-          {PROJECT_SECTIONS.map((section) => {
+          {PROJECT_SECTIONS.map((section, index) => {
             const isSelected = selectedSection === section.id;
             const isHovered = hoveredSectionId === section.id;
             const Icon = section.icon;
-            const bg = isSelected ? accentColor : isHovered ? theme.cardHoverBg : theme.cardBg;
-            const fg = isSelected ? accentContrastText : isHovered ? theme.textPrimary : theme.textSecondary;
+            const opacity = isSelected ? 1 : isHovered ? 0.8 : 0.5;
             return (
               <div
                 key={section.id}
@@ -2136,11 +2135,12 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                   flex: '1 1 0',
                   minWidth: 0,
                   height: 60,
-                  borderRadius: 8,
-                  background: bg,
-                  color: fg,
+                  borderLeft: index > 0 ? `1px solid ${hexToRgba(theme.textSecondary, 0.15)}` : 'none',
+                  borderBottom: isSelected ? `2px solid ${accentColor}` : '2px solid transparent',
+                  color: theme.textPrimary,
+                  opacity,
                   cursor: 'pointer',
-                  transition: 'background 0.15s ease',
+                  transition: 'opacity 0.15s ease, border-color 0.15s ease',
                 }}
               >
                 <Icon size={16} />
