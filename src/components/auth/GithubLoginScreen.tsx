@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Copy, Check } from 'lucide-react';
 import logoUrl from '../../../icon-devflow.svg';
 
 export interface GithubAuthenticatedUser {
@@ -186,25 +187,47 @@ export const GithubLoginScreen: React.FC<GithubLoginScreenProps> = ({ accentColo
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, marginTop: 4 }}>
             <div
               style={{
-                fontFamily: '"JetBrains Mono", Menlo, monospace',
-                fontSize: 26,
-                fontWeight: 700,
-                letterSpacing: 5,
-                color: '#ffffff',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
                 background: '#161616',
                 border: '1px solid rgba(255,255,255,0.12)',
                 borderRadius: 8,
-                padding: '10px 22px',
+                padding: '10px 14px 10px 22px',
               }}
             >
-              {userCode}
+              <span
+                style={{
+                  fontFamily: '"JetBrains Mono", Menlo, monospace',
+                  fontSize: 26,
+                  fontWeight: 700,
+                  letterSpacing: 5,
+                  color: '#ffffff',
+                }}
+              >
+                {userCode}
+              </span>
+              <button
+                onClick={handleCopyCode}
+                title={copied ? 'Código copiado!' : 'Copiar código'}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: 'none',
+                  border: 'none',
+                  color: copied ? '#22c55e' : accentColor,
+                  cursor: 'pointer',
+                  padding: 6,
+                  borderRadius: 6,
+                  transition: 'background 0.15s ease',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.08)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              >
+                {copied ? <Check size={18} /> : <Copy size={18} />}
+              </button>
             </div>
-            <button
-              onClick={handleCopyCode}
-              style={{ background: 'none', border: 'none', color: accentColor, fontSize: 12, cursor: 'pointer', padding: 0 }}
-            >
-              {copied ? 'Código copiado!' : 'Copiar código'}
-            </button>
             <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', textAlign: 'center', maxWidth: 320, lineHeight: 1.5 }}>
               Abrimos <span style={{ color: 'rgba(255,255,255,0.7)' }}>{verificationUri.replace('https://', '')}</span> no seu
               navegador. Cole o código acima para autorizar.
