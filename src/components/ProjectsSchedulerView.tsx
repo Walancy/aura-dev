@@ -31,6 +31,17 @@ import {
   Link2,
   Users,
   Settings,
+  MessageSquare,
+  Smile,
+  AtSign,
+  Layers,
+  Inbox,
+  UserCheck,
+  CheckSquare,
+  Square,
+  Archive,
+  Repeat,
+  MoreHorizontal,
 } from 'lucide-react';
 import { getContrastTextColor, hexToRgba } from '../utils/color';
 import { DatePickerField } from './ui/DatePickerField';
@@ -98,6 +109,10 @@ export interface ProjectIssue {
   nodeId?: string;
   htmlUrl?: string;
   rawLabels?: string[];
+  rawState?: 'open' | 'closed';
+  author?: string;
+  authorAvatarUrl?: string;
+  commentsCount?: number;
   pullRequest?: {
     number: number;
     title: string;
@@ -243,6 +258,372 @@ function formatIssueDateRange(issue: ProjectIssue): string {
   return issue.dateStr;
 }
 
+function formatGithubTimeAgo(iso: string): string {
+  try {
+    const now = new Date().getTime();
+    const past = new Date(iso).getTime();
+    const diffMs = Math.max(0, now - past);
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHr = Math.floor(diffMin / 60);
+    const diffDay = Math.floor(diffHr / 24);
+
+    if (diffDay >= 30) {
+      return `on ${new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+    }
+    if (diffDay >= 7) {
+      const weeks = Math.max(1, Math.floor(diffDay / 7));
+      return `${weeks}w ago`;
+    }
+    if (diffDay > 0) return `${diffDay}d ago`;
+    if (diffHr > 0) return `${diffHr}h ago`;
+    if (diffMin > 0) return `${diffMin}m ago`;
+    return 'just now';
+  } catch {
+    return 'recently';
+  }
+}
+
+const SAMPLE_GITHUB_ISSUES: ProjectIssue[] = [
+  {
+    id: '#246',
+    projectId: 1,
+    githubNumber: 246,
+    title: 'Constraint de FK duplicada em gruposParticipantes.grupo_id quebra embeds do PostgREST',
+    description: 'Verificada duplicação de FK impedindo resolução de embeds do PostgREST.',
+    dateStr: '05 Set 2026',
+    createdAtIso: '2026-09-05T12:00:00Z',
+    durationDays: 14,
+    tag: 'backend',
+    tagColor: { bg: 'rgba(56, 189, 248, 0.15)', text: '#38bdf8' },
+    priority: 'Alta',
+    priorityColor: '#ef4444',
+    status: 'A Fazer',
+    rawState: 'open',
+    author: 'nelsonappmoove',
+    commentsCount: 1,
+    assignees: [],
+    progress: 0,
+    rawLabels: ['backend'],
+  },
+  {
+    id: '#245',
+    projectId: 1,
+    githubNumber: 245,
+    title: 'Excluir missão/grupo não cascateia soft delete para os filhos, gerando registros órfãos',
+    description: 'Ao executar soft delete em missões ou grupos, as entidades filhas continuam ativas.',
+    dateStr: '05 Set 2026',
+    createdAtIso: '2026-09-05T10:30:00Z',
+    durationDays: 14,
+    tag: 'backend',
+    tagColor: { bg: 'rgba(56, 189, 248, 0.15)', text: '#38bdf8' },
+    priority: 'Alta',
+    priorityColor: '#ef4444',
+    status: 'A Fazer',
+    rawState: 'open',
+    author: 'nelsonappmoove',
+    commentsCount: 0,
+    assignees: [],
+    progress: 0,
+    rawLabels: ['backend'],
+  },
+  {
+    id: '#244',
+    projectId: 1,
+    githubNumber: 244,
+    title: 'Otimização de consumo de Egress e Storage no Supabase',
+    description: 'Análise de métricas de rede e redução de tráfego de saída.',
+    dateStr: '19 Ago 2026',
+    createdAtIso: '2026-08-19T14:15:00Z',
+    durationDays: 31,
+    tag: 'infra',
+    tagColor: { bg: 'rgba(168, 85, 247, 0.15)', text: '#a855f7' },
+    priority: 'Média',
+    priorityColor: '#f59e0b',
+    status: 'Em Progresso',
+    rawState: 'open',
+    author: 'nelsonappmoove',
+    commentsCount: 0,
+    assignees: [
+      { name: 'nelsonappmoove', initial: 'N', avatarBg: '#10b981', avatarUrl: 'https://github.com/identicons/nelsonappmoove.png' },
+    ],
+    progress: 50,
+    rawLabels: ['infra'],
+  },
+  {
+    id: '#243',
+    projectId: 1,
+    githubNumber: 243,
+    title: 'Auditar as 36 falhas de teste restantes: 3 são bugs já corrigidos com teste desatualizado, o resto exige decisão de produto',
+    description: 'Levantamento da suite de testes de integração e testes e2e.',
+    dateStr: '18 Ago 2026',
+    createdAtIso: '2026-08-18T09:00:00Z',
+    durationDays: 32,
+    tag: 'bug',
+    tagColor: { bg: 'rgba(239, 68, 68, 0.15)', text: '#ef4444' },
+    priority: 'Urgente',
+    priorityColor: '#dc2626',
+    status: 'A Fazer',
+    rawState: 'open',
+    author: 'nelsonappmoove',
+    commentsCount: 0,
+    assignees: [
+      { name: 'nelsonappmoove', initial: 'N', avatarBg: '#10b981', avatarUrl: 'https://github.com/identicons/nelsonappmoove.png' },
+    ],
+    progress: 0,
+    rawLabels: ['bug', 'PAINEL'],
+  },
+  {
+    id: '#242',
+    projectId: 1,
+    githubNumber: 242,
+    title: 'Edição de hotel cruza campos: thumbnail recebe URL de site, website recebe link do Maps e description recebe o subtítulo',
+    description: 'Formulário de edição de hotéis trocando campos no payload.',
+    dateStr: '18 Ago 2026',
+    createdAtIso: '2026-08-18T11:20:00Z',
+    durationDays: 32,
+    tag: 'bug',
+    tagColor: { bg: 'rgba(239, 68, 68, 0.15)', text: '#ef4444' },
+    priority: 'Alta',
+    priorityColor: '#ef4444',
+    status: 'A Fazer',
+    rawState: 'open',
+    author: 'nelsonappmoove',
+    commentsCount: 0,
+    assignees: [
+      { name: 'nelsonappmoove', initial: 'N', avatarBg: '#10b981', avatarUrl: 'https://github.com/identicons/nelsonappmoove.png' },
+    ],
+    progress: 0,
+    rawLabels: ['bug', 'PAINEL'],
+  },
+  {
+    id: '#241',
+    projectId: 1,
+    githubNumber: 241,
+    title: 'Colunas cidade/estado deslocadas em 17 eventos: rua cai em cidade e cidade cai em estado',
+    description: 'Parser de geocoding com split incorreto em endereços contendo vírgulas duplas.',
+    dateStr: '18 Ago 2026',
+    createdAtIso: '2026-08-18T13:45:00Z',
+    durationDays: 32,
+    tag: 'bug',
+    tagColor: { bg: 'rgba(239, 68, 68, 0.15)', text: '#ef4444' },
+    priority: 'Média',
+    priorityColor: '#f59e0b',
+    status: 'A Fazer',
+    rawState: 'open',
+    author: 'nelsonappmoove',
+    commentsCount: 0,
+    assignees: [
+      { name: 'nelsonappmoove', initial: 'N', avatarBg: '#10b981', avatarUrl: 'https://github.com/identicons/nelsonappmoove.png' },
+    ],
+    progress: 0,
+    rawLabels: ['bug', 'PAINEL'],
+  },
+  {
+    id: '#240',
+    projectId: 1,
+    githubNumber: 240,
+    title: 'ReturnForm não grava geo: eventos de retorno ao hotel ficam sem endereco, cidade, estado, coordenada e place_id',
+    description: 'Payload de retorno ao hotel não inclui coordenadas calculadas.',
+    dateStr: '18 Ago 2026',
+    createdAtIso: '2026-08-18T15:10:00Z',
+    durationDays: 32,
+    tag: 'bug',
+    tagColor: { bg: 'rgba(239, 68, 68, 0.15)', text: '#ef4444' },
+    priority: 'Alta',
+    priorityColor: '#ef4444',
+    status: 'A Fazer',
+    rawState: 'open',
+    author: 'nelsonappmoove',
+    commentsCount: 0,
+    assignees: [
+      { name: 'nelsonappmoove', initial: 'N', avatarBg: '#10b981', avatarUrl: 'https://github.com/identicons/nelsonappmoove.png' },
+    ],
+    progress: 0,
+    rawLabels: ['bug', 'PAINEL'],
+  },
+  {
+    id: '#239',
+    projectId: 1,
+    githubNumber: 239,
+    title: 'Backfill de latitude/longitude nos eventos sem coordenada, só onde o geocoding é preciso',
+    description: 'Job de enriquecimento de dados geográficos em lote.',
+    dateStr: '18 Ago 2026',
+    createdAtIso: '2026-08-18T16:30:00Z',
+    durationDays: 32,
+    tag: 'bug',
+    tagColor: { bg: 'rgba(239, 68, 68, 0.15)', text: '#ef4444' },
+    priority: 'Média',
+    priorityColor: '#f59e0b',
+    status: 'A Fazer',
+    rawState: 'open',
+    author: 'nelsonappmoove',
+    commentsCount: 0,
+    assignees: [
+      { name: 'nelsonappmoove', initial: 'N', avatarBg: '#10b981', avatarUrl: 'https://github.com/identicons/nelsonappmoove.png' },
+    ],
+    progress: 0,
+    rawLabels: ['bug', 'PAINEL'],
+  },
+  {
+    id: '#238',
+    projectId: 1,
+    githubNumber: 238,
+    title: 'Ajuste no design das divs de projetos e tarefas para remover bordas e unificar containers',
+    description: 'Refatoração da interface para seguir a identidade visual minimalista sem bordas.',
+    dateStr: '17 Ago 2026',
+    createdAtIso: '2026-08-17T18:00:00Z',
+    durationDays: 33,
+    tag: 'UI/UX',
+    tagColor: { bg: 'rgba(234, 179, 8, 0.15)', text: '#eab308' },
+    priority: 'Baixa',
+    priorityColor: '#22c55e',
+    status: 'Concluído',
+    rawState: 'closed',
+    author: 'walancy',
+    commentsCount: 3,
+    assignees: [
+      { name: 'walancy', initial: 'W', avatarBg: '#8b5cf6' },
+    ],
+    progress: 100,
+    rawLabels: ['frontend', 'UI/UX'],
+  },
+];
+
+export interface GithubSprintItem {
+  id: string;
+  number: number;
+  title: string;
+  durationLabel: string;
+  startDateIso: string;
+  dueDateIso: string;
+  dateRangeLabel: string;
+  status: 'Current' | 'Planned' | 'Completed';
+}
+
+const SAMPLE_GITHUB_SPRINTS: GithubSprintItem[] = [
+  {
+    id: 'sprint-2',
+    number: 2,
+    title: 'Sprint2 - Cadastro e Perfis de Acesso',
+    durationLabel: '2 weeks',
+    startDateIso: '2026-09-16',
+    dueDateIso: '2026-09-29',
+    dateRangeLabel: 'Sep 16 - Sep 29',
+    status: 'Current',
+  },
+  {
+    id: 'sprint-3',
+    number: 3,
+    title: 'Sprint3 - Catálogo de Lotes, Motor de Frete e Entrada da Streaming Multicanal',
+    durationLabel: '2 weeks',
+    startDateIso: '2026-09-30',
+    dueDateIso: '2026-10-13',
+    dateRangeLabel: 'Sep 30 - Oct 13',
+    status: 'Planned',
+  },
+  {
+    id: 'sprint-4',
+    number: 4,
+    title: 'Sprint4 - Habilitação, Crédito e Player de Streaming',
+    durationLabel: '2 weeks',
+    startDateIso: '2026-10-14',
+    dueDateIso: '2026-10-27',
+    dateRangeLabel: 'Oct 14 - Oct 27',
+    status: 'Planned',
+  },
+  {
+    id: 'sprint-5',
+    number: 5,
+    title: 'Sprint5 - Leilão Ao Vivo — Motor de Lances',
+    durationLabel: '2 weeks',
+    startDateIso: '2026-10-28',
+    dueDateIso: '2026-11-10',
+    dateRangeLabel: 'Oct 28 - Nov 10',
+    status: 'Planned',
+  },
+  {
+    id: 'sprint-6',
+    number: 6,
+    title: 'Sprint6 - Integração Smart TV Samsung',
+    durationLabel: '2 weeks',
+    startDateIso: '2026-11-11',
+    dueDateIso: '2026-11-24',
+    dateRangeLabel: 'Nov 11 - Nov 24',
+    status: 'Planned',
+  },
+  {
+    id: 'sprint-7',
+    number: 7,
+    title: 'Sprint7 - Integração Smart TV LG',
+    durationLabel: '2 weeks',
+    startDateIso: '2026-11-25',
+    dueDateIso: '2026-12-08',
+    dateRangeLabel: 'Nov 25 - Dec 08',
+    status: 'Planned',
+  },
+  {
+    id: 'sprint-8',
+    number: 8,
+    title: 'Sprint8 - Testes de Carga do Leilão ao Vivo',
+    durationLabel: '2 weeks',
+    startDateIso: '2026-12-09',
+    dueDateIso: '2026-12-22',
+    dateRangeLabel: 'Dec 09 - Dec 22',
+    status: 'Planned',
+  },
+  {
+    id: 'sprint-9',
+    number: 9,
+    title: 'Sprint9 - Otimizações de Latência e Cache Redis',
+    durationLabel: '2 weeks',
+    startDateIso: '2026-12-23',
+    dueDateIso: '2027-01-05',
+    dateRangeLabel: 'Dec 23 - Jan 05',
+    status: 'Planned',
+  },
+  {
+    id: 'sprint-10',
+    number: 10,
+    title: 'Sprint10 - App Mobile Flutter e Notificações Push',
+    durationLabel: '2 weeks',
+    startDateIso: '2027-01-06',
+    dueDateIso: '2027-01-19',
+    dateRangeLabel: 'Jan 06 - Jan 19',
+    status: 'Planned',
+  },
+  {
+    id: 'sprint-11',
+    number: 11,
+    title: 'Sprint11 - Compliance LGPD e Auditoria de Segurança',
+    durationLabel: '2 weeks',
+    startDateIso: '2027-01-20',
+    dueDateIso: '2027-02-02',
+    dateRangeLabel: 'Jan 20 - Feb 02',
+    status: 'Planned',
+  },
+  {
+    id: 'sprint-12',
+    number: 12,
+    title: 'Sprint12 - Lançamento Oficial e Go-Live',
+    durationLabel: '2 weeks',
+    startDateIso: '2027-02-03',
+    dueDateIso: '2027-02-16',
+    dateRangeLabel: 'Feb 03 - Feb 16',
+    status: 'Planned',
+  },
+  {
+    id: 'sprint-1',
+    number: 1,
+    title: 'Sprint1 - Setup Inicial e Arquitetura',
+    durationLabel: '2 weeks',
+    startDateIso: '2026-09-02',
+    dueDateIso: '2026-09-15',
+    dateRangeLabel: 'Sep 02 - Sep 15',
+    status: 'Completed',
+  },
+];
+
 function getStatusBarColor(status: ProjectIssue['status'], isEffectiveDark: boolean): string {
   if (status === 'Concluído') return '#10b981';
   if (status === 'Em Progresso') return '#f59e0b';
@@ -322,6 +703,10 @@ function mapGithubIssueToProjectIssue(gh: any, projectId: number, pulls: any[]):
     nodeId: gh.node_id,
     htmlUrl: gh.html_url,
     rawLabels: labelNames,
+    rawState: (gh.state === 'closed' ? 'closed' : 'open') as 'open' | 'closed',
+    author: gh.user?.login || 'gh-user',
+    authorAvatarUrl: gh.user?.avatar_url,
+    commentsCount: gh.comments || 0,
     title: gh.title,
     description: gh.body || '',
     dateStr: createdAt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }),
@@ -391,7 +776,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   };
   const [hoveredCardId, setHoveredCardId] = useState<number | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<number | null>(null);
-  const [selectedSection, setSelectedSection] = useState<ProjectSectionId>('tarefas');
+  const [selectedSection, setSelectedSection] = useState<ProjectSectionId>('sprints');
   const [hoveredSectionId, setHoveredSectionId] = useState<ProjectSectionId | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSprint, setSelectedSprint] = useState('Todas as Linguagens');
@@ -780,6 +1165,228 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     setNewTaskPriority('Média');
     setNewTaskStatus('Em Progresso');
     setNewTaskMilestoneNumber(null);
+  };
+
+  // =========================================================================
+  // ESTADOS E FILTROS PARA A TELA DE ISSUES (PADRÃO GITHUB COM DESIGN NATIVO)
+  // =========================================================================
+  const [issuesSidebarTab, setIssuesSidebarTab] = useState<
+    'all' | 'assigned' | 'created' | 'mentioned' | 'recent' | 'views' | 'projects' | 'milestones' | 'labels'
+  >('all');
+  const [issuesStateFilter, setIssuesStateFilter] = useState<'open' | 'closed'>('open');
+  const [issuesSearchQuery, setIssuesSearchQuery] = useState('');
+  const [selectedIssueCheckboxes, setSelectedIssueCheckboxes] = useState<Set<string>>(new Set());
+  const [activeIssuesDropdown, setActiveIssuesDropdown] = useState<
+    'author' | 'label' | 'milestones' | 'assignee' | 'sort' | null
+  >(null);
+  const [selectedAuthorFilter, setSelectedAuthorFilter] = useState<string>('all');
+  const [selectedLabelFilter, setSelectedLabelFilter] = useState<string>('all');
+  const [selectedAssigneeFilter, setSelectedAssigneeFilter] = useState<string>('all');
+  const [issuesSortMode, setIssuesSortMode] = useState<'newest' | 'oldest' | 'comments'>('newest');
+  const [hoveredIssueId, setHoveredIssueId] = useState<string | null>(null);
+
+  // Issues combinadas: usa issues reais do repositório selecionado se existirem,
+  // ou os dados realistas de exemplo do GitHub da captura de tela enviada pelo usuário
+  const combinedGithubIssues = useMemo(() => {
+    if (rawProjectIssues && rawProjectIssues.length > 0) {
+      return rawProjectIssues;
+    }
+    return SAMPLE_GITHUB_ISSUES;
+  }, [rawProjectIssues]);
+
+  const openIssuesCount = useMemo(() => {
+    return combinedGithubIssues.filter((i) => i.rawState !== 'closed' && i.status !== 'Concluído').length;
+  }, [combinedGithubIssues]);
+
+  const closedIssuesCount = useMemo(() => {
+    return combinedGithubIssues.filter((i) => i.rawState === 'closed' || i.status === 'Concluído').length;
+  }, [combinedGithubIssues]);
+
+  const uniqueAuthors = useMemo(() => {
+    const authors = new Set<string>();
+    combinedGithubIssues.forEach((i) => {
+      if (i.author) authors.add(i.author);
+    });
+    return Array.from(authors);
+  }, [combinedGithubIssues]);
+
+  const uniqueLabels = useMemo(() => {
+    const labels = new Set<string>();
+    combinedGithubIssues.forEach((i) => {
+      if (i.rawLabels) i.rawLabels.forEach((l) => labels.add(l));
+      if (i.tag) labels.add(i.tag);
+    });
+    return Array.from(labels);
+  }, [combinedGithubIssues]);
+
+  const uniqueAssignees = useMemo(() => {
+    const map = new Map<string, { name: string; avatarUrl?: string }>();
+    combinedGithubIssues.forEach((i) => {
+      i.assignees.forEach((a) => {
+        if (!map.has(a.name)) map.set(a.name, { name: a.name, avatarUrl: a.avatarUrl });
+      });
+    });
+    return Array.from(map.values());
+  }, [combinedGithubIssues]);
+
+  const filteredGithubIssues = useMemo(() => {
+    let list = combinedGithubIssues;
+
+    // Filtro por Estado (open vs closed)
+    if (issuesStateFilter === 'open') {
+      list = list.filter((i) => i.rawState !== 'closed' && i.status !== 'Concluído');
+    } else {
+      list = list.filter((i) => i.rawState === 'closed' || i.status === 'Concluído');
+    }
+
+    // Filtro por Tab da Sidebar
+    if (issuesSidebarTab === 'assigned') {
+      const me = currentUser?.login?.toLowerCase() || 'nelsonappmoove';
+      list = list.filter((i) => i.assignees.some((a) => a.name.toLowerCase().includes(me)));
+    } else if (issuesSidebarTab === 'created') {
+      const me = currentUser?.login?.toLowerCase() || 'nelsonappmoove';
+      list = list.filter((i) => (i.author || '').toLowerCase().includes(me));
+    } else if (issuesSidebarTab === 'mentioned') {
+      list = list.filter((i) => (i.commentsCount || 0) > 0);
+    }
+
+    // Filtro por Query de Busca
+    if (issuesSearchQuery.trim()) {
+      const q = issuesSearchQuery.toLowerCase();
+      list = list.filter(
+        (i) =>
+          i.title.toLowerCase().includes(q) ||
+          i.description.toLowerCase().includes(q) ||
+          (i.author || '').toLowerCase().includes(q) ||
+          (i.rawLabels || []).some((l) => l.toLowerCase().includes(q)) ||
+          String(i.githubNumber || '').includes(q) ||
+          i.id.toLowerCase().includes(q)
+      );
+    }
+
+    // Filtro por Autor selecionado no dropdown
+    if (selectedAuthorFilter !== 'all') {
+      list = list.filter((i) => (i.author || '').toLowerCase() === selectedAuthorFilter.toLowerCase());
+    }
+
+    // Filtro por Label selecionada no dropdown
+    if (selectedLabelFilter !== 'all') {
+      list = list.filter(
+        (i) =>
+          (i.rawLabels || []).some((l) => l.toLowerCase() === selectedLabelFilter.toLowerCase()) ||
+          i.tag.toLowerCase() === selectedLabelFilter.toLowerCase()
+      );
+    }
+
+    // Filtro por Assignee selecionado no dropdown
+    if (selectedAssigneeFilter !== 'all') {
+      list = list.filter((i) =>
+        i.assignees.some((a) => a.name.toLowerCase() === selectedAssigneeFilter.toLowerCase())
+      );
+    }
+
+    // Ordenação
+    const sorted = [...list];
+    if (issuesSortMode === 'newest') {
+      sorted.sort((a, b) => new Date(b.createdAtIso).getTime() - new Date(a.createdAtIso).getTime());
+    } else if (issuesSortMode === 'oldest') {
+      sorted.sort((a, b) => new Date(a.createdAtIso).getTime() - new Date(b.createdAtIso).getTime());
+    } else if (issuesSortMode === 'comments') {
+      sorted.sort((a, b) => (b.commentsCount || 0) - (a.commentsCount || 0));
+    }
+
+    return sorted;
+  }, [
+    combinedGithubIssues,
+    issuesStateFilter,
+    issuesSidebarTab,
+    issuesSearchQuery,
+    selectedAuthorFilter,
+    selectedLabelFilter,
+    selectedAssigneeFilter,
+    issuesSortMode,
+    currentUser,
+  ]);
+
+  const handleToggleSelectAllIssues = () => {
+    if (selectedIssueCheckboxes.size === filteredGithubIssues.length && filteredGithubIssues.length > 0) {
+      setSelectedIssueCheckboxes(new Set());
+    } else {
+      setSelectedIssueCheckboxes(new Set(filteredGithubIssues.map((i) => i.id)));
+    }
+  };
+
+  const handleToggleIssueCheckbox = (issueId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedIssueCheckboxes((prev) => {
+      const next = new Set(prev);
+      if (next.has(issueId)) {
+        next.delete(issueId);
+      } else {
+        next.add(issueId);
+      }
+      return next;
+    });
+  };
+
+  // =========================================================================
+  // ESTADOS E DADOS PARA A TELA DE SPRINTS (PADRÃO GITHUB ITERATIONS SETTINGS)
+  // =========================================================================
+  const [sprintFieldName, setSprintFieldName] = useState('Sprint');
+  const [sprintsTab, setSprintsTab] = useState<'active' | 'completed'>('active');
+  const [sprintMoreOptionsOpen, setSprintMoreOptionsOpen] = useState(false);
+  const [customSprintsList, setCustomSprintsList] = useState<GithubSprintItem[]>(SAMPLE_GITHUB_SPRINTS);
+  const [hoveredSprintRowId, setHoveredSprintRowId] = useState<string | null>(null);
+
+  const combinedSprints = useMemo<GithubSprintItem[]>(() => {
+    if (sprintsForSelectedRepo && sprintsForSelectedRepo.length > 0) {
+      const todayIso = new Date().toISOString().slice(0, 10);
+      return sprintsForSelectedRepo.map((sp) => {
+        const isClosed = sp.state === 'closed';
+        const isCurrent =
+          !isClosed &&
+          sp.startDateIso &&
+          sp.dueDateIso &&
+          todayIso >= sp.startDateIso &&
+          todayIso <= sp.dueDateIso;
+        const status: GithubSprintItem['status'] = isClosed ? 'Completed' : isCurrent ? 'Current' : 'Planned';
+        const startFmt = sp.startDateIso ? formatShortDate(sp.startDateIso) : '';
+        const dueFmt = sp.dueDateIso ? formatShortDate(sp.dueDateIso) : '';
+        const dateRangeLabel =
+          startFmt && dueFmt ? `${startFmt} - ${dueFmt}` : startFmt || dueFmt || 'Sem data definida';
+        return {
+          id: `sprint-${sp.number}`,
+          number: sp.number,
+          title: sp.title,
+          durationLabel: '2 weeks',
+          startDateIso: sp.startDateIso || '',
+          dueDateIso: sp.dueDateIso || '',
+          dateRangeLabel,
+          status,
+        };
+      });
+    }
+    return customSprintsList;
+  }, [sprintsForSelectedRepo, customSprintsList]);
+
+  const activeSprintsCount = useMemo(() => {
+    return combinedSprints.filter((s) => s.status !== 'Completed').length;
+  }, [combinedSprints]);
+
+  const completedSprintsCount = useMemo(() => {
+    return combinedSprints.filter((s) => s.status === 'Completed').length;
+  }, [combinedSprints]);
+
+  const displayedSprints = useMemo(() => {
+    if (sprintsTab === 'active') {
+      return combinedSprints.filter((s) => s.status !== 'Completed');
+    }
+    return combinedSprints.filter((s) => s.status === 'Completed');
+  }, [combinedSprints, sprintsTab]);
+
+  const handleDeleteSprint = (sprintId: string) => {
+    setCustomSprintsList((prev) => prev.filter((s) => s.id !== sprintId));
+    showToast('Iteração/Sprint removida.');
   };
 
   const handleCreateTask = async () => {
@@ -2162,7 +2769,1689 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
           })}
         </div>
 
-        {selectedSection !== 'tarefas' ? (
+        {selectedSection === 'issues' ? (
+          /* ========================================================================= */
+          /* TELA DA ABA ISSUES: PADRÃO GITHUB COM O DESIGN DAS DIVS DE PROJETOS/TAREFAS */
+          /* ========================================================================= */
+          <div
+            style={{
+              width: '100%',
+              background: theme.bgShelf,
+              borderRadius: 10,
+              border: theme.shelfBorder,
+              boxShadow: theme.shelfShadow,
+              display: 'flex',
+              flexDirection: 'row',
+              alignItems: 'stretch',
+              gap: 5,
+              padding: 5,
+              boxSizing: 'border-box',
+              marginTop: 4,
+              flex: 1,
+              minHeight: 520,
+            }}
+          >
+            {/* ----------------------------------------------------------------- */}
+            {/* BARRA LATERAL ESQUERDA (SIDEBAR GITHUB ISSUES)                     */}
+            {/* ----------------------------------------------------------------- */}
+            <div
+              style={{
+                width: 200,
+                minWidth: 200,
+                background: theme.viewCanvasBg,
+                borderRadius: 8,
+                padding: '8px 6px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 2,
+                boxSizing: 'border-box',
+                flexShrink: 0,
+              }}
+            >
+              {/* Item: Issues */}
+              <div
+                onClick={() => setIssuesSidebarTab('all')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '7px 10px',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  background: issuesSidebarTab === 'all' ? (isEffectiveDark ? '#242424' : '#e2e8f0') : 'transparent',
+                  color: issuesSidebarTab === 'all' ? theme.textPrimary : theme.textSecondary,
+                  fontWeight: issuesSidebarTab === 'all' ? 500 : 400,
+                  fontSize: 12.5,
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (issuesSidebarTab !== 'all') e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
+                }}
+                onMouseLeave={(e) => {
+                  if (issuesSidebarTab !== 'all') e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <CircleDot size={14} color={issuesSidebarTab === 'all' ? accentColor : theme.textSecondary} />
+                  <span>Issues</span>
+                </div>
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 500,
+                    padding: '1px 6px',
+                    borderRadius: 10,
+                    background: isEffectiveDark ? '#1a1a1a' : '#cbd5e1',
+                    color: theme.textSecondary,
+                  }}
+                >
+                  {openIssuesCount}
+                </span>
+              </div>
+
+              {/* Item: Assigned to me */}
+              <div
+                onClick={() => setIssuesSidebarTab('assigned')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '7px 10px',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  gap: 8,
+                  background: issuesSidebarTab === 'assigned' ? (isEffectiveDark ? '#242424' : '#e2e8f0') : 'transparent',
+                  color: issuesSidebarTab === 'assigned' ? theme.textPrimary : theme.textSecondary,
+                  fontWeight: issuesSidebarTab === 'assigned' ? 500 : 400,
+                  fontSize: 12.5,
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (issuesSidebarTab !== 'assigned') e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
+                }}
+                onMouseLeave={(e) => {
+                  if (issuesSidebarTab !== 'assigned') e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <UserCheck size={14} color={issuesSidebarTab === 'assigned' ? accentColor : theme.textSecondary} />
+                <span>Assigned to me</span>
+              </div>
+
+              {/* Item: Created by me */}
+              <div
+                onClick={() => setIssuesSidebarTab('created')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '7px 10px',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  gap: 8,
+                  background: issuesSidebarTab === 'created' ? (isEffectiveDark ? '#242424' : '#e2e8f0') : 'transparent',
+                  color: issuesSidebarTab === 'created' ? theme.textPrimary : theme.textSecondary,
+                  fontWeight: issuesSidebarTab === 'created' ? 500 : 400,
+                  fontSize: 12.5,
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (issuesSidebarTab !== 'created') e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
+                }}
+                onMouseLeave={(e) => {
+                  if (issuesSidebarTab !== 'created') e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <Smile size={14} color={issuesSidebarTab === 'created' ? accentColor : theme.textSecondary} />
+                <span>Created by me</span>
+              </div>
+
+              {/* Item: Mentioned */}
+              <div
+                onClick={() => setIssuesSidebarTab('mentioned')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '7px 10px',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  gap: 8,
+                  background: issuesSidebarTab === 'mentioned' ? (isEffectiveDark ? '#242424' : '#e2e8f0') : 'transparent',
+                  color: issuesSidebarTab === 'mentioned' ? theme.textPrimary : theme.textSecondary,
+                  fontWeight: issuesSidebarTab === 'mentioned' ? 500 : 400,
+                  fontSize: 12.5,
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (issuesSidebarTab !== 'mentioned') e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
+                }}
+                onMouseLeave={(e) => {
+                  if (issuesSidebarTab !== 'mentioned') e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <AtSign size={14} color={issuesSidebarTab === 'mentioned' ? accentColor : theme.textSecondary} />
+                <span>Mentioned</span>
+              </div>
+
+              {/* Item: Recent activity */}
+              <div
+                onClick={() => {
+                  setIssuesSidebarTab('recent');
+                  setIssuesSortMode('newest');
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '7px 10px',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  gap: 8,
+                  background: issuesSidebarTab === 'recent' ? (isEffectiveDark ? '#242424' : '#e2e8f0') : 'transparent',
+                  color: issuesSidebarTab === 'recent' ? theme.textPrimary : theme.textSecondary,
+                  fontWeight: issuesSidebarTab === 'recent' ? 500 : 400,
+                  fontSize: 12.5,
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (issuesSidebarTab !== 'recent') e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
+                }}
+                onMouseLeave={(e) => {
+                  if (issuesSidebarTab !== 'recent') e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <Clock size={14} color={issuesSidebarTab === 'recent' ? accentColor : theme.textSecondary} />
+                <span>Recent activity</span>
+              </div>
+            </div>
+
+            {/* ----------------------------------------------------------------- */}
+            {/* ÁREA PRINCIPAL: HEADER, BUSCA GITHUB E TABELA DE ISSUES            */}
+            {/* ----------------------------------------------------------------- */}
+            <div
+              style={{
+                flex: 1,
+                minWidth: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+                boxSizing: 'border-box',
+              }}
+            >
+              {/* Cabeçalho superior: Título e botão New Issue */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '2px 4px',
+                  width: '100%',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <h2
+                    style={{
+                      fontSize: 17,
+                      fontWeight: 600,
+                      color: theme.textPrimary,
+                      margin: 0,
+                      letterSpacing: '-0.01em',
+                    }}
+                  >
+                    All issues
+                  </h2>
+                  {selectedProject?.title && (
+                    <span
+                      style={{
+                        fontSize: 11,
+                        color: theme.textSecondary,
+                        background: theme.controlBg,
+                        padding: '2px 8px',
+                        borderRadius: 6,
+                      }}
+                    >
+                      {selectedProject.title}
+                    </span>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsAddTaskModalOpen(true)}
+                  style={{
+                    background: '#238636',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: 6,
+                    padding: '5px 12px',
+                    fontSize: 12,
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    transition: 'all 0.15s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = '#2ea043';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = '#238636';
+                  }}
+                >
+                  <Plus size={13} color="#ffffff" />
+                  <span>New issue</span>
+                </button>
+              </div>
+
+              {/* Barra de Filtro e Busca com Sintaxe do GitHub */}
+              <div
+                style={{
+                  background: theme.viewCanvasBg,
+                  borderRadius: 8,
+                  padding: '5px 10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  width: '100%',
+                  boxSizing: 'border-box',
+                }}
+              >
+                {/* Tag de sintaxe GitHub: is:issue state:open/closed */}
+                <div
+                  onClick={() => setIssuesStateFilter(issuesStateFilter === 'open' ? 'closed' : 'open')}
+                  title="Clique para alternar entre Open e Closed"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    background: isEffectiveDark ? '#222222' : '#e2e8f0',
+                    borderRadius: 4,
+                    padding: '3px 8px',
+                    fontSize: 11.5,
+                    fontFamily: 'ui-monospace, monospace',
+                    color: theme.textPrimary,
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  <span style={{ color: theme.textSecondary }}>is:</span>
+                  <span>issue</span>
+                  <span style={{ color: theme.textSecondary, marginLeft: 2 }}>state:</span>
+                  <span style={{ color: issuesStateFilter === 'open' ? '#22c55e' : '#a855f7' }}>
+                    {issuesStateFilter}
+                  </span>
+                </div>
+
+                {/* Input de texto livre para busca de issues */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+                  <input
+                    type="text"
+                    value={issuesSearchQuery}
+                    onChange={(e) => setIssuesSearchQuery(e.target.value)}
+                    placeholder="Search all issues or type query..."
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: theme.textPrimary,
+                      fontSize: 12.5,
+                      fontWeight: '400',
+                      outline: 'none',
+                      width: '100%',
+                    }}
+                  />
+                  {issuesSearchQuery ? (
+                    <X
+                      size={13}
+                      color={theme.textSecondary}
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => setIssuesSearchQuery('')}
+                    />
+                  ) : (
+                    <Search size={13} color={theme.textSecondary} />
+                  )}
+                </div>
+              </div>
+
+              {/* Tabela de Issues (Contêiner no Design de Tarefas) */}
+              <div
+                style={{
+                  background: theme.viewCanvasBg,
+                  borderRadius: 8,
+                  overflow: 'hidden',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  flex: 1,
+                  minHeight: 400,
+                  position: 'relative',
+                }}
+              >
+                {/* Backdrop para fechar dropdowns abertos */}
+                {activeIssuesDropdown && (
+                  <div
+                    onClick={() => setActiveIssuesDropdown(null)}
+                    style={{
+                      position: 'fixed',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      zIndex: 30,
+                    }}
+                  />
+                )}
+
+                {/* Cabeçalho da Tabela (Barra de Ações do GitHub) */}
+                <div
+                  style={{
+                    background: theme.controlBg,
+                    padding: '8px 12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: 8,
+                    userSelect: 'none',
+                  }}
+                >
+                  {/* Lado Esquerdo: Checkbox mestre + Abas Open / Closed */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div
+                      onClick={handleToggleSelectAllIssues}
+                      style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                      title="Selecionar todas as issues visíveis"
+                    >
+                      {selectedIssueCheckboxes.size > 0 &&
+                      selectedIssueCheckboxes.size === filteredGithubIssues.length ? (
+                        <CheckSquare size={15} color={accentColor} />
+                      ) : (
+                        <Square size={15} color={theme.textSecondary} />
+                      )}
+                    </div>
+
+                    {/* Aba Open */}
+                    <div
+                      onClick={() => setIssuesStateFilter('open')}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        cursor: 'pointer',
+                        padding: '4px 6px',
+                        borderRadius: 6,
+                        background: issuesStateFilter === 'open' ? (isEffectiveDark ? '#262626' : '#e2e8f0') : 'transparent',
+                        transition: 'background 0.12s ease',
+                      }}
+                    >
+                      <CircleDot size={14} color="#22c55e" />
+                      <span
+                        style={{
+                          fontSize: 12.5,
+                          fontWeight: issuesStateFilter === 'open' ? 600 : 400,
+                          color: issuesStateFilter === 'open' ? theme.textPrimary : theme.textSecondary,
+                        }}
+                      >
+                        Open
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 600,
+                          padding: '0 5px',
+                          borderRadius: 8,
+                          background: isEffectiveDark ? '#1a1a1a' : '#cbd5e1',
+                          color: issuesStateFilter === 'open' ? theme.textPrimary : theme.textSecondary,
+                        }}
+                      >
+                        {openIssuesCount}
+                      </span>
+                    </div>
+
+                    {/* Aba Closed */}
+                    <div
+                      onClick={() => setIssuesStateFilter('closed')}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        cursor: 'pointer',
+                        padding: '4px 6px',
+                        borderRadius: 6,
+                        background: issuesStateFilter === 'closed' ? (isEffectiveDark ? '#262626' : '#e2e8f0') : 'transparent',
+                        transition: 'background 0.12s ease',
+                      }}
+                    >
+                      <CheckCircle2
+                        size={14}
+                        color={issuesStateFilter === 'closed' ? '#8250df' : theme.textSecondary}
+                      />
+                      <span
+                        style={{
+                          fontSize: 12.5,
+                          fontWeight: issuesStateFilter === 'closed' ? 600 : 400,
+                          color: issuesStateFilter === 'closed' ? theme.textPrimary : theme.textSecondary,
+                        }}
+                      >
+                        Closed
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 600,
+                          padding: '0 5px',
+                          borderRadius: 8,
+                          background: isEffectiveDark ? '#1a1a1a' : '#cbd5e1',
+                          color: issuesStateFilter === 'closed' ? theme.textPrimary : theme.textSecondary,
+                        }}
+                      >
+                        {closedIssuesCount}
+                      </span>
+                    </div>
+
+                    {selectedIssueCheckboxes.size > 0 && (
+                      <span style={{ fontSize: 11.5, color: accentColor, fontWeight: 500 }}>
+                        {selectedIssueCheckboxes.size} selecionada(s)
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Lado Direito: Filtros Dropdown (Author, Labels, Projects, Milestones, Assignees, Sort) */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, position: 'relative' }}>
+                    {/* Dropdown Author */}
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setActiveIssuesDropdown(activeIssuesDropdown === 'author' ? null : 'author')
+                        }
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          background: 'transparent',
+                          border: 'none',
+                          color: selectedAuthorFilter !== 'all' ? accentColor : theme.textSecondary,
+                          fontSize: 12,
+                          cursor: 'pointer',
+                          padding: '4px 6px',
+                          borderRadius: 6,
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.color = theme.textPrimary)}
+                        onMouseLeave={(e) =>
+                          (e.currentTarget.style.color =
+                            selectedAuthorFilter !== 'all' ? accentColor : theme.textSecondary)
+                        }
+                      >
+                        <span>{selectedAuthorFilter === 'all' ? 'Author' : selectedAuthorFilter}</span>
+                        <ChevronDown size={11} />
+                      </button>
+
+                      {activeIssuesDropdown === 'author' && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            top: '100%',
+                            right: 0,
+                            marginTop: 4,
+                            background: theme.dropdownBg,
+                            borderRadius: 8,
+                            boxShadow: theme.dropdownShadow,
+                            zIndex: 40,
+                            minWidth: 160,
+                            padding: '4px 0',
+                          }}
+                        >
+                          <div
+                            onClick={() => {
+                              setSelectedAuthorFilter('all');
+                              setActiveIssuesDropdown(null);
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '6px 12px',
+                              fontSize: 12,
+                              color: selectedAuthorFilter === 'all' ? accentColor : theme.textPrimary,
+                              cursor: 'pointer',
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = theme.dropdownItemHover)}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                          >
+                            <span>Todos os autores</span>
+                            {selectedAuthorFilter === 'all' && <Check size={12} color={accentColor} />}
+                          </div>
+                          {uniqueAuthors.map((author) => (
+                            <div
+                              key={author}
+                              onClick={() => {
+                                setSelectedAuthorFilter(author);
+                                setActiveIssuesDropdown(null);
+                              }}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '6px 12px',
+                                fontSize: 12,
+                                color: selectedAuthorFilter === author ? accentColor : theme.textPrimary,
+                                cursor: 'pointer',
+                              }}
+                              onMouseEnter={(e) => (e.currentTarget.style.background = theme.dropdownItemHover)}
+                              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                            >
+                              <span>{author}</span>
+                              {selectedAuthorFilter === author && <Check size={12} color={accentColor} />}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Dropdown Labels */}
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setActiveIssuesDropdown(activeIssuesDropdown === 'label' ? null : 'label')
+                        }
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          background: 'transparent',
+                          border: 'none',
+                          color: selectedLabelFilter !== 'all' ? accentColor : theme.textSecondary,
+                          fontSize: 12,
+                          cursor: 'pointer',
+                          padding: '4px 6px',
+                          borderRadius: 6,
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.color = theme.textPrimary)}
+                        onMouseLeave={(e) =>
+                          (e.currentTarget.style.color =
+                            selectedLabelFilter !== 'all' ? accentColor : theme.textSecondary)
+                        }
+                      >
+                        <span>{selectedLabelFilter === 'all' ? 'Labels' : selectedLabelFilter}</span>
+                        <ChevronDown size={11} />
+                      </button>
+
+                      {activeIssuesDropdown === 'label' && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            top: '100%',
+                            right: 0,
+                            marginTop: 4,
+                            background: theme.dropdownBg,
+                            borderRadius: 8,
+                            boxShadow: theme.dropdownShadow,
+                            zIndex: 40,
+                            minWidth: 160,
+                            padding: '4px 0',
+                          }}
+                        >
+                          <div
+                            onClick={() => {
+                              setSelectedLabelFilter('all');
+                              setActiveIssuesDropdown(null);
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '6px 12px',
+                              fontSize: 12,
+                              color: selectedLabelFilter === 'all' ? accentColor : theme.textPrimary,
+                              cursor: 'pointer',
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = theme.dropdownItemHover)}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                          >
+                            <span>Todas as labels</span>
+                            {selectedLabelFilter === 'all' && <Check size={12} color={accentColor} />}
+                          </div>
+                          {uniqueLabels.map((lbl) => (
+                            <div
+                              key={lbl}
+                              onClick={() => {
+                                setSelectedLabelFilter(lbl);
+                                setActiveIssuesDropdown(null);
+                              }}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '6px 12px',
+                                fontSize: 12,
+                                color: selectedLabelFilter === lbl ? accentColor : theme.textPrimary,
+                                cursor: 'pointer',
+                              }}
+                              onMouseEnter={(e) => (e.currentTarget.style.background = theme.dropdownItemHover)}
+                              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                            >
+                              <span>{lbl}</span>
+                              {selectedLabelFilter === lbl && <Check size={12} color={accentColor} />}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Dropdown Projects */}
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedSection('tarefas')}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          background: 'transparent',
+                          border: 'none',
+                          color: theme.textSecondary,
+                          fontSize: 12,
+                          cursor: 'pointer',
+                          padding: '4px 6px',
+                          borderRadius: 6,
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.color = theme.textPrimary)}
+                        onMouseLeave={(e) => (e.currentTarget.style.color = theme.textSecondary)}
+                      >
+                        <span>Projects</span>
+                        <ChevronDown size={11} />
+                      </button>
+                    </div>
+
+                    {/* Dropdown Milestones */}
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedSection('marcos')}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          background: 'transparent',
+                          border: 'none',
+                          color: theme.textSecondary,
+                          fontSize: 12,
+                          cursor: 'pointer',
+                          padding: '4px 6px',
+                          borderRadius: 6,
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.color = theme.textPrimary)}
+                        onMouseLeave={(e) => (e.currentTarget.style.color = theme.textSecondary)}
+                      >
+                        <span>Milestones</span>
+                        <ChevronDown size={11} />
+                      </button>
+                    </div>
+
+                    {/* Dropdown Assignees */}
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setActiveIssuesDropdown(activeIssuesDropdown === 'assignee' ? null : 'assignee')
+                        }
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          background: 'transparent',
+                          border: 'none',
+                          color: selectedAssigneeFilter !== 'all' ? accentColor : theme.textSecondary,
+                          fontSize: 12,
+                          cursor: 'pointer',
+                          padding: '4px 6px',
+                          borderRadius: 6,
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.color = theme.textPrimary)}
+                        onMouseLeave={(e) =>
+                          (e.currentTarget.style.color =
+                            selectedAssigneeFilter !== 'all' ? accentColor : theme.textSecondary)
+                        }
+                      >
+                        <span>{selectedAssigneeFilter === 'all' ? 'Assignees' : selectedAssigneeFilter}</span>
+                        <ChevronDown size={11} />
+                      </button>
+
+                      {activeIssuesDropdown === 'assignee' && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            top: '100%',
+                            right: 0,
+                            marginTop: 4,
+                            background: theme.dropdownBg,
+                            borderRadius: 8,
+                            boxShadow: theme.dropdownShadow,
+                            zIndex: 40,
+                            minWidth: 160,
+                            padding: '4px 0',
+                          }}
+                        >
+                          <div
+                            onClick={() => {
+                              setSelectedAssigneeFilter('all');
+                              setActiveIssuesDropdown(null);
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '6px 12px',
+                              fontSize: 12,
+                              color: selectedAssigneeFilter === 'all' ? accentColor : theme.textPrimary,
+                              cursor: 'pointer',
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = theme.dropdownItemHover)}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                          >
+                            <span>Todos</span>
+                            {selectedAssigneeFilter === 'all' && <Check size={12} color={accentColor} />}
+                          </div>
+                          {uniqueAssignees.map((assignee) => (
+                            <div
+                              key={assignee.name}
+                              onClick={() => {
+                                setSelectedAssigneeFilter(assignee.name);
+                                setActiveIssuesDropdown(null);
+                              }}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '6px 12px',
+                                fontSize: 12,
+                                color: selectedAssigneeFilter === assignee.name ? accentColor : theme.textPrimary,
+                                cursor: 'pointer',
+                              }}
+                              onMouseEnter={(e) => (e.currentTarget.style.background = theme.dropdownItemHover)}
+                              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                            >
+                              <span>{assignee.name}</span>
+                              {selectedAssigneeFilter === assignee.name && <Check size={12} color={accentColor} />}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Dropdown Sort */}
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setActiveIssuesDropdown(activeIssuesDropdown === 'sort' ? null : 'sort')
+                        }
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          background: 'transparent',
+                          border: 'none',
+                          color: issuesSortMode !== 'newest' ? accentColor : theme.textSecondary,
+                          fontSize: 12,
+                          cursor: 'pointer',
+                          padding: '4px 6px',
+                          borderRadius: 6,
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.color = theme.textPrimary)}
+                        onMouseLeave={(e) =>
+                          (e.currentTarget.style.color =
+                            issuesSortMode !== 'newest' ? accentColor : theme.textSecondary)
+                        }
+                      >
+                        <ArrowUpDown size={11} />
+                        <span>
+                          {issuesSortMode === 'newest'
+                            ? 'Newest'
+                            : issuesSortMode === 'oldest'
+                            ? 'Oldest'
+                            : 'Most commented'}
+                        </span>
+                        <ChevronDown size={11} />
+                      </button>
+
+                      {activeIssuesDropdown === 'sort' && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            top: '100%',
+                            right: 0,
+                            marginTop: 4,
+                            background: theme.dropdownBg,
+                            borderRadius: 8,
+                            boxShadow: theme.dropdownShadow,
+                            zIndex: 40,
+                            minWidth: 160,
+                            padding: '4px 0',
+                          }}
+                        >
+                          {(
+                            [
+                              { id: 'newest', label: 'Newest' },
+                              { id: 'oldest', label: 'Oldest' },
+                              { id: 'comments', label: 'Most commented' },
+                            ] as const
+                          ).map((opt) => (
+                            <div
+                              key={opt.id}
+                              onClick={() => {
+                                setIssuesSortMode(opt.id);
+                                setActiveIssuesDropdown(null);
+                              }}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '6px 12px',
+                                fontSize: 12,
+                                color: issuesSortMode === opt.id ? accentColor : theme.textPrimary,
+                                cursor: 'pointer',
+                              }}
+                              onMouseEnter={(e) => (e.currentTarget.style.background = theme.dropdownItemHover)}
+                              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                            >
+                              <span>{opt.label}</span>
+                              {issuesSortMode === opt.id && <Check size={12} color={accentColor} />}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Lista de Linhas de Issues */}
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    overflowY: 'auto',
+                    flex: 1,
+                  }}
+                  className="no-scrollbar"
+                >
+                  {filteredGithubIssues.length === 0 ? (
+                    <div
+                      style={{
+                        padding: '48px 24px',
+                        textAlign: 'center',
+                        color: theme.textSecondary,
+                        fontSize: 13,
+                      }}
+                    >
+                      Nenhuma issue encontrada com os filtros selecionados.
+                    </div>
+                  ) : (
+                    filteredGithubIssues.map((issue, index) => {
+                      const isHovered = hoveredIssueId === issue.id;
+                      const isChecked = selectedIssueCheckboxes.has(issue.id);
+                      const isClosed = issue.rawState === 'closed' || issue.status === 'Concluído';
+                      const issueNumber = issue.githubNumber || issue.id.replace('#', '');
+                      const comments = issue.commentsCount || 0;
+                      const labels = issue.rawLabels || (issue.tag ? [issue.tag] : []);
+
+                      return (
+                        <div
+                          key={issue.id}
+                          onMouseEnter={() => setHoveredIssueId(issue.id)}
+                          onMouseLeave={() => setHoveredIssueId(null)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: 12,
+                            padding: '11px 14px',
+                            borderTop:
+                              index > 0
+                                ? `1px solid ${hexToRgba(theme.textSecondary, 0.08)}`
+                                : 'none',
+                            background: isHovered
+                              ? isEffectiveDark
+                                ? '#1a1a1a'
+                                : '#f1f5f9'
+                              : 'transparent',
+                            transition: 'background 0.12s ease',
+                          }}
+                        >
+                          {/* Checkbox individual */}
+                          <div
+                            onClick={(e) => handleToggleIssueCheckbox(issue.id, e)}
+                            style={{
+                              cursor: 'pointer',
+                              marginTop: 2,
+                              display: 'flex',
+                              alignItems: 'center',
+                            }}
+                          >
+                            {isChecked ? (
+                              <CheckSquare size={15} color={accentColor} />
+                            ) : (
+                              <Square size={15} color={theme.textSecondary} />
+                            )}
+                          </div>
+
+                          {/* Ícone de status (CircleDot verde se aberta, CheckCircle2 roxo se fechada) */}
+                          <div style={{ marginTop: 2, flexShrink: 0 }}>
+                            {isClosed ? (
+                              <CheckCircle2 size={16} color="#8250df" />
+                            ) : (
+                              <CircleDot size={16} color="#22c55e" />
+                            )}
+                          </div>
+
+                          {/* Conteúdo Central: Título + Badges + Subtítulo */}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            {/* Linha 1: Título da Issue + Labels inline + Contador de comentários */}
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                flexWrap: 'wrap',
+                                gap: 6,
+                              }}
+                            >
+                              <span
+                                onClick={() => handleOpenEditIssue(issue)}
+                                style={{
+                                  fontSize: 13.5,
+                                  fontWeight: 500,
+                                  color: theme.textPrimary,
+                                  cursor: 'pointer',
+                                  transition: 'color 0.12s ease',
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.color = accentColor;
+                                  e.currentTarget.style.textDecoration = 'underline';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.color = theme.textPrimary;
+                                  e.currentTarget.style.textDecoration = 'none';
+                                }}
+                              >
+                                {issue.title}
+                              </span>
+
+                              {/* Badges de Labels no estilo GitHub */}
+                              {labels.map((lbl) => {
+                                const isBug = lbl.toLowerCase() === 'bug';
+                                const isPainel = lbl.toLowerCase() === 'painel';
+                                const isBackend = lbl.toLowerCase() === 'backend';
+                                const isInfra = lbl.toLowerCase() === 'infra';
+
+                                const bg = isBug
+                                  ? 'rgba(248, 81, 73, 0.18)'
+                                  : isPainel
+                                  ? 'rgba(56, 139, 253, 0.18)'
+                                  : isBackend
+                                  ? 'rgba(56, 189, 248, 0.18)'
+                                  : isInfra
+                                  ? 'rgba(168, 85, 247, 0.18)'
+                                  : 'rgba(148, 163, 184, 0.15)';
+
+                                const color = isBug
+                                  ? '#f85149'
+                                  : isPainel
+                                  ? '#58a6ff'
+                                  : isBackend
+                                  ? '#38bdf8'
+                                  : isInfra
+                                  ? '#c084fc'
+                                  : theme.textSecondary;
+
+                                return (
+                                  <span
+                                    key={lbl}
+                                    style={{
+                                      fontSize: 10.5,
+                                      fontWeight: 500,
+                                      padding: '1.5px 7px',
+                                      borderRadius: 10,
+                                      background: bg,
+                                      color,
+                                      userSelect: 'none',
+                                      lineHeight: 1.3,
+                                    }}
+                                  >
+                                    {lbl}
+                                  </span>
+                                );
+                              })}
+
+                              {/* Contador de Comentários */}
+                              {comments > 0 && (
+                                <div
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 3.5,
+                                    fontSize: 11,
+                                    color: theme.textSecondary,
+                                    marginLeft: 4,
+                                  }}
+                                  title={`${comments} comentário(s)`}
+                                >
+                                  <MessageSquare size={12} color={theme.textSecondary} />
+                                  <span>{comments}</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Linha 2: Subtítulo no padrão GitHub (#246 · autor opened 2w ago) */}
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                fontSize: 11.5,
+                                color: theme.textSecondary,
+                                marginTop: 3,
+                                flexWrap: 'wrap',
+                              }}
+                            >
+                              <span>#{issueNumber}</span>
+                              <span>·</span>
+                              <span style={{ color: theme.textPrimary, fontWeight: 400 }}>
+                                {issue.author || 'nelsonappmoove'}
+                              </span>
+                              <span>opened {formatGithubTimeAgo(issue.createdAtIso)}</span>
+                              {issue.milestoneTitle && (
+                                <>
+                                  <span>·</span>
+                                  <Milestone size={11} color={theme.textSecondary} />
+                                  <span>{issue.milestoneTitle}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Lado Direito: Avatar do Assignee e Ações */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                            {issue.assignees && issue.assignees.length > 0 && (
+                              <div style={{ display: 'flex', alignItems: 'center' }}>
+                                {issue.assignees.map((a, aIdx) => (
+                                  <div
+                                    key={aIdx}
+                                    title={`Atribuído a ${a.name}`}
+                                    style={{
+                                      width: 20,
+                                      height: 20,
+                                      borderRadius: '50%',
+                                      overflow: 'hidden',
+                                      background: a.avatarBg || '#10b981',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      fontSize: 10,
+                                      fontWeight: 600,
+                                      color: '#ffffff',
+                                      border: `1.5px solid ${theme.viewCanvasBg}`,
+                                    }}
+                                  >
+                                    {a.avatarUrl ? (
+                                      <img
+                                        src={a.avatarUrl}
+                                        alt={a.name}
+                                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                        onError={(e) => {
+                                          (e.currentTarget as HTMLElement).style.display = 'none';
+                                        }}
+                                      />
+                                    ) : (
+                                      a.initial || a.name.charAt(0).toUpperCase()
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Botão de Opções Rápidas (Editar, etc.) */}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditIssue(issue)}
+                              title="Editar tarefa"
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: theme.textSecondary,
+                                cursor: 'pointer',
+                                padding: 3,
+                                borderRadius: 4,
+                                display: 'flex',
+                                alignItems: 'center',
+                                opacity: isHovered ? 1 : 0.3,
+                                transition: 'all 0.12s ease',
+                              }}
+                              onMouseEnter={(e) => (e.currentTarget.style.color = theme.textPrimary)}
+                              onMouseLeave={(e) => (e.currentTarget.style.color = theme.textSecondary)}
+                            >
+                              <MoreVertical size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : selectedSection === 'sprints' ? (
+          /* ========================================================================= */
+          /* TELA DA ABA SPRINTS: PADRÃO GITHUB FIELD SETTINGS COM DESIGN NATIVO       */
+          /* ========================================================================= */
+          <div
+            style={{
+              width: '100%',
+              background: theme.bgShelf,
+              borderRadius: 10,
+              border: theme.shelfBorder,
+              boxShadow: theme.shelfShadow,
+              display: 'flex',
+              flexDirection: 'column',
+              padding: 5,
+              boxSizing: 'border-box',
+              marginTop: 4,
+              flex: 1,
+              minHeight: 520,
+            }}
+          >
+            <div
+              style={{
+                width: '100%',
+                background: theme.viewCanvasBg,
+                borderRadius: 8,
+                padding: '22px 26px',
+                display: 'flex',
+                flexDirection: 'column',
+                boxSizing: 'border-box',
+                flex: 1,
+              }}
+            >
+              {/* Header: Título + Botão Delete field */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  marginBottom: 18,
+                  width: '100%',
+                }}
+              >
+                <h2
+                  style={{
+                    fontSize: 18,
+                    fontWeight: 600,
+                    color: theme.textPrimary,
+                    margin: 0,
+                    letterSpacing: '-0.01em',
+                  }}
+                >
+                  Sprint field settings
+                </h2>
+
+                <button
+                  type="button"
+                  onClick={() => showToast('Campo padrão de sprints protegido.')}
+                  style={{
+                    background: 'rgba(248, 81, 73, 0.1)',
+                    border: 'none',
+                    borderRadius: 6,
+                    padding: '6px 14px',
+                    color: '#f85149',
+                    fontSize: 12,
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(248, 81, 73, 0.2)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(248, 81, 73, 0.1)')}
+                >
+                  Delete field
+                </button>
+              </div>
+
+              {/* Formulário: Field name & Field type */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
+                {/* Field name */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: theme.textSecondary }}>
+                    Field name
+                  </label>
+                  <input
+                    type="text"
+                    value={sprintFieldName}
+                    onChange={(e) => setSprintFieldName(e.target.value)}
+                    style={{
+                      width: 260,
+                      background: theme.controlBg,
+                      border: 'none',
+                      borderRadius: 6,
+                      padding: '7px 12px',
+                      fontSize: 13,
+                      color: theme.textPrimary,
+                      outline: 'none',
+                    }}
+                  />
+                </div>
+
+                {/* Field type */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label style={{ fontSize: 12, fontWeight: 500, color: theme.textSecondary }}>
+                    Field type
+                  </label>
+                  <div
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      background: theme.controlBg,
+                      borderRadius: 6,
+                      padding: '6px 12px',
+                      color: theme.textSecondary,
+                      fontSize: 12,
+                      width: 'fit-content',
+                    }}
+                  >
+                    <Repeat size={13} color={theme.textSecondary} />
+                    <span>Iteration</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tabela de Iterações / Sprints */}
+              <div
+                style={{
+                  background: theme.controlBg,
+                  borderRadius: 8,
+                  overflow: 'hidden',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  width: '100%',
+                  position: 'relative',
+                }}
+              >
+                {/* Backdrop para dropdown More options */}
+                {sprintMoreOptionsOpen && (
+                  <div
+                    onClick={() => setSprintMoreOptionsOpen(false)}
+                    style={{
+                      position: 'fixed',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      zIndex: 30,
+                    }}
+                  />
+                )}
+
+                {/* Barra Superior da Tabela: Tabs Active / Completed + Ações */}
+                <div
+                  style={{
+                    background: isEffectiveDark ? '#1a1a1a' : '#f1f5f9',
+                    padding: '10px 16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: 10,
+                  }}
+                >
+                  {/* Tabs: Active / Completed */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                    {/* Tab Active */}
+                    <div
+                      onClick={() => setSprintsTab('active')}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        cursor: 'pointer',
+                        color: sprintsTab === 'active' ? theme.textPrimary : theme.textSecondary,
+                        fontWeight: sprintsTab === 'active' ? 600 : 400,
+                        fontSize: 12.5,
+                        transition: 'color 0.12s ease',
+                      }}
+                    >
+                      <Clock
+                        size={14}
+                        color={sprintsTab === 'active' ? theme.textPrimary : theme.textSecondary}
+                      />
+                      <span>{activeSprintsCount} Active</span>
+                    </div>
+
+                    {/* Tab Completed */}
+                    <div
+                      onClick={() => setSprintsTab('completed')}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        cursor: 'pointer',
+                        color: sprintsTab === 'completed' ? theme.textPrimary : theme.textSecondary,
+                        fontWeight: sprintsTab === 'completed' ? 600 : 400,
+                        fontSize: 12.5,
+                        transition: 'color 0.12s ease',
+                      }}
+                    >
+                      <Archive
+                        size={14}
+                        color={sprintsTab === 'completed' ? theme.textPrimary : theme.textSecondary}
+                      />
+                      <span>{completedSprintsCount} Completed</span>
+                    </div>
+                  </div>
+
+                  {/* Lado Direito: Botões Add iteration e More options */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSprintCreationContext('create');
+                        setIsCreateSprintModalOpen(true);
+                      }}
+                      style={{
+                        background: isEffectiveDark ? '#242424' : '#e2e8f0',
+                        color: theme.textPrimary,
+                        border: 'none',
+                        borderRadius: 6,
+                        padding: '5px 12px',
+                        fontSize: 12,
+                        fontWeight: 500,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) =>
+                        (e.currentTarget.style.background = isEffectiveDark ? '#2c2c2c' : '#cbd5e1')
+                      }
+                      onMouseLeave={(e) =>
+                        (e.currentTarget.style.background = isEffectiveDark ? '#242424' : '#e2e8f0')
+                      }
+                    >
+                      <Plus size={13} />
+                      <span>Add iteration</span>
+                    </button>
+
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        type="button"
+                        onClick={() => setSprintMoreOptionsOpen((prev) => !prev)}
+                        style={{
+                          background: isEffectiveDark ? '#242424' : '#e2e8f0',
+                          color: theme.textPrimary,
+                          border: 'none',
+                          borderRadius: 6,
+                          padding: '5px 10px',
+                          fontSize: 12,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          transition: 'all 0.15s ease',
+                        }}
+                        onMouseEnter={(e) =>
+                          (e.currentTarget.style.background = isEffectiveDark ? '#2c2c2c' : '#cbd5e1')
+                        }
+                        onMouseLeave={(e) =>
+                          (e.currentTarget.style.background = isEffectiveDark ? '#242424' : '#e2e8f0')
+                        }
+                      >
+                        <span>More options</span>
+                        <ChevronDown size={11} />
+                      </button>
+
+                      {sprintMoreOptionsOpen && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            top: '100%',
+                            right: 0,
+                            marginTop: 4,
+                            background: theme.dropdownBg,
+                            borderRadius: 8,
+                            boxShadow: theme.dropdownShadow,
+                            zIndex: 40,
+                            minWidth: 220,
+                            padding: '4px 0',
+                          }}
+                        >
+                          <div
+                            onClick={() => {
+                              setSprintMoreOptionsOpen(false);
+                              showToast('Duração padrão configurada para 2 semanas.');
+                            }}
+                            style={{
+                              padding: '7px 12px',
+                              fontSize: 12,
+                              color: theme.textPrimary,
+                              cursor: 'pointer',
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = theme.dropdownItemHover)}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                          >
+                            Duração padrão (2 semanas)
+                          </div>
+                          <div
+                            onClick={() => {
+                              setSprintMoreOptionsOpen(false);
+                              showToast('Datas recalculadas automaticamente.');
+                            }}
+                            style={{
+                              padding: '7px 12px',
+                              fontSize: 12,
+                              color: theme.textPrimary,
+                              cursor: 'pointer',
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = theme.dropdownItemHover)}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                          >
+                            Recalcular datas automaticamente
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Lista de Linhas de Iterações/Sprints */}
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    maxHeight: 520,
+                    overflowY: 'auto',
+                  }}
+                  className="no-scrollbar"
+                >
+                  {displayedSprints.length === 0 ? (
+                    <div
+                      style={{
+                        padding: '40px 20px',
+                        textAlign: 'center',
+                        color: theme.textSecondary,
+                        fontSize: 13,
+                      }}
+                    >
+                      {sprintsTab === 'active'
+                        ? 'Nenhuma iteração ativa encontrada.'
+                        : 'Nenhuma iteração concluída.'}
+                    </div>
+                  ) : (
+                    displayedSprints.map((sprint, index) => {
+                      const isHovered = hoveredSprintRowId === sprint.id;
+                      const isCurrent = sprint.status === 'Current';
+                      const isCompleted = sprint.status === 'Completed';
+
+                      return (
+                        <div
+                          key={sprint.id}
+                          onMouseEnter={() => setHoveredSprintRowId(sprint.id)}
+                          onMouseLeave={() => setHoveredSprintRowId(null)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '13px 16px',
+                            borderTop: index > 0 ? `1px solid ${hexToRgba(theme.textSecondary, 0.08)}` : 'none',
+                            background: isHovered
+                              ? isEffectiveDark
+                                ? '#181818'
+                                : '#f8fafc'
+                              : 'transparent',
+                            transition: 'background 0.12s ease',
+                          }}
+                        >
+                          {/* Lado Esquerdo: Badge Status + Título + Duração/Datas */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0, flex: 1 }}>
+                            {/* Badge Status (Current / Planned / Completed) */}
+                            <div style={{ flexShrink: 0 }}>
+                              {isCurrent ? (
+                                <span
+                                  style={{
+                                    background: 'rgba(56, 139, 253, 0.15)',
+                                    border: '1px solid rgba(56, 139, 253, 0.45)',
+                                    color: '#58a6ff',
+                                    borderRadius: 12,
+                                    padding: '2px 10px',
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    letterSpacing: '0.01em',
+                                  }}
+                                >
+                                  Current
+                                </span>
+                              ) : isCompleted ? (
+                                <span
+                                  style={{
+                                    background: 'rgba(34, 197, 94, 0.15)',
+                                    border: '1px solid rgba(34, 197, 94, 0.4)',
+                                    color: '#22c55e',
+                                    borderRadius: 12,
+                                    padding: '2px 10px',
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    letterSpacing: '0.01em',
+                                  }}
+                                >
+                                  Completed
+                                </span>
+                              ) : (
+                                <span
+                                  style={{
+                                    background: 'rgba(148, 163, 184, 0.12)',
+                                    border: '1px solid rgba(148, 163, 184, 0.25)',
+                                    color: '#94a3b8',
+                                    borderRadius: 12,
+                                    padding: '2px 10px',
+                                    fontSize: 11,
+                                    fontWeight: 500,
+                                    letterSpacing: '0.01em',
+                                  }}
+                                >
+                                  Planned
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Informações da Sprint: Título e Datas */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
+                              <span
+                                style={{
+                                  fontSize: 13.5,
+                                  fontWeight: 600,
+                                  color: theme.textPrimary,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {sprint.title}
+                              </span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                                <span style={{ fontWeight: 500, color: theme.textPrimary }}>
+                                  {sprint.durationLabel}
+                                </span>
+                                <span style={{ color: theme.textSecondary }}>{sprint.dateRangeLabel}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Lado Direito: Ações (Lixeira + Três pontos) */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSprint(sprint.id)}
+                              title="Excluir iteração"
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: theme.textSecondary,
+                                cursor: 'pointer',
+                                padding: 4,
+                                borderRadius: 4,
+                                display: 'flex',
+                                alignItems: 'center',
+                                opacity: isHovered ? 0.85 : 0.4,
+                                transition: 'all 0.12s ease',
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.color = '#ef4444';
+                                e.currentTarget.style.opacity = '1';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.color = theme.textSecondary;
+                                e.currentTarget.style.opacity = isHovered ? '0.85' : '0.4';
+                              }}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewSprintTitle(sprint.title);
+                                setSprintCreationContext('edit');
+                                setIsCreateSprintModalOpen(true);
+                              }}
+                              title="Opções da iteração"
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: theme.textSecondary,
+                                cursor: 'pointer',
+                                padding: 4,
+                                borderRadius: 4,
+                                display: 'flex',
+                                alignItems: 'center',
+                                opacity: isHovered ? 0.85 : 0.4,
+                                transition: 'all 0.12s ease',
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.color = theme.textPrimary;
+                                e.currentTarget.style.opacity = '1';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.color = theme.textSecondary;
+                                e.currentTarget.style.opacity = isHovered ? '0.85' : '0.4';
+                              }}
+                            >
+                              <MoreHorizontal size={15} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : selectedSection !== 'tarefas' ? (
           <div
             style={{
               width: '100%',
