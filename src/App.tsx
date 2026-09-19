@@ -2446,7 +2446,7 @@ export const App: React.FC = () => {
       // Fallback to gh CLI
       if (window.electronAPI?.shell?.exec) {
         const res = await window.electronAPI.shell.exec(
-          `export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh issue create --title "${title.replace(/"/g, '\\"')}" --body "Criada via DevFlow IDE"`,
+          `export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh issue create --title "${title.replace(/"/g, '\\"')}" --body "Criada via Aura Dev"`,
           cwd
         );
         if (res.exitCode === 0) {

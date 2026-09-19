@@ -110,7 +110,7 @@ export const GithubLoginScreen: React.FC<GithubLoginScreenProps> = ({ accentColo
           width: 520,
           height: 520,
           borderRadius: '50%',
-          background: `radial-gradient(circle, ${accentColor}33 0%, rgba(120, 80, 220, 0.12) 45%, transparent 70%)`,
+          background: 'radial-gradient(circle, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.06) 45%, transparent 70%)',
           filter: 'blur(40px)',
           pointerEvents: 'none',
         }}
@@ -128,7 +128,7 @@ export const GithubLoginScreen: React.FC<GithubLoginScreenProps> = ({ accentColo
       >
         <img
           src={logoUrl}
-          alt="Ainaobra IDE"
+          alt="Aura Dev"
           style={{ width: 84, height: 'auto', filter: 'drop-shadow(0 0 24px rgba(255,255,255,0.15))' }}
         />
 
@@ -141,7 +141,7 @@ export const GithubLoginScreen: React.FC<GithubLoginScreenProps> = ({ accentColo
               fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
             }}
           >
-            Bem-vindo ao Ainaobra IDE
+            Bem-vindo ao Aura Dev
           </div>
           <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', marginTop: 6 }}>
             Entre com sua conta do GitHub para continuar

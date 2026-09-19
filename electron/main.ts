@@ -15,7 +15,7 @@ import { chatHistoryService } from './chat-history-service';
 import { githubAuthService } from './github-auth-service';
 
 // Set macOS application name
-app.name = 'Ainaobra IDE';
+app.name = 'Aura Dev';
 
 const getAppIcon = () => {
   const iconLocations = [

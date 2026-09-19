@@ -8,15 +8,15 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null) 
     ...(isMac
       ? [
           {
-            label: 'Ainaobra IDE',
+            label: 'Aura Dev',
             submenu: [
               {
-                label: 'Sobre o Ainaobra IDE',
+                label: 'Sobre o Aura Dev',
                 click: () => {
                   dialog.showMessageBox({
                     type: 'info',
-                    title: 'Ainaobra IDE',
-                    message: 'Ainaobra IDE v1.0.0',
+                    title: 'Aura Dev',
+                    message: 'Aura Dev v1.0.0',
                     detail: 'Ambiente de desenvolvimento nativo integrado com suporte a Claude Code CLI e Google Antigravity (AGY).\n\nDesenvolvido para alta performance no macOS.',
                     buttons: ['OK'],
                   });
@@ -37,7 +37,7 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null) 
                   dialog.showMessageBox({
                     type: 'info',
                     title: 'Atualizações',
-                    message: 'Você está usando a versão mais recente do Ainaobra IDE (v1.0.0-beta).',
+                    message: 'Você está usando a versão mais recente do Aura Dev (v1.0.0-beta).',
                     buttons: ['OK'],
                   });
                 },
@@ -45,11 +45,11 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null) 
               { type: 'separator' as const },
               { role: 'services' as const },
               { type: 'separator' as const },
-              { role: 'hide' as const, label: 'Ocultar Ainaobra IDE' },
+              { role: 'hide' as const, label: 'Ocultar Aura Dev' },
               { role: 'hideOthers' as const, label: 'Ocultar Outros' },
               { role: 'unhide' as const, label: 'Mostrar Todos' },
               { type: 'separator' as const },
-              { role: 'quit' as const, label: 'Sair do Ainaobra IDE' },
+              { role: 'quit' as const, label: 'Sair do Aura Dev' },
             ],
           },
         ]
@@ -171,7 +171,7 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null) 
           },
         },
         {
-          label: 'Alternar Painel de IA (Ainaobra)',
+          label: 'Alternar Painel de IA (Aura Dev)',
           accelerator: 'CmdOrCtrl+Shift+A',
           click: () => {
             const win = getMainWindow();
@@ -203,7 +203,7 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null) 
         },
         { type: 'separator' as const },
         {
-          label: 'Perguntar ao Agente Ainaobra...',
+          label: 'Perguntar ao Agente Aura Dev...',
           accelerator: 'CmdOrCtrl+L',
           click: () => {
             const win = getMainWindow();
@@ -296,7 +296,7 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null) 
       label: 'Ajuda',
       submenu: [
         {
-          label: 'Documentação do Ainaobra',
+          label: 'Documentação do Aura Dev',
           click: async () => {
             await shell.openExternal('https://github.com');
           },
@@ -331,7 +331,7 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null) 
           click: () => {
             dialog.showMessageBox({
               type: 'info',
-              title: 'Atalhos do Ainaobra IDE',
+              title: 'Atalhos do Aura Dev',
               message: 'Principais Atalhos:',
               detail: '• Cmd+N: Novo Arquivo\n• Cmd+O: Abrir Arquivo\n• Cmd+Shift+O: Abrir Pasta\n• Cmd+S: Salvar\n• Cmd+L: Foco no Agente IA\n• Cmd+Shift+C: Executar Claude Code\n• Cmd+Shift+G: Executar AGY CLI\n• Ctrl+`: Alternar Terminal\n• Cmd+B: Alternar Explorer',
               buttons: ['Fechar'],

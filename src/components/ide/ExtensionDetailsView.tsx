@@ -352,7 +352,7 @@ export const ExtensionDetailsView: React.FC<ExtensionDetailsViewProps> = ({
 
           {/* Description */}
           <p style={{ fontSize: 12.5, color: themeTokens.textPrimary, margin: '2px 0 4px', lineHeight: 1.4 }}>
-            {extData.description || 'Extensão para aprimorar sua experiência no DevFlow IDE.'}
+            {extData.description || 'Extensão para aprimorar sua experiência no Aura Dev.'}
           </p>
 
           {/* Action Buttons & Badges */}

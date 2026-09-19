@@ -185,7 +185,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
                 Configurações
               </div>
               <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>
-                Estilização, editor, atalhos e extensões do DevFlow IDE
+                Estilização, editor, atalhos e extensões do Aura Dev
               </div>
             </div>
           </div>
@@ -297,7 +297,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
 
             {/* Footer */}
             <div style={{ borderTop: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'}`, paddingTop: 10, marginTop: 10, padding: '10px 10px 0 10px' }}>
-              <div style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>DevFlow IDE • v1.0.0</div>
+              <div style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>Aura Dev • v1.0.0</div>
             </div>
           </div>
 
