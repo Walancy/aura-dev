@@ -370,7 +370,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
       const cached = repoDetailsCache[repo.full_name];
       const doneCount = cached ? cached.issues.filter((i) => i.status === 'Concluído').length : 0;
       const inProgressCount = cached ? cached.issues.filter((i) => i.status === 'Em Progresso').length : 0;
-      const openCount = cached ? cached.issues.filter((i) => i.status !== 'Concluído').length : repo.open_issues_count;
+      const openCount = cached ? cached.issues.filter((i) => i.status === 'A Fazer').length : repo.open_issues_count;
       const total = cached ? cached.issues.length : 0;
       const percentValue = total > 0 ? Math.round((doneCount / total) * 100) : 0;
       return {
@@ -1209,6 +1209,12 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                   ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.18)' : 'rgba(0, 0, 0, 0.14)')
                   : (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)'));
 
+            // Proporção real: concluídas (sólida) / em andamento (pontilhada) / abertas (opacidade baixa)
+            const totalTasksForBar = card.issuesDone + card.issuesInProgress + card.issuesOpen;
+            const doneGrow = card.issuesDone;
+            const inProgressGrow = card.issuesInProgress;
+            const openGrow = totalTasksForBar > 0 ? card.issuesOpen : 1;
+
             return (
               <div
                 key={card.id}
@@ -1394,43 +1400,53 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                       border: 'none',
                     }}
                   >
-                    <div
-                      style={{
-                        flex: '1 1 0',
-                        height: 4,
-                        background: progressSolidBg,
-                        borderRadius: 2,
-                        border: 'none',
-                      }}
-                    />
-                    <div
-                      style={{
-                        width: 'clamp(20px, 18%, 64px)',
-                        height: 4,
-                        backgroundImage: isSelected
-                          ? (isAccentContrastDark
-                              ? 'radial-gradient(circle, #000000 1px, transparent 1px)'
-                              : 'radial-gradient(circle, #ffffff 1px, transparent 1px)')
-                          : (isEffectiveDark
-                              ? 'radial-gradient(circle, #ffffff 1px, transparent 1px)'
-                              : 'radial-gradient(circle, #0f172a 1px, transparent 1px)'),
-                        backgroundSize: '4px 4px',
-                        backgroundRepeat: 'repeat-x',
-                        backgroundPosition: 'center',
-                        border: 'none',
-                        flexShrink: 1,
-                      }}
-                    />
-                    <div
-                      style={{
-                        width: 'clamp(14px, 12%, 44px)',
-                        height: 4,
-                        background: progressFaintBg,
-                        borderRadius: 2,
-                        border: 'none',
-                        flexShrink: 1,
-                      }}
-                    />
+                    {doneGrow > 0 && (
+                      <div
+                        style={{
+                          flex: `${doneGrow} 1 0`,
+                          height: 4,
+                          background: progressSolidBg,
+                          borderRadius: 2,
+                          border: 'none',
+                          transition: 'flex-grow 0.25s ease',
+                        }}
+                        title={`${card.issuesDone} concluída(s)`}
+                      />
+                    )}
+                    {inProgressGrow > 0 && (
+                      <div
+                        style={{
+                          flex: `${inProgressGrow} 1 0`,
+                          height: 4,
+                          backgroundImage: isSelected
+                            ? (isAccentContrastDark
+                                ? 'radial-gradient(circle, #000000 1px, transparent 1px)'
+                                : 'radial-gradient(circle, #ffffff 1px, transparent 1px)')
+                            : (isEffectiveDark
+                                ? 'radial-gradient(circle, #ffffff 1px, transparent 1px)'
+                                : 'radial-gradient(circle, #0f172a 1px, transparent 1px)'),
+                          backgroundSize: '4px 4px',
+                          backgroundRepeat: 'repeat-x',
+                          backgroundPosition: 'center',
+                          border: 'none',
+                          transition: 'flex-grow 0.25s ease',
+                        }}
+                        title={`${card.issuesInProgress} em andamento`}
+                      />
+                    )}
+                    {openGrow > 0 && (
+                      <div
+                        style={{
+                          flex: `${openGrow} 1 0`,
+                          height: 4,
+                          background: progressFaintBg,
+                          borderRadius: 2,
+                          border: 'none',
+                          transition: 'flex-grow 0.25s ease',
+                        }}
+                        title={`${card.issuesOpen} aberta(s)`}
+                      />
+                    )}
                   </div>
                 </div>
 
