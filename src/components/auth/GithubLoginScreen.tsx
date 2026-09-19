@@ -113,6 +113,8 @@ export const GithubLoginScreen: React.FC<GithubLoginScreenProps> = ({ accentColo
           background: 'radial-gradient(circle, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.06) 45%, transparent 70%)',
           filter: 'blur(40px)',
           pointerEvents: 'none',
+          opacity: 0,
+          animation: 'devflow-login-glow-in 2.8s ease-out forwards',
         }}
       />
 
@@ -262,6 +264,10 @@ export const GithubLoginScreen: React.FC<GithubLoginScreenProps> = ({ accentColo
         @keyframes devflow-login-pulse {
           0%, 100% { opacity: 0.35; transform: scale(0.85); }
           50% { opacity: 1; transform: scale(1.15); }
+        }
+        @keyframes devflow-login-glow-in {
+          from { opacity: 0; transform: translate(-50%, -60%) scale(0.85); }
+          to { opacity: 1; transform: translate(-50%, -60%) scale(1); }
         }
       `}</style>
     </div>
