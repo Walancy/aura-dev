@@ -211,6 +211,113 @@ class GithubAuthService {
     if (data.errors) throw new Error(data.errors[0]?.message || 'Erro no GraphQL do GitHub');
     return data.data?.viewer?.projectsV2?.nodes || [];
   }
+
+  public async fetchOrgs(): Promise<Array<{ login: string; avatarUrl: string }>> {
+    const token = this.readToken();
+    if (!token) throw new Error('not authenticated');
+    const res = await fetch('https://api.github.com/user/orgs?per_page=100', {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+    });
+    if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
+    const data: any[] = await res.json();
+    return data.map((o) => ({ login: o.login, avatarUrl: o.avatar_url }));
+  }
+
+  public async fetchRepoIssues(owner: string, repo: string): Promise<any[]> {
+    const token = this.readToken();
+    if (!token) throw new Error('not authenticated');
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/issues?state=all&per_page=100&sort=created&direction=desc`,
+      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' } },
+    );
+    if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
+    const data: any[] = await res.json();
+    // The issues endpoint also returns pull requests; keep only real issues.
+    return data.filter((item) => !item.pull_request);
+  }
+
+  public async fetchRepoPulls(owner: string, repo: string): Promise<any[]> {
+    const token = this.readToken();
+    if (!token) throw new Error('not authenticated');
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls?state=all&per_page=50`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+    });
+    if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
+    return res.json();
+  }
+
+  public async fetchRepoMilestones(owner: string, repo: string): Promise<any[]> {
+    const token = this.readToken();
+    if (!token) throw new Error('not authenticated');
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/milestones?state=all&per_page=100`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+    });
+    if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
+    return res.json();
+  }
+
+  public async fetchRepoReleases(owner: string, repo: string): Promise<any[]> {
+    const token = this.readToken();
+    if (!token) throw new Error('not authenticated');
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases?per_page=30`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+    });
+    if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
+    return res.json();
+  }
+
+  private async ensureLabelExists(owner: string, repo: string, token: string, name: string, color: string): Promise<void> {
+    const checkRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/labels/${encodeURIComponent(name)}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+    });
+    if (checkRes.ok) return;
+    await fetch(`https://api.github.com/repos/${owner}/${repo}/labels`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
+      body: JSON.stringify({ name, color }),
+    }).catch(() => {});
+  }
+
+  public async createIssue(
+    owner: string,
+    repo: string,
+    input: { title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[] },
+  ): Promise<any> {
+    const token = this.readToken();
+    if (!token) throw new Error('not authenticated');
+    for (const label of input.labels || []) {
+      await this.ensureLabelExists(owner, repo, token, label.name, label.color);
+    }
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
+      body: JSON.stringify({
+        title: input.title,
+        body: input.body || '',
+        labels: (input.labels || []).map((l) => l.name),
+        assignees: input.assignees || [],
+      }),
+    });
+    if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
+    return res.json();
+  }
+
+  public async updateIssue(
+    owner: string,
+    repo: string,
+    issueNumber: number,
+    input: { state?: 'open' | 'closed'; labels?: string[] },
+  ): Promise<any> {
+    const token = this.readToken();
+    if (!token) throw new Error('not authenticated');
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
+    return res.json();
+  }
 }
 
 export const githubAuthService = new GithubAuthService();

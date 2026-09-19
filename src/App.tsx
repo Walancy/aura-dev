@@ -5886,14 +5886,14 @@ ${prompt || userDisplayPrompt}`;
           {/* Vertical Divider */}
           <div style={{ width: 1, height: 24, background: isEffectiveDark ? '#373737' : 'rgba(0, 0, 0, 0.1)' }} />
 
-          {/* Profile: Walancy / Walancy + Avatar */}
+          {/* Profile: GitHub name / nick + avatar */}
           <div style={{ justifyContent: 'flex-start', alignItems: 'center', gap: 12, display: 'flex', whiteSpace: 'nowrap' }}>
             <div style={{ flexDirection: 'column', justifyContent: 'flex-start', alignItems: 'flex-end', display: 'inline-flex' }}>
               <div style={{ color: isEffectiveDark ? '#ffffff' : themeTokens.textPrimary, fontSize: 13, fontFamily: 'Poppins', fontWeight: '400', lineHeight: '14px', whiteSpace: 'nowrap' }}>
-                Walancy
+                {githubUser?.name || githubUser?.login || 'Usuário'}
               </div>
               <div style={{ textAlign: 'right', color: isEffectiveDark ? '#727272' : themeTokens.textSecondary, fontSize: 11, fontFamily: 'Poppins', fontWeight: '500', lineHeight: '15px', whiteSpace: 'nowrap' }}>
-                Walancy
+                {githubUser?.login ? `@${githubUser.login}` : ''}
               </div>
             </div>
             {/* User Profile Avatar with NO border */}
@@ -5911,12 +5911,12 @@ ${prompt || userDisplayPrompt}`;
               }}
             >
               <img
-                src={avatarImg}
+                src={githubUser?.avatarUrl || avatarImg}
                 onError={(e) => {
                   const target = e.target as HTMLImageElement;
-                  if (!target.dataset.triedGithub) {
-                    target.dataset.triedGithub = 'true';
-                    target.src = 'https://github.com/walancy.png';
+                  if (!target.dataset.triedFallback) {
+                    target.dataset.triedFallback = 'true';
+                    target.src = avatarImg;
                   }
                 }}
                 style={{
@@ -5927,7 +5927,7 @@ ${prompt || userDisplayPrompt}`;
                   objectFit: 'cover',
                   display: 'block',
                 }}
-                alt="Walancy"
+                alt={githubUser?.login || 'Usuário'}
               />
             </div>
           </div>
@@ -10065,15 +10065,15 @@ ${prompt || userDisplayPrompt}`;
                             )}
                           </div>
                           <img
-                            src={avatarImg}
+                            src={githubUser?.avatarUrl || avatarImg}
                             onError={(e) => {
                               const target = e.target as HTMLImageElement;
-                              if (!target.dataset.triedGithub) {
-                                target.dataset.triedGithub = 'true';
-                                target.src = 'https://github.com/walancy.png';
+                              if (!target.dataset.triedFallback) {
+                                target.dataset.triedFallback = 'true';
+                                target.src = avatarImg;
                               }
                             }}
-                            alt="User"
+                            alt={githubUser?.login || 'User'}
                             style={{
                               width: 22,
                               height: 22,

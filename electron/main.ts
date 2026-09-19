@@ -910,6 +910,81 @@ ipcMain.handle('github:fetchProjects', async () => {
   }
 });
 
+ipcMain.handle('github:fetchOrgs', async () => {
+  try {
+    const orgs = await githubAuthService.fetchOrgs();
+    return { success: true, orgs };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:fetchRepoIssues', async (_event, { owner, repo }: { owner: string; repo: string }) => {
+  try {
+    const issues = await githubAuthService.fetchRepoIssues(owner, repo);
+    return { success: true, issues };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:fetchRepoPulls', async (_event, { owner, repo }: { owner: string; repo: string }) => {
+  try {
+    const pulls = await githubAuthService.fetchRepoPulls(owner, repo);
+    return { success: true, pulls };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:fetchRepoMilestones', async (_event, { owner, repo }: { owner: string; repo: string }) => {
+  try {
+    const milestones = await githubAuthService.fetchRepoMilestones(owner, repo);
+    return { success: true, milestones };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:fetchRepoReleases', async (_event, { owner, repo }: { owner: string; repo: string }) => {
+  try {
+    const releases = await githubAuthService.fetchRepoReleases(owner, repo);
+    return { success: true, releases };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle(
+  'github:createIssue',
+  async (
+    _event,
+    { owner, repo, title, body, labels, assignees }: { owner: string; repo: string; title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[] },
+  ) => {
+    try {
+      const issue = await githubAuthService.createIssue(owner, repo, { title, body, labels, assignees });
+      return { success: true, issue };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  },
+);
+
+ipcMain.handle(
+  'github:updateIssue',
+  async (
+    _event,
+    { owner, repo, issueNumber, state, labels }: { owner: string; repo: string; issueNumber: number; state?: 'open' | 'closed'; labels?: string[] },
+  ) => {
+    try {
+      const issue = await githubAuthService.updateIssue(owner, repo, issueNumber, { state, labels });
+      return { success: true, issue };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  },
+);
+
 app.whenReady().then(() => {
   if (process.platform === 'darwin' && appIconImage && app.dock) {
     try {

@@ -179,6 +179,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cancelLogin: () => ipcRenderer.invoke('github:cancelLogin'),
     fetchRepos: () => ipcRenderer.invoke('github:fetchRepos'),
     fetchProjects: () => ipcRenderer.invoke('github:fetchProjects'),
+    fetchOrgs: () => ipcRenderer.invoke('github:fetchOrgs'),
+    fetchRepoIssues: (owner: string, repo: string) => ipcRenderer.invoke('github:fetchRepoIssues', { owner, repo }),
+    fetchRepoPulls: (owner: string, repo: string) => ipcRenderer.invoke('github:fetchRepoPulls', { owner, repo }),
+    fetchRepoMilestones: (owner: string, repo: string) => ipcRenderer.invoke('github:fetchRepoMilestones', { owner, repo }),
+    fetchRepoReleases: (owner: string, repo: string) => ipcRenderer.invoke('github:fetchRepoReleases', { owner, repo }),
+    createIssue: (owner: string, repo: string, input: { title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[] }) =>
+      ipcRenderer.invoke('github:createIssue', { owner, repo, ...input }),
+    updateIssue: (owner: string, repo: string, issueNumber: number, input: { state?: 'open' | 'closed'; labels?: string[] }) =>
+      ipcRenderer.invoke('github:updateIssue', { owner, repo, issueNumber, ...input }),
     onLoginResult: (callback: (result: { success: boolean; user?: any; error?: string }) => void) => {
       const handler = (_event: any, result: any) => callback(result);
       ipcRenderer.on('github:loginResult', handler);

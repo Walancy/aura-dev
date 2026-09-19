@@ -97,6 +97,13 @@ export interface ElectronAPI {
     cancelLogin: () => Promise<{ success: boolean }>;
     fetchRepos: () => Promise<{ success: boolean; repos?: any[]; error?: string }>;
     fetchProjects: () => Promise<{ success: boolean; projects?: any[]; error?: string }>;
+    fetchOrgs: () => Promise<{ success: boolean; orgs?: Array<{ login: string; avatarUrl: string }>; error?: string }>;
+    fetchRepoIssues: (owner: string, repo: string) => Promise<{ success: boolean; issues?: any[]; error?: string }>;
+    fetchRepoPulls: (owner: string, repo: string) => Promise<{ success: boolean; pulls?: any[]; error?: string }>;
+    fetchRepoMilestones: (owner: string, repo: string) => Promise<{ success: boolean; milestones?: any[]; error?: string }>;
+    fetchRepoReleases: (owner: string, repo: string) => Promise<{ success: boolean; releases?: any[]; error?: string }>;
+    createIssue: (owner: string, repo: string, input: { title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[] }) => Promise<{ success: boolean; issue?: any; error?: string }>;
+    updateIssue: (owner: string, repo: string, issueNumber: number, input: { state?: 'open' | 'closed'; labels?: string[] }) => Promise<{ success: boolean; issue?: any; error?: string }>;
     onLoginResult: (callback: (result: { success: boolean; user?: { login: string; name: string | null; avatarUrl: string; htmlUrl: string }; error?: string }) => void) => () => void;
   };
 }

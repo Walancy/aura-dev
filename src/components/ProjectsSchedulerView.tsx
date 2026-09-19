@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Search,
   ChevronDown,
@@ -13,16 +13,10 @@ import {
   X,
   CheckCircle2,
   Clock,
-  Layers,
   AlertCircle,
   GitPullRequest,
   GitBranch,
-  GitCommit,
   Tag,
-  ExternalLink,
-  Copy,
-  FileText,
-  Users,
   Building2,
 } from 'lucide-react';
 import { getContrastTextColor, hexToRgba } from '../utils/color';
@@ -59,6 +53,11 @@ interface ProjectCardData {
   issuesInProgress: number;
   alertStatus?: 'alerta' | 'critico' | null;
   org?: string;
+  // Real GitHub repo backing this card
+  fullName?: string;
+  owner?: string;
+  repoName?: string;
+  htmlUrl?: string;
 }
 
 export interface ProjectIssue {
@@ -73,17 +72,32 @@ export interface ProjectIssue {
   priority: 'Baixa' | 'Média' | 'Alta' | 'Urgente';
   priorityColor: string;
   status: 'A Fazer' | 'Em Progresso' | 'Concluído';
-  assignees: { name: string; avatarBg: string; initial: string }[];
+  assignees: { name: string; avatarBg: string; initial: string; avatarUrl?: string }[];
   progress: number;
+  // Real GitHub issue backing this task
+  githubNumber?: number;
+  htmlUrl?: string;
+  rawLabels?: string[];
   pullRequest?: {
     number: number;
     title: string;
     branch: string;
     status: 'open' | 'merged' | 'draft';
-    reviewStatus: 'approved' | 'review_required' | 'changes_requested';
-    ciStatus: 'success' | 'failure' | 'pending';
+    reviewStatus?: 'approved' | 'review_required' | 'changes_requested';
+    ciStatus?: 'success' | 'failure' | 'pending';
     url?: string;
   };
+}
+
+interface GithubRepoSummary {
+  id: number;
+  name: string;
+  full_name: string;
+  description: string | null;
+  open_issues_count: number;
+  language: string | null;
+  owner: { login: string; avatar_url?: string };
+  html_url: string;
 }
 
 export interface ProjectRelease {
@@ -105,312 +119,7 @@ export interface ProjectRelease {
   commitsCount: number;
 }
 
-export const RELEASES_DATA: Record<string, ProjectRelease> = {
-  'v2.4 - Produção': {
-    version: 'v2.4 - Produção',
-    tag: 'v2.4.0',
-    releaseName: 'v2.4 - Core Performance & Modern Workspace',
-    dateStr: '18 Nov 2026',
-    author: 'Walancy',
-    status: 'published',
-    milestone: {
-      title: 'Milestone 2.4 - Estabilidade & Polish',
-      totalIssues: 24,
-      closedIssues: 22,
-      openIssues: 2,
-      percent: 92,
-      dueDate: '20 Nov 2026',
-    },
-    highlights: [
-      '🚀 Redução de 45% no tempo de bundle com rolldown e vite',
-      '✨ Novo design border-free ultra-limpo com contraste adaptativo',
-      '⚡ Integração de PRs e CI/CD actions no scheduler de projetos',
-      '🐛 Otimização de concorrência nos terminais integrados PTY',
-    ],
-    commitsCount: 38,
-  },
-  'v2.5 - Release Candidate': {
-    version: 'v2.5 - Release Candidate',
-    tag: 'v2.5.0-rc1',
-    releaseName: 'v2.5 - Team Collaboration & Git Ops',
-    dateStr: 'Previsão: 02 Dez 2026',
-    author: 'Walancy',
-    status: 'pre-release',
-    milestone: {
-      title: 'Milestone 2.5 - Git Ops & Branches',
-      totalIssues: 30,
-      closedIssues: 18,
-      openIssues: 12,
-      percent: 60,
-      dueDate: '02 Dez 2026',
-    },
-    highlights: [
-      '🌿 Criação rápida de branches locais vinculadas a issues',
-      '📊 Gráficos de pulso de commits e deployments em tempo real',
-      '👥 Filtro inteligente de colaboradores por avatar',
-    ],
-    commitsCount: 24,
-  },
-  'v3.0 - Beta': {
-    version: 'v3.0 - Beta',
-    tag: 'v3.0.0-beta.1',
-    releaseName: 'v3.0 - Cloud Workspaces & Next-Gen Extensions',
-    dateStr: 'Previsão: Jan 2027',
-    author: 'Walancy',
-    status: 'draft',
-    milestone: {
-      title: 'Milestone 3.0 - Cloud Architecture',
-      totalIssues: 50,
-      closedIssues: 15,
-      openIssues: 35,
-      percent: 30,
-      dueDate: '15 Jan 2027',
-    },
-    highlights: [
-      '☁️ Suporte a workspaces distribuídos e sincronização remota',
-      '🧩 Sistema modular de extensões nativas aceleradas',
-    ],
-    commitsCount: 14,
-  },
-};
-
-export const TEAM_MEMBERS = [
-  { name: 'Walancy', initial: 'W', avatarBg: '#ea580c', role: 'Tech Lead' },
-  { name: 'Gabriel Costa', initial: 'G', avatarBg: '#0284c7', role: 'Full Stack' },
-  { name: 'Ana Souza', initial: 'A', avatarBg: '#16a34a', role: 'Frontend' },
-  { name: 'Carlos Lima', initial: 'C', avatarBg: '#0891b2', role: 'Backend' },
-  { name: 'Lucas Silva', initial: 'L', avatarBg: '#9333ea', role: 'DevOps' },
-  { name: 'Mariana Melo', initial: 'M', avatarBg: '#059669', role: 'QA' },
-];
-
-export const REPO_PULSE = {
-  lastCommit: {
-    hash: '8f4c29a',
-    message: 'fix(git): enhance branch checkout and PR link tracking',
-    author: 'Walancy',
-    relativeTime: 'há 12m',
-    branch: 'main',
-  },
-  sparkline: [3, 7, 4, 9, 6, 12, 8],
-  deploy: {
-    env: 'Produção',
-    version: 'v2.4',
-    status: 'Ativo',
-    updatedAt: 'há 28m',
-  },
-};
-
-const INITIAL_PROJECT_ISSUES: ProjectIssue[] = [
-  // Projeto 1 (Sprint 2)
-  {
-    id: 'DEV-101',
-    projectId: 1,
-    title: 'Plan project launch',
-    dateStr: 'Nov 4, 2026 at 12:19 am',
-    startDay: 0,
-    spanDays: 2,
-    tag: 'Research',
-    tagColor: { bg: 'rgba(59, 130, 246, 0.15)', text: '#60a5fa' },
-    priority: 'Média',
-    priorityColor: '#f59e0b',
-    status: 'Em Progresso',
-    assignees: [
-      { name: 'Walancy', avatarBg: '#ea580c', initial: 'W' },
-      { name: 'Gabriel Costa', avatarBg: '#0284c7', initial: 'G' },
-      { name: 'Ana Souza', avatarBg: '#16a34a', initial: 'A' },
-    ],
-    progress: 70,
-    pullRequest: {
-      number: 104,
-      title: 'feat(core): project launch roadmap and specs',
-      branch: 'feature/dev-101-project-launch',
-      status: 'open',
-      reviewStatus: 'approved',
-      ciStatus: 'success',
-    },
-  },
-  {
-    id: 'DEV-102',
-    projectId: 1,
-    title: 'Setup database migration & schemas',
-    dateStr: 'Nov 5, 2026 at 09:30 am',
-    startDay: 1,
-    spanDays: 3,
-    tag: 'Backend',
-    tagColor: { bg: 'rgba(168, 85, 247, 0.15)', text: '#c084fc' },
-    priority: 'Alta',
-    priorityColor: '#ef4444',
-    status: 'Em Progresso',
-    assignees: [
-      { name: 'Walancy', avatarBg: '#ea580c', initial: 'W' },
-      { name: 'Carlos Lima', avatarBg: '#0891b2', initial: 'C' },
-    ],
-    progress: 60,
-    pullRequest: {
-      number: 108,
-      title: 'feat(db): schema migrations & postgres connection pool',
-      branch: 'feature/dev-102-db-migrations',
-      status: 'open',
-      reviewStatus: 'review_required',
-      ciStatus: 'pending',
-    },
-  },
-  {
-    id: 'DEV-103',
-    projectId: 1,
-    title: 'Plan project launch',
-    dateStr: 'Nov 4, 2026 at 12:19 am',
-    startDay: 4,
-    spanDays: 2,
-    tag: 'Research',
-    tagColor: { bg: 'rgba(59, 130, 246, 0.15)', text: '#60a5fa' },
-    priority: 'Média',
-    priorityColor: '#f59e0b',
-    status: 'A Fazer',
-    assignees: [
-      { name: 'Lucas Silva', avatarBg: '#9333ea', initial: 'L' },
-      { name: 'Walancy', avatarBg: '#ea580c', initial: 'W' },
-      { name: 'Mariana Melo', avatarBg: '#059669', initial: 'M' },
-    ],
-    progress: 25,
-  },
-  {
-    id: 'DEV-104',
-    projectId: 1,
-    title: 'Plan project launch',
-    dateStr: 'Nov 4, 2026 at 12:19 am',
-    startDay: 3,
-    spanDays: 3,
-    tag: 'Research',
-    tagColor: { bg: 'rgba(59, 130, 246, 0.15)', text: '#60a5fa' },
-    priority: 'Média',
-    priorityColor: '#f59e0b',
-    status: 'Concluído',
-    assignees: [
-      { name: 'Walancy', avatarBg: '#ea580c', initial: 'W' },
-      { name: 'Rodrigo Faro', avatarBg: '#e11d48', initial: 'R' },
-      { name: 'Juliana Paes', avatarBg: '#2563eb', initial: 'J' },
-    ],
-    progress: 100,
-    pullRequest: {
-      number: 98,
-      title: 'chore: research and launch validation metrics',
-      branch: 'feature/dev-104-validation',
-      status: 'merged',
-      reviewStatus: 'approved',
-      ciStatus: 'success',
-    },
-  },
-  // Projeto 2
-  {
-    id: 'DEV-201',
-    projectId: 2,
-    title: 'Arquitetura de microsserviços',
-    dateStr: 'Nov 6, 2026 at 10:00 am',
-    startDay: 0,
-    spanDays: 3,
-    tag: 'DevOps',
-    tagColor: { bg: 'rgba(234, 88, 12, 0.15)', text: '#fb923c' },
-    priority: 'Alta',
-    priorityColor: '#ef4444',
-    status: 'Em Progresso',
-    assignees: [
-      { name: 'Walancy', avatarBg: '#ea580c', initial: 'W' },
-      { name: 'Gabriel Costa', avatarBg: '#0284c7', initial: 'G' },
-    ],
-    progress: 55,
-  },
-  {
-    id: 'DEV-202',
-    projectId: 2,
-    title: 'Configurar gateway e rate-limiting',
-    dateStr: 'Nov 7, 2026 at 02:40 pm',
-    startDay: 3,
-    spanDays: 2,
-    tag: 'Backend',
-    tagColor: { bg: 'rgba(168, 85, 247, 0.15)', text: '#c084fc' },
-    priority: 'Média',
-    priorityColor: '#f59e0b',
-    status: 'A Fazer',
-    assignees: [
-      { name: 'Carlos Lima', avatarBg: '#0891b2', initial: 'C' },
-    ],
-    progress: 20,
-  },
-  {
-    id: 'DEV-203',
-    projectId: 2,
-    title: 'Testes de carga e estresse com k6',
-    dateStr: 'Nov 8, 2026 at 04:15 pm',
-    startDay: 4,
-    spanDays: 3,
-    tag: 'QA',
-    tagColor: { bg: 'rgba(16, 185, 129, 0.15)', text: '#34d399' },
-    priority: 'Baixa',
-    priorityColor: '#22c55e',
-    status: 'Concluído',
-    assignees: [
-      { name: 'Walancy', avatarBg: '#ea580c', initial: 'W' },
-    ],
-    progress: 100,
-  },
-  // Projeto 3
-  {
-    id: 'DEV-301',
-    projectId: 3,
-    title: 'Refatoração da interface Web & Mobile',
-    dateStr: 'Nov 9, 2026 at 11:30 am',
-    startDay: 1,
-    spanDays: 3,
-    tag: 'Design',
-    tagColor: { bg: 'rgba(236, 72, 153, 0.15)', text: '#f472b6' },
-    priority: 'Alta',
-    priorityColor: '#ef4444',
-    status: 'Em Progresso',
-    assignees: [
-      { name: 'Ana Souza', avatarBg: '#16a34a', initial: 'A' },
-      { name: 'Walancy', avatarBg: '#ea580c', initial: 'W' },
-    ],
-    progress: 85,
-  },
-  {
-    id: 'DEV-302',
-    projectId: 3,
-    title: 'Implementação dos tokens do Design System',
-    dateStr: 'Nov 10, 2026 at 03:00 pm',
-    startDay: 4,
-    spanDays: 2,
-    tag: 'Frontend',
-    tagColor: { bg: 'rgba(59, 130, 246, 0.15)', text: '#60a5fa' },
-    priority: 'Média',
-    priorityColor: '#f59e0b',
-    status: 'Concluído',
-    assignees: [
-      { name: 'Walancy', avatarBg: '#ea580c', initial: 'W' },
-    ],
-    progress: 100,
-  },
-  // Projeto 4
-  {
-    id: 'DEV-401',
-    projectId: 4,
-    title: 'Release candidate v2.4 e homologação',
-    dateStr: 'Nov 11, 2026 at 01:20 pm',
-    startDay: 2,
-    spanDays: 4,
-    tag: 'Release',
-    tagColor: { bg: 'rgba(245, 158, 11, 0.15)', text: '#fbbf24' },
-    priority: 'Urgente',
-    priorityColor: '#ef4444',
-    status: 'Em Progresso',
-    assignees: [
-      { name: 'Walancy', avatarBg: '#ea580c', initial: 'W' },
-      { name: 'Gabriel Costa', avatarBg: '#0284c7', initial: 'G' },
-      { name: 'Carlos Lima', avatarBg: '#0891b2', initial: 'C' },
-    ],
-    progress: 90,
-  },
-];
+export const RELEASES_DATA: Record<string, ProjectRelease> = {};
 
 const TIMELINE_DAYS = [
   { key: 'MON', label: 'SEG', num: '20' },
@@ -422,75 +131,6 @@ const TIMELINE_DAYS = [
   { key: 'SUN', label: 'DOM', num: '26' },
 ];
 
-const ALL_PROJECTS: ProjectCardData[] = [
-  {
-    id: 1,
-    badge: 1,
-    title: 'Titulo do projeto',
-    sprint: 'sprint 2',
-    percentage: '70%',
-    percentValue: 70,
-    solidFlex: '1 1 0',
-    dottedWidth: 52,
-    faintWidth: 36,
-    issuesDone: 43,
-    issuesOpen: 62,
-    issuesInProgress: 23,
-    alertStatus: 'critico',
-  },
-  {
-    id: 2,
-    badge: 2,
-    title: 'Titulo do projeto',
-    sprint: 'sprint 2',
-    percentage: '70%',
-    percentValue: 70,
-    solidFlex: '1 1 0',
-    dottedWidth: 52,
-    faintWidth: 36,
-    issuesDone: 43,
-    issuesOpen: 62,
-    issuesInProgress: 23,
-    alertStatus: 'alerta',
-  },
-  {
-    id: 3,
-    badge: 3,
-    title: 'Titulo do projeto',
-    sprint: 'sprint 3',
-    percentage: '85%',
-    percentValue: 85,
-    solidFlex: '1 1 0',
-    dottedWidth: 52,
-    faintWidth: 36,
-    issuesDone: 50,
-    issuesOpen: 45,
-    issuesInProgress: 20,
-    alertStatus: 'critico',
-  },
-  {
-    id: 4,
-    badge: 4,
-    title: 'Titulo do projeto',
-    sprint: 'sprint 4',
-    percentage: '90%',
-    percentValue: 90,
-    solidFlex: '1 1 0',
-    dottedWidth: 52,
-    faintWidth: 36,
-    issuesDone: 56,
-    issuesOpen: 40,
-    issuesInProgress: 25,
-    alertStatus: 'alerta',
-  },
-];
-
-const SPRINT_FILTER_OPTIONS = [
-  'Todas as Sprints',
-  'sprint 2',
-  'sprint 3',
-  'sprint 4',
-];
 
 const STATUS_FILTER_OPTIONS = [
   'Todos os Projetos',
@@ -498,11 +138,6 @@ const STATUS_FILTER_OPTIONS = [
   'Fase Final (≥90%)',
 ];
 
-const VERSION_OPTIONS = [
-  'v2.4 - Produção',
-  'v2.5 - Release Candidate',
-  'v3.0 - Beta',
-];
 
 export interface OrganizationOption {
   id: string;
@@ -512,13 +147,121 @@ export interface OrganizationOption {
   avatarUrl?: string;
 }
 
-export const ORGANIZATION_OPTIONS: OrganizationOption[] = [
-  { id: 'all', name: 'Todas as Organizações', slug: 'all', avatarColor: '#6366f1' },
-  { id: 'walancy', name: 'Walancy', slug: '@walancy', avatarColor: '#ea580c', avatarUrl: 'https://github.com/walancy.png' },
-  { id: 'ainaobra', name: 'Ainaobra', slug: '@ainaobra', avatarColor: '#0ea5e9' },
-  { id: 'aura-dev', name: 'Aura Dev', slug: '@aura-dev', avatarColor: '#10b981' },
-  { id: 'devflow', name: 'DevFlow Systems', slug: '@devflow', avatarColor: '#f59e0b' },
-];
+const TAG_LABEL_STYLE: Record<string, { bg: string; text: string }> = {
+  research: { bg: 'rgba(59, 130, 246, 0.15)', text: '#60a5fa' },
+  backend: { bg: 'rgba(168, 85, 247, 0.15)', text: '#c084fc' },
+  frontend: { bg: 'rgba(59, 130, 246, 0.15)', text: '#60a5fa' },
+  design: { bg: 'rgba(236, 72, 153, 0.15)', text: '#f472b6' },
+  devops: { bg: 'rgba(234, 88, 12, 0.15)', text: '#fb923c' },
+  qa: { bg: 'rgba(16, 185, 129, 0.15)', text: '#34d399' },
+  release: { bg: 'rgba(245, 158, 11, 0.15)', text: '#fbbf24' },
+};
+
+const TAG_LABEL_COLOR: Record<string, string> = {
+  Research: '3b82f6',
+  Backend: 'a855f7',
+  Frontend: '3b82f6',
+  Design: 'ec4899',
+  DevOps: 'ea580c',
+  QA: '10b981',
+  Release: 'f59e0b',
+};
+
+const PRIORITY_LABELS: Record<'Baixa' | 'Média' | 'Alta' | 'Urgente', { name: string; color: string }> = {
+  Baixa: { name: 'priority: baixa', color: '22c55e' },
+  Média: { name: 'priority: média', color: 'f59e0b' },
+  Alta: { name: 'priority: alta', color: 'ef4444' },
+  Urgente: { name: 'priority: urgente', color: 'dc2626' },
+};
+
+const IN_PROGRESS_LABEL = { name: 'em-progresso', color: '0ea5e9' };
+
+function weekdayFromIso(iso: string): number {
+  const d = new Date(iso);
+  const jsDay = d.getDay(); // 0 = Sunday .. 6 = Saturday
+  return jsDay === 0 ? 6 : jsDay - 1; // convert to 0 = Monday .. 6 = Sunday
+}
+
+function mapGithubIssueToProjectIssue(gh: any, projectId: number, pulls: any[]): ProjectIssue {
+  const labelObjs: Array<{ name: string; color?: string }> = (gh.labels || []).map((l: any) =>
+    typeof l === 'string' ? { name: l } : { name: l.name, color: l.color }
+  );
+  const labelNames = labelObjs.map((l) => l.name);
+  const lowerLabels = labelNames.map((l) => l.toLowerCase());
+
+  const priorityLabel = lowerLabels.find((l) => l.startsWith('priority:'));
+  const priority: ProjectIssue['priority'] = priorityLabel?.includes('urgente')
+    ? 'Urgente'
+    : priorityLabel?.includes('alta')
+    ? 'Alta'
+    : priorityLabel?.includes('baixa')
+    ? 'Baixa'
+    : 'Média';
+  const priorityColor =
+    priority === 'Urgente' ? '#dc2626' : priority === 'Alta' ? '#ef4444' : priority === 'Baixa' ? '#22c55e' : '#f59e0b';
+
+  const hasInProgress = lowerLabels.includes('em-progresso');
+  const status: ProjectIssue['status'] = gh.state === 'closed' ? 'Concluído' : hasInProgress ? 'Em Progresso' : 'A Fazer';
+
+  const tagLabelObj = labelObjs.find((l) => {
+    const name = l.name.toLowerCase();
+    return !name.startsWith('priority:') && name !== 'em-progresso';
+  });
+  const tagName = tagLabelObj?.name || 'Geral';
+  const tagColor =
+    TAG_LABEL_STYLE[tagName.toLowerCase()] ||
+    (tagLabelObj?.color
+      ? { bg: hexToRgba(`#${tagLabelObj.color}`, 0.15), text: `#${tagLabelObj.color}` }
+      : { bg: 'rgba(148, 163, 184, 0.15)', text: '#94a3b8' });
+
+  const createdAt = gh.created_at ? new Date(gh.created_at) : new Date();
+  const closedAt = gh.closed_at ? new Date(gh.closed_at) : null;
+  const daysOpen = closedAt ? Math.max(1, Math.round((closedAt.getTime() - createdAt.getTime()) / 86400000)) : 1;
+
+  const assigneeList: any[] = gh.assignees && gh.assignees.length > 0 ? gh.assignees : gh.assignee ? [gh.assignee] : [];
+  const assignees = assigneeList.map((a: any) => ({
+    name: a.login,
+    initial: (a.login || '?').charAt(0).toUpperCase(),
+    avatarBg: '#6366f1',
+    avatarUrl: a.avatar_url,
+  }));
+
+  // Best-effort link to a pull request that mentions "#<issue number>" in its title or body.
+  const matchedPull = (pulls || []).find((pr: any) => {
+    const text = `${pr.title || ''} ${pr.body || ''}`.toLowerCase();
+    return text.includes(`#${gh.number}`);
+  });
+  const pullRequest = matchedPull
+    ? {
+        number: matchedPull.number,
+        title: matchedPull.title,
+        branch: matchedPull.head?.ref || '',
+        status: (matchedPull.merged_at ? 'merged' : matchedPull.draft ? 'draft' : 'open') as 'open' | 'merged' | 'draft',
+        reviewStatus: (matchedPull.merged_at ? 'approved' : 'review_required') as 'approved' | 'review_required',
+        url: matchedPull.html_url,
+      }
+    : undefined;
+
+  return {
+    id: `#${gh.number}`,
+    projectId,
+    githubNumber: gh.number,
+    htmlUrl: gh.html_url,
+    rawLabels: labelNames,
+    title: gh.title,
+    dateStr: createdAt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }),
+    startDay: weekdayFromIso(gh.created_at || new Date().toISOString()),
+    spanDays: Math.min(3, Math.max(1, daysOpen)),
+    tag: tagName,
+    tagColor,
+    priority,
+    priorityColor,
+    status,
+    assignees,
+    progress: status === 'Concluído' ? 100 : status === 'Em Progresso' ? 50 : 0,
+    pullRequest,
+  };
+}
 
 export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   accentColor: propAccentColor,
@@ -568,12 +311,152 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     avatarBorder: isEffectiveDark ? '#181818' : '#ffffff',
   };
   const [hoveredCardId, setHoveredCardId] = useState<number | null>(null);
-  const [selectedCardId, setSelectedCardId] = useState<number | null>(1);
+  const [selectedCardId, setSelectedCardId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedSprint, setSelectedSprint] = useState('Todas as Sprints');
+  const [selectedSprint, setSelectedSprint] = useState('Todas as Linguagens');
   const [selectedStatus, setSelectedStatus] = useState('Todos os Projetos');
   const [selectedVersion, setSelectedVersion] = useState('v2.4 - Produção');
   const [selectedOrg, setSelectedOrg] = useState('Todas as Organizações');
+
+  // Dados reais do GitHub (usuário, repositórios e organizações)
+  const [currentUser, setCurrentUser] = useState<{ login: string; avatarUrl: string } | null>(null);
+  const [repos, setRepos] = useState<GithubRepoSummary[]>([]);
+  const [orgs, setOrgs] = useState<Array<{ login: string; avatarUrl: string }>>([]);
+  const [isLoadingRepos, setIsLoadingRepos] = useState(true);
+  const [reposError, setReposError] = useState<string | null>(null);
+
+  // Cache de issues por repositório (chave = "owner/repo"), carregado sob demanda ao selecionar um card
+  const [repoDetailsCache, setRepoDetailsCache] = useState<
+    Record<string, { issues: ProjectIssue[]; isLoading: boolean; error: string | null }>
+  >({});
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setIsLoadingRepos(true);
+      setReposError(null);
+      try {
+        const [userRes, reposRes, orgsRes] = await Promise.all([
+          window.electronAPI?.github?.getUser?.(),
+          window.electronAPI?.github?.fetchRepos?.(),
+          window.electronAPI?.github?.fetchOrgs?.(),
+        ]);
+        if (cancelled) return;
+        if (userRes?.success && userRes.user) {
+          setCurrentUser({ login: userRes.user.login, avatarUrl: userRes.user.avatarUrl });
+        }
+        if (reposRes?.success && reposRes.repos) {
+          setRepos(reposRes.repos);
+        } else {
+          setReposError(reposRes?.error || 'Não foi possível carregar seus repositórios do GitHub.');
+        }
+        if (orgsRes?.success && orgsRes.orgs) {
+          setOrgs(orgsRes.orgs);
+        }
+      } catch (err: any) {
+        if (!cancelled) setReposError(err?.message || 'Erro ao carregar dados do GitHub.');
+      } finally {
+        if (!cancelled) setIsLoadingRepos(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Cards da prateleira superior = repositórios reais do GitHub
+  const allCards: ProjectCardData[] = useMemo(() => {
+    return repos.map((repo, idx) => {
+      const cached = repoDetailsCache[repo.full_name];
+      const doneCount = cached ? cached.issues.filter((i) => i.status === 'Concluído').length : 0;
+      const inProgressCount = cached ? cached.issues.filter((i) => i.status === 'Em Progresso').length : 0;
+      const openCount = cached ? cached.issues.filter((i) => i.status !== 'Concluído').length : repo.open_issues_count;
+      const total = cached ? cached.issues.length : 0;
+      const percentValue = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+      return {
+        id: repo.id,
+        badge: idx + 1,
+        title: repo.name,
+        sprint: repo.language || '—',
+        percentage: `${percentValue}%`,
+        percentValue,
+        solidFlex: '1 1 0',
+        dottedWidth: 52,
+        faintWidth: 36,
+        issuesDone: doneCount,
+        issuesOpen: openCount,
+        issuesInProgress: inProgressCount,
+        alertStatus: null,
+        org: repo.owner?.login,
+        fullName: repo.full_name,
+        owner: repo.owner?.login,
+        repoName: repo.name,
+        htmlUrl: repo.html_url,
+      };
+    });
+  }, [repos, repoDetailsCache]);
+
+  // Opções do filtro de "linguagem" derivadas dos repositórios reais (substitui as sprints fictícias)
+  const sprintFilterOptions = useMemo(() => {
+    const langs = Array.from(new Set(repos.map((r) => r.language).filter(Boolean))) as string[];
+    return ['Todas as Linguagens', ...langs.sort()];
+  }, [repos]);
+
+  // Organizações reais do usuário + conta pessoal
+  const organizationOptions: OrganizationOption[] = useMemo(() => {
+    const list: OrganizationOption[] = [{ id: 'all', name: 'Todas as Organizações', slug: 'all', avatarColor: '#6366f1' }];
+    if (currentUser) {
+      list.push({
+        id: currentUser.login,
+        name: currentUser.login,
+        slug: `@${currentUser.login}`,
+        avatarColor: accentColor,
+        avatarUrl: currentUser.avatarUrl,
+      });
+    }
+    orgs.forEach((o) => {
+      list.push({ id: o.login, name: o.login, slug: `@${o.login}`, avatarColor: '#0ea5e9', avatarUrl: o.avatarUrl });
+    });
+    return list;
+  }, [orgs, currentUser, accentColor]);
+
+  // Seleciona automaticamente o primeiro repositório assim que a lista carrega
+  useEffect(() => {
+    if (selectedCardId === null && allCards.length > 0) {
+      setSelectedCardId(allCards[0].id);
+    }
+  }, [allCards, selectedCardId]);
+
+  // Busca as issues (e PRs) reais do repositório selecionado, com cache por repositório
+  useEffect(() => {
+    const card = allCards.find((c) => c.id === selectedCardId);
+    if (!card || !card.owner || !card.repoName || !card.fullName) return;
+    const existing = repoDetailsCache[card.fullName];
+    if (existing) return; // já carregado (ou carregando)
+
+    const fullName = card.fullName;
+    const owner = card.owner;
+    const repoName = card.repoName;
+    setRepoDetailsCache((prev) => ({ ...prev, [fullName]: { issues: [], isLoading: true, error: null } }));
+
+    (async () => {
+      try {
+        const [issuesRes, pullsRes] = await Promise.all([
+          window.electronAPI?.github?.fetchRepoIssues?.(owner, repoName),
+          window.electronAPI?.github?.fetchRepoPulls?.(owner, repoName),
+        ]);
+        if (!issuesRes?.success) throw new Error(issuesRes?.error || 'Falha ao buscar issues do repositório.');
+        const pulls = pullsRes?.success ? pullsRes.pulls || [] : [];
+        const mapped = (issuesRes.issues || []).map((gh: any) => mapGithubIssueToProjectIssue(gh, card.id, pulls));
+        setRepoDetailsCache((prev) => ({ ...prev, [fullName]: { issues: mapped, isLoading: false, error: null } }));
+      } catch (err: any) {
+        setRepoDetailsCache((prev) => ({
+          ...prev,
+          [fullName]: { issues: [], isLoading: false, error: err?.message || 'Erro ao buscar dados do repositório.' },
+        }));
+      }
+    })();
+  }, [selectedCardId, allCards, repoDetailsCache]);
 
   const [sprintDropdownOpen, setSprintDropdownOpen] = useState(false);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
@@ -608,7 +491,6 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   };
 
   // Estados para a visualização de Issues/Tarefas do Projeto Selecionado
-  const [issues, setIssues] = useState<ProjectIssue[]>(INITIAL_PROJECT_ISSUES);
   const [viewMode, setViewMode] = useState<'timeline' | 'kanban' | 'spreadsheet'>('timeline');
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
   const [selectedPriorityFilter, setSelectedPriorityFilter] = useState<string>('Todas');
@@ -621,11 +503,9 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   const [newTaskTag, setNewTaskTag] = useState('Research');
   const [newTaskPriority, setNewTaskPriority] = useState<'Baixa' | 'Média' | 'Alta' | 'Urgente'>('Média');
   const [newTaskStatus, setNewTaskStatus] = useState<'A Fazer' | 'Em Progresso' | 'Concluído'>('Em Progresso');
-  const [newTaskStartDay, setNewTaskStartDay] = useState(0);
-  const [newTaskSpanDays, setNewTaskSpanDays] = useState(2);
 
-  // Filtragem dinâmica de cards do shelf superior
-  const filteredCards = ALL_PROJECTS.filter((card) => {
+  // Filtragem dinâmica de cards do shelf superior (agora repositórios reais)
+  const filteredCards = allCards.filter((card) => {
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchesTitle = card.title.toLowerCase().includes(q);
@@ -634,7 +514,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
       if (!matchesTitle && !matchesSprint && !matchesBadge) return false;
     }
 
-    if (selectedSprint !== 'Todas as Sprints') {
+    if (selectedSprint !== 'Todas as Linguagens') {
       if (card.sprint.toLowerCase() !== selectedSprint.toLowerCase()) return false;
     }
 
@@ -651,12 +531,16 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     return true;
   });
 
-  // Projeto atualmente selecionado
-  const selectedProject = ALL_PROJECTS.find((p) => p.id === selectedCardId) || ALL_PROJECTS[0];
+  // Projeto (repositório) atualmente selecionado
+  const selectedProject = allCards.find((p) => p.id === selectedCardId) || allCards[0];
+  const selectedRepoDetail = selectedProject?.fullName ? repoDetailsCache[selectedProject.fullName] : undefined;
+  const isLoadingProjectIssues = !!selectedRepoDetail?.isLoading;
+  const projectIssuesError = selectedRepoDetail?.error || null;
+  const rawProjectIssues = selectedRepoDetail?.issues || [];
 
   // Issues filtradas para o projeto selecionado
   const projectIssues = useMemo(() => {
-    let list = issues.filter((iss) => iss.projectId === selectedCardId);
+    let list = rawProjectIssues;
     if (taskSearchQuery.trim()) {
       const q = taskSearchQuery.toLowerCase();
       list = list.filter(
@@ -679,66 +563,99 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
       list = [...list].sort((a, b) => a.startDay - b.startDay);
     }
     return list;
-  }, [issues, selectedCardId, taskSearchQuery, selectedAssignee, selectedPriorityFilter, sortMode]);
+  }, [rawProjectIssues, taskSearchQuery, selectedAssignee, selectedPriorityFilter, sortMode]);
 
-  const handleCreateTask = () => {
+  const handleCreateTask = async () => {
     if (!newTaskTitle.trim()) return;
-    const tagColors: Record<string, { bg: string; text: string }> = {
-      Research: { bg: 'rgba(59, 130, 246, 0.15)', text: '#60a5fa' },
-      Backend: { bg: 'rgba(168, 85, 247, 0.15)', text: '#c084fc' },
-      Frontend: { bg: 'rgba(59, 130, 246, 0.15)', text: '#60a5fa' },
-      Design: { bg: 'rgba(236, 72, 153, 0.15)', text: '#f472b6' },
-      DevOps: { bg: 'rgba(234, 88, 12, 0.15)', text: '#fb923c' },
-      QA: { bg: 'rgba(16, 185, 129, 0.15)', text: '#34d399' },
-      Release: { bg: 'rgba(245, 158, 11, 0.15)', text: '#fbbf24' },
-    };
-    const priorityColors: Record<string, string> = {
-      Baixa: '#22c55e',
-      Média: '#f59e0b',
-      Alta: '#ef4444',
-      Urgente: '#dc2626',
-    };
+    const card = selectedProject;
+    if (!card || !card.owner || !card.repoName || !card.fullName) {
+      showToast('Selecione um repositório antes de criar uma tarefa.');
+      return;
+    }
+    const fullName = card.fullName;
+    const owner = card.owner;
+    const repoName = card.repoName;
+    const title = newTaskTitle.trim();
+    const status = newTaskStatus;
+    const labels = [
+      { name: newTaskTag, color: TAG_LABEL_COLOR[newTaskTag] || '3b82f6' },
+      PRIORITY_LABELS[newTaskPriority],
+      ...(status === 'Em Progresso' ? [IN_PROGRESS_LABEL] : []),
+    ];
 
-    const newIssue: ProjectIssue = {
-      id: `DEV-${Math.floor(100 + Math.random() * 900)}`,
-      projectId: selectedCardId || 1,
-      title: newTaskTitle.trim(),
-      dateStr: 'Nov 2026',
-      startDay: newTaskStartDay,
-      spanDays: newTaskSpanDays,
-      tag: newTaskTag,
-      tagColor: tagColors[newTaskTag] || { bg: 'rgba(59, 130, 246, 0.15)', text: '#60a5fa' },
-      priority: newTaskPriority,
-      priorityColor: priorityColors[newTaskPriority] || '#f59e0b',
-      status: newTaskStatus,
-      assignees: [{ name: 'Walancy', avatarBg: '#ea580c', initial: 'W' }],
-      progress: newTaskStatus === 'Concluído' ? 100 : newTaskStatus === 'Em Progresso' ? 50 : 0,
-    };
-
-    setIssues((prev) => [...prev, newIssue]);
-    setNewTaskTitle('');
     setIsAddTaskModalOpen(false);
+    setNewTaskTitle('');
+
+    try {
+      const res = await window.electronAPI?.github?.createIssue?.(owner, repoName, {
+        title,
+        labels,
+        assignees: currentUser ? [currentUser.login] : [],
+      });
+      if (!res?.success || !res.issue) throw new Error(res?.error || 'Falha ao criar issue no GitHub.');
+
+      let ghIssue = res.issue;
+      if (status === 'Concluído') {
+        const closeRes = await window.electronAPI?.github?.updateIssue?.(owner, repoName, ghIssue.number, { state: 'closed' });
+        if (closeRes?.success && closeRes.issue) ghIssue = closeRes.issue;
+      }
+
+      const mapped = mapGithubIssueToProjectIssue(ghIssue, card.id, []);
+      setRepoDetailsCache((prev) => ({
+        ...prev,
+        [fullName]: { issues: [mapped, ...(prev[fullName]?.issues || [])], isLoading: false, error: null },
+      }));
+      showToast(`Issue #${ghIssue.number} criada no GitHub.`);
+    } catch (err: any) {
+      showToast(err?.message || 'Erro ao criar a tarefa no GitHub.');
+    }
   };
 
-  const handleToggleIssueStatus = (issueId: string) => {
-    setIssues((prev) =>
-      prev.map((iss) => {
-        if (iss.id === issueId) {
-          const nextStatus: 'A Fazer' | 'Em Progresso' | 'Concluído' =
-            iss.status === 'A Fazer'
-              ? 'Em Progresso'
-              : iss.status === 'Em Progresso'
-              ? 'Concluído'
-              : 'A Fazer';
-          return {
-            ...iss,
-            status: nextStatus,
-            progress: nextStatus === 'Concluído' ? 100 : nextStatus === 'Em Progresso' ? 50 : 0,
-          };
-        }
-        return iss;
-      })
-    );
+  const handleToggleIssueStatus = async (issueId: string) => {
+    const card = selectedProject;
+    const issue = rawProjectIssues.find((i) => i.id === issueId);
+    if (!card || !card.owner || !card.repoName || !card.fullName || !issue || issue.githubNumber == null) return;
+
+    const fullName = card.fullName;
+    const owner = card.owner;
+    const repoName = card.repoName;
+    const nextStatus: 'A Fazer' | 'Em Progresso' | 'Concluído' =
+      issue.status === 'A Fazer' ? 'Em Progresso' : issue.status === 'Em Progresso' ? 'Concluído' : 'A Fazer';
+    const nextLabels = (issue.rawLabels || []).filter((l) => l.toLowerCase() !== 'em-progresso');
+    if (nextStatus === 'Em Progresso') nextLabels.push(IN_PROGRESS_LABEL.name);
+    const nextState: 'open' | 'closed' = nextStatus === 'Concluído' ? 'closed' : 'open';
+
+    // Atualização otimista da UI
+    setRepoDetailsCache((prev) => {
+      const list = prev[fullName]?.issues || [];
+      return {
+        ...prev,
+        [fullName]: {
+          issues: list.map((i) =>
+            i.id === issueId
+              ? {
+                  ...i,
+                  status: nextStatus,
+                  progress: nextStatus === 'Concluído' ? 100 : nextStatus === 'Em Progresso' ? 50 : 0,
+                  rawLabels: nextLabels,
+                }
+              : i
+          ),
+          isLoading: false,
+          error: null,
+        },
+      };
+    });
+
+    try {
+      const res = await window.electronAPI?.github?.updateIssue?.(owner, repoName, issue.githubNumber, {
+        state: nextState,
+        labels: nextLabels,
+      });
+      if (!res?.success) throw new Error(res?.error || 'Falha ao atualizar a issue no GitHub.');
+    } catch (err: any) {
+      showToast(err?.message || 'Erro ao atualizar status no GitHub.');
+    }
   };
 
   return (
@@ -873,7 +790,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                       border: theme.dropdownBorder,
                     }}
                   >
-                    {SPRINT_FILTER_OPTIONS.map((opt) => (
+                    {sprintFilterOptions.map((opt) => (
                       <div
                         key={opt}
                         onClick={() => {
@@ -990,7 +907,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                           width: 16,
                           height: 16,
                           borderRadius: '50%',
-                          background: ORGANIZATION_OPTIONS.find((o) => o.name === selectedOrg)?.avatarColor || accentColor,
+                          background: organizationOptions.find((o) => o.name === selectedOrg)?.avatarColor || accentColor,
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
@@ -1001,9 +918,9 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                           overflow: 'hidden',
                         }}
                       >
-                        {ORGANIZATION_OPTIONS.find((o) => o.name === selectedOrg)?.avatarUrl ? (
+                        {organizationOptions.find((o) => o.name === selectedOrg)?.avatarUrl ? (
                           <img
-                            src={ORGANIZATION_OPTIONS.find((o) => o.name === selectedOrg)?.avatarUrl}
+                            src={organizationOptions.find((o) => o.name === selectedOrg)?.avatarUrl}
                             alt=""
                             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                           />
@@ -1047,7 +964,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                         border: theme.dropdownBorder,
                       }}
                     >
-                      {ORGANIZATION_OPTIONS.map((org) => {
+                      {organizationOptions.map((org) => {
                         const isSelected = selectedOrg === org.name;
                         return (
                           <div
@@ -1653,7 +1570,13 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 width: '100%',
               }}
             >
-              Nenhum projeto encontrado para os filtros selecionados.
+              {isLoadingRepos
+                ? 'Carregando seus repositórios do GitHub...'
+                : reposError
+                ? reposError
+                : repos.length === 0
+                ? 'Nenhum repositório encontrado na sua conta do GitHub.'
+                : 'Nenhum projeto encontrado para os filtros selecionados.'}
             </div>
           )}
         </div>
@@ -2231,9 +2154,14 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                                     marginLeft: i > 0 ? -5 : 0,
                                     border: `1.5px solid ${theme.viewCardBg}`,
                                     userSelect: 'none',
+                                    overflow: 'hidden',
                                   }}
                                 >
-                                  {a.initial}
+                                  {a.avatarUrl ? (
+                                    <img src={a.avatarUrl} alt={a.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                  ) : (
+                                    a.initial
+                                  )}
                                 </div>
                               ))}
                             </div>
@@ -2252,7 +2180,9 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                         margin: 'auto',
                       }}
                     >
-                      Nenhuma tarefa encontrada para este projeto ou filtro.
+                      {isLoadingProjectIssues
+                        ? 'Carregando issues do repositório...'
+                        : projectIssuesError || 'Nenhuma tarefa encontrada para este projeto ou filtro.'}
                     </div>
                   )}
                 </div>
@@ -2471,6 +2401,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                               {iss.assignees.map((a, i) => (
                                 <div
                                   key={i}
+                                  title={a.name}
                                   style={{
                                     width: 20,
                                     height: 20,
@@ -2484,9 +2415,14 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                                     justifyContent: 'center',
                                     marginLeft: i > 0 ? -5 : 0,
                                     border: `1.5px solid ${theme.viewCardBg}`,
+                                    overflow: 'hidden',
                                   }}
                                 >
-                                  {a.initial}
+                                  {a.avatarUrl ? (
+                                    <img src={a.avatarUrl} alt={a.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                  ) : (
+                                    a.initial
+                                  )}
                                 </div>
                               ))}
                             </div>
@@ -2678,12 +2614,17 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                                 fontWeight: '400',
                                 display: 'flex',
                                 alignItems: 'center',
-                                justifyCenter: 'center',
+                                justifyContent: 'center',
                                 marginLeft: i > 0 ? -5 : 0,
                                 border: `1.5px solid ${theme.viewCanvasBg}`,
+                                overflow: 'hidden',
                               }}
                             >
-                              {a.initial}
+                              {a.avatarUrl ? (
+                                <img src={a.avatarUrl} alt={a.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              ) : (
+                                a.initial
+                              )}
                             </div>
                           ))}
                         </div>
@@ -2718,7 +2659,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                   {projectIssues.length === 0 && (
                     <tr>
                       <td colSpan={10} style={{ padding: '36px', textAlign: 'center', color: theme.textSecondary, fontSize: 13, fontWeight: '300' }}>
-                        Nenhuma tarefa encontrada.
+                        {isLoadingProjectIssues ? 'Carregando issues do repositório...' : projectIssuesError || 'Nenhuma tarefa encontrada.'}
                       </td>
                     </tr>
                   )}
@@ -2767,7 +2708,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Plus size={16} color={accentColor} />
                   <span style={{ fontSize: 14, fontWeight: '400', color: theme.textPrimary }}>
-                    Adicionar Tarefa ao {selectedProject.title}
+                    Adicionar Tarefa ao {selectedProject?.title || 'repositório'}
                   </span>
                 </div>
                 <div
@@ -2862,53 +2803,27 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 </div>
               </div>
 
-              {/* Linha com Estado Inicial e Dia na Timeline */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Status</label>
-                  <select
-                    value={newTaskStatus}
-                    onChange={(e) => setNewTaskStatus(e.target.value as any)}
-                    style={{
-                      background: theme.modalInputBg,
-                      border: theme.modalInputBorder,
-                      borderRadius: 6,
-                      padding: '8px 10px',
-                      color: theme.textPrimary,
-                      fontSize: 12.5,
-                      fontWeight: '300',
-                      outline: 'none',
-                    }}
-                  >
-                    <option value="A Fazer">A Fazer</option>
-                    <option value="Em Progresso">Em Progresso</option>
-                    <option value="Concluído">Concluído</option>
-                  </select>
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Dia de Início (Linha do Tempo)</label>
-                  <select
-                    value={newTaskStartDay}
-                    onChange={(e) => setNewTaskStartDay(Number(e.target.value))}
-                    style={{
-                      background: theme.modalInputBg,
-                      border: theme.modalInputBorder,
-                      borderRadius: 6,
-                      padding: '8px 10px',
-                      color: theme.textPrimary,
-                      fontSize: 12.5,
-                      fontWeight: '300',
-                      outline: 'none',
-                    }}
-                  >
-                    {TIMELINE_DAYS.map((d, i) => (
-                      <option key={d.key} value={i}>
-                        {d.label} {d.num}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              {/* Status Inicial */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Status</label>
+                <select
+                  value={newTaskStatus}
+                  onChange={(e) => setNewTaskStatus(e.target.value as any)}
+                  style={{
+                    background: theme.modalInputBg,
+                    border: theme.modalInputBorder,
+                    borderRadius: 6,
+                    padding: '8px 10px',
+                    color: theme.textPrimary,
+                    fontSize: 12.5,
+                    fontWeight: '300',
+                    outline: 'none',
+                  }}
+                >
+                  <option value="A Fazer">A Fazer</option>
+                  <option value="Em Progresso">Em Progresso</option>
+                  <option value="Concluído">Concluído</option>
+                </select>
               </div>
 
               {/* Botões de Ação */}
