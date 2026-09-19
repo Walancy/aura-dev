@@ -2147,14 +2147,74 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                       if (!pos) return null;
                       const { leftPercent, widthPercent } = pos;
 
+                      if (timelineZoom === 'month') {
+                        return (
+                          <div
+                            key={issue.id}
+                            style={{
+                              marginLeft: `${leftPercent}%`,
+                              width: `calc(${widthPercent}% - 8px)`,
+                              minWidth: 90,
+                              background: theme.viewCardBg,
+                              borderRadius: 6,
+                              border: theme.viewCardBorder,
+                              padding: '7px 8px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              boxSizing: 'border-box',
+                              boxShadow: theme.viewCardShadow,
+                              transition: 'background 0.18s ease, transform 0.18s ease',
+                              cursor: 'pointer',
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.background = theme.viewCardHoverBg;
+                              e.currentTarget.style.transform = 'translateY(-1px)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = theme.viewCardBg;
+                              e.currentTarget.style.transform = 'translateY(0)';
+                            }}
+                            onClick={() => handleToggleIssueStatus(issue.id)}
+                            title={issue.title}
+                          >
+                            <div
+                              style={{
+                                width: 3,
+                                height: 16,
+                                borderRadius: 2,
+                                background: issue.status === 'Concluído' ? '#10b981' : (isEffectiveDark ? '#444444' : '#cbd5e1'),
+                                flexShrink: 0,
+                              }}
+                            />
+                            <span
+                              style={{
+                                color: theme.textPrimary,
+                                fontSize: 12,
+                                fontWeight: '300',
+                                lineHeight: 1.2,
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                flex: 1,
+                                minWidth: 0,
+                              }}
+                            >
+                              {issue.title}
+                            </span>
+                            <MoreVertical size={13} color={theme.textSecondary} style={{ flexShrink: 0 }} />
+                          </div>
+                        );
+                      }
+
                       return (
                         <div
                           key={issue.id}
                           style={{
                             marginLeft: `${leftPercent}%`,
                             width: `calc(${widthPercent}% - 14px)`,
-                            minWidth: timelineZoom === 'month' ? 160 : 240,
-                            maxWidth: timelineZoom === 'month' ? 460 : 380,
+                            minWidth: 240,
+                            maxWidth: 380,
                             background: theme.viewCardBg,
                             borderRadius: 8,
                             border: theme.viewCardBorder,
