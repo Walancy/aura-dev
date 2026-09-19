@@ -186,8 +186,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     fetchRepoReleases: (owner: string, repo: string) => ipcRenderer.invoke('github:fetchRepoReleases', { owner, repo }),
     createIssue: (owner: string, repo: string, input: { title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[] }) =>
       ipcRenderer.invoke('github:createIssue', { owner, repo, ...input }),
-    updateIssue: (owner: string, repo: string, issueNumber: number, input: { state?: 'open' | 'closed'; labels?: string[] }) =>
-      ipcRenderer.invoke('github:updateIssue', { owner, repo, issueNumber, ...input }),
+    updateIssue: (
+      owner: string,
+      repo: string,
+      issueNumber: number,
+      input: { title?: string; body?: string; state?: 'open' | 'closed'; labels?: string[]; ensureLabels?: Array<{ name: string; color: string }> },
+    ) => ipcRenderer.invoke('github:updateIssue', { owner, repo, issueNumber, ...input }),
+    deleteIssue: (nodeId: string) => ipcRenderer.invoke('github:deleteIssue', { nodeId }),
     onLoginResult: (callback: (result: { success: boolean; user?: any; error?: string }) => void) => {
       const handler = (_event: any, result: any) => callback(result);
       ipcRenderer.on('github:loginResult', handler);

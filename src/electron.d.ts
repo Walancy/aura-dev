@@ -103,7 +103,13 @@ export interface ElectronAPI {
     fetchRepoMilestones: (owner: string, repo: string) => Promise<{ success: boolean; milestones?: any[]; error?: string }>;
     fetchRepoReleases: (owner: string, repo: string) => Promise<{ success: boolean; releases?: any[]; error?: string }>;
     createIssue: (owner: string, repo: string, input: { title: string; body?: string; labels?: Array<{ name: string; color: string }>; assignees?: string[] }) => Promise<{ success: boolean; issue?: any; error?: string }>;
-    updateIssue: (owner: string, repo: string, issueNumber: number, input: { state?: 'open' | 'closed'; labels?: string[] }) => Promise<{ success: boolean; issue?: any; error?: string }>;
+    updateIssue: (
+      owner: string,
+      repo: string,
+      issueNumber: number,
+      input: { title?: string; body?: string; state?: 'open' | 'closed'; labels?: string[]; ensureLabels?: Array<{ name: string; color: string }> },
+    ) => Promise<{ success: boolean; issue?: any; error?: string }>;
+    deleteIssue: (nodeId: string) => Promise<{ success: boolean; error?: string }>;
     onLoginResult: (callback: (result: { success: boolean; user?: { login: string; name: string | null; avatarUrl: string; htmlUrl: string }; error?: string }) => void) => () => void;
   };
 }

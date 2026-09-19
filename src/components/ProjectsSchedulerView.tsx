@@ -19,6 +19,8 @@ import {
   Tag,
   Copy,
   ExternalLink,
+  Pencil,
+  Trash2,
   Building2,
 } from 'lucide-react';
 import { getContrastTextColor, hexToRgba } from '../utils/color';
@@ -66,9 +68,12 @@ export interface ProjectIssue {
   id: string;
   projectId: number;
   title: string;
+  description: string;
   dateStr: string;
-  createdAtIso: string; // data real de criação, usada para posicionar na timeline
-  durationDays: number; // dias em aberto (mínimo 1), usado como largura na timeline
+  createdAtIso: string; // data real de criação, usada como posição de fallback na timeline
+  durationDays: number; // dias em aberto (mínimo 1), largura de fallback na timeline
+  startDateIso?: string; // YYYY-MM-DD definida pelo usuário (guardada no corpo da issue)
+  dueDateIso?: string; // YYYY-MM-DD definida pelo usuário (guardada no corpo da issue)
   tag: string;
   tagColor: { bg: string; text: string };
   priority: 'Baixa' | 'Média' | 'Alta' | 'Urgente';
@@ -78,6 +83,7 @@ export interface ProjectIssue {
   progress: number;
   // Real GitHub issue backing this task
   githubNumber?: number;
+  nodeId?: string;
   htmlUrl?: string;
   rawLabels?: string[];
   pullRequest?: {
@@ -168,7 +174,44 @@ const PRIORITY_LABELS: Record<'Baixa' | 'Média' | 'Alta' | 'Urgente', { name: s
 
 const IN_PROGRESS_LABEL = { name: 'em-progresso', color: '0ea5e9' };
 
+// GitHub não tem campos nativos de data de início/término por issue, então guardamos
+// como comentários HTML invisíveis no corpo da issue (não aparecem ao ver a issue no GitHub.com).
+const START_DATE_MARKER = /<!--\s*devflow:start=([\d-]+)\s*-->/;
+const DUE_DATE_MARKER = /<!--\s*devflow:due=([\d-]+)\s*-->/;
+
+function encodeIssueBody(description: string, startDate?: string, dueDate?: string): string {
+  const parts = [description.trim()];
+  if (startDate) parts.push(`<!-- devflow:start=${startDate} -->`);
+  if (dueDate) parts.push(`<!-- devflow:due=${dueDate} -->`);
+  return parts.join('\n\n').trim();
+}
+
+function parseIssueBody(rawBody: string | null | undefined): { description: string; startDateIso?: string; dueDateIso?: string } {
+  const body = rawBody || '';
+  const startMatch = body.match(START_DATE_MARKER);
+  const dueMatch = body.match(DUE_DATE_MARKER);
+  const description = body.replace(START_DATE_MARKER, '').replace(DUE_DATE_MARKER, '').trim();
+  return {
+    description,
+    startDateIso: startMatch ? startMatch[1] : undefined,
+    dueDateIso: dueMatch ? dueMatch[1] : undefined,
+  };
+}
+
 const WEEKDAY_LABELS_PT = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
+
+function formatShortDate(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+}
+
+function formatIssueDateRange(issue: ProjectIssue): string {
+  if (issue.startDateIso && issue.dueDateIso) {
+    return `${formatShortDate(issue.startDateIso)} → ${formatShortDate(issue.dueDateIso)}`;
+  }
+  if (issue.startDateIso) return `Início: ${formatShortDate(issue.startDateIso)}`;
+  if (issue.dueDateIso) return `Prazo: ${formatShortDate(issue.dueDateIso)}`;
+  return issue.dateStr;
+}
 
 function mapGithubIssueToProjectIssue(gh: any, projectId: number, pulls: any[]): ProjectIssue {
   const labelObjs: Array<{ name: string; color?: string }> = (gh.labels || []).map((l: any) =>
@@ -231,16 +274,22 @@ function mapGithubIssueToProjectIssue(gh: any, projectId: number, pulls: any[]):
       }
     : undefined;
 
+  const { description, startDateIso, dueDateIso } = parseIssueBody(gh.body);
+
   return {
     id: `#${gh.number}`,
     projectId,
     githubNumber: gh.number,
+    nodeId: gh.node_id,
     htmlUrl: gh.html_url,
     rawLabels: labelNames,
     title: gh.title,
+    description,
     dateStr: createdAt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }),
     createdAtIso: createdAt.toISOString(),
     durationDays: daysOpen,
+    startDateIso,
+    dueDateIso,
     tag: tagName,
     tagColor,
     priority,
@@ -542,13 +591,21 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     days: Date[]
   ): { leftPercent: number; widthPercent: number } | null => {
     if (days.length === 0) return null;
-    const created = new Date(issue.createdAtIso);
-    created.setHours(0, 0, 0, 0);
+    // Prioriza as datas definidas manualmente pelo usuário; cai para created_at/duração real como fallback.
+    const effectiveStart = issue.startDateIso ? new Date(`${issue.startDateIso}T00:00:00`) : new Date(issue.createdAtIso);
+    effectiveStart.setHours(0, 0, 0, 0);
     const rangeStart = days[0];
     const totalDays = days.length;
 
-    let startIdx = Math.round((created.getTime() - rangeStart.getTime()) / 86400000);
-    let span = Math.max(1, issue.durationDays);
+    let startIdx = Math.round((effectiveStart.getTime() - rangeStart.getTime()) / 86400000);
+    let span: number;
+    if (issue.dueDateIso) {
+      const dueDate = new Date(`${issue.dueDateIso}T00:00:00`);
+      dueDate.setHours(0, 0, 0, 0);
+      span = Math.max(1, Math.round((dueDate.getTime() - effectiveStart.getTime()) / 86400000) + 1);
+    } else {
+      span = Math.max(1, issue.durationDays);
+    }
 
     if (startIdx + span <= 0) return null; // termina antes do intervalo visível
     if (startIdx >= totalDays) return null; // começa depois do intervalo visível
@@ -570,11 +627,25 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   const [sortMode, setSortMode] = useState<'default' | 'priority' | 'date'>('default');
   const [isAddTaskModalOpen, setIsAddTaskModalOpen] = useState(false);
 
-  // Campos do formulário de nova tarefa
+  // Campos do formulário de nova tarefa (fluxo inspirado no "Create new issue" do GitHub)
   const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskDescription, setNewTaskDescription] = useState('');
   const [newTaskTag, setNewTaskTag] = useState('Research');
   const [newTaskPriority, setNewTaskPriority] = useState<'Baixa' | 'Média' | 'Alta' | 'Urgente'>('Média');
   const [newTaskStatus, setNewTaskStatus] = useState<'A Fazer' | 'Em Progresso' | 'Concluído'>('Em Progresso');
+  const [newTaskStartDate, setNewTaskStartDate] = useState('');
+  const [newTaskDueDate, setNewTaskDueDate] = useState('');
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
+
+  // Edição de tarefa existente
+  const [editingIssue, setEditingIssue] = useState<ProjectIssue | null>(null);
+  const [editIssueTitle, setEditIssueTitle] = useState('');
+  const [editIssueDescription, setEditIssueDescription] = useState('');
+  const [editIssueTag, setEditIssueTag] = useState('Research');
+  const [editIssuePriority, setEditIssuePriority] = useState<'Baixa' | 'Média' | 'Alta' | 'Urgente'>('Média');
+  const [editIssueStartDate, setEditIssueStartDate] = useState('');
+  const [editIssueDueDate, setEditIssueDueDate] = useState('');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   // Filtragem dinâmica de cards do shelf superior (agora repositórios reais)
   const filteredCards = allCards.filter((card) => {
@@ -637,11 +708,25 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     return list;
   }, [rawProjectIssues, taskSearchQuery, selectedAssignee, selectedPriorityFilter, sortMode]);
 
+  const resetNewTaskForm = () => {
+    setNewTaskTitle('');
+    setNewTaskDescription('');
+    setNewTaskTag('Research');
+    setNewTaskPriority('Média');
+    setNewTaskStatus('Em Progresso');
+    setNewTaskStartDate('');
+    setNewTaskDueDate('');
+  };
+
   const handleCreateTask = async () => {
-    if (!newTaskTitle.trim()) return;
+    if (!newTaskTitle.trim() || isCreatingTask) return;
     const card = selectedProject;
     if (!card || !card.owner || !card.repoName || !card.fullName) {
       showToast('Selecione um repositório antes de criar uma tarefa.');
+      return;
+    }
+    if (newTaskStartDate && newTaskDueDate && newTaskDueDate < newTaskStartDate) {
+      showToast('A data de término não pode ser antes da data de início.');
       return;
     }
     const fullName = card.fullName;
@@ -649,18 +734,18 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     const repoName = card.repoName;
     const title = newTaskTitle.trim();
     const status = newTaskStatus;
+    const body = encodeIssueBody(newTaskDescription, newTaskStartDate || undefined, newTaskDueDate || undefined);
     const labels = [
       { name: newTaskTag, color: TAG_LABEL_COLOR[newTaskTag] || '3b82f6' },
       PRIORITY_LABELS[newTaskPriority],
       ...(status === 'Em Progresso' ? [IN_PROGRESS_LABEL] : []),
     ];
 
-    setIsAddTaskModalOpen(false);
-    setNewTaskTitle('');
-
+    setIsCreatingTask(true);
     try {
       const res = await window.electronAPI?.github?.createIssue?.(owner, repoName, {
         title,
+        body,
         labels,
         assignees: currentUser ? [currentUser.login] : [],
       });
@@ -678,8 +763,12 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
         [fullName]: { issues: [mapped, ...(prev[fullName]?.issues || [])], isLoading: false, error: null },
       }));
       showToast(`Issue #${ghIssue.number} criada no GitHub.`);
+      setIsAddTaskModalOpen(false);
+      resetNewTaskForm();
     } catch (err: any) {
       showToast(err?.message || 'Erro ao criar a tarefa no GitHub.');
+    } finally {
+      setIsCreatingTask(false);
     }
   };
 
@@ -727,6 +816,98 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
       if (!res?.success) throw new Error(res?.error || 'Falha ao atualizar a issue no GitHub.');
     } catch (err: any) {
       showToast(err?.message || 'Erro ao atualizar status no GitHub.');
+    }
+  };
+
+  const handleOpenEditIssue = (issue: ProjectIssue) => {
+    setEditingIssue(issue);
+    setEditIssueTitle(issue.title);
+    setEditIssueDescription(issue.description);
+    setEditIssueTag(issue.tag);
+    setEditIssuePriority(issue.priority);
+    setEditIssueStartDate(issue.startDateIso || '');
+    setEditIssueDueDate(issue.dueDateIso || '');
+  };
+
+  const handleSaveEditIssue = async () => {
+    if (!editingIssue || !editIssueTitle.trim() || isSavingEdit) return;
+    const card = allCards.find((c) => c.id === editingIssue.projectId);
+    if (!card || !card.owner || !card.repoName || !card.fullName || editingIssue.githubNumber == null) return;
+    if (editIssueStartDate && editIssueDueDate && editIssueDueDate < editIssueStartDate) {
+      showToast('A data de término não pode ser antes da data de início.');
+      return;
+    }
+
+    const fullName = card.fullName;
+    const owner = card.owner;
+    const repoName = card.repoName;
+    const issueNumber = editingIssue.githubNumber;
+    const title = editIssueTitle.trim();
+    const body = encodeIssueBody(editIssueDescription, editIssueStartDate || undefined, editIssueDueDate || undefined);
+
+    // Substitui a label de tag/prioridade antigas pelas novas, preservando as demais (ex.: em-progresso)
+    const preservedLabels = (editingIssue.rawLabels || []).filter((l) => {
+      const lower = l.toLowerCase();
+      return lower !== editingIssue.tag.toLowerCase() && !lower.startsWith('priority:');
+    });
+    const nextLabels = [...preservedLabels, editIssueTag, PRIORITY_LABELS[editIssuePriority].name];
+    const ensureLabels = [
+      { name: editIssueTag, color: TAG_LABEL_COLOR[editIssueTag] || '3b82f6' },
+      PRIORITY_LABELS[editIssuePriority],
+    ];
+
+    setIsSavingEdit(true);
+    try {
+      const res = await window.electronAPI?.github?.updateIssue?.(owner, repoName, issueNumber, {
+        title,
+        body,
+        labels: nextLabels,
+        ensureLabels,
+      });
+      if (!res?.success || !res.issue) throw new Error(res?.error || 'Falha ao salvar alterações no GitHub.');
+
+      const mapped = mapGithubIssueToProjectIssue(res.issue, card.id, []);
+      setRepoDetailsCache((prev) => ({
+        ...prev,
+        [fullName]: {
+          issues: (prev[fullName]?.issues || []).map((i) => (i.id === editingIssue.id ? mapped : i)),
+          isLoading: false,
+          error: null,
+        },
+      }));
+      showToast('Tarefa atualizada.');
+      setEditingIssue(null);
+    } catch (err: any) {
+      showToast(err?.message || 'Erro ao salvar a tarefa no GitHub.');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const handleDeleteIssue = async (issue: ProjectIssue) => {
+    const card = allCards.find((c) => c.id === issue.projectId);
+    if (!card || !card.fullName || !issue.nodeId) {
+      showToast('Não foi possível excluir: dados da issue incompletos.');
+      return;
+    }
+    const confirmed = window.confirm(`Excluir a issue "${issue.title}" (${issue.id}) permanentemente no GitHub? Esta ação não pode ser desfeita.`);
+    if (!confirmed) return;
+
+    const fullName = card.fullName;
+    try {
+      const res = await window.electronAPI?.github?.deleteIssue?.(issue.nodeId);
+      if (!res?.success) throw new Error(res?.error || 'Falha ao excluir a issue no GitHub.');
+      setRepoDetailsCache((prev) => ({
+        ...prev,
+        [fullName]: {
+          issues: (prev[fullName]?.issues || []).filter((i) => i.id !== issue.id),
+          isLoading: false,
+          error: null,
+        },
+      }));
+      showToast(`Issue ${issue.id} excluída.`);
+    } catch (err: any) {
+      showToast(err?.message || 'Erro ao excluir a issue no GitHub.');
     }
   };
 
@@ -790,34 +971,52 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
               onClick: () => handleOpenIssueInGithub(issue),
               disabled: !issue.htmlUrl,
             },
+            {
+              label: 'Editar tarefa',
+              icon: <Pencil size={13} />,
+              onClick: () => handleOpenEditIssue(issue),
+              disabled: false,
+              separatorBefore: true,
+            },
+            {
+              label: 'Excluir tarefa',
+              icon: <Trash2 size={13} />,
+              onClick: () => handleDeleteIssue(issue),
+              disabled: !issue.nodeId,
+              danger: true,
+            },
           ].map((item) => (
-            <div
-              key={item.label}
-              onClick={() => {
-                if (item.disabled) return;
-                item.onClick();
-                setOpenIssueMenuId(null);
-              }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '7px 9px',
-                borderRadius: 6,
-                fontSize: 12,
-                color: item.disabled ? theme.textMuted : theme.textPrimary,
-                cursor: item.disabled ? 'default' : 'pointer',
-                opacity: item.disabled ? 0.5 : 1,
-                whiteSpace: 'nowrap',
-              }}
-              onMouseEnter={(e) => {
-                if (!item.disabled) e.currentTarget.style.background = theme.dropdownItemHover;
-              }}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              {item.icon}
-              <span>{item.label}</span>
-            </div>
+            <React.Fragment key={item.label}>
+              {item.separatorBefore && (
+                <div style={{ height: 1, background: theme.tableBorder, margin: '3px 2px' }} />
+              )}
+              <div
+                onClick={() => {
+                  if (item.disabled) return;
+                  item.onClick();
+                  setOpenIssueMenuId(null);
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '7px 9px',
+                  borderRadius: 6,
+                  fontSize: 12,
+                  color: item.disabled ? theme.textMuted : item.danger ? '#ef4444' : theme.textPrimary,
+                  cursor: item.disabled ? 'default' : 'pointer',
+                  opacity: item.disabled ? 0.5 : 1,
+                  whiteSpace: 'nowrap',
+                }}
+                onMouseEnter={(e) => {
+                  if (!item.disabled) e.currentTarget.style.background = item.danger ? 'rgba(239, 68, 68, 0.1)' : theme.dropdownItemHover;
+                }}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              >
+                {item.icon}
+                <span>{item.label}</span>
+              </div>
+            </React.Fragment>
           ))}
         </div>
       )}
@@ -2385,7 +2584,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                                   {issue.title}
                                 </span>
                                 <span style={{ color: theme.textSecondary, fontSize: 11, fontWeight: '300', lineHeight: 1 }}>
-                                  {issue.dateStr}
+                                  {formatIssueDateRange(issue)}
                                 </span>
                               </div>
                             </div>
@@ -2901,7 +3100,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                           {iss.tag}
                         </span>
                       </td>
-                      <td style={{ padding: '10px 14px', fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>{iss.dateStr}</td>
+                      <td style={{ padding: '10px 14px', fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>{formatIssueDateRange(iss)}</td>
                       <td style={{ padding: '10px 14px' }}>
                         <div style={{ display: 'flex', alignItems: 'center' }}>
                           {iss.assignees.map((a, i) => (
@@ -2973,10 +3172,10 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
           )}
         </div>
 
-        {/* Modal de Nova Tarefa */}
+        {/* Modal de Nova Tarefa (fluxo inspirado no "Create new issue" do GitHub) */}
         {isAddTaskModalOpen && (
           <div
-            onClick={() => setIsAddTaskModalOpen(false)}
+            onClick={() => !isCreatingTask && setIsAddTaskModalOpen(false)}
             style={{
               position: 'fixed',
               top: 0,
@@ -2996,7 +3195,9 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
               onClick={(e) => e.stopPropagation()}
               style={{
                 width: '100%',
-                maxWidth: 460,
+                maxWidth: 560,
+                maxHeight: '85vh',
+                overflowY: 'auto',
                 background: theme.modalBg,
                 borderRadius: 10,
                 border: theme.modalBorder,
@@ -3006,13 +3207,23 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 gap: 16,
                 boxShadow: theme.modalShadow,
               }}
+              className="no-scrollbar"
             >
               {/* Título do Modal */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Plus size={16} color={accentColor} />
-                  <span style={{ fontSize: 14, fontWeight: '400', color: theme.textPrimary }}>
-                    Adicionar Tarefa ao {selectedProject?.title || 'repositório'}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <Plus size={16} color={accentColor} style={{ flexShrink: 0 }} />
+                  <span
+                    style={{
+                      fontSize: 14,
+                      fontWeight: '400',
+                      color: theme.textPrimary,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    Nova issue em {selectedProject?.fullName || selectedProject?.title || 'repositório'}
                   </span>
                 </div>
                 <div
@@ -3026,6 +3237,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                     justifyContent: 'center',
                     cursor: 'pointer',
                     color: theme.textSecondary,
+                    flexShrink: 0,
                   }}
                   onMouseEnter={(e) => (e.currentTarget.style.color = theme.textPrimary)}
                   onMouseLeave={(e) => (e.currentTarget.style.color = theme.textSecondary)}
@@ -3036,7 +3248,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
 
               {/* Título da Tarefa */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Título da Tarefa</label>
+                <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Título</label>
                 <input
                   type="text"
                   value={newTaskTitle}
@@ -3051,6 +3263,30 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                     fontSize: 13,
                     fontWeight: '300',
                     outline: 'none',
+                  }}
+                />
+              </div>
+
+              {/* Descrição */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Descrição</label>
+                <textarea
+                  value={newTaskDescription}
+                  onChange={(e) => setNewTaskDescription(e.target.value)}
+                  placeholder="Digite a descrição da tarefa..."
+                  rows={5}
+                  style={{
+                    background: theme.modalInputBg,
+                    border: theme.modalInputBorder,
+                    borderRadius: 6,
+                    padding: '10px 12px',
+                    color: theme.textPrimary,
+                    fontSize: 12.5,
+                    fontWeight: '300',
+                    outline: 'none',
+                    resize: 'vertical',
+                    fontFamily: 'inherit',
+                    lineHeight: 1.5,
                   }}
                 />
               </div>
@@ -3107,6 +3343,49 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 </div>
               </div>
 
+              {/* Linha com Data de Início e Data de Término */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Data de início</label>
+                  <input
+                    type="date"
+                    value={newTaskStartDate}
+                    onChange={(e) => setNewTaskStartDate(e.target.value)}
+                    style={{
+                      background: theme.modalInputBg,
+                      border: theme.modalInputBorder,
+                      borderRadius: 6,
+                      padding: '7px 10px',
+                      color: theme.textPrimary,
+                      fontSize: 12.5,
+                      fontWeight: '300',
+                      outline: 'none',
+                      colorScheme: isEffectiveDark ? 'dark' : 'light',
+                    }}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Data de término</label>
+                  <input
+                    type="date"
+                    value={newTaskDueDate}
+                    min={newTaskStartDate || undefined}
+                    onChange={(e) => setNewTaskDueDate(e.target.value)}
+                    style={{
+                      background: theme.modalInputBg,
+                      border: theme.modalInputBorder,
+                      borderRadius: 6,
+                      padding: '7px 10px',
+                      color: theme.textPrimary,
+                      fontSize: 12.5,
+                      fontWeight: '300',
+                      outline: 'none',
+                      colorScheme: isEffectiveDark ? 'dark' : 'light',
+                    }}
+                  />
+                </div>
+              </div>
+
               {/* Status Inicial */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Status</label>
@@ -3135,6 +3414,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsAddTaskModalOpen(false)}
+                  disabled={isCreatingTask}
                   style={{
                     background: 'transparent',
                     border: 'none',
@@ -3143,7 +3423,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                     color: theme.textSecondary,
                     fontSize: 12.5,
                     fontWeight: '300',
-                    cursor: 'pointer',
+                    cursor: isCreatingTask ? 'default' : 'pointer',
                   }}
                 >
                   Cancelar
@@ -3151,6 +3431,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 <button
                   type="button"
                   onClick={handleCreateTask}
+                  disabled={isCreatingTask || !newTaskTitle.trim()}
                   style={{
                     background: accentColor,
                     border: 'none',
@@ -3159,13 +3440,268 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                     color: accentContrastText,
                     fontSize: 12.5,
                     fontWeight: '400',
-                    cursor: 'pointer',
+                    cursor: isCreatingTask || !newTaskTitle.trim() ? 'default' : 'pointer',
+                    opacity: isCreatingTask || !newTaskTitle.trim() ? 0.6 : 1,
                     transition: 'opacity 0.15s ease',
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.88')}
-                  onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                  onMouseEnter={(e) => {
+                    if (!isCreatingTask && newTaskTitle.trim()) e.currentTarget.style.opacity = '0.88';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isCreatingTask && newTaskTitle.trim()) e.currentTarget.style.opacity = '1';
+                  }}
                 >
-                  Criar Tarefa
+                  {isCreatingTask ? 'Criando...' : 'Criar Tarefa'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Editar Tarefa */}
+        {editingIssue && (
+          <div
+            onClick={() => !isSavingEdit && setEditingIssue(null)}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: theme.modalOverlay,
+              backdropFilter: 'blur(6px)',
+              zIndex: 99999,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 20,
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: '100%',
+                maxWidth: 560,
+                maxHeight: '85vh',
+                overflowY: 'auto',
+                background: theme.modalBg,
+                borderRadius: 10,
+                border: theme.modalBorder,
+                padding: 22,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 16,
+                boxShadow: theme.modalShadow,
+              }}
+              className="no-scrollbar"
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <Pencil size={15} color={accentColor} style={{ flexShrink: 0 }} />
+                  <span
+                    style={{
+                      fontSize: 14,
+                      fontWeight: '400',
+                      color: theme.textPrimary,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    Editar {editingIssue.id}
+                  </span>
+                </div>
+                <div
+                  onClick={() => setEditingIssue(null)}
+                  style={{
+                    width: 24,
+                    height: 24,
+                    borderRadius: 4,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    color: theme.textSecondary,
+                    flexShrink: 0,
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = theme.textPrimary)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = theme.textSecondary)}
+                >
+                  <X size={16} />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Título</label>
+                <input
+                  type="text"
+                  value={editIssueTitle}
+                  onChange={(e) => setEditIssueTitle(e.target.value)}
+                  style={{
+                    background: theme.modalInputBg,
+                    border: theme.modalInputBorder,
+                    borderRadius: 6,
+                    padding: '8px 12px',
+                    color: theme.textPrimary,
+                    fontSize: 13,
+                    fontWeight: '300',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Descrição</label>
+                <textarea
+                  value={editIssueDescription}
+                  onChange={(e) => setEditIssueDescription(e.target.value)}
+                  placeholder="Digite a descrição da tarefa..."
+                  rows={5}
+                  style={{
+                    background: theme.modalInputBg,
+                    border: theme.modalInputBorder,
+                    borderRadius: 6,
+                    padding: '10px 12px',
+                    color: theme.textPrimary,
+                    fontSize: 12.5,
+                    fontWeight: '300',
+                    outline: 'none',
+                    resize: 'vertical',
+                    fontFamily: 'inherit',
+                    lineHeight: 1.5,
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Categoria / Tag</label>
+                  <select
+                    value={editIssueTag}
+                    onChange={(e) => setEditIssueTag(e.target.value)}
+                    style={{
+                      background: theme.modalInputBg,
+                      border: theme.modalInputBorder,
+                      borderRadius: 6,
+                      padding: '8px 10px',
+                      color: theme.textPrimary,
+                      fontSize: 12.5,
+                      fontWeight: '300',
+                      outline: 'none',
+                    }}
+                  >
+                    <option value="Research">Research</option>
+                    <option value="Backend">Backend</option>
+                    <option value="Frontend">Frontend</option>
+                    <option value="Design">Design</option>
+                    <option value="DevOps">DevOps</option>
+                    <option value="QA">QA</option>
+                    <option value="Release">Release</option>
+                    {!(editIssueTag in TAG_LABEL_COLOR) && <option value={editIssueTag}>{editIssueTag}</option>}
+                  </select>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Prioridade</label>
+                  <select
+                    value={editIssuePriority}
+                    onChange={(e) => setEditIssuePriority(e.target.value as any)}
+                    style={{
+                      background: theme.modalInputBg,
+                      border: theme.modalInputBorder,
+                      borderRadius: 6,
+                      padding: '8px 10px',
+                      color: theme.textPrimary,
+                      fontSize: 12.5,
+                      fontWeight: '300',
+                      outline: 'none',
+                    }}
+                  >
+                    <option value="Baixa">Baixa</option>
+                    <option value="Média">Média</option>
+                    <option value="Alta">Alta</option>
+                    <option value="Urgente">Urgente</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Data de início</label>
+                  <input
+                    type="date"
+                    value={editIssueStartDate}
+                    onChange={(e) => setEditIssueStartDate(e.target.value)}
+                    style={{
+                      background: theme.modalInputBg,
+                      border: theme.modalInputBorder,
+                      borderRadius: 6,
+                      padding: '7px 10px',
+                      color: theme.textPrimary,
+                      fontSize: 12.5,
+                      fontWeight: '300',
+                      outline: 'none',
+                      colorScheme: isEffectiveDark ? 'dark' : 'light',
+                    }}
+                  />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Data de término</label>
+                  <input
+                    type="date"
+                    value={editIssueDueDate}
+                    min={editIssueStartDate || undefined}
+                    onChange={(e) => setEditIssueDueDate(e.target.value)}
+                    style={{
+                      background: theme.modalInputBg,
+                      border: theme.modalInputBorder,
+                      borderRadius: 6,
+                      padding: '7px 10px',
+                      color: theme.textPrimary,
+                      fontSize: 12.5,
+                      fontWeight: '300',
+                      outline: 'none',
+                      colorScheme: isEffectiveDark ? 'dark' : 'light',
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => setEditingIssue(null)}
+                  disabled={isSavingEdit}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    borderRadius: 6,
+                    padding: '8px 16px',
+                    color: theme.textSecondary,
+                    fontSize: 12.5,
+                    fontWeight: '300',
+                    cursor: isSavingEdit ? 'default' : 'pointer',
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveEditIssue}
+                  disabled={isSavingEdit || !editIssueTitle.trim()}
+                  style={{
+                    background: accentColor,
+                    border: 'none',
+                    borderRadius: 6,
+                    padding: '8px 18px',
+                    color: accentContrastText,
+                    fontSize: 12.5,
+                    fontWeight: '400',
+                    cursor: isSavingEdit || !editIssueTitle.trim() ? 'default' : 'pointer',
+                    opacity: isSavingEdit || !editIssueTitle.trim() ? 0.6 : 1,
+                    transition: 'opacity 0.15s ease',
+                  }}
+                >
+                  {isSavingEdit ? 'Salvando...' : 'Salvar Alterações'}
                 </button>
               </div>
             </div>

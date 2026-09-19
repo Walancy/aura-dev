@@ -379,15 +379,43 @@ class GithubAuthService {
     owner: string,
     repo: string,
     issueNumber: number,
-    input: { state?: 'open' | 'closed'; labels?: string[] },
+    input: {
+      title?: string;
+      body?: string;
+      state?: 'open' | 'closed';
+      labels?: string[];
+      ensureLabels?: Array<{ name: string; color: string }>;
+    },
   ): Promise<any> {
+    for (const label of input.ensureLabels || []) {
+      await this.ensureLabelExists(owner, repo, label.name, label.color);
+    }
+    const { ensureLabels, ...patchBody } = input;
     const res = await this.authedFetch(`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
-      body: JSON.stringify(input),
+      body: JSON.stringify(patchBody),
     });
     if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
     return res.json();
+  }
+
+  public async deleteIssue(nodeId: string): Promise<void> {
+    const mutation = `
+      mutation($id: ID!) {
+        deleteIssue(input: { issueId: $id }) {
+          clientMutationId
+        }
+      }
+    `;
+    const res = await this.authedFetch('https://api.github.com/graphql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: mutation, variables: { id: nodeId } }),
+    });
+    if (!res.ok) throw new Error(`GitHub GraphQL respondeu ${res.status}`);
+    const data: any = await res.json();
+    if (data.errors) throw new Error(data.errors[0]?.message || 'Erro ao excluir a issue no GitHub');
   }
 }
 
