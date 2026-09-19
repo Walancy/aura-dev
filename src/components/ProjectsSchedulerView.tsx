@@ -2796,8 +2796,8 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
             {/* ----------------------------------------------------------------- */}
             <div
               style={{
-                width: 200,
-                minWidth: 200,
+                width: 'clamp(150px, 20%, 210px)',
+                minWidth: 150,
                 background: theme.viewCanvasBg,
                 borderRadius: 8,
                 padding: '8px 6px',
@@ -3015,28 +3015,28 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                   type="button"
                   onClick={() => setIsAddTaskModalOpen(true)}
                   style={{
-                    background: '#238636',
-                    color: '#ffffff',
-                    border: 'none',
-                    borderRadius: 6,
-                    padding: '5px 12px',
-                    fontSize: 12,
-                    fontWeight: 500,
-                    cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 5,
+                    gap: 6,
+                    background: accentColor,
+                    border: 'none',
+                    borderRadius: 8,
+                    padding: '6px 14px',
+                    color: accentContrastText,
+                    fontSize: 12,
+                    fontWeight: '400',
+                    cursor: 'pointer',
                     transition: 'all 0.15s ease',
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = '#2ea043';
+                    e.currentTarget.style.opacity = '0.88';
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = '#238636';
+                    e.currentTarget.style.opacity = '1';
                   }}
                 >
-                  <Plus size={13} color="#ffffff" />
-                  <span>New issue</span>
+                  <Plus size={13.5} color={accentContrastText} />
+                  <span>Nova Issue</span>
                 </button>
               </div>
 
@@ -3119,7 +3119,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                   display: 'flex',
                   flexDirection: 'column',
                   flex: 1,
-                  minHeight: 400,
+                  minHeight: 280,
                   position: 'relative',
                 }}
               >
@@ -3995,18 +3995,18 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                   type="button"
                   onClick={() => showToast('Campo padrão de sprints protegido.')}
                   style={{
-                    background: 'rgba(248, 81, 73, 0.1)',
+                    background: 'rgba(239, 68, 68, 0.1)',
                     border: 'none',
                     borderRadius: 6,
                     padding: '6px 14px',
-                    color: '#f85149',
+                    color: '#ef4444',
                     fontSize: 12,
                     fontWeight: 500,
                     cursor: 'pointer',
                     transition: 'all 0.15s ease',
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(248, 81, 73, 0.2)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(248, 81, 73, 0.1)')}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)')}
                 >
                   Delete field
                 </button>
@@ -4024,7 +4024,8 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                     value={sprintFieldName}
                     onChange={(e) => setSprintFieldName(e.target.value)}
                     style={{
-                      width: 260,
+                      width: '100%',
+                      maxWidth: 260,
                       background: theme.controlBg,
                       border: 'none',
                       borderRadius: 6,
