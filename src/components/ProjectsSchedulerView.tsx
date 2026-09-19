@@ -65,8 +65,8 @@ export interface ProjectIssue {
   projectId: number;
   title: string;
   dateStr: string;
-  startDay: number; // 0 (MON 20) to 6 (SUN 26)
-  spanDays: number; // 1 to 3
+  createdAtIso: string; // data real de criação, usada para posicionar na timeline
+  durationDays: number; // dias em aberto (mínimo 1), usado como largura na timeline
   tag: string;
   tagColor: { bg: string; text: string };
   priority: 'Baixa' | 'Média' | 'Alta' | 'Urgente';
@@ -121,16 +121,6 @@ export interface ProjectRelease {
 
 export const RELEASES_DATA: Record<string, ProjectRelease> = {};
 
-const TIMELINE_DAYS = [
-  { key: 'MON', label: 'SEG', num: '20' },
-  { key: 'TUE', label: 'TER', num: '21' },
-  { key: 'WED', label: 'QUA', num: '22' },
-  { key: 'THU', label: 'QUI', num: '23', isCurrent: true },
-  { key: 'FRI', label: 'SEX', num: '24' },
-  { key: 'SAT', label: 'SÁB', num: '25' },
-  { key: 'SUN', label: 'DOM', num: '26' },
-];
-
 
 const STATUS_FILTER_OPTIONS = [
   'Todos os Projetos',
@@ -176,11 +166,7 @@ const PRIORITY_LABELS: Record<'Baixa' | 'Média' | 'Alta' | 'Urgente', { name: s
 
 const IN_PROGRESS_LABEL = { name: 'em-progresso', color: '0ea5e9' };
 
-function weekdayFromIso(iso: string): number {
-  const d = new Date(iso);
-  const jsDay = d.getDay(); // 0 = Sunday .. 6 = Saturday
-  return jsDay === 0 ? 6 : jsDay - 1; // convert to 0 = Monday .. 6 = Sunday
-}
+const WEEKDAY_LABELS_PT = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
 
 function mapGithubIssueToProjectIssue(gh: any, projectId: number, pulls: any[]): ProjectIssue {
   const labelObjs: Array<{ name: string; color?: string }> = (gh.labels || []).map((l: any) =>
@@ -216,7 +202,8 @@ function mapGithubIssueToProjectIssue(gh: any, projectId: number, pulls: any[]):
 
   const createdAt = gh.created_at ? new Date(gh.created_at) : new Date();
   const closedAt = gh.closed_at ? new Date(gh.closed_at) : null;
-  const daysOpen = closedAt ? Math.max(1, Math.round((closedAt.getTime() - createdAt.getTime()) / 86400000)) : 1;
+  const endReference = closedAt || new Date();
+  const daysOpen = Math.max(1, Math.round((endReference.getTime() - createdAt.getTime()) / 86400000));
 
   const assigneeList: any[] = gh.assignees && gh.assignees.length > 0 ? gh.assignees : gh.assignee ? [gh.assignee] : [];
   const assignees = assigneeList.map((a: any) => ({
@@ -250,8 +237,8 @@ function mapGithubIssueToProjectIssue(gh: any, projectId: number, pulls: any[]):
     rawLabels: labelNames,
     title: gh.title,
     dateStr: createdAt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }),
-    startDay: weekdayFromIso(gh.created_at || new Date().toISOString()),
-    spanDays: Math.min(3, Math.max(1, daysOpen)),
+    createdAtIso: createdAt.toISOString(),
+    durationDays: daysOpen,
     tag: tagName,
     tagColor,
     priority,
@@ -492,6 +479,74 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
 
   // Estados para a visualização de Issues/Tarefas do Projeto Selecionado
   const [viewMode, setViewMode] = useState<'timeline' | 'kanban' | 'spreadsheet'>('timeline');
+
+  // Zoom da Timeline: define quantos dias reais são exibidos, sempre incluindo hoje
+  const [timelineZoom, setTimelineZoom] = useState<'week' | 'twoWeeks' | 'month'>('month');
+
+  const timelineDays = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    if (timelineZoom === 'month') {
+      const start = new Date(today.getFullYear(), today.getMonth(), 1);
+      const end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      const days: Date[] = [];
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        days.push(new Date(d));
+      }
+      return days;
+    }
+
+    const count = timelineZoom === 'week' ? 7 : 14;
+    const dayOfWeek = today.getDay(); // 0 = domingo .. 6 = sábado
+    const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const monday = new Date(today);
+    monday.setDate(today.getDate() + diffToMonday);
+    const days: Date[] = [];
+    for (let i = 0; i < count; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      days.push(d);
+    }
+    return days;
+  }, [timelineZoom]);
+
+  const timelineColWidth = timelineZoom === 'month' ? 68 : 130;
+
+  const todayStart = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, []);
+
+  // Posiciona uma issue na timeline com base na data real de criação, recortando nas bordas do intervalo visível
+  const getIssueTimelinePosition = (
+    issue: ProjectIssue,
+    days: Date[]
+  ): { leftPercent: number; widthPercent: number } | null => {
+    if (days.length === 0) return null;
+    const created = new Date(issue.createdAtIso);
+    created.setHours(0, 0, 0, 0);
+    const rangeStart = days[0];
+    const totalDays = days.length;
+
+    let startIdx = Math.round((created.getTime() - rangeStart.getTime()) / 86400000);
+    let span = Math.max(1, issue.durationDays);
+
+    if (startIdx + span <= 0) return null; // termina antes do intervalo visível
+    if (startIdx >= totalDays) return null; // começa depois do intervalo visível
+
+    if (startIdx < 0) {
+      span += startIdx;
+      startIdx = 0;
+    }
+    span = Math.max(1, Math.min(span, totalDays - startIdx));
+
+    return {
+      leftPercent: (startIdx / totalDays) * 100,
+      widthPercent: (span / totalDays) * 100,
+    };
+  };
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
   const [selectedPriorityFilter, setSelectedPriorityFilter] = useState<string>('Todas');
   const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
@@ -560,7 +615,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
       const weight: Record<string, number> = { Urgente: 4, Alta: 3, Média: 2, Baixa: 1 };
       list = [...list].sort((a, b) => (weight[b.priority] || 0) - (weight[a.priority] || 0));
     } else if (sortMode === 'date') {
-      list = [...list].sort((a, b) => a.startDay - b.startDay);
+      list = [...list].sort((a, b) => new Date(a.createdAtIso).getTime() - new Date(b.createdAtIso).getTime());
     }
     return list;
   }, [rawProjectIssues, taskSearchQuery, selectedAssignee, selectedPriorityFilter, sortMode]);
@@ -1924,114 +1979,173 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
           {/* VIEW 1: TIMELINE (LINHA DO TEMPO)                         */}
           {/* ========================================================= */}
           {viewMode === 'timeline' && (
-            <div style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: 5, flex: 1, minHeight: 0 }}>
-              {/* Cabeçalho dos Dias (MON 20 a SUN 26) */}
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(7, 1fr)',
-                  background: theme.viewCanvasBg,
-                  borderRadius: 8,
-                  border: 'none',
-                  flexShrink: 0,
-                }}
-              >
-                {TIMELINE_DAYS.map((d) => (
-                  <div
-                    key={d.key}
-                    style={{
-                      padding: '10px 14px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 7,
-                      fontSize: 12,
-                      fontWeight: '300',
-                      color: d.isCurrent ? (isEffectiveDark ? '#ffffff' : accentColor) : theme.textSecondary,
-                      border: 'none',
-                      boxSizing: 'border-box',
-                    }}
-                  >
-                    <span style={{ letterSpacing: '0.04em' }}>{d.key}</span>
-                    <span style={{ fontWeight: '400', color: d.isCurrent ? (isEffectiveDark ? '#ffffff' : accentColor) : (isEffectiveDark ? '#aaaaaa' : '#475569') }}>
-                      {d.num}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Grid Canvas com as colunas dos dias e cards posicionados */}
-              <div
-                style={{
-                  position: 'relative',
-                  background: theme.viewCanvasBg,
-                  borderRadius: 8,
-                  border: 'none',
-                  overflow: 'hidden',
-                  width: '100%',
-                  flex: 1,
-                  minHeight: 280,
-                }}
-              >
-                {/* Colunas verticais de fundo preenchendo a altura exata dos cards */}
+            <div style={{ display: 'flex', flexDirection: 'column', width: '100%', gap: 8, flex: 1, minHeight: 0 }}>
+              {/* Cabeçalho: mês/ano atual + seletor de zoom */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 4px' }}>
+                <span style={{ fontSize: 12.5, color: theme.textSecondary, fontWeight: '400', textTransform: 'capitalize' }}>
+                  {timelineDays[0]?.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+                </span>
                 <div
                   style={{
-                    position: 'absolute',
-                    top: 0,
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(7, 1fr)',
-                    pointerEvents: 'none',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    background: theme.controlBg,
+                    borderRadius: 8,
+                    padding: 3,
+                    border: theme.controlBorder,
+                    gap: 2,
                   }}
                 >
-                  {TIMELINE_DAYS.map((d, colIdx) => (
-                    <div
-                      key={colIdx}
+                  {([
+                    { id: 'week', label: 'Semana' },
+                    { id: 'twoWeeks', label: 'Quinzena' },
+                    { id: 'month', label: 'Mês' },
+                  ] as const).map((z) => (
+                    <button
+                      key={z.id}
+                      type="button"
+                      onClick={() => setTimelineZoom(z.id)}
                       style={{
-                        height: '100%',
-                        borderRight: `1px solid ${theme.tableBorder}`,
-                        background: d.isCurrent
-                          ? `repeating-linear-gradient(0deg, ${hexToRgba(accentColor, isEffectiveDark ? 0.03 : 0.04)}, ${hexToRgba(accentColor, isEffectiveDark ? 0.03 : 0.04)} 2px, transparent 2px, transparent 5px)`
-                          : 'transparent',
-                        position: 'relative',
+                        padding: '5px 11px',
+                        borderRadius: 6,
+                        background: timelineZoom === z.id ? (isEffectiveDark ? '#242424' : '#e2e8f0') : 'transparent',
+                        color: timelineZoom === z.id ? theme.textPrimary : theme.textSecondary,
+                        fontSize: 11.5,
+                        fontWeight: '300',
+                        cursor: 'pointer',
+                        border: 'none',
+                        transition: 'all 0.15s ease',
                       }}
                     >
-                      {/* Linha vertical no dia ativo */}
-                      {d.isCurrent && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            top: 0,
-                            bottom: 0,
-                            left: '50%',
-                            width: 2,
-                            background: accentColor,
-                            boxShadow: `0 0 10px ${hexToRgba(accentColor, 0.6)}`,
-                            zIndex: 2,
-                          }}
-                        />
-                      )}
-                    </div>
+                      {z.label}
+                    </button>
                   ))}
                 </div>
+              </div>
 
-                {/* Camada contendo os cards de tarefas dispostos na linha do tempo (fluxo normal, sem espaço livre residual) */}
-                <div
-                  style={{
-                    position: 'relative',
-                    padding: '16px 12px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 12,
-                    zIndex: 5,
-                  }}
-                >
+              <div style={{ width: '100%', overflowX: 'auto', flex: 1, minHeight: 0 }} className="no-scrollbar">
+                <div style={{ minWidth: timelineDays.length * timelineColWidth, display: 'flex', flexDirection: 'column', gap: 5, height: '100%' }}>
+                  {/* Cabeçalho dos Dias */}
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: `repeat(${timelineDays.length}, 1fr)`,
+                      background: theme.viewCanvasBg,
+                      borderRadius: 8,
+                      border: 'none',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {timelineDays.map((d) => {
+                      const isCurrent = d.getTime() === todayStart.getTime();
+                      return (
+                        <div
+                          key={d.toISOString()}
+                          style={{
+                            padding: timelineZoom === 'month' ? '8px 6px' : '10px 14px',
+                            display: 'flex',
+                            flexDirection: timelineZoom === 'month' ? 'column' : 'row',
+                            alignItems: timelineZoom === 'month' ? 'center' : 'center',
+                            gap: timelineZoom === 'month' ? 2 : 7,
+                            fontSize: 12,
+                            fontWeight: '300',
+                            color: isCurrent ? (isEffectiveDark ? '#ffffff' : accentColor) : theme.textSecondary,
+                            border: 'none',
+                            boxSizing: 'border-box',
+                          }}
+                        >
+                          <span style={{ letterSpacing: '0.04em', fontSize: timelineZoom === 'month' ? 10 : 12 }}>
+                            {WEEKDAY_LABELS_PT[d.getDay()]}
+                          </span>
+                          <span
+                            style={{
+                              fontWeight: '400',
+                              color: isCurrent ? (isEffectiveDark ? '#ffffff' : accentColor) : (isEffectiveDark ? '#aaaaaa' : '#475569'),
+                            }}
+                          >
+                            {d.getDate()}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Grid Canvas com as colunas dos dias e cards posicionados */}
+                  <div
+                    style={{
+                      position: 'relative',
+                      background: theme.viewCanvasBg,
+                      borderRadius: 8,
+                      border: 'none',
+                      overflow: 'hidden',
+                      width: '100%',
+                      flex: 1,
+                      minHeight: 280,
+                    }}
+                  >
+                    {/* Colunas verticais de fundo preenchendo a altura exata dos cards */}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        display: 'grid',
+                        gridTemplateColumns: `repeat(${timelineDays.length}, 1fr)`,
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      {timelineDays.map((d, colIdx) => {
+                        const isCurrent = d.getTime() === todayStart.getTime();
+                        return (
+                          <div
+                            key={colIdx}
+                            style={{
+                              height: '100%',
+                              borderRight: `1px solid ${theme.tableBorder}`,
+                              background: isCurrent
+                                ? `repeating-linear-gradient(0deg, ${hexToRgba(accentColor, isEffectiveDark ? 0.03 : 0.04)}, ${hexToRgba(accentColor, isEffectiveDark ? 0.03 : 0.04)} 2px, transparent 2px, transparent 5px)`
+                                : 'transparent',
+                              position: 'relative',
+                            }}
+                          >
+                            {/* Linha vertical no dia ativo */}
+                            {isCurrent && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  top: 0,
+                                  bottom: 0,
+                                  left: '50%',
+                                  width: 2,
+                                  background: accentColor,
+                                  boxShadow: `0 0 10px ${hexToRgba(accentColor, 0.6)}`,
+                                  zIndex: 2,
+                                }}
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Camada contendo os cards de tarefas dispostos na linha do tempo (fluxo normal, sem espaço livre residual) */}
+                    <div
+                      style={{
+                        position: 'relative',
+                        padding: '16px 12px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 12,
+                        zIndex: 5,
+                      }}
+                    >
                   {projectIssues.length > 0 ? (
                     projectIssues.map((issue) => {
-                      // Calcula a posição e largura com base no startDay (0 a 6) e spanDays (1 a 3)
-                      const leftPercent = (issue.startDay / 7) * 100;
-                      const widthPercent = Math.min((issue.spanDays / 7) * 100, 100 - leftPercent);
+                      const pos = getIssueTimelinePosition(issue, timelineDays);
+                      if (!pos) return null;
+                      const { leftPercent, widthPercent } = pos;
 
                       return (
                         <div
@@ -2039,8 +2153,8 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                           style={{
                             marginLeft: `${leftPercent}%`,
                             width: `calc(${widthPercent}% - 14px)`,
-                            minWidth: 240,
-                            maxWidth: 380,
+                            minWidth: timelineZoom === 'month' ? 160 : 240,
+                            maxWidth: timelineZoom === 'month' ? 460 : 380,
                             background: theme.viewCardBg,
                             borderRadius: 8,
                             border: theme.viewCardBorder,
@@ -2201,6 +2315,8 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                         : projectIssuesError || 'Nenhuma tarefa encontrada para este projeto ou filtro.'}
                     </div>
                   )}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
