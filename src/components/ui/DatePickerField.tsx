@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Calendar, CalendarClock, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { hexToRgba } from '../../utils/color';
+
+const POPUP_WIDTH = 240;
+const POPUP_HEIGHT_ESTIMATE = 320;
 
 export interface DatePickerFieldProps {
   value: string; // 'YYYY-MM-DD' ou ''
@@ -52,10 +56,12 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
   showTodayShortcut = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [popupPos, setPopupPos] = useState<{ top: number; left: number } | null>(null);
   const selectedDate = value ? toDateOnly(value) : null;
   const minDate = min ? toDateOnly(min) : null;
   const [viewMonth, setViewMonth] = useState(() => selectedDate || new Date());
   const containerRef = useRef<HTMLDivElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
 
   const selectToday = () => {
     const t = new Date();
@@ -69,15 +75,51 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
     if (selectedDate) setViewMonth(selectedDate);
   }, [value]);
 
+  const updatePopupPosition = () => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    let left = rect.left;
+    if (left + POPUP_WIDTH > window.innerWidth - 8) {
+      left = window.innerWidth - POPUP_WIDTH - 8;
+    }
+    if (left < 8) left = 8;
+
+    let top = rect.bottom + 6;
+    if (top + POPUP_HEIGHT_ESTIMATE > window.innerHeight - 8) {
+      const above = rect.top - POPUP_HEIGHT_ESTIMATE - 6;
+      top = above < 8 ? 8 : above;
+    }
+
+    setPopupPos({ top, left });
+  };
+
+  const handleTriggerClick = () => {
+    if (!isOpen) updatePopupPosition();
+    setIsOpen((prev) => !prev);
+  };
+
+  // Reposiciona (ou fecha, via clique fora) enquanto o popup estiver aberto, inclusive
+  // ao rolar o modal que o contém, já que o popup é renderizado via portal.
   useEffect(() => {
     if (!isOpen) return;
+
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setIsOpen(false);
-      }
+      const target = e.target as Node;
+      if (containerRef.current?.contains(target)) return;
+      if (popupRef.current?.contains(target)) return;
+      setIsOpen(false);
     };
+    const handleReposition = () => updatePopupPosition();
+
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    window.addEventListener('scroll', handleReposition, true);
+    window.addEventListener('resize', handleReposition);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('scroll', handleReposition, true);
+      window.removeEventListener('resize', handleReposition);
+    };
   }, [isOpen]);
 
   const today = new Date();
@@ -103,7 +145,7 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
     <div ref={containerRef} style={{ position: 'relative' }}>
       <button
         type="button"
-        onClick={() => setIsOpen((prev) => !prev)}
+        onClick={handleTriggerClick}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -155,15 +197,16 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
         )}
       </button>
 
-      {isOpen && (
+      {isOpen && popupPos && createPortal(
         <div
+          ref={popupRef}
           onClick={(e) => e.stopPropagation()}
           style={{
-            position: 'absolute',
-            top: 'calc(100% + 6px)',
-            left: 0,
+            position: 'fixed',
+            top: popupPos.top,
+            left: popupPos.left,
             zIndex: 100000,
-            width: 240,
+            width: POPUP_WIDTH,
             background: dropdownBg,
             borderRadius: 10,
             padding: 10,
@@ -277,7 +320,8 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
               </button>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
