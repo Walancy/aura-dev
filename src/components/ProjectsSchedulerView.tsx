@@ -293,18 +293,18 @@ function formatGithubTimeAgo(iso: string): string {
     const diffDay = Math.floor(diffHr / 24);
 
     if (diffDay >= 30) {
-      return `on ${new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+      return `em ${new Date(iso).toLocaleDateString('pt-BR', { month: 'short', day: 'numeric' })}`;
     }
     if (diffDay >= 7) {
       const weeks = Math.max(1, Math.floor(diffDay / 7));
-      return `${weeks}w ago`;
+      return `há ${weeks}sem`;
     }
-    if (diffDay > 0) return `${diffDay}d ago`;
-    if (diffHr > 0) return `${diffHr}h ago`;
-    if (diffMin > 0) return `${diffMin}m ago`;
-    return 'just now';
+    if (diffDay > 0) return `há ${diffDay}d`;
+    if (diffHr > 0) return `há ${diffHr}h`;
+    if (diffMin > 0) return `há ${diffMin}min`;
+    return 'agora mesmo';
   } catch {
-    return 'recently';
+    return 'recentemente';
   }
 }
 
@@ -2924,7 +2924,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <CircleDot size={14} color={issuesSidebarTab === 'all' ? accentColor : theme.textSecondary} />
-                  <span>Issues</span>
+                  <span>Todas as Issues</span>
                 </div>
                 <span
                   style={{
@@ -2964,7 +2964,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 }}
               >
                 <UserCheck size={14} color={issuesSidebarTab === 'assigned' ? accentColor : theme.textSecondary} />
-                <span>Assigned to me</span>
+                <span>Atribuídas a mim</span>
               </div>
 
               {/* Item: Created by me */}
@@ -2991,7 +2991,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 }}
               >
                 <Smile size={14} color={issuesSidebarTab === 'created' ? accentColor : theme.textSecondary} />
-                <span>Created by me</span>
+                <span>Criadas por mim</span>
               </div>
 
               {/* Item: Mentioned */}
@@ -3018,7 +3018,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 }}
               >
                 <AtSign size={14} color={issuesSidebarTab === 'mentioned' ? accentColor : theme.textSecondary} />
-                <span>Mentioned</span>
+                <span>Mencionado</span>
               </div>
 
               {/* Item: Recent activity */}
@@ -3048,7 +3048,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 }}
               >
                 <Clock size={14} color={issuesSidebarTab === 'recent' ? accentColor : theme.textSecondary} />
-                <span>Recent activity</span>
+                <span>Atividade recente</span>
               </div>
             </div>
 
@@ -3065,44 +3065,6 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 boxSizing: 'border-box',
               }}
             >
-              {/* Cabeçalho superior: Título */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  padding: '2px 4px',
-                  width: '100%',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <h2
-                    style={{
-                      fontSize: 17,
-                      fontWeight: 600,
-                      color: theme.textPrimary,
-                      margin: 0,
-                      letterSpacing: '-0.01em',
-                    }}
-                  >
-                    All issues
-                  </h2>
-                  {selectedProject?.title && (
-                    <span
-                      style={{
-                        fontSize: 11,
-                        color: theme.textSecondary,
-                        background: theme.controlBg,
-                        padding: '2px 8px',
-                        borderRadius: 6,
-                      }}
-                    >
-                      {selectedProject.title}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-
               {/* Tabela de Issues (Contêiner no Design de Tarefas) */}
               <div
                 style={{
@@ -3181,7 +3143,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                           color: issuesStateFilter === 'open' ? theme.textPrimary : theme.textSecondary,
                         }}
                       >
-                        Open
+                        Aberto
                       </span>
                       <span
                         style={{
@@ -3222,7 +3184,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                           color: issuesStateFilter === 'closed' ? theme.textPrimary : theme.textSecondary,
                         }}
                       >
-                        Closed
+                        Fechado
                       </span>
                       <span
                         style={{
@@ -3272,7 +3234,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                             selectedAuthorFilter !== 'all' ? accentColor : theme.textSecondary)
                         }
                       >
-                        <span>{selectedAuthorFilter === 'all' ? 'Author' : selectedAuthorFilter}</span>
+                        <span>{selectedAuthorFilter === 'all' ? 'Autor' : selectedAuthorFilter}</span>
                         <ChevronDown size={11} />
                       </button>
 
@@ -3363,7 +3325,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                             selectedLabelFilter !== 'all' ? accentColor : theme.textSecondary)
                         }
                       >
-                        <span>{selectedLabelFilter === 'all' ? 'Labels' : selectedLabelFilter}</span>
+                        <span>{selectedLabelFilter === 'all' ? 'Etiquetas' : selectedLabelFilter}</span>
                         <ChevronDown size={11} />
                       </button>
 
@@ -3399,7 +3361,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                             onMouseEnter={(e) => (e.currentTarget.style.background = theme.dropdownItemHover)}
                             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                           >
-                            <span>Todas as labels</span>
+                            <span>Todas as etiquetas</span>
                             {selectedLabelFilter === 'all' && <Check size={12} color={accentColor} />}
                           </div>
                           {uniqueLabels.map((lbl) => (
@@ -3449,7 +3411,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                         onMouseEnter={(e) => (e.currentTarget.style.color = theme.textPrimary)}
                         onMouseLeave={(e) => (e.currentTarget.style.color = theme.textSecondary)}
                       >
-                        <span>Projects</span>
+                        <span>Projetos</span>
                         <ChevronDown size={11} />
                       </button>
                     </div>
@@ -3474,7 +3436,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                         onMouseEnter={(e) => (e.currentTarget.style.color = theme.textPrimary)}
                         onMouseLeave={(e) => (e.currentTarget.style.color = theme.textSecondary)}
                       >
-                        <span>Milestones</span>
+                        <span>Marcos</span>
                         <ChevronDown size={11} />
                       </button>
                     </div>
@@ -3504,7 +3466,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                             selectedAssigneeFilter !== 'all' ? accentColor : theme.textSecondary)
                         }
                       >
-                        <span>{selectedAssigneeFilter === 'all' ? 'Assignees' : selectedAssigneeFilter}</span>
+                        <span>{selectedAssigneeFilter === 'all' ? 'Responsáveis' : selectedAssigneeFilter}</span>
                         <ChevronDown size={11} />
                       </button>
 
@@ -3598,10 +3560,10 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                         <ArrowUpDown size={11} />
                         <span>
                           {issuesSortMode === 'newest'
-                            ? 'Newest'
+                            ? 'Mais recentes'
                             : issuesSortMode === 'oldest'
-                            ? 'Oldest'
-                            : 'Most commented'}
+                            ? 'Mais antigas'
+                            : 'Mais comentadas'}
                         </span>
                         <ChevronDown size={11} />
                       </button>
@@ -3623,9 +3585,9 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                         >
                           {(
                             [
-                              { id: 'newest', label: 'Newest' },
-                              { id: 'oldest', label: 'Oldest' },
-                              { id: 'comments', label: 'Most commented' },
+                              { id: 'newest', label: 'Mais recentes' },
+                              { id: 'oldest', label: 'Mais antigas' },
+                              { id: 'comments', label: 'Mais comentadas' },
                             ] as const
                           ).map((opt) => (
                             <div
@@ -3877,7 +3839,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                               <span style={{ color: theme.textPrimary, fontWeight: 400 }}>
                                 {issue.author || 'nelsonappmoove'}
                               </span>
-                              <span>opened {formatGithubTimeAgo(issue.createdAtIso)}</span>
+                              <span>aberta {formatGithubTimeAgo(issue.createdAtIso)}</span>
                               {issue.milestoneTitle && (
                                 <>
                                   <span>·</span>
@@ -4010,7 +3972,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                     letterSpacing: '-0.01em',
                   }}
                 >
-                  Sprint field settings
+                  Configurações do campo Sprint
                 </h2>
 
                 <button
@@ -4030,16 +3992,16 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                   onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)')}
                   onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)')}
                 >
-                  Delete field
+                  Excluir campo
                 </button>
               </div>
 
-              {/* Formulário: Field name & Field type */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
-                {/* Field name */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {/* Formulário: Nome do campo & Tipo do campo, lado a lado */}
+              <div style={{ display: 'flex', gap: 32, marginBottom: 20, flexWrap: 'wrap' }}>
+                {/* Nome do campo */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: 260 }}>
                   <label style={{ fontSize: 12, fontWeight: 500, color: theme.textSecondary }}>
-                    Field name
+                    Nome do campo
                   </label>
                   <input
                     type="text"
@@ -4047,7 +4009,6 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                     onChange={(e) => setSprintFieldName(e.target.value)}
                     style={{
                       width: '100%',
-                      maxWidth: 260,
                       background: theme.controlBg,
                       border: 'none',
                       borderRadius: 6,
@@ -4059,10 +4020,10 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                   />
                 </div>
 
-                {/* Field type */}
+                {/* Tipo do campo */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <label style={{ fontSize: 12, fontWeight: 500, color: theme.textSecondary }}>
-                    Field type
+                    Tipo do campo
                   </label>
                   <div
                     style={{
@@ -4078,7 +4039,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                     }}
                   >
                     <Repeat size={13} color={theme.textSecondary} />
-                    <span>Iteration</span>
+                    <span>Iteração</span>
                   </div>
                 </div>
               </div>
