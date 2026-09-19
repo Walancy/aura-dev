@@ -123,6 +123,20 @@ export interface AttachedImageItem {
   path?: string;
 }
 
+// Unified shape combining in-memory and disk-saved chat sessions, used by the
+// Chat History modal's Current/Running/Recent lists (see `allUnifiedSessions` in App.tsx).
+export interface UnifiedConvoItem {
+  id: string;
+  title: string;
+  provider: string;
+  updatedAt: number;
+  projectName?: string;
+  workspacePath?: string;
+  model?: string;
+  isCurrent?: boolean;
+  isRunning?: boolean;
+}
+
 export interface ChatSessionItem {
   id: string;
   title: string;
