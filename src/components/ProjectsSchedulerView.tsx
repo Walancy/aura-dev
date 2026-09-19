@@ -24,6 +24,7 @@ import {
   Building2,
 } from 'lucide-react';
 import { getContrastTextColor, hexToRgba } from '../utils/color';
+import { DatePickerField } from './ui/DatePickerField';
 
 export interface ProjectsSchedulerViewProps {
   accentColor?: string;
@@ -3347,41 +3348,38 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Data de início</label>
-                  <input
-                    type="date"
+                  <DatePickerField
                     value={newTaskStartDate}
-                    onChange={(e) => setNewTaskStartDate(e.target.value)}
-                    style={{
-                      background: theme.modalInputBg,
-                      border: theme.modalInputBorder,
-                      borderRadius: 6,
-                      padding: '7px 10px',
-                      color: theme.textPrimary,
-                      fontSize: 12.5,
-                      fontWeight: '300',
-                      outline: 'none',
-                      colorScheme: isEffectiveDark ? 'dark' : 'light',
-                    }}
+                    onChange={setNewTaskStartDate}
+                    accentColor={accentColor}
+                    isEffectiveDark={isEffectiveDark}
+                    inputBg={theme.modalInputBg}
+                    inputBorder={theme.modalInputBorder}
+                    textPrimary={theme.textPrimary}
+                    textSecondary={theme.textSecondary}
+                    dropdownBg={theme.dropdownBg}
+                    dropdownShadow={theme.dropdownShadow}
+                    dropdownBorder={theme.dropdownBorder}
+                    dropdownItemHover={theme.dropdownItemHover}
+                    showTodayShortcut
                   />
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Data de término</label>
-                  <input
-                    type="date"
+                  <DatePickerField
                     value={newTaskDueDate}
+                    onChange={setNewTaskDueDate}
                     min={newTaskStartDate || undefined}
-                    onChange={(e) => setNewTaskDueDate(e.target.value)}
-                    style={{
-                      background: theme.modalInputBg,
-                      border: theme.modalInputBorder,
-                      borderRadius: 6,
-                      padding: '7px 10px',
-                      color: theme.textPrimary,
-                      fontSize: 12.5,
-                      fontWeight: '300',
-                      outline: 'none',
-                      colorScheme: isEffectiveDark ? 'dark' : 'light',
-                    }}
+                    accentColor={accentColor}
+                    isEffectiveDark={isEffectiveDark}
+                    inputBg={theme.modalInputBg}
+                    inputBorder={theme.modalInputBorder}
+                    textPrimary={theme.textPrimary}
+                    textSecondary={theme.textSecondary}
+                    dropdownBg={theme.dropdownBg}
+                    dropdownShadow={theme.dropdownShadow}
+                    dropdownBorder={theme.dropdownBorder}
+                    dropdownItemHover={theme.dropdownItemHover}
                   />
                 </div>
               </div>
@@ -3627,41 +3625,38 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Data de início</label>
-                  <input
-                    type="date"
+                  <DatePickerField
                     value={editIssueStartDate}
-                    onChange={(e) => setEditIssueStartDate(e.target.value)}
-                    style={{
-                      background: theme.modalInputBg,
-                      border: theme.modalInputBorder,
-                      borderRadius: 6,
-                      padding: '7px 10px',
-                      color: theme.textPrimary,
-                      fontSize: 12.5,
-                      fontWeight: '300',
-                      outline: 'none',
-                      colorScheme: isEffectiveDark ? 'dark' : 'light',
-                    }}
+                    onChange={setEditIssueStartDate}
+                    accentColor={accentColor}
+                    isEffectiveDark={isEffectiveDark}
+                    inputBg={theme.modalInputBg}
+                    inputBorder={theme.modalInputBorder}
+                    textPrimary={theme.textPrimary}
+                    textSecondary={theme.textSecondary}
+                    dropdownBg={theme.dropdownBg}
+                    dropdownShadow={theme.dropdownShadow}
+                    dropdownBorder={theme.dropdownBorder}
+                    dropdownItemHover={theme.dropdownItemHover}
+                    showTodayShortcut
                   />
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Data de término</label>
-                  <input
-                    type="date"
+                  <DatePickerField
                     value={editIssueDueDate}
+                    onChange={setEditIssueDueDate}
                     min={editIssueStartDate || undefined}
-                    onChange={(e) => setEditIssueDueDate(e.target.value)}
-                    style={{
-                      background: theme.modalInputBg,
-                      border: theme.modalInputBorder,
-                      borderRadius: 6,
-                      padding: '7px 10px',
-                      color: theme.textPrimary,
-                      fontSize: 12.5,
-                      fontWeight: '300',
-                      outline: 'none',
-                      colorScheme: isEffectiveDark ? 'dark' : 'light',
-                    }}
+                    accentColor={accentColor}
+                    isEffectiveDark={isEffectiveDark}
+                    inputBg={theme.modalInputBg}
+                    inputBorder={theme.modalInputBorder}
+                    textPrimary={theme.textPrimary}
+                    textSecondary={theme.textSecondary}
+                    dropdownBg={theme.dropdownBg}
+                    dropdownShadow={theme.dropdownShadow}
+                    dropdownBorder={theme.dropdownBorder}
+                    dropdownItemHover={theme.dropdownItemHover}
                   />
                 </div>
               </div>
