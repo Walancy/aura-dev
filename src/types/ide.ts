@@ -1,5 +1,20 @@
 import type React from 'react';
 
+// Shape of the `themeTokens` object computed once in App.tsx from `isEffectiveDark`
+// and threaded down to every panel/modal that needs theme-aware colors.
+export interface ThemeTokens {
+  bgApp: string;
+  bgCard: string;
+  bgCardSecondary: string;
+  bgCardElevated: string;
+  textPrimary: string;
+  textSecondary: string;
+  textMuted: string;
+  border: string;
+  borderSubtle: string;
+  hoverBg: string;
+}
+
 export interface TerminalSessionItem {
   id: string;
   name: string;
