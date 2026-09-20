@@ -3953,97 +3953,6 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                 flex: 1,
               }}
             >
-              {/* Header: Título + Botão Delete field */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  marginBottom: 18,
-                  width: '100%',
-                }}
-              >
-                <h2
-                  style={{
-                    fontSize: 18,
-                    fontWeight: 600,
-                    color: theme.textPrimary,
-                    margin: 0,
-                    letterSpacing: '-0.01em',
-                  }}
-                >
-                  Configurações do campo Sprint
-                </h2>
-
-                <button
-                  type="button"
-                  onClick={() => showToast('Campo padrão de sprints protegido.')}
-                  style={{
-                    background: 'rgba(239, 68, 68, 0.1)',
-                    border: 'none',
-                    borderRadius: 6,
-                    padding: '6px 14px',
-                    color: '#ef4444',
-                    fontSize: 12,
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)')}
-                >
-                  Excluir campo
-                </button>
-              </div>
-
-              {/* Formulário: Nome do campo & Tipo do campo, lado a lado */}
-              <div style={{ display: 'flex', gap: 32, marginBottom: 20, flexWrap: 'wrap' }}>
-                {/* Nome do campo */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: 260 }}>
-                  <label style={{ fontSize: 12, fontWeight: 500, color: theme.textSecondary }}>
-                    Nome do campo
-                  </label>
-                  <input
-                    type="text"
-                    value={sprintFieldName}
-                    onChange={(e) => setSprintFieldName(e.target.value)}
-                    style={{
-                      width: '100%',
-                      background: theme.controlBg,
-                      border: 'none',
-                      borderRadius: 6,
-                      padding: '7px 12px',
-                      fontSize: 13,
-                      color: theme.textPrimary,
-                      outline: 'none',
-                    }}
-                  />
-                </div>
-
-                {/* Tipo do campo */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <label style={{ fontSize: 12, fontWeight: 500, color: theme.textSecondary }}>
-                    Tipo do campo
-                  </label>
-                  <div
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      background: theme.controlBg,
-                      borderRadius: 6,
-                      padding: '6px 12px',
-                      color: theme.textSecondary,
-                      fontSize: 12,
-                      width: 'fit-content',
-                    }}
-                  >
-                    <Repeat size={13} color={theme.textSecondary} />
-                    <span>Iteração</span>
-                  </div>
-                </div>
-              </div>
-
               {/* Tabela de Iterações / Sprints */}
               <div
                 style={{
@@ -4103,7 +4012,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                         size={14}
                         color={sprintsTab === 'active' ? theme.textPrimary : theme.textSecondary}
                       />
-                      <span>{activeSprintsCount} Active</span>
+                      <span>{activeSprintsCount} Ativas</span>
                     </div>
 
                     {/* Tab Completed */}
@@ -4124,12 +4033,48 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                         size={14}
                         color={sprintsTab === 'completed' ? theme.textPrimary : theme.textSecondary}
                       />
-                      <span>{completedSprintsCount} Completed</span>
+                      <span>{completedSprintsCount} Concluídas</span>
                     </div>
                   </div>
 
-                  {/* Lado Direito: Botões Add iteration e More options */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
+                  {/* Lado Direito: Nome/Tipo do campo + Botões Nova sprint e Mais opções */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative', flexWrap: 'wrap' }}>
+                    <input
+                      type="text"
+                      value={sprintFieldName}
+                      onChange={(e) => setSprintFieldName(e.target.value)}
+                      title="Nome do campo"
+                      style={{
+                        width: 100,
+                        background: isEffectiveDark ? '#242424' : '#e2e8f0',
+                        border: 'none',
+                        borderRadius: 6,
+                        padding: '5px 10px',
+                        fontSize: 12,
+                        color: theme.textPrimary,
+                        outline: 'none',
+                      }}
+                    />
+
+                    <div
+                      title="Tipo do campo: Iteração"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        background: isEffectiveDark ? '#242424' : '#e2e8f0',
+                        borderRadius: 6,
+                        padding: '5px 10px',
+                        color: theme.textSecondary,
+                        fontSize: 12,
+                      }}
+                    >
+                      <Repeat size={12} color={theme.textSecondary} />
+                      <span>Iteração</span>
+                    </div>
+
+                    <div style={{ width: 1, height: 18, background: hexToRgba(theme.textSecondary, 0.2) }} />
+
                     <button
                       type="button"
                       onClick={() => {
@@ -4158,7 +4103,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                       }
                     >
                       <Plus size={13} />
-                      <span>Add iteration</span>
+                      <span>Nova sprint</span>
                     </button>
 
                     <div style={{ position: 'relative' }}>
@@ -4185,7 +4130,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                           (e.currentTarget.style.background = isEffectiveDark ? '#242424' : '#e2e8f0')
                         }
                       >
-                        <span>More options</span>
+                        <span>Mais opções</span>
                         <ChevronDown size={11} />
                       </button>
 
@@ -4239,6 +4184,26 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                         </div>
                       )}
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => showToast('Campo padrão de sprints protegido.')}
+                      style={{
+                        background: 'rgba(239, 68, 68, 0.1)',
+                        border: 'none',
+                        borderRadius: 6,
+                        padding: '5px 12px',
+                        color: '#ef4444',
+                        fontSize: 12,
+                        fontWeight: 500,
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)')}
+                    >
+                      Excluir campo
+                    </button>
                   </div>
                 </div>
 
@@ -4307,7 +4272,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                                     letterSpacing: '0.01em',
                                   }}
                                 >
-                                  Current
+                                  Atual
                                 </span>
                               ) : isCompleted ? (
                                 <span
@@ -4322,7 +4287,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                                     letterSpacing: '0.01em',
                                   }}
                                 >
-                                  Completed
+                                  Concluída
                                 </span>
                               ) : (
                                 <span
@@ -4337,7 +4302,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
                                     letterSpacing: '0.01em',
                                   }}
                                 >
-                                  Planned
+                                  Planejada
                                 </span>
                               )}
                             </div>
