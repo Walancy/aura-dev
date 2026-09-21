@@ -44,7 +44,7 @@ export class ModelService {
   private activeModelIds: Record<string, string> = {
     claude: 'sonnet',
     antigravity: 'gemini-3.8-flash-high',
-    codex: 'gpt-5.3-codex',
+    codex: 'default',
     gemini: 'gemini-2.5-flash',
     ollama: 'llama3.3',
   };
@@ -320,9 +320,9 @@ export class ModelService {
 
   private getCodexModels(): ProviderModelsResult {
     const models: AiModelItem[] = [
-      { id: 'gpt-5.3-codex', label: 'GPT-5.3-Codex', tag: 'Codificação agentiva' },
+      { id: 'default', label: 'Padrão do Codex CLI', tag: 'Compatível com ChatGPT' },
     ];
-    const currentModelId = this.activeModelIds.codex || 'gpt-5.3-codex';
+    const currentModelId = this.activeModelIds.codex || 'default';
     const current = models.find((m) => m.id === currentModelId) || models[0];
     return {
       providerId: 'codex',

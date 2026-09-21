@@ -410,7 +410,7 @@ where
             for directory in &request.additional_dirs {
                 args.extend(["--add-dir".into(), directory.display().to_string()]);
             }
-            if let Some(model) = &request.model {
+            if let Some(model) = request.model.as_ref().filter(|model| !model.eq_ignore_ascii_case("default")) {
                 args.extend(["-m".into(), model.clone()]);
             }
             args.push(request.request.clone());

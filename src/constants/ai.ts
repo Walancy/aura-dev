@@ -167,11 +167,11 @@ export const AI_PROVIDERS: AiProviderConfig[] = [
     loginUrl: 'https://platform.openai.com/api-keys',
     loginHelp: 'O Codex CLI requer autenticação ou uma chave de API da OpenAI (OPENAI_API_KEY).',
     models: [
-      'gpt-5.3-codex',
+      'default',
     ],
     commands: [
       { command: '/help', description: 'Exibir comandos e opções do Codex CLI' },
-      { command: '/model', description: 'Selecionar o modelo Codex ativo', usage: '/model [nome]' },
+      { command: '/model', description: 'Selecionar o modelo configurado no Codex CLI', usage: '/model [nome]' },
       { command: '/clear', description: 'Resetar histórico e contexto da sessão' },
       { command: '/review', description: 'Revisão profunda de código com recomendações' },
       { command: '/diff', description: 'Visualizar diff de alterações locais no repositório' },
