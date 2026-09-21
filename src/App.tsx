@@ -61,6 +61,7 @@ import {
   Bug,
   GitCompare,
   History,
+  Network,
 } from 'lucide-react';
 import avatarImg from './avatar.png';
 import { FileIcon, FolderIcon } from './components/FileIcon';
@@ -69,6 +70,7 @@ import { SidebarPanels } from './components/ide/SidebarPanels';
 import { ExtensionDetailsView } from './components/ide/ExtensionDetailsView';
 import { ProjectsSchedulerView } from './components/ProjectsSchedulerView';
 import { ProjectWorkspaceSelector } from './components/ide/ProjectWorkspaceSelector';
+import { OrchestrationCanvas } from './components/OrchestrationCanvas';
 import {
   CodiconFiles,
   CodiconSearch,
@@ -122,7 +124,7 @@ import type {
 } from './types/ide';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'projetos' | 'daily' | 'equipmentos' | 'ide' | 'ports'>('projetos');
+  const [activeTab, setActiveTab] = useState<'projetos' | 'orchestration' | 'daily' | 'equipmentos' | 'ide' | 'ports'>('projetos');
   const [activeTermTab, setActiveTermTab] = useState<'problems' | 'output' | 'debug' | 'terminal' | 'ports'>('terminal');
 
   // Code Review (Diff View) state
@@ -5333,12 +5335,14 @@ ${prompt || userDisplayPrompt}`;
           >
             {[
               { id: 'projetos', label: 'Projetos' },
+              { id: 'orchestration', label: 'Orquestração', icon: Network },
               { id: 'daily', label: 'Daily' },
               { id: 'equipmentos', label: 'Equipmentos' },
               { id: 'ide', label: 'IDE' },
               { id: 'ports', label: 'Ports' },
             ].map((t) => {
               const isActive = activeTab === t.id;
+              const TabIcon = t.icon;
               return (
                 <div
                   key={t.id}
@@ -5360,6 +5364,7 @@ ${prompt || userDisplayPrompt}`;
                     transition: 'all 0.15s ease',
                   }}
                 >
+                  {TabIcon && <TabIcon size={13} style={{ marginRight: 5 }} />}
                   <div
                     style={{
                       color: isActive ? themeTokens.textPrimary : themeTokens.textSecondary,
@@ -12934,18 +12939,28 @@ ${prompt || userDisplayPrompt}`;
           )}
         </div>
       ) : activeTab === 'projetos' ? (
-        <ProjectsSchedulerView
-          accentColor={accentColor}
-          isEffectiveDark={isEffectiveDark}
-          themeTokens={themeTokens}
-          selectedAiProvider={selectedAiProvider}
-          selectedModel={selectedModel}
-          onSelectAiProvider={handleSwitchAiProvider}
-          onSelectModel={handleSelectModel}
-          installedClis={installedClis}
-          activeModels={activeModels}
-          onInstallAiCli={handleInstallCliInTerminal}
-        />
+        <div style={{ alignSelf: 'stretch', width: '100%', minWidth: 0, minHeight: 0, flex: '1 1 0', display: 'flex', overflow: 'hidden' }}>
+          <ProjectsSchedulerView
+            accentColor={accentColor}
+            isEffectiveDark={isEffectiveDark}
+            themeTokens={themeTokens}
+            selectedAiProvider={selectedAiProvider}
+            selectedModel={selectedModel}
+            onSelectAiProvider={handleSwitchAiProvider}
+            onSelectModel={handleSelectModel}
+            installedClis={installedClis}
+            activeModels={activeModels}
+            onInstallAiCli={handleInstallCliInTerminal}
+          />
+        </div>
+      ) : activeTab === 'orchestration' ? (
+        <div style={{ alignSelf: 'stretch', width: '100%', minWidth: 0, minHeight: 0, flex: '1 1 0', display: 'flex', overflow: 'hidden' }}>
+          <OrchestrationCanvas
+            accentColor={accentColor}
+            isEffectiveDark={isEffectiveDark}
+            themeTokens={themeTokens}
+          />
+        </div>
       ) : (
         /* Empty container for other tabs as requested */
         <div style={{ alignSelf: 'stretch', flex: '1 1 0', background: 'black', borderRadius: 10, border: 'none' }} />

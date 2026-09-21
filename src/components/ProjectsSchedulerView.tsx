@@ -1372,12 +1372,58 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   const [isReleaseNotesModalOpen, setIsReleaseNotesModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [openIssueMenuId, setOpenIssueMenuId] = useState<string | null>(null);
+  const [autonomousRuns, setAutonomousRuns] = useState<Record<string, { runId?: string; phase?: string; status: 'running' | 'done' | 'review' | 'failed'; summary?: string }>>({});
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.ai?.onOrchestratorEvent?.((event: any) => {
+      const issueId = event?.payload?.issueId || event?.issueId;
+      if (!issueId) return;
+      setAutonomousRuns((current) => ({
+        ...current,
+        [issueId]: { ...current[issueId], phase: event.phase || event.kind, status: 'running' },
+      }));
+    });
+    return () => unsubscribe?.();
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
       setToastMessage((current) => (current === msg ? null : current));
     }, 3200);
+  };
+
+  const handleAutonomousRun = async (issue: ProjectIssue) => {
+    const cwd = localStorage.getItem('ide_workspace_path');
+    if (!cwd) {
+      showToast('Abra um workspace antes de executar a tarefa autonomamente.');
+      return;
+    }
+    const configuredProvider = localStorage.getItem('ide_ai_provider') || 'claude';
+    const provider = configuredProvider === 'codex' ? 'codex' : configuredProvider === 'agy' || configuredProvider === 'antigravity' ? 'antigravity' : 'claude';
+    const configuredProjectNumber = Number(localStorage.getItem('ide_github_project_number') || '');
+    const runId = crypto.randomUUID();
+    setAutonomousRuns((current) => ({ ...current, [issue.id]: { runId, status: 'running', phase: 'planning' } }));
+    const result = await window.electronAPI?.ai?.autonomousRun?.({
+      runId,
+      provider,
+      cwd,
+      title: issue.title,
+      description: `${issue.description || ''}\nGitHub: ${issue.htmlUrl || issue.id}`,
+      taskId: issue.id,
+      projectNumber: Number.isFinite(configuredProjectNumber) && configuredProjectNumber > 0 ? configuredProjectNumber : undefined,
+    });
+    if (!result) return;
+    setAutonomousRuns((current) => ({ ...current, [issue.id]: { runId: result.runId, status: result.status, phase: result.status === 'done' ? 'completed' : 'review', summary: result.summary } }));
+    showToast(result.status === 'done' ? `Tarefa concluída: ${issue.title}` : `Tarefa enviada para revisão: ${issue.title}`);
+  };
+
+  const handleAutonomousCancel = async (issue: ProjectIssue) => {
+    const runId = autonomousRuns[issue.id]?.runId;
+    if (!runId) return;
+    await window.electronAPI?.ai?.cancelAutonomous?.(runId);
+    setAutonomousRuns((current) => ({ ...current, [issue.id]: { ...current[issue.id], status: 'review', phase: 'cancelled' } }));
+    showToast('Execução autônoma cancelada.');
   };
 
   const handleOpenIssueInGithub = (issue: ProjectIssue) => {
@@ -7360,7 +7406,48 @@ Formate com seções bem organizadas:
                               </span>
                             </div>
 
-                            <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                              {autonomousRuns[issue.id]?.status === 'running' ? (
+                                <button
+                                  type="button"
+                                  onClick={(event) => { event.stopPropagation(); void handleAutonomousCancel(issue); }}
+                                  title={`Cancelar (${autonomousRuns[issue.id]?.phase || 'executando'})`}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                    border: 'none',
+                                    borderRadius: 4,
+                                    padding: '3px 6px',
+                                    color: '#f59e0b',
+                                    background: 'rgba(245, 158, 11, 0.12)',
+                                    fontSize: 10,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  <Clock size={11} /> {autonomousRuns[issue.id]?.phase || 'rodando'}
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(event) => { event.stopPropagation(); void handleAutonomousRun(issue); }}
+                                  title="Executar tarefa autonomamente"
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                    border: 'none',
+                                    borderRadius: 4,
+                                    padding: '3px 6px',
+                                    color: accentColor,
+                                    background: hexToRgba(accentColor, 0.12),
+                                    fontSize: 10,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  <Zap size={11} /> {autonomousRuns[issue.id]?.status === 'done' ? 'reexecutar' : 'executar'}
+                                </button>
+                              )}
                               {issue.assignees.map((a, i) => (
                                 <div
                                   key={i}

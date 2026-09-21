@@ -7,6 +7,9 @@ dist
 dist-electron
 *.tgz
 
+# Rust build artifacts
+rust/orchestrator/target/
+
 # code coverage
 coverage
 *.lcov

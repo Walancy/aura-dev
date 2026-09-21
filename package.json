@@ -4,9 +4,10 @@
   "description": "Native Project Management & IDE Desktop App with Claude and AGY CLI",
   "main": "dist-electron/main.js",
   "scripts": {
+    "build:orchestrator": "cargo build --release --manifest-path rust/orchestrator/Cargo.toml && node scripts/copy-orchestrator.js",
     "build:electron": "tsc -p tsconfig.electron.json",
     "build:ui": "vite build",
-    "build": "tsc -p tsconfig.electron.json && vite build",
+    "build": "npm run build:orchestrator && tsc -p tsconfig.electron.json && vite build",
     "dev:ui": "vite --port 5185",
     "start": "tsc -p tsconfig.electron.json && electron dist-electron/main.js"
   },

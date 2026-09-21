@@ -13,6 +13,8 @@ import { gitService } from './git-service';
 import { extensionsService } from './extensions-service';
 import { chatHistoryService } from './chat-history-service';
 import { githubAuthService } from './github-auth-service';
+import { orchestratorService } from './orchestrator-service';
+import { autonomousService } from './autonomous-service';
 
 // Set macOS application name
 app.name = 'Aura Dev';
@@ -410,6 +412,12 @@ ipcMain.handle('ai:checkClis', async () => {
   };
 });
 
+ipcMain.handle('ai:orchestratorProviders', async () => orchestratorService.providers());
+ipcMain.handle('ai:orchestrate', async (_event, input) => orchestratorService.run(input, (event) => mainWindow?.webContents.send('ai:orchestrator-event', event)));
+ipcMain.handle('ai:orchestratorCancel', async (_event, runId: string) => ({ cancelled: orchestratorService.cancel(runId) }));
+ipcMain.handle('ai:autonomousRun', async (_event, input) => autonomousService.run(input, (event) => mainWindow?.webContents.send('ai:orchestrator-event', event)));
+ipcMain.handle('ai:autonomousCancel', async (_event, runId: string) => ({ cancelled: autonomousService.cancel(runId) }));
+
 // Dynamic Slash Commands extractor from active CLI
 ipcMain.handle('ai:getCommands', async (_event, { providerId }: { providerId: string }) => {
   return commandsService.getCommands(providerId);
@@ -572,6 +580,18 @@ ipcMain.handle('ai:runCli', async (_event, {
     PATH: envPath,
     HOME: userHome,
   };
+
+  // Claude, Codex and Antigravity requests go through the Rust orchestrator. Other
+  // providers keep the existing direct-CLI path until their protocol is normalized there.
+  if ((cliCmd === 'claude' || cliCmd === 'codex' || cliCmd === 'agy' || cliCmd === 'antigravity') && !prompt.startsWith('/')) {
+    return orchestratorService.run({
+      provider: cliCmd === 'agy' || cliCmd === 'antigravity' ? 'antigravity' : cliCmd as 'claude' | 'codex',
+      request: prompt,
+      cwd: targetCwd,
+      model,
+      additionalDirs,
+    }, (event) => mainWindow?.webContents.send('ai:orchestrator-event', event));
+  }
 
   return new Promise((resolve) => {
     let stdout = '';
@@ -949,6 +969,24 @@ ipcMain.handle('github:fetchProjects', async () => {
   try {
     const projects = await githubAuthService.fetchProjects();
     return { success: true, projects };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:fetchProjectItems', async (_event, { projectNumber }: { projectNumber: number }) => {
+  try {
+    const project = await githubAuthService.fetchProjectItems(projectNumber);
+    return { success: true, project };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:updateProjectItemStatus', async (_event, { projectId, itemId, fieldId, optionId }: { projectId: string; itemId: string; fieldId: string; optionId: string }) => {
+  try {
+    const item = await githubAuthService.updateProjectItemStatus(projectId, itemId, fieldId, optionId);
+    return { success: true, item };
   } catch (err: any) {
     return { success: false, error: err.message };
   }

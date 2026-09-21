@@ -297,6 +297,71 @@ class GithubAuthService {
     return data.data?.viewer?.projectsV2?.nodes || [];
   }
 
+  public async fetchProjectItems(projectNumber: number): Promise<any> {
+    const query = `
+      query($number: Int!) {
+        viewer {
+          projectV2(number: $number) {
+            id
+            title
+            fields(first: 100) {
+              nodes {
+                ... on ProjectV2FieldCommon { id name }
+                ... on ProjectV2SingleSelectField { id name options { id name } }
+              }
+            }
+            items(first: 100) {
+              nodes {
+                id
+                content {
+                  ... on Issue { id number title body state url repository { nameWithOwner } }
+                  ... on PullRequest { id number title body state url repository { nameWithOwner } }
+              }
+                fieldValues(first: 30) {
+                  nodes {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2FieldCommon { id name } } }
+                    ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { id name } } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+    const res = await this.authedFetch('https://api.github.com/graphql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, variables: { number: projectNumber } }),
+    });
+    if (!res.ok) throw new Error(`GitHub GraphQL respondeu ${res.status}`);
+    const data: any = await res.json();
+    if (data.errors) throw new Error(data.errors[0]?.message || 'Erro ao buscar itens do Project');
+    return data.data?.viewer?.projectV2 || null;
+  }
+
+  public async updateProjectItemStatus(projectId: string, itemId: string, fieldId: string, optionId: string): Promise<any> {
+    const mutation = `
+      mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+        updateProjectV2ItemFieldValue(input: {
+          projectId: $projectId,
+          itemId: $itemId,
+          fieldId: $fieldId,
+          value: { singleSelectOptionId: $optionId }
+        }) { projectV2Item { id } }
+      }
+    `;
+    const res = await this.authedFetch('https://api.github.com/graphql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: mutation, variables: { projectId, itemId, fieldId, optionId } }),
+    });
+    if (!res.ok) throw new Error(`GitHub GraphQL respondeu ${res.status}`);
+    const data: any = await res.json();
+    if (data.errors) throw new Error(data.errors[0]?.message || 'Erro ao atualizar status do Project');
+    return data.data?.updateProjectV2ItemFieldValue?.projectV2Item || null;
+  }
+
   public async fetchOrgs(): Promise<Array<{ login: string; avatarUrl: string }>> {
     const res = await this.authedFetch('https://api.github.com/user/orgs?per_page=100', {
       headers: { Accept: 'application/vnd.github+json' },

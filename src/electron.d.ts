@@ -47,6 +47,12 @@ export interface ElectronAPI {
   ai: {
     prompt: (prompt: string, model: string, cwd?: string) => Promise<{ response: string }>;
     checkClis?: () => Promise<Record<string, boolean>>;
+    orchestratorProviders?: () => Promise<Array<{ id: 'claude' | 'codex' | 'antigravity'; available: boolean; version?: string }>>;
+    orchestrate?: (input: { runId?: string; provider: 'claude' | 'codex' | 'antigravity'; request: string; cwd: string; model?: string; mode?: 'ask' | 'plan' | 'execute'; depth?: 'fast' | 'balanced' | 'deep'; additionalDirs?: string[]; timeoutMs?: number }) => Promise<{ stdout: string; stderr: string; exitCode: number; requestId: string }>;
+    cancelOrchestration?: (runId: string) => Promise<{ cancelled: boolean }>;
+    autonomousRun?: (input: { runId?: string; provider: 'claude' | 'codex' | 'antigravity'; cwd: string; title: string; description?: string; model?: string; projectNumber?: number; projectId?: string; itemId?: string; maxRepairCycles?: number; taskId?: string }) => Promise<{ runId: string; status: 'done' | 'review' | 'failed'; summary: string }>;
+    cancelAutonomous?: (runId: string) => Promise<{ cancelled: boolean }>;
+    onOrchestratorEvent?: (callback: (event: { provider: string; kind: string; message: string; timestamp_ms: number; payload: unknown }) => void) => () => void;
     getCommands?: (providerId: string) => Promise<Array<{ command: string; description: string; usage?: string }>>;
     getQuotas?: () => Promise<Record<string, { dailyPercent: number; weeklyPercent: number; dailyResetTime: string; weeklyResetDay: string; weeklyResetTime: string }>>;
     getModels?: (providerId: string) => Promise<{ providerId: string; currentModel: string; currentModelId: string; models: Array<{ id: string; label: string; tag?: string; description?: string }> }>;
@@ -101,6 +107,8 @@ export interface ElectronAPI {
     cancelLogin: () => Promise<{ success: boolean }>;
     fetchRepos: () => Promise<{ success: boolean; repos?: any[]; error?: string }>;
     fetchProjects: () => Promise<{ success: boolean; projects?: any[]; error?: string }>;
+    fetchProjectItems: (projectNumber: number) => Promise<{ success: boolean; project?: any; error?: string }>;
+    updateProjectItemStatus: (projectId: string, itemId: string, fieldId: string, optionId: string) => Promise<{ success: boolean; item?: any; error?: string }>;
     fetchOrgs: () => Promise<{ success: boolean; orgs?: Array<{ login: string; avatarUrl: string }>; error?: string }>;
     fetchRepoIssues: (owner: string, repo: string) => Promise<{ success: boolean; issues?: any[]; error?: string }>;
     fetchRepoPulls: (owner: string, repo: string) => Promise<{ success: boolean; pulls?: any[]; error?: string }>;
@@ -138,4 +146,3 @@ declare module '*.svg' {
   const src: string;
   export default src;
 }
-

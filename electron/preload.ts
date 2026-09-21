@@ -101,6 +101,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     prompt: (prompt: string, model: string, cwd?: string) =>
       ipcRenderer.invoke('ai:prompt', { prompt, model, cwd }),
     checkClis: () => ipcRenderer.invoke('ai:checkClis'),
+    orchestratorProviders: () => ipcRenderer.invoke('ai:orchestratorProviders'),
+    orchestrate: (input: any) => ipcRenderer.invoke('ai:orchestrate', input),
+    cancelOrchestration: (runId: string) => ipcRenderer.invoke('ai:orchestratorCancel', runId),
+    autonomousRun: (input: any) => ipcRenderer.invoke('ai:autonomousRun', input),
+    cancelAutonomous: (runId: string) => ipcRenderer.invoke('ai:autonomousCancel', runId),
+    onOrchestratorEvent: (callback: (event: any) => void) => {
+      const handler = (_event: any, payload: any) => callback(payload);
+      ipcRenderer.on('ai:orchestrator-event', handler);
+      return () => ipcRenderer.removeListener('ai:orchestrator-event', handler);
+    },
     getCommands: (providerId: string) =>
       ipcRenderer.invoke('ai:getCommands', { providerId }),
     getQuotas: () =>
@@ -185,6 +195,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cancelLogin: () => ipcRenderer.invoke('github:cancelLogin'),
     fetchRepos: () => ipcRenderer.invoke('github:fetchRepos'),
     fetchProjects: () => ipcRenderer.invoke('github:fetchProjects'),
+    fetchProjectItems: (projectNumber: number) => ipcRenderer.invoke('github:fetchProjectItems', { projectNumber }),
+    updateProjectItemStatus: (projectId: string, itemId: string, fieldId: string, optionId: string) =>
+      ipcRenderer.invoke('github:updateProjectItemStatus', { projectId, itemId, fieldId, optionId }),
     fetchOrgs: () => ipcRenderer.invoke('github:fetchOrgs'),
     fetchRepoIssues: (owner: string, repo: string) => ipcRenderer.invoke('github:fetchRepoIssues', { owner, repo }),
     fetchRepoPulls: (owner: string, repo: string) => ipcRenderer.invoke('github:fetchRepoPulls', { owner, repo }),
