@@ -230,6 +230,13 @@ export const ProjectWorkspaceSelector: React.FC<ProjectWorkspaceSelectorProps> =
       });
     }
 
+    // Sort so cloned projects are ALWAYS first, followed by alphabetical order
+    list.sort((a, b) => {
+      if (a.isCloned && !b.isCloned) return -1;
+      if (!a.isCloned && b.isCloned) return 1;
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
+
     return list;
   }, [githubRepos, localClonedRepos, workspacePath, repoDetails]);
 
@@ -260,13 +267,23 @@ export const ProjectWorkspaceSelector: React.FC<ProjectWorkspaceSelectorProps> =
     );
   }, [allProjects, workspacePath]);
 
-  // Filtered projects for the search dropdown
+  // Filtered projects for the search dropdown: always keep cloned projects first
   const filteredProjects = useMemo(() => {
-    if (!searchQuery.trim()) return allProjects;
-    const q = searchQuery.toLowerCase().trim();
-    return allProjects.filter(
-      (p) => p.name.toLowerCase().includes(q) || p.fullName.toLowerCase().includes(q) || p.sprint.toLowerCase().includes(q)
-    );
+    let list = allProjects;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      list = list.filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          p.fullName.toLowerCase().includes(q) ||
+          p.sprint.toLowerCase().includes(q)
+      );
+    }
+    return [...list].sort((a, b) => {
+      if (a.isCloned && !b.isCloned) return -1;
+      if (!a.isCloned && b.isCloned) return 1;
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
   }, [allProjects, searchQuery]);
 
   // Action: Select project

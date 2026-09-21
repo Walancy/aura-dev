@@ -72,6 +72,8 @@ import { ProjectsSchedulerView } from './components/ProjectsSchedulerView';
 import { ProjectWorkspaceSelector } from './components/ide/ProjectWorkspaceSelector';
 import { OrchestrationCanvas } from './components/OrchestrationCanvas';
 import { ProjectTasksDockTab } from './components/dock/ProjectTasksDockTab';
+import { IssueDetailSidesheet } from './components/modals/IssueDetailSidesheet';
+import type { ProjectIssue } from './components/ProjectsSchedulerView';
 import {
   CodiconFiles,
   CodiconSearch,
@@ -134,6 +136,7 @@ export const App: React.FC = () => {
   // GitHub Issues state
   const [gitIssues, setGitIssues] = useState<GitHubIssueItem[]>([]);
   const [isIssuesModalOpen, setIsIssuesModalOpen] = useState(false);
+  const [sidesheetIssue, setSidesheetIssue] = useState<ProjectIssue | null>(null);
   const [isLoadingIssues, setIsLoadingIssues] = useState(false);
   const [issuesSearchQuery, setIssuesSearchQuery] = useState('');
   const [newIssueTitle, setNewIssueTitle] = useState('');
@@ -2423,7 +2426,7 @@ export const App: React.FC = () => {
       // 2. Fallback to gh CLI
       if (window.electronAPI?.shell?.exec) {
         const res = await window.electronAPI.shell.exec(
-          'export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh issue list --limit 50 --json number,title,author,updatedAt,labels,state',
+          'export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh issue list --limit 100 --json number,title,author,updatedAt,labels,state,milestone,assignees,body,url',
           cwd
         );
         if (res.exitCode === 0 && res.stdout.trim()) {
@@ -2520,6 +2523,85 @@ export const App: React.FC = () => {
       window.electronAPI.shell.openExternal(url);
     }
   };
+
+  const handleOpenIssueSidesheet = useCallback((issueNumber: number) => {
+    const rawIssue = gitIssues.find((i) => i.number === issueNumber);
+    if (!rawIssue) return;
+
+    const labelNames = (rawIssue.labels || []).map((l: any) => typeof l === 'string' ? l : l.name);
+    const isOpen = (rawIssue.state || 'open').toLowerCase() === 'open';
+
+    const assignees = Array.isArray(rawIssue.assignees) && rawIssue.assignees.length > 0
+      ? rawIssue.assignees.map((a: any) => {
+          const login = typeof a === 'string' ? a : a?.login || 'user';
+          return {
+            name: login,
+            avatarBg: '#3b82f6',
+            initial: login.charAt(0).toUpperCase(),
+            avatarUrl: typeof a === 'object' ? a?.avatar_url : undefined,
+          };
+        })
+      : rawIssue.assignee
+      ? [{
+          name: typeof rawIssue.assignee === 'object' ? rawIssue.assignee.login : String(rawIssue.assignee),
+          avatarBg: '#3b82f6',
+          initial: String(typeof rawIssue.assignee === 'object' ? rawIssue.assignee.login : rawIssue.assignee).charAt(0).toUpperCase(),
+          avatarUrl: typeof rawIssue.assignee === 'object' ? rawIssue.assignee.avatar_url : undefined,
+        }]
+      : [];
+
+    const storedSprint = (() => {
+      try {
+        const raw = localStorage.getItem('devflow_issue_sprints');
+        const map = raw ? JSON.parse(raw) : {};
+        return map[rawIssue.number];
+      } catch {
+        return null;
+      }
+    })();
+
+    const milestoneTitle =
+      storedSprint ||
+      rawIssue.milestone?.title ||
+      (rawIssue.number >= 101 && rawIssue.number <= 107
+        ? 'Sprint 01 - Aina Obra'
+        : 'Sprint2 - Cadastro e Perfis de Acesso');
+
+    const milestoneNumber =
+      rawIssue.milestone?.number ??
+      (milestoneTitle.includes('1') ? 1 : milestoneTitle.includes('2') ? 2 : undefined);
+
+    const mapped: ProjectIssue = {
+      id: `#${rawIssue.number}`,
+      projectId: 0,
+      githubNumber: rawIssue.number,
+      nodeId: rawIssue.node_id,
+      htmlUrl: rawIssue.url || rawIssue.html_url,
+      rawLabels: labelNames,
+      rawState: isOpen ? 'open' : 'closed',
+      author: typeof rawIssue.author === 'object' && rawIssue.author !== null
+        ? rawIssue.author.login || 'user'
+        : String(rawIssue.author || 'user'),
+      authorAvatarUrl: typeof rawIssue.author === 'object' ? rawIssue.author?.avatar_url : undefined,
+      commentsCount: rawIssue.comments || 0,
+      title: rawIssue.title,
+      description: rawIssue.body || '',
+      dateStr: rawIssue.updatedAt || rawIssue.created_at || 'Hoje',
+      createdAtIso: rawIssue.created_at || new Date().toISOString(),
+      durationDays: 1,
+      tag: labelNames[0] || 'Geral',
+      tagColor: { bg: 'rgba(59,130,246,0.15)', text: '#60a5fa' },
+      priority: 'Média',
+      priorityColor: '#3b82f6',
+      status: isOpen ? 'A Fazer' : 'Concluído',
+      assignees,
+      progress: isOpen ? 0 : 100,
+      milestoneNumber,
+      milestoneTitle,
+    };
+
+    setSidesheetIssue(mapped);
+  }, [gitIssues]);
 
   // Git Branches Integration
   const refreshGitBranches = useCallback(async () => {
@@ -9821,8 +9903,12 @@ ${prompt || userDisplayPrompt}`;
                     isLoading={isLoadingIssues}
                     onRefresh={refreshGitHubIssues}
                     onDoWithAi={handleTaskDoWithAi}
-                    onOpenIssueDetails={handleOpenIssueInBrowser}
+                    onOpenIssueDetails={handleOpenIssueSidesheet}
                     currentUserLogin={githubUser?.login || 'walancy'}
+                    sprints={[
+                      { number: 2, title: 'Sprint2 - Cadastro e Perfis de Acesso' },
+                      { number: 1, title: 'Sprint 01 - Aina Obra' },
+                    ]}
                     themeTokens={themeTokens}
                     isEffectiveDark={isEffectiveDark}
                     accentColor={accentColor}
@@ -12164,11 +12250,13 @@ ${prompt || userDisplayPrompt}`;
                             style={{
                               display: 'inline-flex',
                               alignItems: 'center',
+                              alignSelf: 'flex-start',
+                              width: 'fit-content',
                               gap: 6,
-                              background: isEffectiveDark ? 'rgba(56, 189, 248, 0.12)' : 'rgba(14, 165, 233, 0.1)',
-                              border: `1px solid ${isEffectiveDark ? 'rgba(56, 189, 248, 0.3)' : 'rgba(14, 165, 233, 0.25)'}`,
+                              background: isEffectiveDark ? 'rgba(56, 189, 248, 0.14)' : 'rgba(14, 165, 233, 0.12)',
+                              border: 'none',
                               borderRadius: 6,
-                              padding: '3px 8px 3px 6px',
+                              padding: '3px 8px',
                               fontSize: 12,
                               fontFamily: 'Poppins, sans-serif',
                               color: isEffectiveDark ? '#38bdf8' : '#0284c7',
@@ -12177,11 +12265,11 @@ ${prompt || userDisplayPrompt}`;
                               marginTop: 4,
                             }}
                           >
-                            <span style={{ fontWeight: 700, fontSize: 11 }}>#{attachedTask.number}</span>
+                            <span style={{ fontWeight: 700, fontSize: 11, flexShrink: 0 }}>#{attachedTask.number}</span>
                             <span
                               title={attachedTask.title}
                               style={{
-                                maxWidth: 220,
+                                maxWidth: 260,
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
                                 whiteSpace: 'nowrap',
@@ -12199,15 +12287,18 @@ ${prompt || userDisplayPrompt}`;
                                 border: 'none',
                                 color: isEffectiveDark ? '#38bdf8' : '#0284c7',
                                 cursor: 'pointer',
-                                padding: 1,
+                                padding: 0,
+                                marginLeft: 2,
                                 display: 'flex',
                                 alignItems: 'center',
+                                justifyContent: 'center',
                                 borderRadius: 3,
+                                flexShrink: 0,
                               }}
                               onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = '#ef4444')}
                               onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = isEffectiveDark ? '#38bdf8' : '#0284c7')}
                             >
-                              <X size={11} />
+                              <X size={12} />
                             </button>
                           </div>
                         )}
@@ -13886,6 +13977,95 @@ ${prompt || userDisplayPrompt}`;
             onOpenIssueInBrowser={handleOpenIssueInBrowser}
           />
         )}
+
+        {/* ========================================================================= */}
+        {/* ISSUE DETAIL SIDESHEET (GITHUB-STYLE)                                     */}
+        {/* ========================================================================= */}
+        <IssueDetailSidesheet
+          isOpen={Boolean(sidesheetIssue)}
+          issue={sidesheetIssue}
+          repoFullName={gitRepoName ? (gitRepoName.includes('/') ? gitRepoName : `appmoove/${gitRepoName}`) : 'appmoove/ainaobra'}
+          isRepoPrivate={true}
+          availableSprints={[
+            { number: 2, title: 'Sprint2 - Cadastro e Perfis de Acesso', state: 'open', openIssues: 14, closedIssues: 0 },
+            { number: 1, title: 'Sprint 01 - Aina Obra', state: 'open', openIssues: 7, closedIssues: 0 },
+            { number: 3, title: 'Sprint3 - Catálogo de Lotes e Motor de Frete', state: 'open', openIssues: 0, closedIssues: 0 },
+          ]}
+          theme={themeTokens}
+          isEffectiveDark={isEffectiveDark}
+          accentColor={accentColor}
+          accentContrastText={getContrastTextColor(accentColor)}
+          currentUser={githubUser ? { login: githubUser.login, avatarUrl: githubUser.avatarUrl || avatarImg } : null}
+          onClose={() => setSidesheetIssue(null)}
+          onUpdateIssue={async (updatedFields) => {
+            if (!sidesheetIssue) return;
+            setSidesheetIssue((prev) => prev ? { ...prev, ...updatedFields } : null);
+            if (sidesheetIssue.githubNumber) {
+              try {
+                const raw = localStorage.getItem('devflow_issue_sprints');
+                const map = raw ? JSON.parse(raw) : {};
+                const sprintTitle =
+                  updatedFields.milestoneTitle ||
+                  (updatedFields.milestoneNumber === 1
+                    ? 'Sprint 01 - Aina Obra'
+                    : updatedFields.milestoneNumber === 2
+                    ? 'Sprint2 - Cadastro e Perfis de Acesso'
+                    : updatedFields.milestoneNumber === 3
+                    ? 'Sprint3 - Catálogo de Lotes e Motor de Frete'
+                    : updatedFields.milestoneNumber === null
+                    ? ''
+                    : undefined);
+                if (sprintTitle !== undefined) {
+                  if (sprintTitle) {
+                    map[sidesheetIssue.githubNumber] = sprintTitle;
+                  } else {
+                    delete map[sidesheetIssue.githubNumber];
+                  }
+                  localStorage.setItem('devflow_issue_sprints', JSON.stringify(map));
+                  window.dispatchEvent(new Event('devflow_issue_sprints_updated'));
+                }
+              } catch {}
+            }
+            if (window.electronAPI?.github?.updateIssue && sidesheetIssue.githubNumber) {
+              try {
+                const fullRepo = gitRepoName ? (gitRepoName.includes('/') ? gitRepoName : `appmoove/${gitRepoName}`) : 'appmoove/ainaobra';
+                const [owner, repo] = fullRepo.split('/');
+                await window.electronAPI.github.updateIssue(owner, repo, sidesheetIssue.githubNumber, {
+                  title: updatedFields.title,
+                  body: updatedFields.description,
+                  state: updatedFields.state,
+                  labels: updatedFields.rawLabels,
+                  milestone: updatedFields.milestoneNumber,
+                });
+                refreshGitHubIssues();
+              } catch (err) {
+                console.warn('Erro ao atualizar issue:', err);
+              }
+            }
+          }}
+          onCreateBranchForIssue={(issue) => {
+            const slug = (issue.title || 'issue')
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-+|-+$/g, '')
+              .slice(0, 30);
+            const branchName = `issue-${issue.githubNumber || issue.id}-${slug}`;
+            navigator.clipboard?.writeText?.(`git checkout -b ${branchName}`);
+            setToastMessage(`Comando copiado: git checkout -b ${branchName}`);
+          }}
+          onAskAiAboutIssue={(issue) => {
+            handleTaskDoWithAi({
+              number: issue.githubNumber || 0,
+              title: issue.title,
+              body: issue.description,
+              state: issue.rawState || 'open',
+              labels: (issue.rawLabels || []).map((name) => ({ name })),
+              url: issue.htmlUrl,
+            });
+            setSidesheetIssue(null);
+          }}
+          showToast={(msg) => setToastMessage(msg)}
+        />
       </div>
   );
 };
