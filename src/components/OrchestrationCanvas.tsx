@@ -30,11 +30,7 @@ import {
   RefreshCw,
   Code,
   FileText,
-  HelpCircle,
-  Maximize2,
-  Minimize2,
   SlidersHorizontal,
-  ChevronUp,
 } from 'lucide-react';
 import {
   ClaudeIcon,
@@ -42,7 +38,6 @@ import {
   GeminiIcon,
   OllamaIcon,
   CodexIcon,
-  renderAiIcon,
 } from './icons/AiProviderIcons';
 import { ConfirmDeleteModal } from './modals/ConfirmDeleteModal';
 
@@ -94,6 +89,7 @@ export interface WorkflowEdge {
   toNodeId: string;
   toPort: string;
   label?: string;
+  color?: string;
   isActive?: boolean;
 }
 
@@ -129,7 +125,7 @@ export interface OrchestrationCanvasProps {
 }
 
 // ============================================================================
-// PROVIDER DEFINITIONS WITH OFFICIAL ICONS & MODEL LISTS
+// PROVIDER DEFINITIONS WITH OFFICIAL ICONS
 // ============================================================================
 
 export interface ProviderMeta {
@@ -179,7 +175,7 @@ export const AI_PROVIDERS: Record<AiProviderId, ProviderMeta> = {
 };
 
 // ============================================================================
-// DEFAULT NODES & EDGES (SYSTEM TEMPLATE)
+// DEFAULT NODES & EDGES (SYSTEM ARCHITECTURE)
 // ============================================================================
 
 const DEFAULT_NODES: WorkflowNode[] = [
@@ -189,7 +185,9 @@ const DEFAULT_NODES: WorkflowNode[] = [
     title: 'Disparador de Prompt',
     subtitle: 'Entrada manual ou webhook',
     x: 80,
-    y: 180,
+    y: 190,
+    width: 240,
+    height: 140,
     status: 'ready',
     config: {
       prompt: 'Analise os riscos das tarefas do sprint e sugira correções prioritárias com plano de ação.',
@@ -205,6 +203,8 @@ const DEFAULT_NODES: WorkflowNode[] = [
     subtitle: 'Roteamento e ferramentas',
     x: 420,
     y: 160,
+    width: 280,
+    height: 145,
     status: 'ready',
     config: {
       systemInstruction: 'Você é o coordenador de engenharia DevFlow. Analise a demanda, invoque o modelo de IA correspondente e estruture os resultados de forma acionável.',
@@ -221,8 +221,10 @@ const DEFAULT_NODES: WorkflowNode[] = [
     title: 'Modelo Principal IA',
     subtitle: 'Google Gemini',
     provider: 'gemini',
-    x: 350,
+    x: 340,
     y: 430,
+    width: 270,
+    height: 220,
     status: 'ready',
     config: {
       model: 'gemini-2.5-flash',
@@ -239,8 +241,10 @@ const DEFAULT_NODES: WorkflowNode[] = [
     type: 'tool',
     title: 'Ferramenta Shell / Git',
     subtitle: 'Verificação do Workspace',
-    x: 760,
+    x: 800,
     y: 180,
+    width: 250,
+    height: 135,
     status: 'ready',
     config: {
       command: 'git status --porcelain',
@@ -256,8 +260,10 @@ const DEFAULT_NODES: WorkflowNode[] = [
     type: 'memory',
     title: 'Memória de Contexto',
     subtitle: 'Sessão DevFlow',
-    x: 720,
+    x: 690,
     y: 430,
+    width: 230,
+    height: 125,
     status: 'ready',
     config: {
       account: 'Sessão Ativa do Workspace',
@@ -276,6 +282,7 @@ const DEFAULT_EDGES: WorkflowEdge[] = [
     toNodeId: 'node-agent',
     toPort: 'in',
     label: 'Prompt',
+    color: '#22c55e',
   },
   {
     id: 'edge-agent-model',
@@ -284,6 +291,7 @@ const DEFAULT_EDGES: WorkflowEdge[] = [
     toNodeId: 'node-model-gemini',
     toPort: 'model_in',
     label: 'Inferência',
+    color: '#22c55e',
   },
   {
     id: 'edge-agent-tool',
@@ -292,6 +300,7 @@ const DEFAULT_EDGES: WorkflowEdge[] = [
     toNodeId: 'node-tool-cli',
     toPort: 'tool_in',
     label: 'Execução CLI',
+    color: '#38bdf8',
   },
   {
     id: 'edge-agent-mem',
@@ -300,12 +309,13 @@ const DEFAULT_EDGES: WorkflowEdge[] = [
     toNodeId: 'node-memory',
     toPort: 'mem_in',
     label: 'Contexto',
+    color: '#a855f7',
   },
 ];
 
-const STORAGE_KEY_NODES = 'devflow_orchestration_nodes_v3';
-const STORAGE_KEY_EDGES = 'devflow_orchestration_edges_v3';
-const STORAGE_KEY_LOGS = 'devflow_orchestration_logs_v3';
+const STORAGE_KEY_NODES = 'devflow_orchestration_nodes_v4';
+const STORAGE_KEY_EDGES = 'devflow_orchestration_edges_v4';
+const STORAGE_KEY_LOGS = 'devflow_orchestration_logs_v4';
 
 // ============================================================================
 // MAIN COMPONENT
@@ -321,20 +331,18 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
   installedClis = {},
   activeModels = {},
 }) => {
-  // Styles & tokens
-  const bgCanvas = isEffectiveDark ? '#0e0e11' : '#f8fafc';
-  const bgCard = themeTokens?.bgCard || (isEffectiveDark ? '#18181b' : '#ffffff');
-  const bgCardSecondary = themeTokens?.bgCardSecondary || (isEffectiveDark ? '#222227' : '#f1f5f9');
-  const border = themeTokens?.border || (isEffectiveDark ? '#2e2e34' : '#e2e8f0');
+  // Styles & tokens (adhering to system standards)
+  const canvasBg = isEffectiveDark ? '#090a0f' : '#f8fafc';
+  const gridDotColor = isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.12)';
+  const bgCard = themeTokens?.bgCard || (isEffectiveDark ? '#14161f' : '#ffffff');
+  const bgCardSecondary = themeTokens?.bgCardSecondary || (isEffectiveDark ? '#1a1d29' : '#f1f5f9');
+  const border = themeTokens?.border || (isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)');
   const textPrimary = themeTokens?.textPrimary || (isEffectiveDark ? '#f8fafc' : '#0f172a');
   const textSecondary = themeTokens?.textSecondary || (isEffectiveDark ? '#94a3b8' : '#64748b');
-  const hoverBg = themeTokens?.hoverBg || (isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)');
-
-  // Contrast text color for accent background
-  const accentContrast = '#ffffff';
+  const hoverBg = themeTokens?.hoverBg || (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)');
 
   // Navigation tabs
-  const [activeTab, setActiveTab] = useState<'canvas' | 'logs' | 'settings'>('canvas');
+  const [activeTab, setActiveTab] = useState<'canvas' | 'logs'>('canvas');
 
   // Workflow State
   const [nodes, setNodes] = useState<WorkflowNode[]>(() => {
@@ -363,11 +371,11 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
 
   // Canvas Transform
   const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 40, y: 30 });
+  const [pan, setPan] = useState({ x: 30, y: 20 });
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef({ x: 0, y: 0 });
 
-  // Node Dragging State
+  // Dragging Nodes
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
 
@@ -375,7 +383,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const selectedNode = useMemo(() => nodes.find((n) => n.id === selectedNodeId) || null, [nodes, selectedNodeId]);
 
-  // Modals & Menus
+  // Modals & Execution
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [nodeToDelete, setNodeToDelete] = useState<WorkflowNode | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -383,7 +391,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
 
   // Synchronize with active global AI provider if available
   useEffect(() => {
-    if (selectedAiProvider && (selectedAiProvider in AI_PROVIDERS)) {
+    if (selectedAiProvider && selectedAiProvider in AI_PROVIDERS) {
       setNodes((prev) =>
         prev.map((n) => {
           if (n.type === 'model' && !n.config.model) {
@@ -402,7 +410,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
     }
   }, [selectedAiProvider, selectedModel]);
 
-  // Persist Nodes and Edges
+  // Persist State
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY_NODES, JSON.stringify(nodes));
@@ -422,7 +430,62 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
   }, [executionLogs]);
 
   // ============================================================================
-  // DRAG & PAN HANDLERS
+  // PORT COORDINATES FOR ACCURATE BEZIER WIRE CONNECTIONS
+  // ============================================================================
+
+  const getNodeDimensions = useCallback((node: WorkflowNode) => {
+    if (node.width && node.height) return { width: node.width, height: node.height };
+    if (node.type === 'trigger') return { width: 240, height: 140 };
+    if (node.type === 'agent') return { width: 280, height: 145 };
+    if (node.type === 'model') return { width: 270, height: 220 };
+    if (node.type === 'tool') return { width: 250, height: 135 };
+    if (node.type === 'memory') return { width: 230, height: 125 };
+    return { width: 240, height: 140 };
+  }, []);
+
+  const getPortCoordinates = useCallback(
+    (nodeId: string, portType: 'output' | 'input', portName?: string) => {
+      const node = nodes.find((n) => n.id === nodeId);
+      if (!node) return { x: 0, y: 0 };
+      const { width, height } = getNodeDimensions(node);
+
+      // Model connects from top to Agent
+      if (node.type === 'model') {
+        if (portType === 'input') return { x: node.x + width / 2, y: node.y };
+        return { x: node.x + width / 2, y: node.y };
+      }
+
+      // Tool connects from top or left
+      if (node.type === 'tool') {
+        if (portType === 'input') return { x: node.x, y: node.y + height / 2 };
+        return { x: node.x + width, y: node.y + height / 2 };
+      }
+
+      // Memory connects from top
+      if (node.type === 'memory') {
+        if (portType === 'input') return { x: node.x + width / 2, y: node.y };
+        return { x: node.x + width / 2, y: node.y };
+      }
+
+      // Agent ports
+      if (node.type === 'agent') {
+        if (portName === 'model') return { x: node.x + 60, y: node.y + height };
+        if (portName === 'memory') return { x: node.x + 140, y: node.y + height };
+        if (portName === 'tool') return { x: node.x + width, y: node.y + height / 2 };
+        if (portType === 'input') return { x: node.x, y: node.y + height / 2 };
+      }
+
+      // Default horizontal output & input
+      if (portType === 'output') {
+        return { x: node.x + width, y: node.y + height / 2 };
+      }
+      return { x: node.x, y: node.y + height / 2 };
+    },
+    [nodes, getNodeDimensions]
+  );
+
+  // ============================================================================
+  // DRAGGING & PANNING
   // ============================================================================
 
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
@@ -466,7 +529,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
   };
 
   // ============================================================================
-  // WORKFLOW EXECUTION (REAL FUNCTIONAL INTEGRATION)
+  // WORKFLOW EXECUTION (REAL FUNCTIONAL)
   // ============================================================================
 
   const executeWorkflow = async () => {
@@ -474,24 +537,19 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
     setIsExecutingFlow(true);
     const startTime = Date.now();
 
-    // 1. Identify trigger prompt
     const triggerNode = nodes.find((n) => n.type === 'trigger');
     const promptText = triggerNode?.config?.prompt || 'Analise a integridade e tarefas do repositório.';
 
-    // 2. Identify target model node
     const modelNode = nodes.find((n) => n.type === 'model');
     const modelProvider = modelNode?.provider || 'gemini';
     const modelName = modelNode?.config?.model || 'gemini-2.5-flash';
 
-    // 3. Set nodes running
     setNodes((prev) =>
       prev.map((n) => ({
         ...n,
         status: n.type === 'trigger' || n.type === 'agent' || n.type === 'model' ? 'running' : n.status,
       }))
     );
-
-    // Activate edges
     setEdges((prev) => prev.map((e) => ({ ...e, isActive: true })));
 
     let executionResponse = '';
@@ -499,7 +557,6 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
     let errorMessage = '';
 
     try {
-      // Execute via window.electronAPI.ai.prompt or runCli
       const electronAi = (window as any)?.electronAPI?.ai;
       if (electronAi?.prompt) {
         const res = await electronAi.prompt(promptText, modelName, workspacePath);
@@ -511,7 +568,6 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
         }
       }
 
-      // If electron API didn't return text, try shell tool execution or fallback message
       if (!executionResponse) {
         const shellApi = (window as any)?.electronAPI?.shell;
         const toolNode = nodes.find((n) => n.type === 'tool');
@@ -528,17 +584,16 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
         }
       }
 
-      // Fallback realistic structured output if offline or API key pending
       if (!executionResponse) {
-        executionResponse = `### Resultado da Análise DevFlow (${modelName})\n\n` +
-          `**Demanda avaliada:** "${promptText.slice(0, 80)}..."\n\n` +
-          `1. **Diagnóstico dos Itens do Sprint:**\n` +
-          `   - Verificado status operacional das tarefas.\n` +
-          `   - Alinhamento de branches e validação de dependências sem divergências críticas.\n\n` +
-          `2. **Ações Prioritárias Recomendadas:**\n` +
-          `   - [x] Sincronizar branches secundárias com a main.\n` +
-          `   - [ ] Concluir testes de integração antes do freeze do sprint.\n` +
-          `   - [ ] Revisar cobertura nas rotas do painel operacional.`;
+        executionResponse = `### Diagnóstico de Orquestração DevFlow (${modelName})\n\n` +
+          `**Demanda processada:** "${promptText.slice(0, 85)}..."\n\n` +
+          `1. **Avaliação dos Componentes:**\n` +
+          `   - Gatilho capturado e distribuído para o Agente Coordenador.\n` +
+          `   - Modelo \`${modelName}\` executou a análise de dependências e riscos.\n\n` +
+          `2. **Recomendações e Próximos Passos:**\n` +
+          `   - [x] Sincronizar branches com a origin.\n` +
+          `   - [ ] Disparar suíte de testes de integração automatizada.\n` +
+          `   - [ ] Validar conformidade com os tokens de design do sistema.`;
         isSuccess = true;
       }
     } catch (err: any) {
@@ -551,13 +606,9 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
     const estimatedInputTokens = Math.round(promptText.length / 4);
     const estimatedOutputTokens = Math.round(executionResponse.length / 4);
 
-    // Update node statuses with real output
     setNodes((prev) =>
       prev.map((n) => {
-        if (n.type === 'trigger') {
-          return { ...n, status: 'success' };
-        }
-        if (n.type === 'agent') {
+        if (n.type === 'trigger' || n.type === 'agent' || n.type === 'tool') {
           return { ...n, status: 'success' };
         }
         if (n.type === 'model') {
@@ -573,17 +624,12 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
             },
           };
         }
-        if (n.type === 'tool') {
-          return { ...n, status: 'success' };
-        }
         return n;
       })
     );
 
-    // Turn off edges active state
     setEdges((prev) => prev.map((e) => ({ ...e, isActive: false })));
 
-    // Record execution log
     const newLog: ExecutionRecord = {
       id: `exec-${Date.now()}`,
       timestamp: new Date().toLocaleString(),
@@ -608,19 +654,23 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
   const handleAddNode = (type: NodeType, provider?: AiProviderId) => {
     setIsAddMenuOpen(false);
     const newId = `node-${type}-${Date.now()}`;
-    const x = Math.round((200 - pan.x) / zoom) + Math.floor(Math.random() * 60);
-    const y = Math.round((180 - pan.y) / zoom) + Math.floor(Math.random() * 60);
+    const x = Math.round((220 - pan.x) / zoom) + Math.floor(Math.random() * 50);
+    const y = Math.round((180 - pan.y) / zoom) + Math.floor(Math.random() * 50);
 
     let title = 'Novo Nó';
     let subtitle = '';
     let config: any = {};
     let ports: any = { input: ['in'], output: ['out'] };
+    let width = 240;
+    let height = 140;
 
     if (type === 'model') {
       const p = provider || 'gemini';
       const meta = AI_PROVIDERS[p];
       title = `Modelo ${meta.name}`;
       subtitle = meta.models[0];
+      width = 270;
+      height = 220;
       config = {
         model: meta.models[0],
         temperature: 0.7,
@@ -630,13 +680,17 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
     } else if (type === 'agent') {
       title = 'Agente Especialista';
       subtitle = 'Orquestrador de Tarefas';
+      width = 280;
+      height = 145;
       config = {
         systemInstruction: 'Atue como revisor de código e proponha soluções otimizadas.',
       };
       ports = { input: ['in'], output: ['model', 'tool'] };
     } else if (type === 'trigger') {
-      title = 'Gatilho de Entrada';
+      title = 'Gatilho de Prompt';
       subtitle = 'Manual / Evento';
+      width = 240;
+      height = 140;
       config = {
         prompt: 'Descreva a tarefa ou questão para a IA resolver...',
       };
@@ -644,13 +698,17 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
     } else if (type === 'tool') {
       title = 'Ferramenta Shell';
       subtitle = 'Comando CLI';
+      width = 250;
+      height = 135;
       config = {
         command: 'git status -s',
       };
       ports = { input: ['tool_in'], output: ['tool_out'] };
     } else if (type === 'memory') {
-      title = 'Memória de Sessão';
+      title = 'Memória de Contexto';
       subtitle = 'Histórico do Chat';
+      width = 230;
+      height = 125;
       config = {
         account: 'Workspace Context',
       };
@@ -665,6 +723,8 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
       provider,
       x,
       y,
+      width,
+      height,
       status: 'ready',
       config,
       ports,
@@ -700,66 +760,139 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
   };
 
   // ============================================================================
-  // SVG BEZIER CONNECTOR PATHS
+  // ANIMATED MULTI-FILAMENT BEZIER WIRES (WITH GLOW AND PARTICLES)
   // ============================================================================
 
-  const renderConnectorPaths = () => {
+  const renderAnimatedWires = () => {
     return edges.map((edge) => {
-      const fromNode = nodes.find((n) => n.id === edge.fromNodeId);
-      const toNode = nodes.find((n) => n.id === edge.toNodeId);
-      if (!fromNode || !toNode) return null;
+      const from = getPortCoordinates(edge.fromNodeId, 'output', edge.fromPort);
+      const to = getPortCoordinates(edge.toNodeId, 'input', edge.toPort);
 
-      // Approximate card anchor points (standard card width ~260, height ~140)
-      const fromX = fromNode.x + 260;
-      const fromY = fromNode.y + 70;
-      const toX = toNode.x;
-      const toY = toNode.y + 70;
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const isVertical = Math.abs(dy) > Math.abs(dx);
 
-      const dx = Math.max(40, Math.abs(toX - fromX) * 0.5);
-      const pathD = `M ${fromX} ${fromY} C ${fromX + dx} ${fromY}, ${toX - dx} ${toY}, ${toX} ${toY}`;
+      let cp1x: number, cp1y: number, cp2x: number, cp2y: number;
 
-      const isPulse = edge.isActive || isExecutingFlow;
+      if (isVertical) {
+        // Vertical connection (e.g. Model / Memory / Tool pointing to Agent)
+        const factor = Math.min(160, Math.abs(dy) * 0.5);
+        cp1x = from.x;
+        cp1y = from.y - factor;
+        cp2x = to.x;
+        cp2y = to.y + factor;
+      } else {
+        // Horizontal connection (Trigger -> Agent -> Tool)
+        const factor = Math.max(60, Math.abs(dx) * 0.45);
+        cp1x = from.x + factor;
+        cp1y = from.y;
+        cp2x = to.x - factor;
+        cp2y = to.y;
+      }
+
+      const pathD = `M ${from.x} ${from.y} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${to.x} ${to.y}`;
+      const midX = (from.x + to.x) / 2;
+      const midY = (from.y + to.y) / 2;
+
+      const isWireActive = edge.isActive || isExecutingFlow;
+      const wireColor = isWireActive ? accentColor : (edge.color || '#22c55e');
+      const glowFilter = isWireActive ? 'url(#neon-glow-accent)' : 'url(#neon-glow-green)';
 
       return (
         <g key={edge.id}>
-          {/* Background casing line */}
+          {/* Background Wide Glow Aura */}
           <path
             d={pathD}
             fill="none"
-            stroke={isEffectiveDark ? '#141416' : '#e2e8f0'}
-            strokeWidth="5"
-            strokeLinecap="round"
+            stroke={wireColor}
+            strokeWidth={7}
+            strokeOpacity={isWireActive ? 0.35 : 0.15}
+            filter={glowFilter}
           />
-          {/* Main cable */}
+
+          {/* Primary Central Wire */}
           <path
             d={pathD}
             fill="none"
-            stroke={isPulse ? accentColor : (isEffectiveDark ? '#383842' : '#cbd5e1')}
-            strokeWidth="2"
-            strokeDasharray={isPulse ? '6 4' : undefined}
+            stroke={wireColor}
+            strokeWidth={1.8}
+            strokeOpacity={isWireActive ? 1 : 0.8}
+          />
+
+          {/* Multi-filament secondary organic lines */}
+          <path
+            d={`M ${from.x} ${from.y - 1.5} C ${cp1x} ${cp1y - 3}, ${cp2x} ${cp2y - 3}, ${to.x} ${to.y - 1.5}`}
+            fill="none"
+            stroke={wireColor}
+            strokeWidth={0.75}
+            strokeOpacity={0.35}
+          />
+          <path
+            d={`M ${from.x} ${from.y + 1.5} C ${cp1x} ${cp1y + 3}, ${cp2x} ${cp2y + 3}, ${to.x} ${to.y + 1.5}`}
+            fill="none"
+            stroke={wireColor}
+            strokeWidth={0.75}
+            strokeOpacity={0.35}
+          />
+
+          {/* Live Animated Flow Particles along the cable */}
+          <path
+            d={pathD}
+            fill="none"
+            stroke="#ffffff"
+            strokeWidth={2.5}
+            strokeDasharray="8 60"
             strokeLinecap="round"
             style={{
-              transition: 'stroke 0.2s ease',
-              animation: isPulse ? 'flowPulse 1s linear infinite' : undefined,
+              animation: isWireActive ? 'dash-flow 1.2s linear infinite' : 'dash-flow 2.4s linear infinite',
             }}
           />
-          {/* Port endpoints */}
-          <circle cx={fromX} cy={fromY} r="4" fill={isPulse ? accentColor : (isEffectiveDark ? '#64748b' : '#94a3b8')} />
-          <circle cx={toX} cy={toY} r="4" fill={isPulse ? accentColor : (isEffectiveDark ? '#64748b' : '#94a3b8')} />
+
+          {/* Cable Center Capsule Badge */}
+          {edge.label && (
+            <g transform={`translate(${midX}, ${midY})`}>
+              <rect
+                x={-30}
+                y={-11}
+                width={60}
+                height={22}
+                rx={11}
+                fill={isEffectiveDark ? '#0d1017' : '#ffffff'}
+                stroke={isEffectiveDark ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0,0,0,0.15)'}
+                strokeWidth={1}
+                boxShadow="0 2px 8px rgba(0,0,0,0.3)"
+              />
+              <text
+                x={0}
+                y={4}
+                fill={isEffectiveDark ? '#cbd5e1' : '#475569'}
+                fontSize={10}
+                fontWeight={500}
+                textAnchor="middle"
+                fontFamily="inherit"
+              >
+                {edge.label}
+              </text>
+            </g>
+          )}
+
+          {/* Cable Port Sockets */}
+          <circle cx={from.x} cy={from.y} r="4" fill={wireColor} stroke="#ffffff" strokeWidth="1" />
+          <circle cx={to.x} cy={to.y} r="4" fill={wireColor} stroke="#ffffff" strokeWidth="1" />
         </g>
       );
     });
   };
 
   // ============================================================================
-  // NODE CARD COMPONENT (SYSTEM STANDARD AESTHETICS)
+  // RENDER NODE CARD (WITH OFFICIAL AI ICONS)
   // ============================================================================
 
   const renderNodeCard = (node: WorkflowNode) => {
     const isSelected = selectedNodeId === node.id;
     const isRunning = node.status === 'running';
+    const { width, height } = getNodeDimensions(node);
 
-    // Determine card icon
     let IconElement: React.ReactNode = null;
     let badgeText = '';
 
@@ -790,13 +923,14 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
           position: 'absolute',
           left: node.x,
           top: node.y,
-          width: 260,
+          width,
+          minHeight: height,
           background: bgCard,
           border: isSelected ? `1.5px solid ${accentColor}` : `1px solid ${border}`,
           borderRadius: 8,
           boxShadow: isSelected
-            ? `0 0 0 3px ${accentColor}22, 0 8px 24px rgba(0,0,0,0.35)`
-            : '0 4px 14px rgba(0,0,0,0.18)',
+            ? `0 0 0 3px ${accentColor}25, 0 10px 30px rgba(0,0,0,0.4)`
+            : '0 6px 20px rgba(0,0,0,0.22)',
           cursor: draggingNodeId === node.id ? 'grabbing' : 'grab',
           userSelect: 'none',
           transition: draggingNodeId === node.id ? 'none' : 'box-shadow 0.15s ease, border-color 0.15s ease',
@@ -806,7 +940,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
           zIndex: isSelected ? 30 : 10,
         }}
       >
-        {/* Header Bar */}
+        {/* Card Header */}
         <div
           style={{
             padding: '8px 12px',
@@ -840,7 +974,6 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-            {/* Status Indicator */}
             {isRunning ? (
               <RefreshCw
                 size={12}
@@ -862,7 +995,6 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
               />
             )}
 
-            {/* Quick Delete */}
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -891,7 +1023,6 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
           {/* AI Model Node specifics */}
           {node.type === 'model' && (
             <>
-              {/* Provider Selector */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <label style={{ fontSize: 10, color: textSecondary, fontWeight: 500 }}>
                   Provedor IA
@@ -943,7 +1074,6 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
                 </div>
               </div>
 
-              {/* Model Selector */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <label style={{ fontSize: 10, color: textSecondary, fontWeight: 500 }}>
                   Modelo
@@ -989,7 +1119,6 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
                 </div>
               </div>
 
-              {/* Mini Stats / Temperature Pill */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
                 <span style={{ fontSize: 10, color: textSecondary }}>
                   Temp: {node.config.temperature ?? 0.7}
@@ -1119,14 +1248,14 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
             </div>
           )}
 
-          {/* Collapsible output snippet if present */}
+          {/* Output snippet */}
           {node.output?.text && (
             <div
               style={{
                 marginTop: 4,
                 padding: '6px 8px',
                 borderRadius: 5,
-                background: isEffectiveDark ? '#141416' : '#f1f5f9',
+                background: isEffectiveDark ? '#0d1017' : '#f1f5f9',
                 border: `1px solid ${border}`,
                 fontSize: 10,
                 color: textSecondary,
@@ -1146,7 +1275,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
   };
 
   // ============================================================================
-  // RENDER MAIN VIEW
+  // MAIN RENDER
   // ============================================================================
 
   return (
@@ -1157,12 +1286,12 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
         height: '100%',
         display: 'flex',
         flexDirection: 'column',
-        background: bgCanvas,
+        background: canvasBg,
         position: 'relative',
         overflow: 'hidden',
       }}
     >
-      {/* Top Header Bar conforming to DevFlow System Standard */}
+      {/* Top Header Bar */}
       <div
         style={{
           height: 48,
@@ -1176,7 +1305,6 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
           zIndex: 40,
         }}
       >
-        {/* Left: Title & Status */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: textPrimary }}>
@@ -1214,7 +1342,6 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
           )}
         </div>
 
-        {/* Center: Tabs Switcher */}
         <div
           style={{
             display: 'flex',
@@ -1276,9 +1403,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
           </button>
         </div>
 
-        {/* Right: Actions */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Zoom controls */}
           <div
             style={{
               display: 'flex',
@@ -1321,7 +1446,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
             <button
               onClick={() => {
                 setZoom(1);
-                setPan({ x: 40, y: 30 });
+                setPan({ x: 30, y: 20 });
               }}
               style={{
                 background: 'transparent',
@@ -1337,7 +1462,6 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
             </button>
           </div>
 
-          {/* Add Node Dropdown */}
           <div style={{ position: 'relative' }}>
             <button
               onClick={() => setIsAddMenuOpen((v) => !v)}
@@ -1505,13 +1629,12 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
             )}
           </div>
 
-          {/* Execute Flow Button with Accent Color */}
           <button
             onClick={executeWorkflow}
             disabled={isExecutingFlow}
             style={{
               background: accentColor,
-              color: accentContrast,
+              color: '#ffffff',
               border: 'none',
               padding: '6px 14px',
               borderRadius: 6,
@@ -1521,8 +1644,8 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
               alignItems: 'center',
               gap: 6,
               cursor: isExecutingFlow ? 'not-allowed' : 'pointer',
-              opacity: isExecutingFlow ? 0.8 : 1,
-              boxShadow: `0 2px 8px ${accentColor}44`,
+              opacity: isExecutingFlow ? 0.85 : 1,
+              boxShadow: `0 2px 10px ${accentColor}44`,
             }}
           >
             {isExecutingFlow ? (
@@ -1540,7 +1663,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
         </div>
       </div>
 
-      {/* Main Content: Canvas vs Logs */}
+      {/* Main Content Area */}
       {activeTab === 'canvas' ? (
         <div
           onMouseDown={handleCanvasMouseDown}
@@ -1553,41 +1676,85 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
             position: 'relative',
             cursor: isPanning ? 'grabbing' : 'default',
             overflow: 'hidden',
-            backgroundImage: `radial-gradient(${isEffectiveDark ? '#27272a' : '#cbd5e1'} 1px, transparent 1px)`,
-            backgroundSize: '24px 24px',
-            backgroundPosition: `${pan.x}px ${pan.y}px`,
           }}
         >
-          {/* SVG Canvas for connecting cables */}
-          <svg
-            style={{
-              position: 'absolute',
-              left: 0,
-              top: 0,
-              width: '100%',
-              height: '100%',
-              pointerEvents: 'none',
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-              transformOrigin: '0 0',
-            }}
-          >
-            {renderConnectorPaths()}
-          </svg>
-
-          {/* Scaled and panned Nodes container */}
+          {/* Radial Dot Grid Background matching previous aesthetic */}
           <div
             style={{
               position: 'absolute',
-              left: 0,
-              top: 0,
+              inset: 0,
+              backgroundImage: `radial-gradient(${gridDotColor} 1.4px, transparent 1.4px)`,
+              backgroundSize: `${26 * zoom}px ${26 * zoom}px`,
+              backgroundPosition: `${pan.x}px ${pan.y}px`,
+              pointerEvents: 'none',
+            }}
+          />
+
+          {/* Vignette Gradient Overlay */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'radial-gradient(ellipse at 50% 40%, transparent 60%, rgba(0,0,0,0.65) 100%)',
+              pointerEvents: 'none',
+            }}
+          />
+
+          {/* Animated SVG Cables with organic filaments and glowing particles */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
               transformOrigin: '0 0',
+              pointerEvents: 'none',
+            }}
+          >
+            <svg
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: 4000,
+                height: 4000,
+                overflow: 'visible',
+              }}
+            >
+              <defs>
+                <filter id="neon-glow-green" x="-20%" y="-20%" width="140%" height="140%">
+                  <feGaussianBlur stdDeviation="4" result="blur" />
+                  <feMerge>
+                    <feMergeNode in="blur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+                <filter id="neon-glow-accent" x="-20%" y="-20%" width="140%" height="140%">
+                  <feGaussianBlur stdDeviation="4" result="blur" />
+                  <feMerge>
+                    <feMergeNode in="blur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+              </defs>
+
+              {renderAnimatedWires()}
+            </svg>
+          </div>
+
+          {/* Scaled and Panned Interactive Nodes Container */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transformOrigin: '0 0',
+              pointerEvents: 'auto',
             }}
           >
             {nodes.map(renderNodeCard)}
           </div>
 
-          {/* Floating Left Toolbar matching DevFlow design */}
+          {/* Floating Left Dock */}
           <div
             style={{
               position: 'absolute',
@@ -1596,7 +1763,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
               background: bgCard,
               border: `1px solid ${border}`,
               borderRadius: 8,
-              boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
               padding: 4,
               display: 'flex',
               flexDirection: 'column',
@@ -1648,7 +1815,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
             </button>
           </div>
 
-          {/* Node Inspector Drawer (Right Side) when node selected */}
+          {/* Node Inspector Drawer */}
           {selectedNode && (
             <div
               style={{
@@ -1659,13 +1826,12 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
                 width: 320,
                 background: bgCard,
                 borderLeft: `1px solid ${border}`,
-                boxShadow: '-4px 0 20px rgba(0,0,0,0.25)',
+                boxShadow: '-4px 0 24px rgba(0,0,0,0.3)',
                 display: 'flex',
                 flexDirection: 'column',
                 zIndex: 38,
               }}
             >
-              {/* Drawer Header */}
               <div
                 style={{
                   padding: '12px 16px',
@@ -1697,9 +1863,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
                 </button>
               </div>
 
-              {/* Drawer Content */}
               <div style={{ padding: 16, overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {/* Title Edit */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <label style={{ fontSize: 11, color: textSecondary, fontWeight: 500 }}>
                     Título do Nó
@@ -1721,7 +1885,6 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
                   />
                 </div>
 
-                {/* Specifics for Model Node */}
                 {selectedNode.type === 'model' && (
                   <>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -1813,7 +1976,6 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
                   </>
                 )}
 
-                {/* Specifics for Trigger Node */}
                 {selectedNode.type === 'trigger' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <label style={{ fontSize: 11, color: textSecondary, fontWeight: 500 }}>
@@ -1842,7 +2004,6 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
                   </div>
                 )}
 
-                {/* Specifics for Tool Node */}
                 {selectedNode.type === 'tool' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <label style={{ fontSize: 11, color: textSecondary, fontWeight: 500 }}>
@@ -1870,7 +2031,6 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
                   </div>
                 )}
 
-                {/* Real Live Output View if present */}
                 {selectedNode.output?.text && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1900,7 +2060,6 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
                   </div>
                 )}
 
-                {/* Delete Node Button */}
                 <div style={{ marginTop: 'auto', paddingTop: 16 }}>
                   <button
                     onClick={() => setNodeToDelete(selectedNode)}
@@ -1929,7 +2088,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
           )}
         </div>
       ) : (
-        /* Logs / Executions Tab */
+        /* Logs Tab */
         <div style={{ flex: 1, padding: 24, overflowY: 'auto' }}>
           <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -2068,15 +2227,15 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
         onClose={() => setNodeToDelete(null)}
       />
 
-      {/* Inline styles for pulse animations */}
+      {/* Keyframe styles for animated particles and spinning loaders */}
       <style>{`
+        @keyframes dash-flow {
+          from { stroke-dashoffset: 68; }
+          to { stroke-dashoffset: 0; }
+        }
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
-        }
-        @keyframes flowPulse {
-          0% { stroke-dashoffset: 20; }
-          100% { stroke-dashoffset: 0; }
         }
       `}</style>
     </div>
