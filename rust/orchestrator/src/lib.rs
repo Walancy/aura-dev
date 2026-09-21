@@ -416,11 +416,19 @@ where
             args.push(request.request.clone());
         }
         ProviderId::Antigravity => {
-            if let Some(model) = &request.model {
+            args.extend([
+                "--output-format".into(),
+                "stream-json".into(),
+                "--dangerously-skip-permissions".into(),
+            ]);
+            if let Some(model) = request
+                .model
+                .as_ref()
+                .filter(|model| !model.is_empty() && !model.eq_ignore_ascii_case("default"))
+            {
                 args.extend(["--model".into(), model.clone()]);
             }
             args.extend([
-                "--dangerously-skip-permissions".into(),
                 "--add-dir".into(),
                 request.cwd.display().to_string(),
             ]);
@@ -534,6 +542,7 @@ where
 fn event_kind(value: &Value) -> &'static str {
     let ty = value
         .get("type")
+        .or_else(|| value.get("event"))
         .and_then(Value::as_str)
         .unwrap_or_default();
     if ty.contains("error") || ty.contains("failed") {
@@ -550,6 +559,7 @@ fn event_kind(value: &Value) -> &'static str {
 fn event_message(value: &Value) -> String {
     value
         .get("type")
+        .or_else(|| value.get("event"))
         .and_then(Value::as_str)
         .unwrap_or("provider_event")
         .to_owned()
@@ -559,19 +569,27 @@ fn parse_jsonl(provider: ProviderId, bytes: &[u8]) -> Result<RunResult, String> 
     let text = std::str::from_utf8(bytes)
         .map_err(|error| format!("provider output is not UTF-8: {error}"))?;
     let mut result = None;
+    let mut delta_acc = String::new();
     let mut events = 0;
     let mut input_tokens = None;
     let mut output_tokens = None;
-    for (line, raw) in text.lines().enumerate() {
-        if raw.trim().is_empty() {
+    for (_line, raw) in text.lines().enumerate() {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
             continue;
         }
-        let value: Value = serde_json::from_str(raw)
-            .map_err(|error| format!("invalid provider JSON on line {}: {error}", line + 1))?;
+        let value: Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => {
+                // Non-JSON line (e.g. CLI warning or preamble); skip gracefully
+                continue;
+            }
+        };
         events += 1;
         if let Some(usage) = value
             .get("usage")
             .or_else(|| value.get("result").and_then(|v| v.get("usage")))
+            .or_else(|| value.get("step_update").and_then(|v| v.get("usage")))
         {
             input_tokens = usage
                 .get("input_tokens")
@@ -584,14 +602,36 @@ fn parse_jsonl(provider: ProviderId, bytes: &[u8]) -> Result<RunResult, String> 
                 .and_then(Value::as_u64)
                 .or(output_tokens);
         }
+        if let Some(step) = value.get("step_update") {
+            if let Some(delta) = step.get("text_delta").and_then(Value::as_str) {
+                delta_acc.push_str(delta);
+            }
+        }
         if let Some(candidate) = terminal_text(&value) {
             result = Some(candidate);
         }
     }
-    let text = result.ok_or_else(|| "provider returned no terminal result text".to_owned())?;
+
+    if events == 0 {
+        let raw_trimmed = text.trim();
+        if !raw_trimmed.is_empty() {
+            return Ok(RunResult {
+                provider,
+                text: raw_trimmed.to_owned(),
+                events: 0,
+                input_tokens: None,
+                output_tokens: None,
+            });
+        }
+    }
+
+    let final_text = result
+        .or_else(|| if !delta_acc.trim().is_empty() { Some(delta_acc) } else { None })
+        .ok_or_else(|| "provider returned no terminal result text".to_owned())?;
+
     Ok(RunResult {
         provider,
-        text,
+        text: final_text,
         events,
         input_tokens,
         output_tokens,
@@ -601,6 +641,7 @@ fn parse_jsonl(provider: ProviderId, bytes: &[u8]) -> Result<RunResult, String> 
 fn terminal_text(value: &Value) -> Option<String> {
     let event_type = value
         .get("type")
+        .or_else(|| value.get("event"))
         .and_then(Value::as_str)
         .unwrap_or_default();
     let terminal = matches!(
@@ -610,13 +651,23 @@ fn terminal_text(value: &Value) -> Option<String> {
     if !terminal {
         return None;
     }
-    for key in ["result", "text", "message", "output"] {
+    if let Some(result_obj) = value.get("result") {
+        if let Some(text) = result_obj.as_str() {
+            return Some(text.to_owned());
+        }
+        for subkey in ["response", "text", "message", "output"] {
+            if let Some(text) = result_obj.get(subkey).and_then(Value::as_str) {
+                return Some(text.to_owned());
+            }
+        }
+    }
+    for key in ["result", "text", "message", "output", "response"] {
         if let Some(text) = value.get(key).and_then(Value::as_str) {
             return Some(text.to_owned());
         }
         if let Some(text) = value
             .get(key)
-            .and_then(|v| v.get("text"))
+            .and_then(|v| v.get("text").or_else(|| v.get("response")).or_else(|| v.get("message")))
             .and_then(Value::as_str)
         {
             return Some(text.to_owned());
@@ -625,7 +676,7 @@ fn terminal_text(value: &Value) -> Option<String> {
     if event_type == "item.completed" {
         let item = value.get("item")?;
         if matches!(item.get("type").and_then(Value::as_str), Some("agent_message" | "assistant_message")) {
-            for key in ["text", "message", "output"] {
+            for key in ["text", "message", "output", "response"] {
                 if let Some(text) = item.get(key).and_then(Value::as_str) {
                     return Some(text.to_owned());
                 }
@@ -674,6 +725,40 @@ mod tests {
         assert_eq!(result.text, "STATUS: PASS");
         assert_eq!(result.input_tokens, Some(10));
         assert_eq!(result.output_tokens, Some(3));
+    }
+
+    #[test]
+    fn parses_antigravity_stream_json() {
+        let result = parse_jsonl(
+            ProviderId::Antigravity,
+            r#"{"event":"init","init":{"model":"gemini-3.8-flash-high"}}
+{"event":"step_update","step_update":{"step_index":0,"state":"DONE"}}
+{"event":"step_update","step_update":{"step_index":1,"state":"DONE","text_delta":"Olá!"}}
+{"event":"result","result":{"status":"SUCCESS","response":"Olá! Como posso ajudar você hoje?","usage":{"input_tokens":120,"output_tokens":15}}}"#.as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(result.text, "Olá! Como posso ajudar você hoje?");
+        assert_eq!(result.input_tokens, Some(120));
+        assert_eq!(result.output_tokens, Some(15));
+    }
+
+    #[test]
+    fn handles_non_json_preamble_and_plain_text() {
+        let with_warning = parse_jsonl(
+            ProviderId::Antigravity,
+            r#"WARNING: using experimental features
+{"event":"result","result":{"status":"SUCCESS","response":"OK"}}"#.as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(with_warning.text, "OK");
+
+        let plain_text = parse_jsonl(
+            ProviderId::Antigravity,
+            "Olá direto em texto sem JSON!".as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(plain_text.text, "Olá direto em texto sem JSON!");
+        assert_eq!(plain_text.events, 0);
     }
 
     fn task(id: &str, dependencies: &[&str]) -> ScheduledTask {
