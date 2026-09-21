@@ -13182,6 +13182,11 @@ ${prompt || userDisplayPrompt}`;
             accentColor={accentColor}
             isEffectiveDark={isEffectiveDark}
             themeTokens={themeTokens}
+            workspacePath={workspacePath}
+            selectedAiProvider={selectedAiProvider}
+            selectedModel={selectedModel}
+            installedClis={installedClis}
+            activeModels={activeModels}
           />
         </div>
       ) : (
