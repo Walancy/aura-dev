@@ -127,7 +127,7 @@ import type {
 } from './types/ide';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'projetos' | 'orchestration' | 'daily' | 'equipmentos' | 'ide' | 'ports'>('projetos');
+  const [activeTab, setActiveTab] = useState<'projetos' | 'orchestration' | 'daily' | 'equipmentos' | 'ide' | 'design'>('projetos');
   const [activeTermTab, setActiveTermTab] = useState<'problems' | 'output' | 'debug' | 'terminal' | 'ports' | 'tasks'>('terminal');
 
   // Code Review (Diff View) state
@@ -5453,14 +5453,14 @@ ${prompt || userDisplayPrompt}`;
           >
             {[
               { id: 'projetos', label: 'Projetos' },
-              { id: 'orchestration', label: 'Orquestração', icon: Network },
+              { id: 'orchestration', label: 'Orquestração' },
               { id: 'daily', label: 'Daily' },
               { id: 'equipmentos', label: 'Equipmentos' },
               { id: 'ide', label: 'IDE' },
-              { id: 'ports', label: 'Ports' },
+              { id: 'design', label: 'Design' },
             ].map((t) => {
               const isActive = activeTab === t.id;
-              const TabIcon = t.icon;
+              const TabIcon = (t as any).icon;
               return (
                 <div
                   key={t.id}
