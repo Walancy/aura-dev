@@ -44,7 +44,7 @@ export class ModelService {
   private activeModelIds: Record<string, string> = {
     claude: 'sonnet',
     antigravity: 'gemini-3.8-flash-high',
-    codex: 'o3',
+    codex: 'gpt-5.3-codex',
     gemini: 'gemini-2.5-flash',
     ollama: 'llama3.3',
   };
@@ -320,12 +320,9 @@ export class ModelService {
 
   private getCodexModels(): ProviderModelsResult {
     const models: AiModelItem[] = [
-      { id: 'o3', label: 'o3 (Reasoning)', tag: 'Raciocínio' },
-      { id: 'o4-mini', label: 'o4-mini', tag: 'Rápido' },
-      { id: 'gpt-4.5', label: 'GPT-4.5 Orion', tag: 'Mais Recente' },
-      { id: 'claude-3-7-sonnet', label: 'Sonnet 3.7' },
+      { id: 'gpt-5.3-codex', label: 'GPT-5.3-Codex', tag: 'Codificação agentiva' },
     ];
-    const currentModelId = this.activeModelIds.codex || 'o3';
+    const currentModelId = this.activeModelIds.codex || 'gpt-5.3-codex';
     const current = models.find((m) => m.id === currentModelId) || models[0];
     return {
       providerId: 'codex',
@@ -389,4 +386,3 @@ export class ModelService {
 }
 
 export const modelService = new ModelService();
-

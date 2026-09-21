@@ -315,7 +315,7 @@ export class NativeCommandsService {
 
     const list: AiSlashCommand[] = [
       { command: '/help', description: 'Exibir comandos e opções do Codex CLI' },
-      { command: '/model', description: 'Alternar modelo OpenAI (GPT-4o, o3-mini, o1)', usage: '/model [nome]' },
+      { command: '/model', description: 'Selecionar o modelo Codex ativo', usage: '/model [nome]' },
       { command: '/clear', description: 'Resetar histórico e contexto da sessão' },
       { command: '/review', description: 'Revisão profunda de código com recomendações' },
       { command: '/diff', description: 'Visualizar diff de alterações locais no repositório' },
