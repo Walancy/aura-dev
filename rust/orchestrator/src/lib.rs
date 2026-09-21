@@ -401,6 +401,7 @@ where
                     "--json",
                     "--dangerously-bypass-approvals-and-sandbox",
                     "--skip-git-repo-check",
+                    "--ignore-user-config",
                     "--cd",
                 ]
                 .map(String::from),
