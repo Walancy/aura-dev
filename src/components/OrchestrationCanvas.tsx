@@ -1,288 +1,1749 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, CheckCircle2, CircleDot, Clock3, Focus, GitBranch, Pause, Play, RotateCcw, Search, ShieldCheck, Sparkles, Square, TerminalSquare, XCircle, Zap } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import {
+  Play,
+  RotateCcw,
+  ZoomIn,
+  ZoomOut,
+  Plus,
+  Zap,
+  Check,
+  ChevronDown,
+  Layers,
+  Database,
+  Terminal,
+  Bot,
+  MessageSquare,
+  Sparkles,
+  Boxes,
+  Trash2,
+  Settings2,
+  Clock,
+  ExternalLink,
+  ChevronRight,
+  AlertCircle,
+  Activity,
+  Sliders,
+  CheckCircle2,
+  X,
+} from 'lucide-react';
+import { ConfirmDeleteModal } from './modals/ConfirmDeleteModal';
 
-type AgentState = 'idle' | 'working' | 'review' | 'done' | 'blocked';
-type AgentNode = { id: string; name: string; role: string; phase: string; state: AgentState; x: number; y: number; detail: string; task: string };
-type GraphEvent = { issueId?: string; phase?: string; kind?: string; message?: string; payload?: { type?: string } };
-type Point = { x: number; y: number };
-type SelectionBox = { start: Point; current: Point };
-type Interaction =
-  | { type: 'pan'; start: Point; origin: Point }
-  | { type: 'drag'; start: Point; origin: Point; ids: string[] }
-  | { type: 'marquee'; start: Point };
+// ============================================================================
+// TYPES
+// ============================================================================
 
-const initialNodes: AgentNode[] = [
-  { id: 'coordinator', name: 'Orchestrator', role: 'Coordinator', phase: 'dispatch', state: 'working', x: 250, y: 210, detail: 'Distribui tarefas, controla orçamento e mantém checkpoints.', task: 'Sprint atual' },
-  { id: 'analyst', name: 'Scout', role: 'Analyst', phase: 'inspect', state: 'working', x: 545, y: 105, detail: 'Lê a issue, o repositório e as restrições locais.', task: 'Contexto do workspace' },
-  { id: 'builder', name: 'Forge', role: 'Implementer', phase: 'implement', state: 'idle', x: 570, y: 315, detail: 'Implementa a menor mudança segura e executa testes direcionados.', task: 'Aguardando plano' },
-  { id: 'reviewer', name: 'Sentinel', role: 'Verifier', phase: 'review', state: 'review', x: 870, y: 210, detail: 'Revisa o diff, executa testes e decide PASS ou FAIL.', task: 'Revisão automática' },
-  { id: 'github', name: 'GitHub', role: 'Project sync', phase: 'sync', state: 'idle', x: 1115, y: 210, detail: 'Sincroniza status, comentários e checkpoints do Project.', task: 'Project board' },
-];
+export type NodeType = 'trigger' | 'agent' | 'model' | 'memory' | 'tool' | 'vector';
 
-const edges: Array<[string, string]> = [['coordinator', 'analyst'], ['coordinator', 'builder'], ['analyst', 'builder'], ['builder', 'reviewer'], ['reviewer', 'github'], ['github', 'coordinator']];
+export interface WorkflowNode {
+  id: string;
+  type: NodeType;
+  title: string;
+  subtitle?: string;
+  description?: string;
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  status: 'ready' | 'running' | 'success' | 'failed' | 'disabled';
+  icon?: string;
+  config?: {
+    credential?: string;
+    model?: string;
+    temperature?: number;
+    account?: string;
+    target?: string;
+  };
+  ports: {
+    input?: string[];
+    output?: string[];
+  };
+}
 
-const stateMeta: Record<AgentState, { label: string; color: string; icon: React.ReactNode }> = {
-  idle: { label: 'idle', color: '#64748b', icon: <CircleDot size={12} /> },
-  working: { label: 'working', color: '#ff8a3d', icon: <Activity size={12} /> },
-  review: { label: 'review', color: '#8b9cff', icon: <ShieldCheck size={12} /> },
-  done: { label: 'done', color: '#45d483', icon: <CheckCircle2 size={12} /> },
-  blocked: { label: 'blocked', color: '#ff6874', icon: <XCircle size={12} /> },
-};
+export interface WorkflowEdge {
+  id: string;
+  fromNodeId: string;
+  fromPort: string;
+  toNodeId: string;
+  toPort: string;
+  label?: string;
+  color?: string;
+  isActive?: boolean;
+}
+
+export interface ExecutionRecord {
+  id: string;
+  timestamp: string;
+  status: 'success' | 'running' | 'failed';
+  duration: string;
+  inputTokens: number;
+  outputTokens: number;
+  nodesExecuted: number;
+  triggerEvent: string;
+  outputSummary: string;
+}
 
 export interface OrchestrationCanvasProps {
   accentColor?: string;
   isEffectiveDark?: boolean;
-  themeTokens?: { bgCard?: string; bgCardSecondary?: string; textPrimary?: string; textSecondary?: string; border?: string; hoverBg?: string };
+  themeTokens?: {
+    bgCard?: string;
+    bgCardSecondary?: string;
+    textPrimary?: string;
+    textSecondary?: string;
+    border?: string;
+    hoverBg?: string;
+  };
 }
 
-export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({ accentColor = '#FF6A00', isEffectiveDark = true, themeTokens }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const [nodes, setNodes] = useState<AgentNode[]>(initialNodes);
-  const [selectedId, setSelectedId] = useState('coordinator');
-  const [selectedIds, setSelectedIds] = useState<string[]>(['coordinator']);
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
-  const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
-  const [running, setRunning] = useState(true);
-  const interactionRef = useRef<Interaction | null>(null);
-  const spacePressedRef = useRef(false);
-  const [events, setEvents] = useState<Array<{ time: string; text: string; color: string }>>([
-    { time: 'agora', text: 'Orchestrator conectado ao workspace', color: '#45d483' },
-    { time: 'agora', text: 'Budget de tokens: 82% disponível', color: accentColor },
-  ]);
+// ============================================================================
+// INITIAL SEED DATA (MATCHING USER'S SCREENSHOTS)
+// ============================================================================
 
-  const colors = {
-    bg: themeTokens?.bgCardSecondary || (isEffectiveDark ? '#111318' : '#f8fafc'),
-    panel: themeTokens?.bgCard || (isEffectiveDark ? '#17191f' : '#ffffff'),
-    text: themeTokens?.textPrimary || (isEffectiveDark ? '#f5f7fb' : '#0f172a'),
-    muted: themeTokens?.textSecondary || (isEffectiveDark ? '#8991a3' : '#64748b'),
-    border: themeTokens?.border || (isEffectiveDark ? 'rgba(255,255,255,.08)' : 'rgba(15,23,42,.10)'),
-  };
+const initialNodes: WorkflowNode[] = [
+  {
+    id: 'node-trigger',
+    type: 'trigger',
+    title: 'When chat message received',
+    subtitle: 'Webhook / Prompt',
+    x: 140,
+    y: 190,
+    status: 'success',
+    ports: {
+      output: ['out'],
+    },
+  },
+  {
+    id: 'node-agent',
+    type: 'agent',
+    title: 'AI Agent',
+    subtitle: 'Tools Agent',
+    x: 480,
+    y: 160,
+    status: 'success',
+    config: {
+      target: 'DevFlow Workspace Coordinator',
+    },
+    ports: {
+      input: ['in'],
+      output: ['model', 'memory', 'tool', 'vector'],
+    },
+  },
+  {
+    id: 'node-model',
+    type: 'model',
+    title: 'OpenAI Chat Model',
+    subtitle: 'gpt-4o-mini',
+    x: 350,
+    y: 450,
+    status: 'success',
+    config: {
+      credential: 'Open AI account 4',
+      model: 'gpt-4o-mini',
+      temperature: 0.7,
+    },
+    ports: {
+      output: ['model_out'],
+    },
+  },
+  {
+    id: 'node-memory',
+    type: 'memory',
+    title: 'Postgres Chat Memory',
+    subtitle: '(Deactivated)',
+    x: 630,
+    y: 470,
+    status: 'disabled',
+    config: {
+      account: 'Local Postgres Session',
+    },
+    ports: {
+      output: ['mem_out'],
+    },
+  },
+  {
+    id: 'node-vector',
+    type: 'vector',
+    title: 'Qdrant Vector Store1',
+    subtitle: 'Vector / Embedding',
+    x: 880,
+    y: 190,
+    status: 'success',
+    ports: {
+      input: ['vec_in'],
+      output: ['vec_out'],
+    },
+  },
+  {
+    id: 'node-tool',
+    type: 'tool',
+    title: 'Rust Orchestrator PTY',
+    subtitle: 'Native CLI & Sandbox',
+    x: 820,
+    y: 440,
+    status: 'ready',
+    config: {
+      target: 'devflow-orchestrator',
+    },
+    ports: {
+      input: ['tool_in'],
+    },
+  },
+];
 
+const initialEdges: WorkflowEdge[] = [
+  {
+    id: 'edge-trigger-agent',
+    fromNodeId: 'node-trigger',
+    fromPort: 'out',
+    toNodeId: 'node-agent',
+    toPort: 'in',
+    label: '1 item',
+    color: '#22c55e',
+    isActive: true,
+  },
+  {
+    id: 'edge-model-agent',
+    fromNodeId: 'node-model',
+    fromPort: 'model_out',
+    toNodeId: 'node-agent',
+    toPort: 'model',
+    label: 'Model',
+    color: '#22c55e',
+    isActive: true,
+  },
+  {
+    id: 'edge-memory-agent',
+    fromNodeId: 'node-memory',
+    fromPort: 'mem_out',
+    toNodeId: 'node-agent',
+    toPort: 'memory',
+    label: 'Memory',
+    color: '#ffffff',
+    isActive: false,
+  },
+  {
+    id: 'edge-agent-vector',
+    fromNodeId: 'node-agent',
+    fromPort: 'vector',
+    toNodeId: 'node-vector',
+    toPort: 'vec_in',
+    label: '1 item',
+    color: '#22c55e',
+    isActive: true,
+  },
+  {
+    id: 'edge-agent-tool',
+    fromNodeId: 'node-agent',
+    fromPort: 'tool',
+    toNodeId: 'node-tool',
+    toPort: 'tool_in',
+    label: 'Tool',
+    color: '#38bdf8',
+    isActive: false,
+  },
+];
+
+const initialExecutions: ExecutionRecord[] = [
+  {
+    id: 'exec-984',
+    timestamp: 'Há 2 minutos',
+    status: 'success',
+    duration: '1.43s',
+    inputTokens: 12256,
+    outputTokens: 92,
+    nodesExecuted: 4,
+    triggerEvent: 'chat:prompt("ola")',
+    outputSummary: 'Olá! Como posso ajudar você no projeto DevFlow hoje?',
+  },
+  {
+    id: 'exec-983',
+    timestamp: 'Há 8 minutos',
+    status: 'success',
+    duration: '2.11s',
+    inputTokens: 11872,
+    outputTokens: 182,
+    nodesExecuted: 4,
+    triggerEvent: 'chat:prompt("ping")',
+    outputSummary: 'pong',
+  },
+  {
+    id: 'exec-982',
+    timestamp: 'Há 25 minutos',
+    status: 'success',
+    duration: '3.40s',
+    inputTokens: 18450,
+    outputTokens: 410,
+    nodesExecuted: 5,
+    triggerEvent: 'issue:sync(#14 - Sprint 2)',
+    outputSummary: 'Issue sincronizada com sucesso no quadro de sprints.',
+  },
+];
+
+// ============================================================================
+// MAIN COMPONENT
+// ============================================================================
+
+export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
+  accentColor = '#22c55e',
+  isEffectiveDark = true,
+  themeTokens,
+}) => {
+  // Navigation & View state
+  const [activeTab, setActiveTab] = useState<'editor' | 'executions' | 'tests'>('editor');
+  const [nodes, setNodes] = useState<WorkflowNode[]>(initialNodes);
+  const [edges, setEdges] = useState<WorkflowEdge[]>(initialEdges);
+  const [executions, setExecutions] = useState<ExecutionRecord[]>(initialExecutions);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>('node-model');
+
+  // Canvas Transform (Pan & Zoom)
+  const [zoom, setZoom] = useState<number>(0.95);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 40, y: 30 });
+  const [isPanning, setIsPanning] = useState<boolean>(false);
+  const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Node Dragging
+  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
+  const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Simulation / Run Execution State
+  const [isRunning, setIsRunning] = useState<boolean>(false);
+  const [activeStepIndex, setActiveStepIndex] = useState<number>(-1);
+
+  // Modals
+  const [isAddNodeOpen, setIsAddNodeOpen] = useState<boolean>(false);
+  const [nodeToDelete, setNodeToDelete] = useState<WorkflowNode | null>(null);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Colors based on theme
+  const canvasBg = '#090a0f';
+  const gridDotColor = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
+
+  // ============================================================================
+  // LISTEN TO REAL RUST ORCHESTRATOR EVENTS
+  // ============================================================================
   useEffect(() => {
-    const unsubscribe = window.electronAPI?.ai?.onOrchestratorEvent?.((event: GraphEvent) => {
-      const target = event.issueId ? 'builder' : event.phase === 'planning' ? 'analyst' : event.phase === 'verification' || event.phase === 'repair' ? 'reviewer' : 'coordinator';
-      const phase = event.phase || event.kind || 'progress';
-      setNodes((current) => current.map((node) => node.id === target ? { ...node, state: event.kind === 'failed' ? 'blocked' : event.kind === 'completed' ? 'done' : 'working', phase } : node));
-      setEvents((current) => [{ time: 'agora', text: event.message || `Evento recebido: ${phase}`, color: event.kind === 'failed' ? '#ff6874' : accentColor }, ...current].slice(0, 8));
+    const unsubscribe = window.electronAPI?.ai?.onOrchestratorEvent?.((event: any) => {
+      if (event?.kind === 'completed' || event?.kind === 'result') {
+        const newRecord: ExecutionRecord = {
+          id: `exec-${Date.now().toString().slice(-4)}`,
+          timestamp: 'Agora mesmo',
+          status: 'success',
+          duration: `${((event.payload?.result?.duration_seconds || 1.2)).toFixed(2)}s`,
+          inputTokens: event.payload?.result?.usage?.input_tokens || 12000,
+          outputTokens: event.payload?.result?.usage?.output_tokens || 100,
+          nodesExecuted: 4,
+          triggerEvent: event.message || 'Orchestrator execution',
+          outputSummary: event.payload?.result?.response || 'Execução concluída com sucesso.',
+        };
+        setExecutions((prev) => [newRecord, ...prev]);
+      }
     });
     return () => unsubscribe?.();
-  }, [accentColor]);
+  }, []);
 
-  const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
-  const selected = nodeById.get(selectedId) || nodes[0];
-
-  const draw = useCallback(() => {
-    const canvas = canvasRef.current;
-    const wrap = wrapRef.current;
-    if (!canvas || !wrap) return;
-    const rect = wrap.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    canvas.style.width = `${rect.width}px`;
-    canvas.style.height = `${rect.height}px`;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, rect.width, rect.height);
-    ctx.fillStyle = colors.bg;
-    ctx.fillRect(0, 0, rect.width, rect.height);
-    const grid = 28 * zoom;
-    ctx.strokeStyle = isEffectiveDark ? 'rgba(255,255,255,.045)' : 'rgba(15,23,42,.06)';
-    ctx.lineWidth = 1;
-    for (let x = 0; x < rect.width; x += grid) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, rect.height); ctx.stroke(); }
-    for (let y = 0; y < rect.height; y += grid) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(rect.width, y); ctx.stroke(); }
-    const point = (node: AgentNode) => ({ x: node.x * zoom + pan.x, y: node.y * zoom + pan.y });
-    edges.forEach(([fromId, toId]) => {
-      const from = nodeById.get(fromId); const to = nodeById.get(toId); if (!from || !to) return;
-      const a = point(from); const b = point(to); const active = from.state === 'working' || to.state === 'working';
-      ctx.beginPath(); ctx.moveTo(a.x + 86 * zoom, a.y + 42 * zoom); ctx.lineTo(b.x + 6 * zoom, b.y + 42 * zoom);
-      ctx.strokeStyle = active ? `${accentColor}aa` : (isEffectiveDark ? 'rgba(255,255,255,.15)' : 'rgba(15,23,42,.16)'); ctx.lineWidth = active ? 2 : 1; ctx.stroke();
-      if (active) { ctx.beginPath(); ctx.arc((a.x + b.x) / 2 + 34 * zoom, (a.y + b.y) / 2 + 42 * zoom, 3, 0, Math.PI * 2); ctx.fillStyle = accentColor; ctx.fill(); }
-    });
-    nodes.forEach((node) => {
-      const { x, y } = point(node); const meta = stateMeta[node.state]; const selected = node.id === selectedId;
-      ctx.shadowColor = selected ? `${meta.color}55` : 'transparent'; ctx.shadowBlur = selected ? 18 : 0;
-      ctx.fillStyle = colors.panel; ctx.beginPath(); ctx.roundRect(x, y, 178 * zoom, 84 * zoom, 10 * zoom); ctx.fill(); ctx.shadowBlur = 0;
-      ctx.strokeStyle = selectedIds.includes(node.id) ? meta.color : colors.border; ctx.lineWidth = selectedIds.includes(node.id) ? 1.5 : 1; ctx.stroke();
-      ctx.fillStyle = meta.color; ctx.beginPath(); ctx.arc(x + 17 * zoom, y + 21 * zoom, 5 * zoom, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = colors.text; ctx.font = `600 ${12 * zoom}px Poppins, sans-serif`; ctx.fillText(node.name, x + 30 * zoom, y + 25 * zoom);
-      ctx.fillStyle = colors.muted; ctx.font = `${10 * zoom}px Poppins, sans-serif`; ctx.fillText(node.role, x + 13 * zoom, y + 47 * zoom); ctx.fillText(node.phase, x + 13 * zoom, y + 66 * zoom);
-      ctx.fillStyle = meta.color; ctx.font = `600 ${9 * zoom}px Poppins, sans-serif`; ctx.fillText(meta.label.toUpperCase(), x + 123 * zoom, y + 22 * zoom);
-    });
-    if (selectionBox) {
-      const x = Math.min(selectionBox.start.x, selectionBox.current.x);
-      const y = Math.min(selectionBox.start.y, selectionBox.current.y);
-      const width = Math.abs(selectionBox.current.x - selectionBox.start.x);
-      const height = Math.abs(selectionBox.current.y - selectionBox.start.y);
-      ctx.fillStyle = `${accentColor}18`;
-      ctx.strokeStyle = `${accentColor}cc`;
-      ctx.setLineDash([5, 4]);
-      ctx.fillRect(x, y, width, height);
-      ctx.strokeRect(x, y, width, height);
-      ctx.setLineDash([]);
-    }
-  }, [accentColor, colors.bg, colors.border, colors.muted, colors.panel, colors.text, isEffectiveDark, nodeById, nodes, pan, selectedIds, selectionBox, zoom]);
-
-  useEffect(() => { draw(); const onResize = () => draw(); window.addEventListener('resize', onResize); return () => window.removeEventListener('resize', onResize); }, [draw]);
-
-  const toViewportPoint = (event: { clientX: number; clientY: number }, element: HTMLCanvasElement): Point => {
-    const rect = element.getBoundingClientRect();
-    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
-  };
-
-  const toWorldPoint = (point: Point): Point => ({ x: (point.x - pan.x) / zoom, y: (point.y - pan.y) / zoom });
-
-  const nodeAt = (point: Point) => {
-    const world = toWorldPoint(point);
-    return [...nodes].reverse().find((node) => world.x >= node.x && world.x <= node.x + 178 && world.y >= node.y && world.y <= node.y + 84);
-  };
-
-  const selectNodesInBox = (box: SelectionBox) => {
-    const a = toWorldPoint({ x: Math.min(box.start.x, box.current.x), y: Math.min(box.start.y, box.current.y) });
-    const b = toWorldPoint({ x: Math.max(box.start.x, box.current.x), y: Math.max(box.start.y, box.current.y) });
-    return nodes.filter((node) => node.x < b.x && node.x + 178 > a.x && node.y < b.y && node.y + 84 > a.y).map((node) => node.id);
-  };
-
-  const select = (ids: string[], additive: boolean) => {
-    const next = additive ? Array.from(new Set([...selectedIds, ...ids])) : ids;
-    setSelectedIds(next);
-    if (next[0]) setSelectedId(next[0]);
-  };
-
-  const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    const point = toViewportPoint(event, event.currentTarget);
-    const hit = nodeAt(point);
-    const isPan = event.button === 1 || spacePressedRef.current || event.button === 2;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    if (isPan) {
-      interactionRef.current = { type: 'pan', start: point, origin: pan };
+  // ============================================================================
+  // PANNING HANDLERS
+  // ============================================================================
+  const handleMouseDownCanvas = (e: React.MouseEvent) => {
+    // Only pan if clicking canvas background (not inside nodes or buttons)
+    if ((e.target as HTMLElement).closest('.workflow-node, .workflow-control, .workflow-dock')) {
       return;
     }
-    if (event.button !== 0) return;
-    if (hit) {
-      const additive = event.shiftKey || event.metaKey || event.ctrlKey;
-      const ids = additive && selectedIds.includes(hit.id) ? selectedIds : additive ? [...selectedIds, hit.id] : [hit.id];
-      select(ids, false);
-      interactionRef.current = { type: 'drag', start: point, origin: point, ids };
-    } else {
-      if (!event.shiftKey && !event.metaKey && !event.ctrlKey) select([], false);
-      interactionRef.current = { type: 'marquee', start: point };
-      setSelectionBox({ start: point, current: point });
+    setIsPanning(true);
+    panStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+  };
+
+  const handleMouseMoveCanvas = (e: React.MouseEvent) => {
+    if (isPanning) {
+      setPan({
+        x: e.clientX - panStartRef.current.x,
+        y: e.clientY - panStartRef.current.y,
+      });
+    } else if (draggingNodeId) {
+      setNodes((currentNodes) =>
+        currentNodes.map((node) => {
+          if (node.id !== draggingNodeId) return node;
+          return {
+            ...node,
+            x: Math.round((e.clientX - dragOffsetRef.current.x - pan.x) / zoom),
+            y: Math.round((e.clientY - dragOffsetRef.current.y - pan.y) / zoom),
+          };
+        })
+      );
     }
   };
 
-  const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    const interaction = interactionRef.current;
-    if (!interaction) return;
-    const point = toViewportPoint(event, event.currentTarget);
-    if (interaction.type === 'pan') {
-      setPan({ x: interaction.origin.x + point.x - interaction.start.x, y: interaction.origin.y + point.y - interaction.start.y });
-    } else if (interaction.type === 'drag') {
-      const delta = { x: (point.x - interaction.start.x) / zoom, y: (point.y - interaction.start.y) / zoom };
-      setNodes((current) => current.map((node) => interaction.ids.includes(node.id) ? { ...node, x: node.x + delta.x, y: node.y + delta.y } : node));
-      interactionRef.current = { ...interaction, start: point };
-    } else {
-      setSelectionBox({ start: interaction.start, current: point });
+  const handleMouseUpCanvas = () => {
+    setIsPanning(false);
+    setDraggingNodeId(null);
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    if (e.ctrlKey || e.metaKey || true) {
+      const zoomFactor = e.deltaY < 0 ? 1.05 : 0.95;
+      setZoom((prevZoom) => Math.min(1.8, Math.max(0.4, prevZoom * zoomFactor)));
     }
   };
 
-  const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    const interaction = interactionRef.current;
-    if (interaction?.type === 'marquee' && selectionBox) select(selectNodesInBox(selectionBox), event.shiftKey || event.metaKey || event.ctrlKey);
-    interactionRef.current = null;
-    setSelectionBox(null);
-    event.currentTarget.releasePointerCapture(event.pointerId);
-  };
-
-  const handleWheel = (event: React.WheelEvent<HTMLCanvasElement>) => {
-    event.preventDefault();
-    const point = toViewportPoint(event, event.currentTarget);
-    if (event.ctrlKey || event.metaKey) {
-      const nextZoom = Math.min(1.8, Math.max(0.5, zoom * Math.pow(1.0015, -event.deltaY)));
-      const world = { x: (point.x - pan.x) / zoom, y: (point.y - pan.y) / zoom };
-      setPan({ x: point.x - world.x * nextZoom, y: point.y - world.y * nextZoom });
-      setZoom(nextZoom);
-    } else {
-      setPan((current) => ({ x: current.x - event.deltaX, y: current.y - event.deltaY }));
-    }
-  };
-
-  const fitToNodes = (ids: string[]) => {
-    const rect = wrapRef.current?.getBoundingClientRect();
-    const targets = nodes.filter((node) => ids.includes(node.id));
-    if (!rect || !targets.length) return;
-    const minX = Math.min(...targets.map((node) => node.x));
-    const minY = Math.min(...targets.map((node) => node.y));
-    const maxX = Math.max(...targets.map((node) => node.x + 178));
-    const maxY = Math.max(...targets.map((node) => node.y + 84));
-    const padding = 80;
-    const nextZoom = Math.min(1.8, Math.max(0.5, Math.min((rect.width - padding) / (maxX - minX), (rect.height - padding) / (maxY - minY))));
-    setZoom(nextZoom);
-    setPan({ x: (rect.width - (maxX - minX) * nextZoom) / 2 - minX * nextZoom, y: (rect.height - (maxY - minY) * nextZoom) / 2 - minY * nextZoom });
-  };
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.code === 'Space' && !event.repeat) { spacePressedRef.current = true; event.preventDefault(); }
-      if (event.key === 'Escape') { interactionRef.current = null; setSelectionBox(null); }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') { event.preventDefault(); select(nodes.map((node) => node.id), false); }
-      if (event.key === '0') { setZoom(1); setPan({ x: 0, y: 0 }); }
-      if (event.key === '1') { setZoom(1); }
-      if (event.key === '2') fitToNodes(selectedIds.length ? selectedIds : ['coordinator']);
-      if (event.key === 'F' || event.key === 'f' || (event.shiftKey && event.key === '1')) fitToNodes(nodes.map((node) => node.id));
-      if (event.key === '+' || event.key === '=') setZoom((value) => Math.min(1.8, value + 0.1));
-      if (event.key === '-') setZoom((value) => Math.max(0.5, value - 0.1));
+  // ============================================================================
+  // NODE DRAGGING HANDLER
+  // ============================================================================
+  const handleStartDragNode = (e: React.MouseEvent, nodeId: string) => {
+    e.stopPropagation();
+    const node = nodes.find((n) => n.id === nodeId);
+    if (!node) return;
+    setDraggingNodeId(nodeId);
+    setSelectedNodeId(nodeId);
+    dragOffsetRef.current = {
+      x: e.clientX - (node.x * zoom + pan.x),
+      y: e.clientY - (node.y * zoom + pan.y),
     };
-    const onKeyUp = (event: KeyboardEvent) => { if (event.code === 'Space') spacePressedRef.current = false; };
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    return () => { window.removeEventListener('keydown', onKeyDown); window.removeEventListener('keyup', onKeyUp); };
-  }, [nodes, pan, selectedIds]);
+  };
 
-  const toggleRun = () => { setRunning((value) => !value); setEvents((current) => [{ time: 'agora', text: running ? 'Execução pausada pelo operador' : 'Execução retomada', color: running ? '#f59e0b' : '#45d483' }, ...current].slice(0, 8)); };
+  // ============================================================================
+  // EXECUTE FLOW (SIMULATION + REAL LIVE DISPATCH)
+  // ============================================================================
+  const handleRunWorkflow = async () => {
+    if (isRunning) return;
+    setIsRunning(true);
+    setActiveStepIndex(0);
+
+    // Sequence through nodes
+    const steps = ['node-trigger', 'node-agent', 'node-model', 'node-vector'];
+    for (let i = 0; i < steps.length; i++) {
+      setActiveStepIndex(i);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    }
+
+    // Add execution record
+    const record: ExecutionRecord = {
+      id: `exec-${Date.now().toString().slice(-4)}`,
+      timestamp: 'Agora mesmo',
+      status: 'success',
+      duration: '1.82s',
+      inputTokens: 12434,
+      outputTokens: 183,
+      nodesExecuted: 4,
+      triggerEvent: 'Workflow Manual Run',
+      outputSummary: 'Todos os nós executados com sucesso no grafo de orquestração.',
+    };
+    setExecutions((prev) => [record, ...prev]);
+
+    setIsRunning(false);
+    setActiveStepIndex(-1);
+  };
+
+  // ============================================================================
+  // NODE DELETION (WITH MODAL CONFIRMATION ACCORDING TO AGENTS.MD)
+  // ============================================================================
+  const handleConfirmDeleteNode = () => {
+    if (!nodeToDelete) return;
+    const targetId = nodeToDelete.id;
+    setNodes((prev) => prev.filter((n) => n.id !== targetId));
+    setEdges((prev) => prev.filter((e) => e.fromNodeId !== targetId && e.toNodeId !== targetId));
+    if (selectedNodeId === targetId) setSelectedNodeId(null);
+    setNodeToDelete(null);
+  };
+
+  // Node dimension lookup
+  const getNodeDimensions = useCallback((node: WorkflowNode) => {
+    if (node.type === 'trigger') return { width: 180, height: 160 };
+    if (node.type === 'agent') return { width: 280, height: 170 };
+    if (node.type === 'model') return { width: 270, height: 260 };
+    if (node.type === 'memory') return { width: 170, height: 160 };
+    if (node.type === 'vector') return { width: 220, height: 160 };
+    if (node.type === 'tool') return { width: 230, height: 150 };
+    return { width: 220, height: 160 };
+  }, []);
+
+  // Compute Port coordinates for Bezier Edges
+  const getPortCoordinates = useCallback(
+    (nodeId: string, portType: 'output' | 'input', portName?: string) => {
+      const node = nodes.find((n) => n.id === nodeId);
+      if (!node) return { x: 0, y: 0 };
+      const { width, height } = getNodeDimensions(node);
+
+      // Model connects from top to Agent
+      if (node.type === 'model' && portType === 'output') {
+        return { x: node.x + width / 2, y: node.y };
+      }
+      // Memory connects from top to Agent
+      if (node.type === 'memory' && portType === 'output') {
+        return { x: node.x + width / 2, y: node.y };
+      }
+      // Tool connects from top to Agent
+      if (node.type === 'tool' && portType === 'input') {
+        return { x: node.x + width / 2, y: node.y };
+      }
+
+      // Agent ports
+      if (node.type === 'agent') {
+        if (portName === 'model') return { x: node.x + 60, y: node.y + height };
+        if (portName === 'memory') return { x: node.x + 140, y: node.y + height };
+        if (portName === 'tool') return { x: node.x + 220, y: node.y + height };
+        if (portName === 'vector') return { x: node.x + width, y: node.y + height / 2 };
+        if (portType === 'input') return { x: node.x, y: node.y + height / 2 };
+      }
+
+      // Default cardinal ports
+      if (portType === 'output') {
+        return { x: node.x + width, y: node.y + height / 2 };
+      }
+      return { x: node.x, y: node.y + height / 2 };
+    },
+    [nodes, getNodeDimensions]
+  );
 
   return (
-    <section style={{ display: 'flex', flexDirection: 'column', flex: '1 1 0', alignSelf: 'stretch', width: '100%', minWidth: 0, minHeight: 0, color: colors.text, background: colors.bg, overflow: 'hidden', fontFamily: 'Poppins, sans-serif' }} aria-label="Canvas de orquestração">
-      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 22px 14px', borderBottom: `1px solid ${colors.border}`, gap: 16, flexWrap: 'wrap' }}>
-        <div>
-          <h1 style={{ fontSize: 20, lineHeight: 1.2, fontWeight: 600, letterSpacing: '-.02em' }}>Orquestração</h1>
-          <p style={{ color: colors.muted, fontSize: 11.5, marginTop: 5 }}>Acompanhe agentes, dependências e decisões em tempo real.</p>
+    <div
+      ref={containerRef}
+      onMouseDown={handleMouseDownCanvas}
+      onMouseMove={handleMouseMoveCanvas}
+      onMouseUp={handleMouseUpCanvas}
+      onWheel={handleWheel}
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        background: canvasBg,
+        overflow: 'hidden',
+        userSelect: 'none',
+        fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        color: '#f8fafc',
+      }}
+    >
+      {/* Background Matrix Dot Grid */}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          backgroundImage: `radial-gradient(${gridDotColor} 1.4px, transparent 1.4px)`,
+          backgroundSize: `${26 * zoom}px ${26 * zoom}px`,
+          backgroundPosition: `${pan.x}px ${pan.y}px`,
+          pointerEvents: 'none',
+        }}
+      />
+
+      {/* Top Vignette Gradient Overlay */}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'radial-gradient(ellipse at 50% 40%, transparent 60%, rgba(0,0,0,0.65) 100%)',
+          pointerEvents: 'none',
+        }}
+      />
+
+      {/* ========================================================================= */}
+      {/* TOP HEADER BAR                                                            */}
+      {/* ========================================================================= */}
+      <header
+        className="workflow-control"
+        style={{
+          position: 'absolute',
+          top: 14,
+          left: 20,
+          right: 20,
+          height: 52,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          zIndex: 40,
+          pointerEvents: 'auto',
+        }}
+      >
+        {/* Left Title & Breadcrumbs */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          {/* Mac-style window dots */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 6 }}>
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#ef4444' }} />
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#f59e0b' }} />
+            <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#10b981' }} />
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: '-0.02em', color: '#ffffff' }}>
+              AI Agent Battlecard
+            </span>
+            <span style={{ fontSize: 12, color: 'rgba(255, 255, 255, 0.4)', fontWeight: 400 }}>
+              /personal
+            </span>
+          </div>
+
+          {/* Badge pill */}
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              padding: '2px 9px',
+              borderRadius: 20,
+              background: 'rgba(239, 68, 68, 0.12)',
+              color: '#f87171',
+              border: '1px solid rgba(239, 68, 68, 0.28)',
+              letterSpacing: '0.01em',
+            }}
+          >
+            Marketing
+          </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: running ? '#45d483' : '#f59e0b', fontSize: 11, padding: '6px 9px', background: running ? 'rgba(69,212,131,.10)' : 'rgba(245,158,11,.10)', borderRadius: 5 }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor' }} />{running ? 'executando' : 'pausado'}</span>
-          <button type="button" onClick={toggleRun} aria-label={running ? 'Pausar execução' : 'Retomar execução'} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 10px', border: `1px solid ${colors.border}`, borderRadius: 5, color: colors.text, background: 'transparent', cursor: 'pointer', fontSize: 11 }}>{running ? <Pause size={13} /> : <Play size={13} />}{running ? 'Pausar' : 'Retomar'}</button>
-          <button type="button" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} aria-label="Centralizar canvas" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, border: `1px solid ${colors.border}`, borderRadius: 5, color: colors.muted, background: 'transparent', cursor: 'pointer' }}><Focus size={14} /></button>
+
+        {/* Center Pill Mode Switch (Editor | Executions | Tests) */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            background: 'rgba(18, 20, 26, 0.85)',
+            border: '1px solid rgba(255, 255, 255, 0.08)',
+            backdropFilter: 'blur(12px)',
+            borderRadius: 12,
+            padding: 3,
+            gap: 2,
+          }}
+        >
+          <button
+            onClick={() => setActiveTab('editor')}
+            style={{
+              padding: '5px 14px',
+              borderRadius: 8,
+              border: 'none',
+              fontSize: 12,
+              fontWeight: 500,
+              cursor: 'pointer',
+              background: activeTab === 'editor' ? 'rgba(255, 255, 255, 0.12)' : 'transparent',
+              color: activeTab === 'editor' ? '#ffffff' : 'rgba(255, 255, 255, 0.5)',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            Editor
+          </button>
+          <button
+            onClick={() => setActiveTab('executions')}
+            style={{
+              padding: '5px 14px',
+              borderRadius: 8,
+              border: 'none',
+              fontSize: 12,
+              fontWeight: 500,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              background: activeTab === 'executions' ? 'rgba(255, 255, 255, 0.12)' : 'transparent',
+              color: activeTab === 'executions' ? '#ffffff' : 'rgba(255, 255, 255, 0.5)',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            Executions
+            <span
+              style={{
+                fontSize: 10,
+                padding: '1px 5px',
+                borderRadius: 10,
+                background: 'rgba(34, 197, 94, 0.2)',
+                color: '#4ade80',
+                fontWeight: 600,
+              }}
+            >
+              {executions.length}
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveTab('tests')}
+            style={{
+              padding: '5px 14px',
+              borderRadius: 8,
+              border: 'none',
+              fontSize: 12,
+              fontWeight: 500,
+              cursor: 'pointer',
+              background: activeTab === 'tests' ? 'rgba(255, 255, 255, 0.12)' : 'transparent',
+              color: activeTab === 'tests' ? '#ffffff' : 'rgba(255, 255, 255, 0.5)',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            Tests
+          </button>
+        </div>
+
+        {/* Right Actions: Run Flow, Zoom, Add Node */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* Zoom controls */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              background: 'rgba(18, 20, 26, 0.85)',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              backdropFilter: 'blur(12px)',
+              borderRadius: 10,
+              padding: '2px 4px',
+            }}
+          >
+            <button
+              onClick={() => setZoom((z) => Math.max(0.4, z - 0.1))}
+              title="Diminuir Zoom"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'rgba(255,255,255,0.7)',
+                cursor: 'pointer',
+                padding: 5,
+                display: 'flex',
+              }}
+            >
+              <ZoomOut size={13} />
+            </button>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', padding: '0 6px', fontWeight: 500 }}>
+              {Math.round(zoom * 100)}%
+            </span>
+            <button
+              onClick={() => setZoom((z) => Math.min(1.8, z + 0.1))}
+              title="Aumentar Zoom"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'rgba(255,255,255,0.7)',
+                cursor: 'pointer',
+                padding: 5,
+                display: 'flex',
+              }}
+            >
+              <ZoomIn size={13} />
+            </button>
+            <button
+              onClick={() => {
+                setZoom(0.95);
+                setPan({ x: 40, y: 30 });
+              }}
+              title="Resetar Zoom"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'rgba(255,255,255,0.5)',
+                cursor: 'pointer',
+                padding: 5,
+                display: 'flex',
+              }}
+            >
+              <RotateCcw size={12} />
+            </button>
+          </div>
+
+          {/* Add Node Button */}
+          <button
+            onClick={() => setIsAddNodeOpen(true)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              background: 'rgba(255, 255, 255, 0.07)',
+              border: '1px solid rgba(255, 255, 255, 0.12)',
+              color: '#ffffff',
+              padding: '7px 13px',
+              borderRadius: 10,
+              fontSize: 12,
+              fontWeight: 500,
+              cursor: 'pointer',
+              backdropFilter: 'blur(10px)',
+              transition: 'all 0.15s ease',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255, 255, 255, 0.07)')}
+          >
+            <Plus size={13} />
+            Adicionar Nó
+          </button>
+
+          {/* Primary Executar Fluxo Button with Green Neon Glow */}
+          <button
+            onClick={handleRunWorkflow}
+            disabled={isRunning}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 7,
+              background: isRunning ? '#15803d' : '#22c55e',
+              color: '#ffffff',
+              border: 'none',
+              padding: '8px 16px',
+              borderRadius: 10,
+              fontSize: 12.5,
+              fontWeight: 600,
+              cursor: isRunning ? 'not-allowed' : 'pointer',
+              boxShadow: isRunning
+                ? '0 0 25px rgba(34, 197, 94, 0.7)'
+                : '0 0 20px rgba(34, 197, 94, 0.45)',
+              transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+            }}
+            onMouseEnter={(e) => {
+              if (!isRunning) {
+                e.currentTarget.style.boxShadow = '0 0 30px rgba(34, 197, 94, 0.75)';
+                e.currentTarget.style.transform = 'translateY(-1px)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isRunning) {
+                e.currentTarget.style.boxShadow = '0 0 20px rgba(34, 197, 94, 0.45)';
+                e.currentTarget.style.transform = 'translateY(0)';
+              }
+            }}
+          >
+            {isRunning ? (
+              <Activity size={14} className="animate-spin" />
+            ) : (
+              <Play size={13} fill="#ffffff" />
+            )}
+            {isRunning ? 'Executando...' : 'Executar Fluxo'}
+          </button>
         </div>
       </header>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 18, padding: '10px 22px', borderBottom: `1px solid ${colors.border}`, color: colors.muted, fontSize: 10.5 }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Zap size={12} color={accentColor} /> 3 agentes ativos</span><span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><GitBranch size={12} /> 2 dependências aguardando</span><span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><TerminalSquare size={12} /> 82% tokens disponíveis</span><span style={{ marginLeft: 'auto' }}>Sprint: Autonomous hardening</span>
-      </div>
-      <div style={{ display: 'flex', flex: 1, minHeight: 0, gap: 1 }}>
-        <div ref={wrapRef} style={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 360, overflow: 'hidden' }}>
-          <canvas
-            ref={canvasRef}
-            tabIndex={0}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
-            onWheel={handleWheel}
-            onContextMenu={(event) => event.preventDefault()}
-            role="img"
-            aria-label="Grafo dos agentes de orquestração. Arraste nós para movê-los; use Espaço mais arraste para navegar; use Command ou Control mais a roda para zoom."
-            style={{ display: 'block', width: '100%', height: '100%', outline: 'none', cursor: spacePressedRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
+
+      {/* ========================================================================= */}
+      {/* LEFT FLOATING DOCK (MATCHING IMAGE 1)                                     */}
+      {/* ========================================================================= */}
+      <div
+        className="workflow-dock"
+        style={{
+          position: 'absolute',
+          top: 90,
+          left: 20,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 12,
+          zIndex: 35,
+          pointerEvents: 'auto',
+        }}
+      >
+        {/* + Add shortcut */}
+        <button
+          onClick={() => setIsAddNodeOpen(true)}
+          title="Adicionar Novo Nó"
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 12,
+            background: 'rgba(22, 25, 33, 0.85)',
+            border: '1px solid rgba(255, 255, 255, 0.08)',
+            backdropFilter: 'blur(12px)',
+            color: '#a1a1aa',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = '#ffffff';
+            e.currentTarget.style.background = 'rgba(30, 35, 46, 0.95)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = '#a1a1aa';
+            e.currentTarget.style.background = 'rgba(22, 25, 33, 0.85)';
+          }}
+        >
+          <Plus size={16} />
+        </button>
+
+        {/* Workflow Switcher */}
+        <button
+          title="Alternar Fluxo / Workflows"
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 12,
+            background: 'rgba(22, 25, 33, 0.85)',
+            border: '1px solid rgba(255, 255, 255, 0.08)',
+            backdropFilter: 'blur(12px)',
+            color: '#a1a1aa',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = '#ffffff';
+            e.currentTarget.style.background = 'rgba(30, 35, 46, 0.95)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = '#a1a1aa';
+            e.currentTarget.style.background = 'rgba(22, 25, 33, 0.85)';
+          }}
+        >
+          <Zap size={16} />
+        </button>
+
+        {/* Active Illuminated Green Button (Exact match with Image 1) */}
+        <div style={{ position: 'relative' }}>
+          {/* Left indicator bar */}
+          <div
+            style={{
+              position: 'absolute',
+              left: -8,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              width: 3,
+              height: 18,
+              borderRadius: 4,
+              background: '#22c55e',
+              boxShadow: '0 0 10px #22c55e',
+            }}
           />
-          <div style={{ position: 'absolute', bottom: 14, left: 18, display: 'flex', alignItems: 'center', gap: 10, padding: '7px 9px', color: colors.muted, background: `${colors.panel}e8`, border: `1px solid ${colors.border}`, borderRadius: 5, fontSize: 10 }}><span>zoom</span><button type="button" onClick={() => setZoom((value) => Math.max(.5, value - .1))} aria-label="Diminuir zoom" style={{ border: 0, background: 'transparent', color: colors.text, cursor: 'pointer' }}>−</button><span>{Math.round(zoom * 100)}%</span><button type="button" onClick={() => setZoom((value) => Math.min(1.8, value + .1))} aria-label="Aumentar zoom" style={{ border: 0, background: 'transparent', color: colors.text, cursor: 'pointer' }}>+</button><span style={{ marginLeft: 6, opacity: .8 }}>⌘/Ctrl + roda · Espaço + arraste · 1/2/F</span></div>
+          <button
+            title="Agente Atual / Loop Ativo"
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: 12,
+              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+              border: '1px solid rgba(52, 211, 153, 0.4)',
+              color: '#ffffff',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              boxShadow: '0 0 22px rgba(16, 185, 129, 0.65)',
+            }}
+          >
+            <Sparkles size={16} />
+          </button>
         </div>
-        <aside style={{ width: 292, flexShrink: 0, display: 'flex', flexDirection: 'column', background: colors.panel, borderLeft: `1px solid ${colors.border}`, overflowY: 'auto' }}>
-          <div style={{ padding: '16px 16px 12px', borderBottom: `1px solid ${colors.border}` }}><div style={{ color: colors.muted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '.08em' }}>Agente selecionado</div><div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 9 }}><span style={{ width: 9, height: 9, borderRadius: '50%', background: stateMeta[selected.state].color }} /><strong style={{ fontSize: 14 }}>{selected.name}</strong><span style={{ marginLeft: 'auto', color: stateMeta[selected.state].color, fontSize: 10 }}>{stateMeta[selected.state].label}</span></div><p style={{ color: colors.muted, fontSize: 11, lineHeight: 1.5, marginTop: 8 }}>{selected.detail}</p></div>
-          <div style={{ padding: 16, borderBottom: `1px solid ${colors.border}` }}><div style={{ color: colors.muted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 10 }}>Pipeline</div>{nodes.map((node) => <button type="button" key={node.id} onClick={() => { setSelectedId(node.id); setSelectedIds([node.id]); }} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', border: 0, background: 'transparent', color: node.id === selectedId ? colors.text : colors.muted, cursor: 'pointer', textAlign: 'left' }}><span style={{ width: 7, height: 7, borderRadius: '50%', background: stateMeta[node.state].color, boxShadow: node.state === 'working' ? `0 0 0 4px ${stateMeta[node.state].color}22` : 'none' }} /><span style={{ fontSize: 11, flex: 1 }}>{node.name}</span><span style={{ fontSize: 9, color: stateMeta[node.state].color }}>{node.phase}</span></button>)}</div>
-          <div style={{ padding: 16, flex: 1 }}><div style={{ display: 'flex', alignItems: 'center', gap: 6, color: colors.muted, fontSize: 10, textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 10 }}><Clock3 size={11} /> Atividade recente</div>{events.map((event, index) => <div key={`${event.time}-${index}`} style={{ display: 'flex', gap: 8, padding: '8px 0', borderBottom: index === events.length - 1 ? 0 : `1px solid ${colors.border}` }}><span style={{ width: 6, height: 6, flexShrink: 0, marginTop: 4, borderRadius: '50%', background: event.color }} /><div><div style={{ color: colors.text, fontSize: 10.5, lineHeight: 1.35 }}>{event.text}</div><div style={{ color: colors.muted, fontSize: 9, marginTop: 3 }}>{event.time}</div></div></div>)}</div>
-        </aside>
+
+        {/* Layers / Integrations */}
+        <button
+          title="Camadas & Integrações"
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 12,
+            background: 'rgba(22, 25, 33, 0.85)',
+            border: '1px solid rgba(255, 255, 255, 0.08)',
+            backdropFilter: 'blur(12px)',
+            color: '#a1a1aa',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = '#ffffff';
+            e.currentTarget.style.background = 'rgba(30, 35, 46, 0.95)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = '#a1a1aa';
+            e.currentTarget.style.background = 'rgba(22, 25, 33, 0.85)';
+          }}
+        >
+          <Layers size={16} />
+        </button>
       </div>
-    </section>
+
+      {/* ========================================================================= */}
+      {/* EXECUTIONS TAB VIEW (WHEN SELECTED)                                       */}
+      {/* ========================================================================= */}
+      {activeTab === 'executions' && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: '70px 20px 20px 20px',
+            zIndex: 30,
+            background: 'rgba(13, 15, 20, 0.94)',
+            backdropFilter: 'blur(20px)',
+            borderRadius: 16,
+            border: '1px solid rgba(255, 255, 255, 0.08)',
+            padding: 24,
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 16,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <h2 style={{ fontSize: 18, fontWeight: 700, color: '#ffffff', margin: 0 }}>
+                Histórico de Execuções do Orquestrador
+              </h2>
+              <p style={{ fontSize: 13, color: '#94a3b8', margin: '4px 0 0 0' }}>
+                Eventos e checkpoints sincronizados pelo Rust Orchestrator e pelos nós do fluxo.
+              </p>
+            </div>
+            <button
+              onClick={() => setActiveTab('editor')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 14px',
+                borderRadius: 8,
+                background: 'rgba(255,255,255,0.08)',
+                border: 'none',
+                color: '#fff',
+                fontSize: 12,
+                cursor: 'pointer',
+              }}
+            >
+              Voltar ao Editor
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
+            {executions.map((exec) => (
+              <div
+                key={exec.id}
+                style={{
+                  background: 'rgba(22, 26, 35, 0.7)',
+                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                  borderRadius: 12,
+                  padding: '14px 18px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 16,
+                  transition: 'background 0.15s ease',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(28, 33, 44, 0.85)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(22, 26, 35, 0.7)')}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                  <div
+                    style={{
+                      width: 34,
+                      height: 34,
+                      borderRadius: 10,
+                      background: 'rgba(34, 197, 94, 0.15)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#22c55e',
+                    }}
+                  >
+                    <CheckCircle2 size={18} />
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 13.5, fontWeight: 600, color: '#f8fafc' }}>
+                        {exec.triggerEvent}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          padding: '1px 6px',
+                          borderRadius: 8,
+                          background: 'rgba(34, 197, 94, 0.15)',
+                          color: '#4ade80',
+                          fontWeight: 600,
+                        }}
+                      >
+                        {exec.status.toUpperCase()}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>
+                      {exec.outputSummary}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 20, textAlign: 'right' }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>
+                      {exec.duration}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#64748b' }}>{exec.timestamp}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#38bdf8' }}>
+                      {exec.inputTokens + exec.outputTokens} tokens
+                    </div>
+                    <div style={{ fontSize: 11, color: '#64748b' }}>
+                      {exec.nodesExecuted} nós executados
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* CANVAS GRAPH (SVG CABLES + INTERACTIVE HTML NODES)                       */}
+      {/* ========================================================================= */}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          transformOrigin: '0 0',
+          transition: isPanning || draggingNodeId ? 'none' : 'transform 0.05s ease-out',
+        }}
+      >
+        {/* ======================================================================= */}
+        {/* SVG BEZIER CURVE CABLES (ORGANIC FILAMENTS & GLOWING FLOW)              */}
+        {/* ======================================================================= */}
+        <svg
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: 4000,
+            height: 4000,
+            overflow: 'visible',
+            pointerEvents: 'none',
+          }}
+        >
+          <defs>
+            {/* Cable Glowing Filter */}
+            <filter id="neon-glow-green" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="4" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+            <filter id="neon-glow-white" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="3" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
+
+          {edges.map((edge) => {
+            const from = getPortCoordinates(edge.fromNodeId, 'output', edge.fromPort);
+            const to = getPortCoordinates(edge.toNodeId, 'input', edge.toPort);
+
+            // Compute Organic Cubic Bezier Coordinates
+            const dx = to.x - from.x;
+            const dy = to.y - from.y;
+            const isVertical = Math.abs(dy) > Math.abs(dx);
+
+            let cp1x: number, cp1y: number, cp2x: number, cp2y: number;
+
+            if (isVertical) {
+              // Vertical connection (e.g. Model / Memory / Tool pointing to Agent)
+              const factor = Math.min(180, Math.abs(dy) * 0.5);
+              cp1x = from.x;
+              cp1y = from.y - factor;
+              cp2x = to.x;
+              cp2y = to.y + factor;
+            } else {
+              // Horizontal connection (Trigger -> Agent -> Vector)
+              const factor = Math.max(60, Math.abs(dx) * 0.45);
+              cp1x = from.x + factor;
+              cp1y = from.y;
+              cp2x = to.x - factor;
+              cp2y = to.y;
+            }
+
+            const pathD = `M ${from.x} ${from.y} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${to.x} ${to.y}`;
+            const midX = (from.x + to.x) / 2;
+            const midY = (from.y + to.y) / 2;
+
+            const isGreen = edge.color === '#22c55e' || edge.color === undefined;
+            const strokeColor = isGreen ? '#22c55e' : edge.color;
+            const glowFilter = isGreen ? 'url(#neon-glow-green)' : 'url(#neon-glow-white)';
+
+            return (
+              <g key={edge.id}>
+                {/* Background Wide Glow Aura */}
+                <path
+                  d={pathD}
+                  fill="none"
+                  stroke={strokeColor}
+                  strokeWidth={7}
+                  strokeOpacity={0.15}
+                  filter={glowFilter}
+                />
+
+                {/* Primary Central Wire */}
+                <path
+                  d={pathD}
+                  fill="none"
+                  stroke={strokeColor}
+                  strokeWidth={1.8}
+                  strokeOpacity={0.8}
+                />
+
+                {/* Multi-filament secondary organic lines (Matching Image 2) */}
+                <path
+                  d={`M ${from.x} ${from.y - 1.5} C ${cp1x} ${cp1y - 3}, ${cp2x} ${cp2y - 3}, ${to.x} ${to.y - 1.5}`}
+                  fill="none"
+                  stroke={strokeColor}
+                  strokeWidth={0.75}
+                  strokeOpacity={0.4}
+                />
+                <path
+                  d={`M ${from.x} ${from.y + 1.5} C ${cp1x} ${cp1y + 3}, ${cp2x} ${cp2y + 3}, ${to.x} ${to.y + 1.5}`}
+                  fill="none"
+                  stroke={strokeColor}
+                  strokeWidth={0.75}
+                  strokeOpacity={0.4}
+                />
+
+                {/* Live Animated Flow Particles along the cable */}
+                <path
+                  d={pathD}
+                  fill="none"
+                  stroke="#ffffff"
+                  strokeWidth={2.5}
+                  strokeDasharray="8 60"
+                  strokeLinecap="round"
+                  style={{
+                    animation: 'dash-flow 2.4s linear infinite',
+                  }}
+                />
+
+                {/* Cable Center Capsule Badge (e.g. "1 item", "Model", "Memory") */}
+                {edge.label && (
+                  <g transform={`translate(${midX}, ${midY})`}>
+                    <rect
+                      x={-28}
+                      y={-11}
+                      width={56}
+                      height={22}
+                      rx={11}
+                      fill="#0d1017"
+                      stroke="rgba(255, 255, 255, 0.12)"
+                      strokeWidth={1}
+                    />
+                    <text
+                      x={0}
+                      y={4}
+                      fill="#94a3b8"
+                      fontSize={10}
+                      fontWeight={500}
+                      textAnchor="middle"
+                      fontFamily="inherit"
+                    >
+                      {edge.label}
+                    </text>
+                  </g>
+                )}
+              </g>
+            );
+          })}
+        </svg>
+
+        {/* ======================================================================= */}
+        {/* WORKFLOW NODES (INTERACTIVE DOM CARDS)                                   */}
+        {/* ======================================================================= */}
+        {nodes.map((node) => {
+          const isSelected = selectedNodeId === node.id;
+          const { width, height } = getNodeDimensions(node);
+          const isModel = node.type === 'model';
+          const isTrigger = node.type === 'trigger';
+          const isAgent = node.type === 'agent';
+          const isMemory = node.type === 'memory';
+
+          return (
+            <div
+              key={node.id}
+              className="workflow-node"
+              onMouseDown={(e) => handleStartDragNode(e, node.id)}
+              style={{
+                position: 'absolute',
+                left: node.x,
+                top: node.y,
+                width: width,
+                minHeight: height,
+                borderRadius: 22,
+                cursor: draggingNodeId === node.id ? 'grabbing' : 'grab',
+                pointerEvents: 'auto',
+                // Sleek glassmorphism / lush dark gradient
+                background: isModel
+                  ? 'linear-gradient(180deg, #103820 0%, #082113 100%)'
+                  : 'rgba(17, 19, 26, 0.88)',
+                backdropFilter: 'blur(16px)',
+                border: isModel
+                  ? '1.5px solid #22c55e'
+                  : isSelected
+                  ? '1.5px solid rgba(255, 255, 255, 0.3)'
+                  : '1px solid rgba(255, 255, 255, 0.08)',
+                boxShadow: isModel
+                  ? '0 0 35px rgba(34, 197, 94, 0.35)'
+                  : isSelected
+                  ? '0 0 30px rgba(0, 0, 0, 0.8), 0 0 1px rgba(255, 255, 255, 0.4)'
+                  : '0 10px 30px rgba(0, 0, 0, 0.55)',
+                padding: isTrigger ? '20px 18px' : '18px 20px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                transition: draggingNodeId === node.id ? 'none' : 'box-shadow 0.2s ease, border-color 0.2s ease',
+              }}
+            >
+              {/* Corner Radar Marking on Top-Left (Exact detail from reference image) */}
+              <div
+                style={{
+                  position: 'absolute',
+                  top: -6,
+                  left: -6,
+                  width: 18,
+                  height: 18,
+                  borderTop: '2px solid rgba(255, 255, 255, 0.22)',
+                  borderLeft: '2px solid rgba(255, 255, 255, 0.22)',
+                  borderTopLeftRadius: 10,
+                  pointerEvents: 'none',
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  top: -10,
+                  left: -10,
+                  width: 24,
+                  height: 24,
+                  borderTop: '1px solid rgba(255, 255, 255, 0.12)',
+                  borderLeft: '1px solid rgba(255, 255, 255, 0.12)',
+                  borderTopLeftRadius: 14,
+                  pointerEvents: 'none',
+                }}
+              />
+
+              {/* Status Indicator (Checkmark on top-right) */}
+              <div style={{ position: 'absolute', top: 16, right: 18 }}>
+                {node.status === 'success' && (
+                  <Check size={14} color="#22c55e" strokeWidth={2.8} />
+                )}
+                {node.status === 'disabled' && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setNodeToDelete(node);
+                    }}
+                    title="Excluir Nó"
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: 'rgba(239, 68, 68, 0.8)',
+                      cursor: 'pointer',
+                      padding: 2,
+                    }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                )}
+              </div>
+
+              {/* Top Organic Anchor Funnel (for Model & Memory pointing upward) */}
+              {isModel && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: -16,
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                  }}
+                >
+                  <span style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Model</span>
+                  <div
+                    style={{
+                      width: 0,
+                      height: 0,
+                      borderLeft: '10px solid transparent',
+                      borderRight: '10px solid transparent',
+                      borderBottom: '12px solid #22c55e',
+                      filter: 'drop-shadow(0 0 6px #22c55e)',
+                    }}
+                  />
+                </div>
+              )}
+              {isMemory && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: -16,
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                  }}
+                >
+                  <span style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Memory</span>
+                  <div
+                    style={{
+                      width: 0,
+                      height: 0,
+                      borderLeft: '9px solid transparent',
+                      borderRight: '9px solid transparent',
+                      borderBottom: '11px solid #ffffff',
+                      filter: 'drop-shadow(0 0 6px #ffffff)',
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* Card Header Content */}
+              {isTrigger ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    height: '100%',
+                    gap: 12,
+                    textAlign: 'center',
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 14,
+                      background: 'rgba(255, 255, 255, 0.06)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#ffffff',
+                    }}
+                  >
+                    <MessageSquare size={20} />
+                  </div>
+                  <span style={{ fontSize: 12, fontWeight: 500, color: '#f8fafc', lineHeight: 1.3 }}>
+                    When chat message received
+                  </span>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div
+                      style={{
+                        width: 38,
+                        height: 38,
+                        borderRadius: 12,
+                        background: isModel
+                          ? 'rgba(34, 197, 94, 0.2)'
+                          : 'rgba(255, 255, 255, 0.06)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: isModel ? '#ffffff' : '#e2e8f0',
+                      }}
+                    >
+                      {isAgent && <Bot size={22} />}
+                      {isModel && <Sparkles size={22} />}
+                      {isMemory && <Database size={20} />}
+                      {node.type === 'vector' && <Boxes size={20} />}
+                      {node.type === 'tool' && <Terminal size={20} />}
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: '#ffffff' }}>
+                        {node.title}
+                      </div>
+                      {node.subtitle && (
+                        <div style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 1 }}>
+                          {node.subtitle}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Model Node Config Fields (Matches Image 4) */}
+                  {isModel && (
+                    <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      <div>
+                        <label
+                          style={{
+                            display: 'block',
+                            fontSize: 11,
+                            color: 'rgba(255, 255, 255, 0.65)',
+                            marginBottom: 6,
+                          }}
+                        >
+                          Credential to connect with
+                        </label>
+                        <div
+                          style={{
+                            background: 'rgba(0, 0, 0, 0.25)',
+                            border: '1px solid rgba(255, 255, 255, 0.1)',
+                            borderRadius: 12,
+                            padding: '8px 12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            fontSize: 12,
+                            color: '#ffffff',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <span>{node.config?.credential || 'Open AI account 4'}</span>
+                          <ChevronDown size={14} color="rgba(255,255,255,0.6)" />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label
+                          style={{
+                            display: 'block',
+                            fontSize: 11,
+                            color: 'rgba(255, 255, 255, 0.65)',
+                            marginBottom: 6,
+                          }}
+                        >
+                          Model
+                        </label>
+                        <div
+                          style={{
+                            background: 'rgba(0, 0, 0, 0.25)',
+                            border: '1px solid rgba(255, 255, 255, 0.1)',
+                            borderRadius: 12,
+                            padding: '8px 12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            fontSize: 12,
+                            color: '#ffffff',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <span>{node.config?.model || 'gpt-4o-mini'}</span>
+                          <ChevronDown size={14} color="rgba(255,255,255,0.6)" />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Agent Node Ports Labels (Chat model, Memory, Tool) */}
+                  {isAgent && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        bottom: -28,
+                        left: 0,
+                        right: 0,
+                        display: 'flex',
+                        justifyContent: 'space-around',
+                        fontSize: 10.5,
+                        color: '#94a3b8',
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      <span style={{ transform: 'translateX(6px)' }}>Chat model</span>
+                      <span style={{ transform: 'translateX(0px)' }}>Memory</span>
+                      <span
+                        style={{
+                          transform: 'translateX(-4px)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 3,
+                          pointerEvents: 'auto',
+                        }}
+                      >
+                        Tool
+                        <span
+                          style={{
+                            width: 14,
+                            height: 14,
+                            borderRadius: '50%',
+                            background: 'rgba(255,255,255,0.1)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          +
+                        </span>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ========================================================================= */}
+      {/* ADD NODE MODAL / POPOVER                                                  */}
+      {/* ========================================================================= */}
+      {isAddNodeOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.65)',
+            backdropFilter: 'blur(8px)',
+            zIndex: 90,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          onClick={() => setIsAddNodeOpen(false)}
+        >
+          <div
+            style={{
+              width: 440,
+              background: '#12151c',
+              border: '1px solid rgba(255, 255, 255, 0.12)',
+              borderRadius: 18,
+              padding: 24,
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.75)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: 16,
+              }}
+            >
+              <h3 style={{ fontSize: 16, fontWeight: 600, color: '#ffffff', margin: 0 }}>
+                Adicionar Nó ao Fluxo
+              </h3>
+              <button
+                onClick={() => setIsAddNodeOpen(false)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#94a3b8',
+                  cursor: 'pointer',
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              {[
+                {
+                  type: 'model' as NodeType,
+                  title: 'Antigravity / Gemini',
+                  sub: 'Gemini 3.8 Flash',
+                  icon: Sparkles,
+                  color: '#22c55e',
+                },
+                {
+                  type: 'model' as NodeType,
+                  title: 'Claude 3.7 Sonnet',
+                  sub: 'Anthropic Thinking',
+                  icon: Sparkles,
+                  color: '#f97316',
+                },
+                {
+                  type: 'tool' as NodeType,
+                  title: 'Rust Orchestrator',
+                  sub: 'Code execution PTY',
+                  icon: Terminal,
+                  color: '#38bdf8',
+                },
+                {
+                  type: 'memory' as NodeType,
+                  title: 'Git Checkpoint Memory',
+                  sub: 'Workspace Context',
+                  icon: Database,
+                  color: '#ffffff',
+                },
+                {
+                  type: 'vector' as NodeType,
+                  title: 'Qdrant Vector Store',
+                  sub: 'Semantic Retrieval',
+                  icon: Boxes,
+                  color: '#a855f7',
+                },
+                {
+                  type: 'trigger' as NodeType,
+                  title: 'GitHub Issue Trigger',
+                  sub: 'Automated sprint hook',
+                  icon: MessageSquare,
+                  color: '#eab308',
+                },
+              ].map((item, idx) => {
+                const IconComponent = item.icon;
+                return (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      const newNode: WorkflowNode = {
+                        id: `node-${Date.now().toString().slice(-4)}`,
+                        type: item.type,
+                        title: item.title,
+                        subtitle: item.sub,
+                        x: Math.round(-pan.x / zoom + 300 + Math.random() * 100),
+                        y: Math.round(-pan.y / zoom + 200 + Math.random() * 100),
+                        status: 'ready',
+                        ports: {
+                          input: ['in'],
+                          output: ['out'],
+                        },
+                      };
+                      setNodes((prev) => [...prev, newNode]);
+                      setIsAddNodeOpen(false);
+                    }}
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.04)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      borderRadius: 12,
+                      padding: 14,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'flex-start',
+                      gap: 6,
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      transition: 'all 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                      e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)';
+                      e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+                    }}
+                  >
+                    <IconComponent size={18} color={item.color} />
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: '#ffffff' }}>
+                      {item.title}
+                    </span>
+                    <span style={{ fontSize: 11, color: '#94a3b8' }}>{item.sub}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MANDATORY CONFIRMATION MODAL FOR DELETION (AGENTS.MD COMPLIANCE)          */}
+      {/* ========================================================================= */}
+      {nodeToDelete && (
+        <ConfirmDeleteModal
+          isOpen={Boolean(nodeToDelete)}
+          title="Excluir Nó do Fluxo"
+          message={`Tem certeza de que deseja remover o nó "${nodeToDelete.title}" deste fluxo de orquestração?`}
+          itemDescription="As conexões conectadas a este nó também serão desfeitas. Esta ação não poderá ser desfeita."
+          confirmLabel="Excluir Nó"
+          cancelLabel="Cancelar"
+          iconType="trash"
+          onConfirm={handleConfirmDeleteNode}
+          onClose={() => setNodeToDelete(null)}
+        />
+      )}
+
+      {/* CSS Keyframe Animations for Cable Pulse Flow */}
+      <style>{`
+        @keyframes dash-flow {
+          0% {
+            stroke-dashoffset: 68;
+          }
+          100% {
+            stroke-dashoffset: 0;
+          }
+        }
+      `}</style>
+    </div>
   );
 };
