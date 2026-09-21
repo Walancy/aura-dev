@@ -400,6 +400,7 @@ where
                     "exec",
                     "--json",
                     "--dangerously-bypass-approvals-and-sandbox",
+                    "--skip-git-repo-check",
                     "--cd",
                 ]
                 .map(String::from),
