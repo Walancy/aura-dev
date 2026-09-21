@@ -9,7 +9,7 @@
     "build:ui": "vite build",
     "build": "npm run build:orchestrator && tsc -p tsconfig.electron.json && vite build",
     "dev:ui": "vite --port 5185",
-    "start": "tsc -p tsconfig.electron.json && electron dist-electron/main.js"
+    "start": "npm run build:orchestrator && tsc -p tsconfig.electron.json && electron dist-electron/main.js"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
