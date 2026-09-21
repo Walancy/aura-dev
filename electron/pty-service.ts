@@ -220,9 +220,15 @@ export class NativePtyService {
       args = ['-l', '-c', 'ollama run llama3'];
       title = 'Ollama CLI';
     } else if (type === 'codex') {
-      const homeCodex = '/opt/homebrew/bin/codex';
-      if (fs.existsSync(homeCodex)) {
-        file = homeCodex;
+      const codexCandidates = [
+        path.join(userHome, '.local/bin/codex'),
+        path.join(userHome, '.bun/bin/codex'),
+        '/opt/homebrew/bin/codex',
+        '/usr/local/bin/codex',
+      ];
+      const codexPath = codexCandidates.find((candidate) => fs.existsSync(candidate));
+      if (codexPath) {
+        file = codexPath;
         args = [];
       } else {
         file = '/bin/zsh';

@@ -94,7 +94,11 @@ export class OrchestratorService {
     const binary = this.binaryCandidates().find((candidate) => fs.existsSync(candidate));
     const command = binary ? binary : 'cargo';
     const args = binary ? [] : ['run', '--quiet', '--manifest-path', this.manifestPath];
-    const env = { ...process.env, TERM: 'xterm-256color' };
+    const env = {
+      ...process.env,
+      TERM: 'xterm-256color',
+      PATH: this.providerPath(),
+    };
 
     return new Promise((resolve) => {
       const child = spawn(command, args, { cwd: path.dirname(this.manifestPath), env, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -133,6 +137,25 @@ export class OrchestratorService {
       });
       child.stdin.end(`${JSON.stringify(payload)}\n`);
     });
+  }
+
+  private providerPath(): string {
+    const home = process.env.HOME || '';
+    const candidates = [
+      path.join(home, '.local/bin'),
+      path.join(home, '.bun/bin'),
+      path.join(home, '.cargo/bin'),
+      '/opt/homebrew/bin',
+      '/opt/homebrew/sbin',
+      '/usr/local/bin',
+      '/usr/local/sbin',
+      '/usr/bin',
+      '/bin',
+      '/usr/sbin',
+      '/sbin',
+      process.env.PATH || '',
+    ];
+    return Array.from(new Set(candidates.filter(Boolean))).join(path.delimiter);
   }
 }
 

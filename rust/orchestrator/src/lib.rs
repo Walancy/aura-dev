@@ -306,8 +306,26 @@ pub fn discover() -> Vec<ProviderStatus> {
 }
 
 fn find_binary(binaries: &[&str]) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
+    let mut directories: Vec<PathBuf> = std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .collect();
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = PathBuf::from(home);
+        directories.extend([
+            home.join(".local/bin"),
+            home.join(".bun/bin"),
+            home.join(".cargo/bin"),
+        ]);
+    }
+    directories.extend([
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+    ]);
+    directories
+        .into_iter()
         .flat_map(|dir| binaries.iter().map(move |binary| dir.join(binary)))
         .find(|candidate| candidate.is_file())
 }
@@ -377,7 +395,19 @@ where
             args.push(request.request.clone());
         }
         ProviderId::Codex => {
-            args.extend(["exec", "--json"].map(String::from));
+            args.extend(
+                [
+                    "exec",
+                    "--json",
+                    "--dangerously-bypass-approvals-and-sandbox",
+                    "--cd",
+                ]
+                .map(String::from),
+            );
+            args.push(request.cwd.display().to_string());
+            for directory in &request.additional_dirs {
+                args.extend(["--add-dir".into(), directory.display().to_string()]);
+            }
             if let Some(model) = &request.model {
                 args.extend(["-m".into(), model.clone()]);
             }
@@ -590,6 +620,16 @@ fn terminal_text(value: &Value) -> Option<String> {
             return Some(text.to_owned());
         }
     }
+    if event_type == "item.completed" {
+        let item = value.get("item")?;
+        if matches!(item.get("type").and_then(Value::as_str), Some("agent_message" | "assistant_message")) {
+            for key in ["text", "message", "output"] {
+                if let Some(text) = item.get(key).and_then(Value::as_str) {
+                    return Some(text.to_owned());
+                }
+            }
+        }
+    }
     None
 }
 
@@ -618,6 +658,20 @@ mod tests {
         .unwrap();
         assert_eq!(result.text, "done");
         assert_eq!(result.events, 2);
+    }
+
+    #[test]
+    fn parses_codex_agent_message_item() {
+        let result = parse_jsonl(
+            ProviderId::Codex,
+            br#"{"type":"thread.started","thread_id":"thread_1"}
+{"type":"item.completed","item":{"type":"agent_message","text":"STATUS: PASS"}}
+{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":3}}"#,
+        )
+        .unwrap();
+        assert_eq!(result.text, "STATUS: PASS");
+        assert_eq!(result.input_tokens, Some(10));
+        assert_eq!(result.output_tokens, Some(3));
     }
 
     fn task(id: &str, dependencies: &[&str]) -> ScheduledTask {
