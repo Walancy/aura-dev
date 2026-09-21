@@ -50,6 +50,13 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+input,
+textarea,
+select,
+button {
+  font-family: inherit;
+}
+
 /* Scrollbars */
 ::-webkit-scrollbar {
   width: 4px;
@@ -201,3 +208,26 @@ body.resizing-row {
   display: inline-block;
   animation: thinkingBounce 1.2s infinite ease-in-out both;
 }
+
+@keyframes projectGridFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes projectDetailsSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+

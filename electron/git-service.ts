@@ -138,6 +138,92 @@ export class GitService {
   }
 
   /**
+   * Scans a base folder (or common code directories) up to depth 2,
+   * discovering all local git repositories and resolving their remote URLs.
+   */
+  public scanLocalProjects(baseDir?: string): Array<{
+    dir: string;
+    name: string;
+    repoFullName?: string;
+    remoteUrl?: string;
+  }> {
+    const candidates: string[] = [];
+    if (baseDir && fs.existsSync(baseDir)) {
+      candidates.push(baseDir);
+    }
+    const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+    if (homeDir) {
+      const docsCodes = path.join(homeDir, 'Documents', 'codes');
+      if (fs.existsSync(docsCodes) && !candidates.includes(docsCodes)) {
+        candidates.push(docsCodes);
+      }
+      const devDir = path.join(homeDir, 'Development');
+      if (fs.existsSync(devDir) && !candidates.includes(devDir)) {
+        candidates.push(devDir);
+      }
+    }
+
+    const discovered: Array<{
+      dir: string;
+      name: string;
+      repoFullName?: string;
+      remoteUrl?: string;
+    }> = [];
+    const visitedDirs = new Set<string>();
+
+    const checkDir = (dirPath: string) => {
+      if (visitedDirs.has(dirPath)) return;
+      visitedDirs.add(dirPath);
+
+      if (fs.existsSync(path.join(dirPath, '.git'))) {
+        let remoteUrl = '';
+        let repoFullName = '';
+        try {
+          remoteUrl = execSync('git config --get remote.origin.url', {
+            cwd: dirPath,
+            encoding: 'utf8',
+            timeout: 2000,
+          }).trim();
+          if (remoteUrl) {
+            const match = remoteUrl.match(/[:/]([^/:]+\/[^/:]+?)(?:\.git)?$/);
+            if (match) repoFullName = match[1];
+          }
+        } catch {}
+
+        discovered.push({
+          dir: dirPath,
+          name: path.basename(dirPath),
+          repoFullName: repoFullName || undefined,
+          remoteUrl: remoteUrl || undefined,
+        });
+      }
+    };
+
+    for (const root of candidates) {
+      checkDir(root);
+      try {
+        const firstLevel = fs.readdirSync(root, { withFileTypes: true });
+        for (const f1 of firstLevel) {
+          if (!f1.isDirectory() || f1.name.startsWith('.') || f1.name === 'node_modules') continue;
+          const p1 = path.join(root, f1.name);
+          checkDir(p1);
+
+          try {
+            const secondLevel = fs.readdirSync(p1, { withFileTypes: true });
+            for (const f2 of secondLevel) {
+              if (!f2.isDirectory() || f2.name.startsWith('.') || f2.name === 'node_modules') continue;
+              const p2 = path.join(p1, f2.name);
+              checkDir(p2);
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+
+    return discovered;
+  }
+
+  /**
    * Fetches Git & GitHub information for a workspace and active file.
    */
   public async getWorkspaceGitInfo(
@@ -474,6 +560,40 @@ export class GitService {
     } catch (err: any) {
       return { success: false, error: err.message };
     }
+  }
+
+  public async cloneRepo(
+    repoUrl: string,
+    targetParentDir: string
+  ): Promise<{ success: boolean; repoPath?: string; error?: string }> {
+    if (!repoUrl) {
+      return { success: false, error: 'URL do repositório é obrigatória' };
+    }
+    if (!targetParentDir || !fs.existsSync(targetParentDir)) {
+      return { success: false, error: 'Diretório de destino inválido ou inexistente' };
+    }
+
+    const cleanUrl = repoUrl.trim();
+    const parts = cleanUrl.split('/');
+    let folderName = parts[parts.length - 1] || 'repository';
+    if (folderName.endsWith('.git')) {
+      folderName = folderName.slice(0, -4);
+    }
+    const repoPath = path.join(targetParentDir, folderName);
+
+    if (fs.existsSync(repoPath)) {
+      return { success: true, repoPath, error: 'Repositório já existe na pasta de destino' };
+    }
+
+    return new Promise((resolve) => {
+      exec(`git clone "${cleanUrl}"`, { cwd: targetParentDir, timeout: 180000 }, (error, _stdout, stderr) => {
+        if (error) {
+          resolve({ success: false, error: stderr || error.message });
+        } else {
+          resolve({ success: true, repoPath });
+        }
+      });
+    });
   }
 }
 

@@ -1,7 +1,8 @@
 import React from 'react';
+import { CircleDot, CheckCircle2, Check, MoreHorizontal } from 'lucide-react';
 
-// Lightweight, dependency-free Markdown -> JSX renderer for the "Open Preview" panel.
-export function renderInlineMarkdown(text: string, keyPrefix: string, accentColor: string): React.ReactNode[] {
+// Lightweight, dependency-free Markdown -> JSX renderer
+export function renderInlineMarkdown(text: string, keyPrefix: string, accentColor: string, isEffectiveDark?: boolean): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
   const pattern = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(\[[^\]]+\]\([^)]+\))/g;
   let lastIndex = 0;
@@ -14,13 +15,20 @@ export function renderInlineMarkdown(text: string, keyPrefix: string, accentColo
       parts.push(
         <code
           key={`${keyPrefix}-${idx++}`}
-          style={{ background: 'rgba(127,127,127,0.18)', padding: '1px 5px', borderRadius: 4, fontFamily: 'JetBrains Mono, Menlo, monospace', fontSize: '0.9em' }}
+          style={{
+            background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+            border: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'}`,
+            padding: '2px 6px',
+            borderRadius: 6,
+            fontFamily: 'JetBrains Mono, Menlo, monospace',
+            fontSize: '0.88em',
+          }}
         >
           {token.slice(1, -1)}
         </code>
       );
     } else if (token.startsWith('**')) {
-      parts.push(<strong key={`${keyPrefix}-${idx++}`}>{token.slice(2, -2)}</strong>);
+      parts.push(<strong key={`${keyPrefix}-${idx++}`} style={{ fontWeight: 600 }}>{token.slice(2, -2)}</strong>);
     } else if (token.startsWith('[')) {
       const m = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
       parts.push(
@@ -43,7 +51,15 @@ export function renderInlineMarkdown(text: string, keyPrefix: string, accentColo
 
 export function renderMarkdownPreview(
   md: string,
-  opts: { textPrimary: string; textSecondary: string; textMuted: string; border: string; accentColor: string; isEffectiveDark: boolean }
+  opts: {
+    textPrimary: string;
+    textSecondary: string;
+    textMuted: string;
+    border: string;
+    accentColor: string;
+    isEffectiveDark: boolean;
+    onToggleTask?: (lineIndex: number, completed: boolean) => void;
+  }
 ): React.ReactNode {
   if (!md || !md.trim()) {
     return <div style={{ color: opts.textMuted, fontSize: 13, fontStyle: 'italic', padding: 20 }}>Arquivo Markdown vazio.</div>;
@@ -93,7 +109,7 @@ export function renderMarkdownPreview(
 
     // Horizontal rule
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
-      blocks.push(<hr key={key++} style={{ border: 'none', borderTop: `1px solid ${opts.border}`, margin: '10px 0' }} />);
+      blocks.push(<hr key={key++} style={{ border: 'none', borderTop: `1px solid ${opts.border}`, margin: '14px 0' }} />);
       i++;
       continue;
     }
@@ -110,14 +126,14 @@ export function renderMarkdownPreview(
             key: key++,
             style: {
               fontSize: sizes[level],
-              fontWeight: 700,
+              fontWeight: 600,
               color: opts.textPrimary,
-              margin: level <= 2 ? '16px 0 8px' : '10px 0 4px',
+              margin: level <= 2 ? '20px 0 10px' : '14px 0 6px',
               borderBottom: level <= 2 ? `1px solid ${opts.border}` : 'none',
               paddingBottom: level <= 2 ? 6 : 0,
             },
           },
-          renderInlineMarkdown(headerMatch[2], `h${key}`, opts.accentColor)
+          renderInlineMarkdown(headerMatch[2], `h${key}`, opts.accentColor, opts.isEffectiveDark)
         )
       );
       i++;
@@ -143,9 +159,129 @@ export function renderMarkdownPreview(
           }}
         >
           {quoteLines.map((ql, qi) => (
-            <div key={qi}>{renderInlineMarkdown(ql, `bq${key}-${qi}`, opts.accentColor)}</div>
+            <div key={qi}>{renderInlineMarkdown(ql, `bq${key}-${qi}`, opts.accentColor, opts.isEffectiveDark)}</div>
           ))}
         </blockquote>
+      );
+      continue;
+    }
+
+    // Task list / Checklist items: - [ ] or - [x]
+    if (/^[-*]\s+\[([ xX])\]/.test(trimmed)) {
+      const taskItems: Array<{ lineIndex: number; completed: boolean; text: string }> = [];
+      while (i < lines.length && /^[-*]\s+\[([ xX])\]/.test(lines[i].trim())) {
+        const lineIdx = i;
+        const m = lines[i].trim().match(/^[-*]\s+\[([ xX])\]\s*(.*)$/);
+        if (m) {
+          taskItems.push({
+            lineIndex: lineIdx,
+            completed: m[1].toLowerCase() === 'x',
+            text: m[2],
+          });
+        }
+        i++;
+      }
+
+      blocks.push(
+        <div key={key++} style={{ display: 'flex', flexDirection: 'column', gap: 2, margin: '6px 0' }}>
+          {taskItems.map((item, itemIdx) => {
+            const isIssueRef = /#\d+/.test(item.text);
+            return (
+              <div
+                key={itemIdx}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '6px 8px',
+                  borderRadius: 6,
+                  transition: 'background 0.12s ease',
+                  cursor: opts.onToggleTask ? 'pointer' : 'default',
+                  position: 'relative',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = opts.isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)';
+                  const btn = e.currentTarget.querySelector('.task-row-more') as HTMLElement;
+                  if (btn) btn.style.opacity = '1';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent';
+                  const btn = e.currentTarget.querySelector('.task-row-more') as HTMLElement;
+                  if (btn) btn.style.opacity = '0';
+                }}
+              >
+                {/* Checkbox */}
+                <div
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    opts.onToggleTask?.(item.lineIndex, item.completed);
+                  }}
+                  style={{
+                    width: 15,
+                    height: 15,
+                    borderRadius: 4,
+                    border: item.completed
+                      ? 'none'
+                      : `1px solid ${opts.isEffectiveDark ? '#484f58' : '#d0d7de'}`,
+                    background: item.completed
+                      ? (opts.accentColor || '#1f6feb')
+                      : 'transparent',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  {item.completed && <Check size={11} color="#ffffff" strokeWidth={3} />}
+                </div>
+
+                {/* Status icon (CircleDot for open, CheckCircle2 for closed) */}
+                {isIssueRef && (
+                  <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                    {item.completed ? (
+                      <CheckCircle2 size={14} color="#8957e5" strokeWidth={2.2} />
+                    ) : (
+                      <CircleDot size={14} color="#3fb950" strokeWidth={2.2} />
+                    )}
+                  </div>
+                )}
+
+                {/* Text Content */}
+                <div
+                  onClick={() => opts.onToggleTask?.(item.lineIndex, item.completed)}
+                  style={{
+                    fontSize: 13.5,
+                    color: item.completed ? opts.textSecondary : opts.textPrimary,
+                    textDecoration: item.completed ? 'line-through' : 'none',
+                    lineHeight: 1.4,
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  {renderInlineMarkdown(item.text, `task-${key}-${itemIdx}`, opts.accentColor, opts.isEffectiveDark)}
+                </div>
+
+                {/* Action button */}
+                <div
+                  className="task-row-more"
+                  style={{
+                    opacity: 0,
+                    transition: 'opacity 0.15s ease',
+                    color: opts.textSecondary,
+                    padding: '2px 4px',
+                    borderRadius: 4,
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  <MoreHorizontal size={14} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
       );
       continue;
     }
@@ -153,15 +289,15 @@ export function renderMarkdownPreview(
     // Unordered list (consume consecutive items)
     if (/^[-*]\s+/.test(trimmed)) {
       const items: string[] = [];
-      while (i < lines.length && /^[-*]\s+/.test(lines[i].trim())) {
+      while (i < lines.length && /^[-*]\s+/.test(lines[i].trim()) && !/^[-*]\s+\[([ xX])\]/.test(lines[i].trim())) {
         items.push(lines[i].trim().replace(/^[-*]\s+/, ''));
         i++;
       }
       blocks.push(
         <ul key={key++} style={{ margin: '4px 0', paddingLeft: 22, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {items.map((it, ii) => (
-            <li key={ii} style={{ color: opts.textPrimary, fontSize: 13 }}>
-              {renderInlineMarkdown(it, `ul${key}-${ii}`, opts.accentColor)}
+            <li key={ii} style={{ color: opts.textPrimary, fontSize: 13.5 }}>
+              {renderInlineMarkdown(it, `ul${key}-${ii}`, opts.accentColor, opts.isEffectiveDark)}
             </li>
           ))}
         </ul>
@@ -179,8 +315,8 @@ export function renderMarkdownPreview(
       blocks.push(
         <ol key={key++} style={{ margin: '4px 0', paddingLeft: 22, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {items.map((it, ii) => (
-            <li key={ii} style={{ color: opts.textPrimary, fontSize: 13 }}>
-              {renderInlineMarkdown(it, `ol${key}-${ii}`, opts.accentColor)}
+            <li key={ii} style={{ color: opts.textPrimary, fontSize: 13.5 }}>
+              {renderInlineMarkdown(it, `ol${key}-${ii}`, opts.accentColor, opts.isEffectiveDark)}
             </li>
           ))}
         </ol>
@@ -197,13 +333,21 @@ export function renderMarkdownPreview(
 
     // Paragraph (consume consecutive non-blank plain lines)
     const paraLines: string[] = [];
-    while (i < lines.length && lines[i].trim() && !/^(#{1,4})\s+/.test(lines[i].trim()) && !/^[-*]\s+/.test(lines[i].trim()) && !/^\d+\.\s+/.test(lines[i].trim()) && !lines[i].trim().startsWith('>') && !lines[i].trim().startsWith('```')) {
+    while (
+      i < lines.length &&
+      lines[i].trim() &&
+      !/^(#{1,4})\s+/.test(lines[i].trim()) &&
+      !/^[-*]\s+/.test(lines[i].trim()) &&
+      !/^\d+\.\s+/.test(lines[i].trim()) &&
+      !lines[i].trim().startsWith('>') &&
+      !lines[i].trim().startsWith('```')
+    ) {
       paraLines.push(lines[i].trim());
       i++;
     }
     blocks.push(
-      <p key={key++} style={{ color: opts.textPrimary, margin: 0, fontSize: 13, lineHeight: 1.6 }}>
-        {renderInlineMarkdown(paraLines.join(' '), `p${key}`, opts.accentColor)}
+      <p key={key++} style={{ color: opts.textPrimary, margin: '4px 0', fontSize: 14, lineHeight: 1.6 }}>
+        {renderInlineMarkdown(paraLines.join(' '), `p${key}`, opts.accentColor, opts.isEffectiveDark)}
       </p>
     );
   }

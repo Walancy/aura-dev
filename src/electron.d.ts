@@ -2,6 +2,8 @@ export interface ElectronAPI {
   windowState?: {
     isFullscreen: () => Promise<boolean>;
     onFullscreenChange: (callback: (isFullscreen: boolean) => void) => () => void;
+    setAlwaysOnTop?: (flag: boolean) => Promise<boolean>;
+    isAlwaysOnTop?: () => Promise<boolean>;
   };
   pty: {
     create: (id: string, type: string, cwd: string, cols: number, rows: number, accentColor?: string) => Promise<{ success: boolean; id?: string; title?: string; pid?: number; error?: string }>;
@@ -86,8 +88,10 @@ export interface ElectronAPI {
       lastCommitHash?: string;
     }>;
     listRepos?: (workspacePath: string) => Promise<Array<{ dir: string; name: string }>>;
+    scanLocalProjects?: (baseDir?: string) => Promise<Array<{ dir: string; name: string; repoFullName?: string; remoteUrl?: string }>>;
     getIssues?: (workspacePath: string) => Promise<Array<any>>;
     createIssue?: (workspacePath: string, title: string, body?: string) => Promise<{ success: boolean; issue?: any; error?: string }>;
+    clone?: (repoUrl: string, targetDir: string) => Promise<{ success: boolean; repoPath?: string; error?: string }>;
   };
   github?: {
     isAuthenticated: () => Promise<{ authenticated: boolean }>;
@@ -111,7 +115,10 @@ export interface ElectronAPI {
       input: { title?: string; body?: string; state?: 'open' | 'closed'; labels?: string[]; ensureLabels?: Array<{ name: string; color: string }>; milestone?: number | null },
     ) => Promise<{ success: boolean; issue?: any; error?: string }>;
     deleteIssue: (nodeId: string) => Promise<{ success: boolean; error?: string }>;
+    fetchIssueComments: (owner: string, repo: string, issueNumber: number) => Promise<{ success: boolean; comments?: any[]; error?: string }>;
+    addIssueComment: (owner: string, repo: string, issueNumber: number, body: string) => Promise<{ success: boolean; comment?: any; error?: string }>;
     createMilestone: (owner: string, repo: string, input: { title: string; description?: string; due_on?: string }) => Promise<{ success: boolean; milestone?: any; error?: string }>;
+    updateMilestone: (owner: string, repo: string, milestoneNumber: number, input: { title?: string; description?: string; due_on?: string; state?: 'open' | 'closed' }) => Promise<{ success: boolean; milestone?: any; error?: string }>;
     onLoginResult: (callback: (result: { success: boolean; user?: { login: string; name: string | null; avatarUrl: string; htmlUrl: string }; error?: string }) => void) => () => void;
   };
 }

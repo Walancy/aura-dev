@@ -354,6 +354,28 @@ class GithubAuthService {
     return fallback.json();
   }
 
+  public async fetchIssueComments(owner: string, repo: string, issueNumber: number): Promise<any[]> {
+    const res = await this.authedFetch(
+      `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/comments?per_page=100`,
+      { headers: { Accept: 'application/vnd.github+json' } },
+    );
+    if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
+    return res.json();
+  }
+
+  public async addIssueComment(owner: string, repo: string, issueNumber: number, body: string): Promise<any> {
+    const res = await this.authedFetch(
+      `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/comments`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
+        body: JSON.stringify({ body }),
+      },
+    );
+    if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
+    return res.json();
+  }
+
   public async createMilestone(
     owner: string,
     repo: string,
@@ -361,6 +383,21 @@ class GithubAuthService {
   ): Promise<any> {
     const res = await this.authedFetch(`https://api.github.com/repos/${owner}/${repo}/milestones`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
+    return res.json();
+  }
+
+  public async updateMilestone(
+    owner: string,
+    repo: string,
+    milestoneNumber: number,
+    input: { title?: string; description?: string; due_on?: string; state?: 'open' | 'closed' },
+  ): Promise<any> {
+    const res = await this.authedFetch(`https://api.github.com/repos/${owner}/${repo}/milestones/${milestoneNumber}`, {
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
       body: JSON.stringify(input),
     });

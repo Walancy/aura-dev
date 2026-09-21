@@ -68,6 +68,7 @@ import { PromptEditor, PromptEditorRef } from './components/PromptEditor';
 import { SidebarPanels } from './components/ide/SidebarPanels';
 import { ExtensionDetailsView } from './components/ide/ExtensionDetailsView';
 import { ProjectsSchedulerView } from './components/ProjectsSchedulerView';
+import { ProjectWorkspaceSelector } from './components/ide/ProjectWorkspaceSelector';
 import {
   CodiconFiles,
   CodiconSearch,
@@ -404,6 +405,7 @@ export const App: React.FC = () => {
   const [activeModels, setActiveModels] = useState<Record<string, { currentModel: string; currentModelId: string; models: Array<{ id: string; label: string; tag?: string; description?: string }> }>>({});
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [quotaTooltipOpen, setQuotaTooltipOpen] = useState(false);
+  const [headerQuotaTooltipOpen, setHeaderQuotaTooltipOpen] = useState(false);
   const [aiQuotas, setAiQuotas] = useState<Record<string, AiQuotaConfig>>(DEFAULT_AI_QUOTAS);
 
   // Helper to dynamically reposition/flip popups to avoid edge clipping or overflow
@@ -807,6 +809,7 @@ export const App: React.FC = () => {
   const providerDropdownRef = useRef<HTMLDivElement>(null);
   const modelDropdownRef = useRef<HTMLDivElement>(null);
   const quotaTooltipRef = useRef<HTMLDivElement>(null);
+  const headerQuotaTooltipRef = useRef<HTMLDivElement>(null);
 
   // Switch AI Provider and create a new chat session if messages exist
   const handleSwitchAiProvider = (newProviderId: string) => {
@@ -1384,6 +1387,9 @@ export const App: React.FC = () => {
   // Settings & Theme Styling State (VS Code & Antigravity Style)
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
+  const [isHeaderAiMenuOpen, setIsHeaderAiMenuOpen] = useState(false);
+  const [headerAiSubmenuProvider, setHeaderAiSubmenuProvider] = useState<string | null>(null);
+  const headerAiMenuRef = useRef<HTMLDivElement>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [settingsActiveTab, setSettingsActiveTab] = useState<'general' | 'appearance' | 'editor' | 'terminal' | 'ai' | 'shortcuts' | 'extensions'>('general');
 
@@ -3531,18 +3537,35 @@ export const App: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, [isQuickOpenOpen]);
 
-  // Close Settings Menu on outside click
+  // Close Settings Menu & Header AI Menu on outside click / escape
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
       if (settingsMenuRef.current && !settingsMenuRef.current.contains(e.target as Node)) {
         setIsSettingsMenuOpen(false);
       }
+      if (headerAiMenuRef.current && !headerAiMenuRef.current.contains(e.target as Node)) {
+        setIsHeaderAiMenuOpen(false);
+        setHeaderAiSubmenuProvider(null);
+      }
     };
-    if (isSettingsMenuOpen) {
-      document.addEventListener('mousedown', handleOutsideClick);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (isSettingsMenuOpen) setIsSettingsMenuOpen(false);
+        if (isHeaderAiMenuOpen) {
+          setIsHeaderAiMenuOpen(false);
+          setHeaderAiSubmenuProvider(null);
+        }
+      }
+    };
+    if (isSettingsMenuOpen || isHeaderAiMenuOpen) {
+      document.addEventListener('mousedown', handleOutsideClick, true);
+      document.addEventListener('keydown', handleKeyDown);
     }
-    return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, [isSettingsMenuOpen]);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick, true);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isSettingsMenuOpen, isHeaderAiMenuOpen]);
 
   // Apply accent color and theme to document & native terminal
   useEffect(() => {
@@ -4113,18 +4136,21 @@ export const App: React.FC = () => {
     };
   }, [refreshAiQuotas]);
 
-  // Click outside listener for Quota Tooltip popup
+  // Click outside listener for Quota Tooltip popups
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (quotaTooltipRef.current && !quotaTooltipRef.current.contains(e.target as Node)) {
         setQuotaTooltipOpen(false);
       }
+      if (headerQuotaTooltipRef.current && !headerQuotaTooltipRef.current.contains(e.target as Node)) {
+        setHeaderQuotaTooltipOpen(false);
+      }
     };
-    if (quotaTooltipOpen) {
+    if (quotaTooltipOpen || headerQuotaTooltipOpen) {
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
-  }, [quotaTooltipOpen]);
+  }, [quotaTooltipOpen, headerQuotaTooltipOpen]);
 
   // Dialog Handlers (3 Dots Menu)
   const handleOpenFolderDialog = async () => {
@@ -5537,7 +5563,564 @@ ${prompt || userDisplayPrompt}`;
             </>
           )}
 
-          {/* Settings Gear Button & Dropdown Menu */}
+          {/* Header AI Group (2 Porcentagens de Uso + Seletor de IA) */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, WebkitAppRegion: 'no-drag' as any }}>
+            {/* Header AI Usage Quota Badge */}
+            {(() => {
+              const currentQuota = aiQuotas[selectedAiProvider] || aiQuotas.claude || DEFAULT_AI_QUOTAS.claude;
+              return (
+                <div
+                  ref={headerQuotaTooltipRef}
+                  onClick={() => {
+                    setHeaderQuotaTooltipOpen((prev) => !prev);
+                    refreshAiQuotas();
+                  }}
+                  onMouseEnter={() => setHeaderQuotaTooltipOpen(true)}
+                  onMouseLeave={() => setHeaderQuotaTooltipOpen(false)}
+                  title="Clique para ver detalhes de uso e reset das quotas de IA"
+                  style={{
+                    position: 'relative',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'center',
+                    alignItems: 'flex-end',
+                    lineHeight: 1.05,
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                    flexShrink: 0,
+                    padding: '2px 4px',
+                    borderRadius: 4,
+                    transition: 'background 0.12s ease',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 3 }}>
+                    <span
+                      style={{
+                        fontSize: 8,
+                        fontWeight: 700,
+                        color: accentColor,
+                        fontFamily: 'Poppins, -apple-system, sans-serif',
+                      }}
+                      title="Diário"
+                    >
+                      D
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 9.5,
+                        fontWeight: 700,
+                        color: currentQuota.dailyPercent === 0 ? '#ef4444' : currentQuota.dailyPercent <= 15 ? '#f97316' : (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary),
+                        fontFamily: 'Poppins, -apple-system, sans-serif',
+                        letterSpacing: '-0.02em',
+                      }}
+                    >
+                      {currentQuota.dailyPercent}%
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 3 }}>
+                    <span
+                      style={{
+                        fontSize: 8,
+                        fontWeight: 700,
+                        color: accentColor,
+                        fontFamily: 'Poppins, -apple-system, sans-serif',
+                      }}
+                      title="Semanal"
+                    >
+                      S
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 9.5,
+                        fontWeight: 700,
+                        color: currentQuota.weeklyPercent === 0 ? '#ef4444' : currentQuota.weeklyPercent <= 15 ? '#f97316' : (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary),
+                        fontFamily: 'Poppins, -apple-system, sans-serif',
+                        letterSpacing: '-0.02em',
+                      }}
+                    >
+                      {currentQuota.weeklyPercent}%
+                    </span>
+                  </div>
+
+                  {/* Header Quota Tooltip Popup */}
+                  {headerQuotaTooltipOpen && (
+                    <div
+                      ref={clampPopupToViewport}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        position: 'absolute',
+                        top: 32,
+                        right: 0,
+                        background: isEffectiveDark ? '#1a1a1c' : themeTokens.bgCardSecondary,
+                        border: `1px solid ${themeTokens.border}`,
+                        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.65)',
+                        borderRadius: 10,
+                        padding: '12px 14px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 10,
+                        zIndex: 999999,
+                        minWidth: 295,
+                        width: 'max-content',
+                        maxWidth: 340,
+                        boxSizing: 'border-box',
+                        pointerEvents: 'auto',
+                      }}
+                    >
+                      {/* Header */}
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          borderBottom: `1px solid ${themeTokens.border}`,
+                          paddingBottom: 8,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                          {selectedAiProvider === 'claude' && <ClaudeIcon size={15} />}
+                          {selectedAiProvider === 'antigravity' && <AntigravityIcon size={15} />}
+                          {selectedAiProvider === 'codex' && <CodexIcon size={15} />}
+                          {selectedAiProvider === 'gemini' && <GeminiIcon size={15} />}
+                          {selectedAiProvider === 'ollama' && <OllamaIcon size={15} />}
+                          <span style={{ fontSize: 12, fontWeight: 600, color: themeTokens.textPrimary, fontFamily: 'Poppins, sans-serif' }}>
+                            {AI_PROVIDERS.find((p) => p.id === selectedAiProvider)?.name || 'IA'}
+                          </span>
+                        </div>
+                        <span
+                          style={{
+                            fontSize: 9.5,
+                            color: themeTokens.textSecondary,
+                            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
+                            padding: '2px 7px',
+                            borderRadius: 4,
+                            fontWeight: 500,
+                            fontFamily: 'Poppins, sans-serif',
+                          }}
+                        >
+                          Quota Restante
+                        </span>
+                      </div>
+
+                      {/* Daily Quota */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, fontFamily: 'Poppins, sans-serif' }}>
+                          <span style={{ color: themeTokens.textSecondary }}>Limite diário:</span>
+                          <span style={{ color: themeTokens.textPrimary, fontWeight: 700 }}>
+                            {currentQuota.dailyPercent}% disponível
+                          </span>
+                        </div>
+                        {/* Accent progress bar */}
+                        <div style={{ width: '100%', height: 4, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)', borderRadius: 2, overflow: 'hidden' }}>
+                          <div
+                            style={{
+                              width: `${Math.min(100, Math.max(0, currentQuota.dailyPercent))}%`,
+                              height: '100%',
+                              background: accentColor,
+                              borderRadius: 2,
+                              transition: 'width 0.3s ease',
+                            }}
+                          />
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 10.5,
+                            color: themeTokens.textSecondary,
+                            marginTop: 2,
+                            fontFamily: 'Poppins, sans-serif',
+                            whiteSpace: 'normal',
+                            wordBreak: 'break-word',
+                            lineHeight: '14px',
+                          }}
+                        >
+                          Reset diário: {formatQuotaResetDisplay(currentQuota.dailyResetTime, currentQuota.dailyResetDay || 'Hoje', false)}
+                        </div>
+                      </div>
+
+                      {/* Weekly Quota */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, fontFamily: 'Poppins, sans-serif' }}>
+                          <span style={{ color: themeTokens.textSecondary }}>Limite semanal:</span>
+                          <span style={{ color: themeTokens.textPrimary, fontWeight: 700 }}>
+                            {currentQuota.weeklyPercent}% disponível
+                          </span>
+                        </div>
+                        {/* Accent progress bar */}
+                        <div style={{ width: '100%', height: 4, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)', borderRadius: 2, overflow: 'hidden' }}>
+                          <div
+                            style={{
+                              width: `${Math.min(100, Math.max(0, currentQuota.weeklyPercent))}%`,
+                              height: '100%',
+                              background: accentColor,
+                              borderRadius: 2,
+                              transition: 'width 0.3s ease',
+                            }}
+                          />
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 10.5,
+                            color: themeTokens.textSecondary,
+                            marginTop: 2,
+                            fontFamily: 'Poppins, sans-serif',
+                            whiteSpace: 'normal',
+                            wordBreak: 'break-word',
+                            lineHeight: '14px',
+                          }}
+                        >
+                          Reset semanal: {formatQuotaResetDisplay(currentQuota.weeklyResetTime, currentQuota.weeklyResetDay || 'Sexta-feira', true)}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Header AI Selector Button & Dropdown */}
+            <div style={{ position: 'relative' }} ref={headerAiMenuRef}>
+            <div
+              onClick={() => {
+                setIsHeaderAiMenuOpen((prev) => {
+                  const next = !prev;
+                  if (next) setHeaderAiSubmenuProvider(selectedAiProvider);
+                  else setHeaderAiSubmenuProvider(null);
+                  return next;
+                });
+              }}
+              style={{
+                width: 24,
+                height: 24,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                borderRadius: 4,
+                transition: 'all 0.15s ease',
+                background: isHeaderAiMenuOpen ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)') : 'transparent',
+              }}
+              onMouseEnter={(e) => {
+                if (!isHeaderAiMenuOpen) {
+                  e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!isHeaderAiMenuOpen) {
+                  e.currentTarget.style.background = 'transparent';
+                }
+              }}
+              title={`IA Ativa: ${AI_PROVIDERS.find((p) => p.id === selectedAiProvider)?.name || 'Claude'} · ${selectedModel || 'Padrão'} (Clique para alternar)`}
+            >
+              {renderAiIcon(selectedAiProvider, 17)}
+            </div>
+
+            {/* Header AI Dropdown Menu */}
+            {isHeaderAiMenuOpen && (
+              <>
+                <div
+                  style={{
+                    position: 'fixed',
+                    inset: 0,
+                    zIndex: 999998,
+                    background: 'transparent',
+                    cursor: 'default',
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsHeaderAiMenuOpen(false);
+                    setHeaderAiSubmenuProvider(null);
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setIsHeaderAiMenuOpen(false);
+                    setHeaderAiSubmenuProvider(null);
+                  }}
+                />
+                <div
+                  ref={clampPopupToViewport}
+                style={{
+                  position: 'absolute',
+                  top: 32,
+                  right: 0,
+                  background: isEffectiveDark ? '#1a1a1c' : themeTokens.bgCardSecondary,
+                  borderRadius: 10,
+                  border: `1px solid ${themeTokens.border}`,
+                  boxShadow: '0 12px 32px rgba(0, 0, 0, 0.65)',
+                  padding: '6px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 2,
+                  zIndex: 999999,
+                  minWidth: 265,
+                  userSelect: 'none',
+                }}
+              >
+                <div style={{ padding: '4px 8px 6px', fontSize: 10.5, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: `1px solid ${themeTokens.border}`, marginBottom: 2 }}>
+                  Selecionar IA & Modelo
+                </div>
+                {AI_PROVIDERS.map((p) => {
+                  const isInstalled = installedClis[p.id] ?? true;
+                  const isSelected = selectedAiProvider === p.id;
+                  const isSubmenuOpen = headerAiSubmenuProvider === p.id;
+                  const dynamicList = activeModels[p.id]?.models || [];
+                  const fallbackList = (p.models || []).map((mName) => ({
+                    id: mName,
+                    label: mName,
+                  }));
+                  const modelList = dynamicList.length > 0 ? dynamicList : fallbackList;
+                  const currentModelName = activeModels[p.id]?.currentModel || (isSelected ? selectedModel : p.models?.[0]);
+                  const pQuota = aiQuotas[p.id] || DEFAULT_AI_QUOTAS[p.id] || { dailyPercent: 100, weeklyPercent: 100 };
+
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => {
+                        if (!isInstalled) {
+                          handleInstallCliInTerminal(p);
+                          return;
+                        }
+                        handleSwitchAiProvider(p.id);
+                        if (modelList.length > 0) {
+                          setHeaderAiSubmenuProvider(p.id);
+                        } else {
+                          setIsHeaderAiMenuOpen(false);
+                          setHeaderAiSubmenuProvider(null);
+                        }
+                      }}
+                      onMouseEnter={() => {
+                        if (isInstalled && modelList.length > 0) {
+                          setHeaderAiSubmenuProvider(p.id);
+                        }
+                      }}
+                      style={{
+                        padding: '7px 10px',
+                        color: themeTokens.textPrimary,
+                        fontSize: 12,
+                        fontFamily: 'Poppins, sans-serif',
+                        fontWeight: isSelected ? '600' : '400',
+                        cursor: 'pointer',
+                        borderRadius: 6,
+                        whiteSpace: 'nowrap',
+                        background: isSelected
+                          ? hexToRgba(accentColor, 0.16)
+                          : isSubmenuOpen
+                          ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)')
+                          : 'transparent',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        opacity: isInstalled ? 1 : 0.75,
+                        transition: 'background 0.12s ease',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                        {/* Porcentagem de uso à esquerda do ícone */}
+                        <div
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'flex-end',
+                            justifyContent: 'center',
+                            lineHeight: 1.05,
+                            flexShrink: 0,
+                            minWidth: 32,
+                            userSelect: 'none',
+                          }}
+                          title={`Disponível: ${pQuota.dailyPercent}% diário · ${pQuota.weeklyPercent}% semanal`}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 2 }}>
+                            <span style={{ fontSize: 7.5, fontWeight: 700, color: accentColor }}>D</span>
+                            <span
+                              style={{
+                                fontSize: 8.5,
+                                fontWeight: 600,
+                                color: pQuota.dailyPercent === 0 ? '#ef4444' : pQuota.dailyPercent <= 15 ? '#f97316' : (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary),
+                                letterSpacing: '-0.02em',
+                              }}
+                            >
+                              {pQuota.dailyPercent}%
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 2 }}>
+                            <span style={{ fontSize: 7.5, fontWeight: 700, color: accentColor }}>S</span>
+                            <span
+                              style={{
+                                fontSize: 8.5,
+                                fontWeight: 600,
+                                color: pQuota.weeklyPercent === 0 ? '#ef4444' : pQuota.weeklyPercent <= 15 ? '#f97316' : (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary),
+                                letterSpacing: '-0.02em',
+                              }}
+                            >
+                              {pQuota.weeklyPercent}%
+                            </span>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                          {renderAiIcon(p.id, 16)}
+                        </div>
+                        <span style={{ color: isSelected ? accentColor : themeTokens.textPrimary }}>{p.name}</span>
+                        {isSelected && currentModelName && (
+                          <span style={{ fontSize: 11, color: themeTokens.textSecondary, opacity: 0.75, maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            • {currentModelName}
+                          </span>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                        {isInstalled && (
+                          <>
+                            {isSelected && (
+                              <Check size={13} color={accentColor} />
+                            )}
+                            {modelList.length > 0 && (
+                              <ChevronRight size={13} color={themeTokens.textSecondary} />
+                            )}
+                          </>
+                        )}
+
+                        {!isInstalled && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleInstallCliInTerminal(p);
+                            }}
+                            title={`Instalar no terminal (${p.installGuide})`}
+                            style={{
+                              fontSize: 10,
+                              padding: '2px 7px',
+                              borderRadius: 4,
+                              background: accentColor,
+                              border: 'none',
+                              color: '#fff',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              cursor: 'pointer',
+                              fontWeight: 500,
+                            }}
+                          >
+                            <SquareTerminal size={10} />
+                            <span>Instalar</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Submenu de Modelos ancorado à esquerda do menu de IA do header */}
+                {(() => {
+                  if (!headerAiSubmenuProvider) return null;
+                  const targetProvider = AI_PROVIDERS.find((p) => p.id === headerAiSubmenuProvider);
+                  if (!targetProvider) return null;
+                  const isTargetInstalled = installedClis[targetProvider.id] ?? true;
+                  if (!isTargetInstalled) return null;
+
+                  const dynamicList = activeModels[targetProvider.id]?.models || [];
+                  const fallbackList = (targetProvider.models || []).map((mName) => ({
+                    id: mName,
+                    label: mName,
+                  }));
+                  const modelList = dynamicList.length > 0 ? dynamicList : fallbackList;
+                  if (modelList.length === 0) return null;
+
+                  return (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        right: 'calc(100% + 4px)',
+                        top: 0,
+                        background: isEffectiveDark ? '#1a1a1c' : themeTokens.bgCardSecondary,
+                        borderRadius: 10,
+                        border: `1px solid ${themeTokens.border}`,
+                        boxShadow: '0 12px 32px rgba(0, 0, 0, 0.65)',
+                        padding: 6,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 2,
+                        zIndex: 1000000,
+                        minWidth: 170,
+                        maxWidth: 260,
+                        maxHeight: 'min(420px, calc(100vh - 60px))',
+                        overflowY: 'auto',
+                      }}
+                      className="no-scrollbar"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {/* Ponte invisível que conecta o submenu de modelos ao menu pai */}
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: -10,
+                          bottom: -10,
+                          right: -14,
+                          width: 20,
+                          background: 'transparent',
+                          pointerEvents: 'auto',
+                        }}
+                      />
+                      <div style={{ padding: '3px 8px 5px', fontSize: 10, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: `1px solid ${themeTokens.border}`, marginBottom: 3 }}>
+                        Modelos {targetProvider.name}
+                      </div>
+                      {modelList.map((m) => {
+                        const currentId = activeModels[targetProvider.id]?.currentModelId;
+                        const currentLabel = activeModels[targetProvider.id]?.currentModel;
+                        const isCurrent = (targetProvider.id === selectedAiProvider) && (currentId === m.id || currentLabel === m.label || (selectedModel && (selectedModel === m.id || selectedModel === m.label)));
+
+                        return (
+                          <div
+                            key={m.id}
+                            onClick={() => {
+                              handleSelectModel(m, targetProvider.id);
+                              setIsHeaderAiMenuOpen(false);
+                              setHeaderAiSubmenuProvider(null);
+                            }}
+                            style={{
+                              padding: '6px 10px',
+                              borderRadius: 6,
+                              cursor: 'pointer',
+                              background: isCurrent ? hexToRgba(accentColor, 0.16) : 'transparent',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 8,
+                              transition: 'background 0.12s ease',
+                              whiteSpace: 'nowrap',
+                            }}
+                            onMouseEnter={(e) => {
+                              if (!isCurrent) e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)';
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isCurrent) e.currentTarget.style.background = 'transparent';
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: 12,
+                                fontWeight: isCurrent ? 600 : 400,
+                                color: isCurrent ? accentColor : themeTokens.textPrimary,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                              }}
+                            >
+                              {m.label}
+                            </span>
+                            {isCurrent && <Check size={12} color={accentColor} style={{ flexShrink: 0 }} />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Settings Gear Button & Dropdown Menu */}
           <div style={{ position: 'relative' }} ref={settingsMenuRef}>
               <div
                 onClick={() => setIsSettingsMenuOpen((prev) => !prev)}
@@ -5561,8 +6144,26 @@ ${prompt || userDisplayPrompt}`;
 
               {/* Settings Dropdown Menu */}
               {isSettingsMenuOpen && (
-                <div
-                  ref={clampPopupToViewport}
+                <>
+                  <div
+                    style={{
+                      position: 'fixed',
+                      inset: 0,
+                      zIndex: 999998,
+                      background: 'transparent',
+                      cursor: 'default',
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsSettingsMenuOpen(false);
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setIsSettingsMenuOpen(false);
+                    }}
+                  />
+                  <div
+                    ref={clampPopupToViewport}
                   style={{
                     position: 'absolute',
                     top: 32,
@@ -5880,6 +6481,7 @@ ${prompt || userDisplayPrompt}`;
                     <span>Customize Layout</span>
                   </div>
                 </div>
+                </>
               )}
             </div>
 
@@ -6468,8 +7070,28 @@ ${prompt || userDisplayPrompt}`;
                   />
                 ) : (
                   <>
-                {/* Top Explorer Card */}
-                <div
+                    <ProjectWorkspaceSelector
+                      workspacePath={workspacePath}
+                      onSelectWorkspace={async (newPath, repoName) => {
+                        setWorkspacePath(newPath);
+                        setTerminalCwd(newPath);
+                        localStorage.setItem('ide_workspace_path', newPath);
+                        localStorage.setItem('ide_terminal_cwd', newPath);
+                        await loadWorkspaceTree(newPath);
+                        setToastMessage(`Projeto ativo: ${repoName || newPath.split('/').pop()}`);
+                        setTimeout(() => setToastMessage(null), 3000);
+                      }}
+                      themeTokens={themeTokens}
+                      isEffectiveDark={isEffectiveDark}
+                      accentColor={accentColor}
+                      onToast={(msg) => {
+                        setToastMessage(msg);
+                        setTimeout(() => setToastMessage(null), 3000);
+                      }}
+                    />
+
+                    {/* Top Explorer Card */}
+                    <div
                   style={{
                     width: '100%',
                     flex: '1 1 0',
@@ -12316,6 +12938,13 @@ ${prompt || userDisplayPrompt}`;
           accentColor={accentColor}
           isEffectiveDark={isEffectiveDark}
           themeTokens={themeTokens}
+          selectedAiProvider={selectedAiProvider}
+          selectedModel={selectedModel}
+          onSelectAiProvider={handleSwitchAiProvider}
+          onSelectModel={handleSelectModel}
+          installedClis={installedClis}
+          activeModels={activeModels}
+          onInstallAiCli={handleInstallCliInTerminal}
         />
       ) : (
         /* Empty container for other tabs as requested */

@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     maximize: () => ipcRenderer.send('window:maximize'),
     close: () => ipcRenderer.send('window:close'),
     setTheme: (theme: 'dark' | 'light') => ipcRenderer.send('theme:set', theme),
+    setAlwaysOnTop: (flag: boolean) => ipcRenderer.invoke('window:setAlwaysOnTop', flag),
+    isAlwaysOnTop: () => ipcRenderer.invoke('window:isAlwaysOnTop'),
   },
 
   // PTY Methods
@@ -164,10 +166,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('git:getWorkspaceGitInfo', { workspacePath, activeFilePath }),
     listRepos: (workspacePath: string) =>
       ipcRenderer.invoke('git:listRepos', { workspacePath }),
+    scanLocalProjects: (baseDir?: string) =>
+      ipcRenderer.invoke('git:scanLocalProjects', { baseDir }),
     getIssues: (workspacePath: string) =>
       ipcRenderer.invoke('git:getIssues', { workspacePath }),
     createIssue: (workspacePath: string, title: string, body?: string) =>
       ipcRenderer.invoke('git:createIssue', { workspacePath, title, body }),
+    clone: (repoUrl: string, targetDir: string) =>
+      ipcRenderer.invoke('git:clone', { repoUrl, targetDir }),
   },
 
   // GitHub OAuth Device Flow login
@@ -194,8 +200,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       input: { title?: string; body?: string; state?: 'open' | 'closed'; labels?: string[]; ensureLabels?: Array<{ name: string; color: string }>; milestone?: number | null },
     ) => ipcRenderer.invoke('github:updateIssue', { owner, repo, issueNumber, ...input }),
     deleteIssue: (nodeId: string) => ipcRenderer.invoke('github:deleteIssue', { nodeId }),
+    fetchIssueComments: (owner: string, repo: string, issueNumber: number) =>
+      ipcRenderer.invoke('github:fetchIssueComments', { owner, repo, issueNumber }),
+    addIssueComment: (owner: string, repo: string, issueNumber: number, body: string) =>
+      ipcRenderer.invoke('github:addIssueComment', { owner, repo, issueNumber, body }),
     createMilestone: (owner: string, repo: string, input: { title: string; description?: string; due_on?: string }) =>
       ipcRenderer.invoke('github:createMilestone', { owner, repo, ...input }),
+    updateMilestone: (owner: string, repo: string, milestoneNumber: number, input: { title?: string; description?: string; due_on?: string; state?: 'open' | 'closed' }) =>
+      ipcRenderer.invoke('github:updateMilestone', { owner, repo, milestoneNumber, ...input }),
     onLoginResult: (callback: (result: { success: boolean; user?: any; error?: string }) => void) => {
       const handler = (_event: any, result: any) => callback(result);
       ipcRenderer.on('github:loginResult', handler);

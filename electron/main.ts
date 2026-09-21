@@ -117,6 +117,14 @@ function createWindow() {
     }
   });
 
+  ipcMain.handle('window:setAlwaysOnTop', (_event, flag: boolean) => {
+    mainWindow?.setAlwaysOnTop(flag, 'floating');
+    return mainWindow?.isAlwaysOnTop() || false;
+  });
+  ipcMain.handle('window:isAlwaysOnTop', () => {
+    return mainWindow?.isAlwaysOnTop() || false;
+  });
+
   // Load from Vite dev server if active, otherwise load compiled dist/index.html
   const indexPath = path.join(__dirname, '../dist/index.html');
   const http = require('http');
@@ -489,8 +497,34 @@ ipcMain.handle('ai:runCli', async (_event, {
 
   const args: string[] = [];
   if (cliCmd === 'claude') {
-    if (model && !prompt.startsWith('/')) {
-      args.push('--model', model);
+    let resolvedModel = model?.trim() || '';
+    if (resolvedModel) {
+      const lower = resolvedModel.toLowerCase();
+      if (lower === 'default' || lower === 'padrão') {
+        resolvedModel = '';
+      } else if (lower.includes('sonnet') && lower.includes('1m')) {
+        resolvedModel = 'sonnet[1m]';
+      } else if (lower.includes('opus') && lower.includes('1m')) {
+        resolvedModel = 'opus[1m]';
+      } else if (lower.includes('fable') && lower.includes('1m')) {
+        resolvedModel = 'fable[1m]';
+      } else if (lower.includes('opus') && lower.includes('plan')) {
+        resolvedModel = 'opusplan';
+      } else if (lower.includes('sonnet')) {
+        resolvedModel = 'sonnet';
+      } else if (lower.includes('opus')) {
+        resolvedModel = 'opus';
+      } else if (lower.includes('haiku')) {
+        resolvedModel = 'haiku';
+      } else if (lower.includes('fable')) {
+        resolvedModel = 'fable';
+      } else if (lower.includes('best')) {
+        resolvedModel = 'best';
+      }
+    }
+
+    if (resolvedModel && !prompt.startsWith('/')) {
+      args.push('--model', resolvedModel);
     }
     args.push('--dangerously-skip-permissions');
     args.push('-p', prompt);
@@ -591,6 +625,10 @@ ipcMain.handle('git:listRepos', async (_event, { workspacePath }: { workspacePat
   return gitService.listWorkspaceRepos(workspacePath);
 });
 
+ipcMain.handle('git:scanLocalProjects', async (_event, { baseDir }: { baseDir?: string } = {}) => {
+  return gitService.scanLocalProjects(baseDir);
+});
+
 ipcMain.handle('git:getIssues', async (_event, { workspacePath }: { workspacePath: string }) => {
   const gitDir = gitService.resolveGitDir(workspacePath);
   if (!gitDir) return [];
@@ -615,6 +653,10 @@ ipcMain.handle('git:createIssue', async (_event, { workspacePath, title, body }:
   } catch {}
   if (!repoFullName) return { success: false, error: 'Remote GitHub não configurado' };
   return gitService.createGitHubIssue(repoFullName, title, body);
+});
+
+ipcMain.handle('git:clone', async (_event, { repoUrl, targetDir }: { repoUrl: string; targetDir: string }) => {
+  return gitService.cloneRepo(repoUrl, targetDir);
 });
 
 // Native macOS Dialogs (Abrir Arquivo / Pasta)
@@ -1018,6 +1060,24 @@ ipcMain.handle('github:deleteIssue', async (_event, { nodeId }: { nodeId: string
   }
 });
 
+ipcMain.handle('github:fetchIssueComments', async (_event, { owner, repo, issueNumber }: { owner: string; repo: string; issueNumber: number }) => {
+  try {
+    const comments = await githubAuthService.fetchIssueComments(owner, repo, issueNumber);
+    return { success: true, comments };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:addIssueComment', async (_event, { owner, repo, issueNumber, body }: { owner: string; repo: string; issueNumber: number; body: string }) => {
+  try {
+    const comment = await githubAuthService.addIssueComment(owner, repo, issueNumber, body);
+    return { success: true, comment };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMain.handle(
   'github:createMilestone',
   async (
@@ -1026,6 +1086,29 @@ ipcMain.handle(
   ) => {
     try {
       const milestone = await githubAuthService.createMilestone(owner, repo, { title, description, due_on });
+      return { success: true, milestone };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  },
+);
+
+ipcMain.handle(
+  'github:updateMilestone',
+  async (
+    _event,
+    {
+      owner,
+      repo,
+      milestoneNumber,
+      title,
+      description,
+      due_on,
+      state,
+    }: { owner: string; repo: string; milestoneNumber: number; title?: string; description?: string; due_on?: string; state?: 'open' | 'closed' },
+  ) => {
+    try {
+      const milestone = await githubAuthService.updateMilestone(owner, repo, milestoneNumber, { title, description, due_on, state });
       return { success: true, milestone };
     } catch (err: any) {
       return { success: false, error: err.message };
