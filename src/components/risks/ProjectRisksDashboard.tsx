@@ -1454,28 +1454,122 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                   gap: 8,
                 }}
               >
-                {strategicRisks.map((risk) => (
-                  <div
-                    key={risk.id}
-                    style={{
-                      background: cardBg,
-                      borderRadius: 8,
-                      border: 'none',
-                      padding: '10px 12px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 8,
-                      boxShadow: isEffectiveDark ? 'none' : '0 1px 2px rgba(0,0,0,0.03)',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 12.5, fontWeight: 400, color: textPrimary }}>{risk.title}</span>
+                {strategicRisks.map((risk) => {
+                  const getImpactBadge = (impact?: string) => {
+                    switch (impact) {
+                      case 'high':
+                        return {
+                          label: 'Impacto: Alto',
+                          bg: isEffectiveDark ? 'rgba(239, 68, 68, 0.15)' : 'rgba(239, 68, 68, 0.1)',
+                          color: isEffectiveDark ? '#f87171' : '#dc2626',
+                        };
+                      case 'medium':
+                        return {
+                          label: 'Impacto: Médio',
+                          bg: isEffectiveDark ? 'rgba(245, 158, 11, 0.15)' : 'rgba(245, 158, 11, 0.1)',
+                          color: isEffectiveDark ? '#fbbf24' : '#d97706',
+                        };
+                      case 'low':
+                      default:
+                        return {
+                          label: 'Impacto: Baixo',
+                          bg: isEffectiveDark ? 'rgba(34, 197, 94, 0.15)' : 'rgba(34, 197, 94, 0.1)',
+                          color: isEffectiveDark ? '#4ade80' : '#16a34a',
+                        };
+                    }
+                  };
+
+                  const getProbabilityBadge = (prob?: string) => {
+                    switch (prob) {
+                      case 'high':
+                        return {
+                          label: 'Probabilidade: Alta',
+                          bg: isEffectiveDark ? 'rgba(239, 68, 68, 0.15)' : 'rgba(239, 68, 68, 0.1)',
+                          color: isEffectiveDark ? '#f87171' : '#dc2626',
+                        };
+                      case 'medium':
+                        return {
+                          label: 'Probabilidade: Média',
+                          bg: isEffectiveDark ? 'rgba(245, 158, 11, 0.15)' : 'rgba(245, 158, 11, 0.1)',
+                          color: isEffectiveDark ? '#fbbf24' : '#d97706',
+                        };
+                      case 'low':
+                      default:
+                        return {
+                          label: 'Probabilidade: Baixa',
+                          bg: isEffectiveDark ? 'rgba(34, 197, 94, 0.15)' : 'rgba(34, 197, 94, 0.1)',
+                          color: isEffectiveDark ? '#4ade80' : '#16a34a',
+                        };
+                    }
+                  };
+
+                  const impactBadge = getImpactBadge(risk.impact);
+                  const probBadge = getProbabilityBadge(risk.probability);
+
+                  return (
+                    <div
+                      key={risk.id}
+                      style={{
+                        background: cardBg,
+                        borderRadius: 8,
+                        border: 'none',
+                        padding: '10px 12px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
+                        boxShadow: isEffectiveDark ? 'none' : '0 1px 2px rgba(0,0,0,0.03)',
+                      }}
+                    >
+                      {/* Top Header: Title + Action Buttons */}
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: textPrimary, lineHeight: 1.35 }}>
+                          {risk.title}
+                        </span>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingStrategicRisk(risk);
+                              setIsModalOpen(true);
+                            }}
+                            style={{
+                              background: isEffectiveDark ? '#242424' : '#f1f5f9',
+                              border: 'none',
+                              color: textSecondary,
+                              cursor: 'pointer',
+                              padding: 4,
+                              borderRadius: 4,
+                              display: 'flex',
+                            }}
+                          >
+                            <Edit2 size={12} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeletingRisk(risk)}
+                            style={{
+                              background: isEffectiveDark ? 'rgba(239, 68, 68, 0.12)' : 'rgba(239, 68, 68, 0.1)',
+                              border: 'none',
+                              color: '#ef4444',
+                              cursor: 'pointer',
+                              padding: 4,
+                              borderRadius: 4,
+                              display: 'flex',
+                            }}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Tags Row: Placed below the Title */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         <span
                           style={{
-                            fontSize: 9,
+                            fontSize: 9.5,
                             fontWeight: 400,
-                            padding: '1px 5px',
+                            padding: '1.5px 6px',
                             borderRadius: 4,
                             background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
                             color: textPrimary,
@@ -1483,44 +1577,33 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                         >
                           {risk.category}
                         </span>
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingStrategicRisk(risk);
-                            setIsModalOpen(true);
-                          }}
+                        <span
                           style={{
-                            background: isEffectiveDark ? '#242424' : '#f1f5f9',
-                            border: 'none',
-                            color: textSecondary,
-                            cursor: 'pointer',
-                            padding: 4,
+                            fontSize: 9.5,
+                            fontWeight: 500,
+                            padding: '1.5px 6px',
                             borderRadius: 4,
-                            display: 'flex',
+                            background: impactBadge.bg,
+                            color: impactBadge.color,
+                            whiteSpace: 'nowrap',
                           }}
                         >
-                          <Edit2 size={12} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeletingRisk(risk)}
+                          {impactBadge.label}
+                        </span>
+                        <span
                           style={{
-                            background: isEffectiveDark ? 'rgba(239, 68, 68, 0.12)' : 'rgba(239, 68, 68, 0.1)',
-                            border: 'none',
-                            color: '#ef4444',
-                            cursor: 'pointer',
-                            padding: 4,
+                            fontSize: 9.5,
+                            fontWeight: 500,
+                            padding: '1.5px 6px',
                             borderRadius: 4,
-                            display: 'flex',
+                            background: probBadge.bg,
+                            color: probBadge.color,
+                            whiteSpace: 'nowrap',
                           }}
                         >
-                          <Trash2 size={12} />
-                        </button>
+                          {probBadge.label}
+                        </span>
                       </div>
-                    </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                       {risk.mitigationPlan && (
@@ -1551,7 +1634,8 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                       )}
                     </div>
                   </div>
-                ))}
+                );
+              })}
               </div>
             )
           )}

@@ -58,8 +58,15 @@ export interface GitHubIssueItem {
   title: string;
   state: string;
   updatedAt: string;
-  author?: { login: string; name?: string };
-  labels?: Array<{ name: string; color?: string; description?: string }>;
+  createdAt?: string;
+  author?: string | { login: string; name?: string };
+  authorAvatar?: string;
+  assignees?: Array<{ login: string; avatarUrl?: string }> | string[];
+  assignee?: { login: string; avatarUrl?: string } | null;
+  labels?: Array<{ id?: number; name: string; color?: string; description?: string }>;
+  milestone?: { title: string; dueOn?: string } | null;
+  body?: string;
+  url?: string;
 }
 
 export interface GitBranchItem {

@@ -495,6 +495,10 @@ export class GitService {
             number: item.number,
             title: item.title,
             author: item.user?.login || item.user?.name || 'walancy',
+            authorAvatar: item.user?.avatar_url,
+            assignees: (item.assignees || []).map((a: any) => ({ login: a.login, avatarUrl: a.avatar_url })),
+            assignee: item.assignee ? { login: item.assignee.login, avatarUrl: item.assignee.avatar_url } : null,
+            body: item.body || '',
             updatedAt: item.updated_at,
             createdAt: item.created_at,
             labels: (item.labels || []).map((l: any) => ({

@@ -71,6 +71,7 @@ import { ExtensionDetailsView } from './components/ide/ExtensionDetailsView';
 import { ProjectsSchedulerView } from './components/ProjectsSchedulerView';
 import { ProjectWorkspaceSelector } from './components/ide/ProjectWorkspaceSelector';
 import { OrchestrationCanvas } from './components/OrchestrationCanvas';
+import { ProjectTasksDockTab } from './components/dock/ProjectTasksDockTab';
 import {
   CodiconFiles,
   CodiconSearch,
@@ -125,7 +126,7 @@ import type {
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'projetos' | 'orchestration' | 'daily' | 'equipmentos' | 'ide' | 'ports'>('projetos');
-  const [activeTermTab, setActiveTermTab] = useState<'problems' | 'output' | 'debug' | 'terminal' | 'ports'>('terminal');
+  const [activeTermTab, setActiveTermTab] = useState<'problems' | 'output' | 'debug' | 'terminal' | 'ports' | 'tasks'>('terminal');
 
   // Code Review (Diff View) state
   const [activeReview, setActiveReview] = useState<ReviewSession | null>(null);
@@ -137,6 +138,16 @@ export const App: React.FC = () => {
   const [issuesSearchQuery, setIssuesSearchQuery] = useState('');
   const [newIssueTitle, setNewIssueTitle] = useState('');
   const [isCreatingIssue, setIsCreatingIssue] = useState(false);
+
+  // Attached Task for AI Chat prompt
+  const [attachedTask, setAttachedTask] = useState<{
+    number: number;
+    title: string;
+    body?: string;
+    state?: string;
+    labels?: Array<{ name: string; color?: string }>;
+    url?: string;
+  } | null>(null);
 
   // Git Branches state
   const [currentBranch, setCurrentBranch] = useState('main');
@@ -2484,6 +2495,23 @@ export const App: React.FC = () => {
     setToastMessage(`Issue #${issue.number} vinculada ao chat de IA`);
   };
 
+  const handleTaskDoWithAi = useCallback((issue: GitHubIssueItem) => {
+    setAttachedTask({
+      number: issue.number,
+      title: issue.title,
+      body: issue.body,
+      state: issue.state,
+      labels: issue.labels?.map((l) => ({ name: l.name, color: l.color })),
+      url: issue.url,
+    });
+    setShowAiPanel(true);
+    setTimeout(() => {
+      inputRef.current?.focus();
+      promptEditorRef.current?.focus();
+    }, 150);
+    setToastMessage(`Tarefa #${issue.number} anexada ao chat de IA`);
+  }, []);
+
   const handleOpenIssueInBrowser = (issueNumber: number) => {
     const repo = gitRepoName || 'appmoove/ainaobra';
     const cleanRepo = repo.includes('/') ? repo : `appmoove/${repo}`;
@@ -4644,13 +4672,15 @@ export const App: React.FC = () => {
   const handleAiSubmit = async (e?: React.FormEvent, promptOverride?: string) => {
     if (e) e.preventDefault();
     const prompt = (promptOverride !== undefined ? promptOverride : promptEditorRef.current ? promptEditorRef.current.getValue() : askPrompt).trim();
-    if ((!prompt && attachedFiles.length === 0 && attachedImages.length === 0) || isAiExecuting) return;
+    if ((!prompt && attachedFiles.length === 0 && attachedImages.length === 0 && !attachedTask) || isAiExecuting) return;
 
-    // Snapshot attached files & images, then clear prompt and attachments
+    // Snapshot attached files, images & task, then clear prompt and attachments
     const currentAttachedFiles = [...attachedFiles];
     const currentAttachedImages = attachedImages.slice(0, MAX_ATTACHED_IMAGES);
+    const currentAttachedTask = attachedTask;
     setAttachedFiles([]);
     setAttachedImages([]);
+    setAttachedTask(null);
     setAskPrompt('');
     promptEditorRef.current?.clear();
 
@@ -4721,7 +4751,7 @@ export const App: React.FC = () => {
     };
 
     // Add user message to AI history & session with attached items
-    const userDisplayPrompt = prompt || (currentAttachedFiles.length > 0 ? `Analise o(s) arquivo(s): ${currentAttachedFiles.map((f) => f.name).join(', ')}` : 'Analise a imagem anexada.');
+    const userDisplayPrompt = prompt || (currentAttachedTask ? `Resolver Tarefa #${currentAttachedTask.number}: ${currentAttachedTask.title}` : currentAttachedFiles.length > 0 ? `Analise o(s) arquivo(s): ${currentAttachedFiles.map((f) => f.name).join(', ')}` : 'Analise a imagem anexada.');
     pushAiMessage({
       type: 'user',
       text: userDisplayPrompt,
@@ -4947,6 +4977,12 @@ export const App: React.FC = () => {
         }
         if (currentAttachedImages.length > 0) {
           attachedContextBlock += `\n\n[Imagens Anexadas]: ${currentAttachedImages.length} imagem(ns) colada(s) ou anexada(s) pelo usuário no chat.`;
+        }
+        if (currentAttachedTask) {
+          attachedContextBlock += `\n\n[Tarefa/Issue Vinculada do Projeto]:
+- Issue #${currentAttachedTask.number}: "${currentAttachedTask.title}"
+${currentAttachedTask.labels && currentAttachedTask.labels.length > 0 ? `- Labels: ${currentAttachedTask.labels.map((l) => l.name).join(', ')}\n` : ''}${currentAttachedTask.body ? `- Detalhes da Tarefa:\n${currentAttachedTask.body}\n` : ''}
+Por favor, considere as especificações desta tarefa e implemente a solução necessária.`;
         }
         if (mentionsContextBlock) {
           attachedContextBlock += mentionsContextBlock;
@@ -5606,9 +5642,9 @@ ${prompt || userDisplayPrompt}`;
                         color: accentColor,
                         fontFamily: 'Poppins, -apple-system, sans-serif',
                       }}
-                      title="Diário"
+                      title={selectedAiProvider === 'claude' ? 'Sessão de 5h' : 'Diário'}
                     >
-                      D
+                      {selectedAiProvider === 'claude' ? '5h' : 'D'}
                     </span>
                     <span
                       style={{
@@ -5630,9 +5666,9 @@ ${prompt || userDisplayPrompt}`;
                         color: accentColor,
                         fontFamily: 'Poppins, -apple-system, sans-serif',
                       }}
-                      title="Semanal"
+                      title={selectedAiProvider === 'claude' ? 'Semanal (7 dias)' : 'Semanal'}
                     >
-                      S
+                      {selectedAiProvider === 'claude' ? 'Sem' : 'S'}
                     </span>
                     <span
                       style={{
@@ -5707,13 +5743,20 @@ ${prompt || userDisplayPrompt}`;
                         </span>
                       </div>
 
-                      {/* Daily Quota */}
+                      {/* Daily / Session Quota */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, fontFamily: 'Poppins, sans-serif' }}>
-                          <span style={{ color: themeTokens.textSecondary }}>Limite diário:</span>
-                          <span style={{ color: themeTokens.textPrimary, fontWeight: 700 }}>
-                            {currentQuota.dailyPercent}% disponível
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11.5, fontFamily: 'Poppins, sans-serif' }}>
+                          <span style={{ color: themeTokens.textSecondary }}>
+                            {selectedAiProvider === 'claude' ? 'Sessão atual (5h):' : 'Limite diário:'}
                           </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span style={{ color: themeTokens.textPrimary, fontWeight: 700 }}>
+                              {currentQuota.dailyPercent}% disp.
+                            </span>
+                            <span style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>
+                              ({100 - currentQuota.dailyPercent}% usado)
+                            </span>
+                          </div>
                         </div>
                         {/* Accent progress bar */}
                         <div style={{ width: '100%', height: 4, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)', borderRadius: 2, overflow: 'hidden' }}>
@@ -5738,17 +5781,24 @@ ${prompt || userDisplayPrompt}`;
                             lineHeight: '14px',
                           }}
                         >
-                          Reset diário: {formatQuotaResetDisplay(currentQuota.dailyResetTime, currentQuota.dailyResetDay || 'Hoje', false)}
+                          Reset {selectedAiProvider === 'claude' ? 'da sessão' : 'diário'}: {formatQuotaResetDisplay(currentQuota.dailyResetTime, currentQuota.dailyResetDay || 'Hoje', false)}
                         </div>
                       </div>
 
                       {/* Weekly Quota */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, fontFamily: 'Poppins, sans-serif' }}>
-                          <span style={{ color: themeTokens.textSecondary }}>Limite semanal:</span>
-                          <span style={{ color: themeTokens.textPrimary, fontWeight: 700 }}>
-                            {currentQuota.weeklyPercent}% disponível
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11.5, fontFamily: 'Poppins, sans-serif' }}>
+                          <span style={{ color: themeTokens.textSecondary }}>
+                            {selectedAiProvider === 'claude' ? 'Semana atual (7d):' : 'Limite semanal:'}
                           </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span style={{ color: themeTokens.textPrimary, fontWeight: 700 }}>
+                              {currentQuota.weeklyPercent}% disp.
+                            </span>
+                            <span style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>
+                              ({100 - currentQuota.weeklyPercent}% usado)
+                            </span>
+                          </div>
                         </div>
                         {/* Accent progress bar */}
                         <div style={{ width: '100%', height: 4, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)', borderRadius: 2, overflow: 'hidden' }}>
@@ -8651,6 +8701,7 @@ ${prompt || userDisplayPrompt}`;
                         { id: 'debug', label: 'Debug console' },
                         { id: 'terminal', label: 'Terminal' },
                         { id: 'ports', label: 'Ports' },
+                        { id: 'tasks', label: 'Tarefas' },
                       ].map((st) => {
                         const isActive = activeTermTab === st.id;
                         return (
@@ -9761,6 +9812,21 @@ ${prompt || userDisplayPrompt}`;
                       </div>
                     ))}
                   </div>
+                )}
+
+                {/* 6. Tasks View */}
+                {activeTermTab === 'tasks' && (
+                  <ProjectTasksDockTab
+                    issues={gitIssues}
+                    isLoading={isLoadingIssues}
+                    onRefresh={refreshGitHubIssues}
+                    onDoWithAi={handleTaskDoWithAi}
+                    onOpenIssueDetails={handleOpenIssueInBrowser}
+                    currentUserLogin={githubUser?.login || 'walancy'}
+                    themeTokens={themeTokens}
+                    isEffectiveDark={isEffectiveDark}
+                    accentColor={accentColor}
+                  />
                 )}
               </div>
                 </div>
@@ -12092,7 +12158,59 @@ ${prompt || userDisplayPrompt}`;
                           </div>
                         )}
 
-
+                        {/* Attached Task Chip */}
+                        {attachedTask && (
+                          <div
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              background: isEffectiveDark ? 'rgba(56, 189, 248, 0.12)' : 'rgba(14, 165, 233, 0.1)',
+                              border: `1px solid ${isEffectiveDark ? 'rgba(56, 189, 248, 0.3)' : 'rgba(14, 165, 233, 0.25)'}`,
+                              borderRadius: 6,
+                              padding: '3px 8px 3px 6px',
+                              fontSize: 12,
+                              fontFamily: 'Poppins, sans-serif',
+                              color: isEffectiveDark ? '#38bdf8' : '#0284c7',
+                              userSelect: 'none',
+                              maxWidth: '100%',
+                              marginTop: 4,
+                            }}
+                          >
+                            <span style={{ fontWeight: 700, fontSize: 11 }}>#{attachedTask.number}</span>
+                            <span
+                              title={attachedTask.title}
+                              style={{
+                                maxWidth: 220,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                fontWeight: 500,
+                              }}
+                            >
+                              {attachedTask.title}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setAttachedTask(null)}
+                              title="Desvincular tarefa"
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: isEffectiveDark ? '#38bdf8' : '#0284c7',
+                                cursor: 'pointer',
+                                padding: 1,
+                                display: 'flex',
+                                alignItems: 'center',
+                                borderRadius: 3,
+                              }}
+                              onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = '#ef4444')}
+                              onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = isEffectiveDark ? '#38bdf8' : '#0284c7')}
+                            >
+                              <X size={11} />
+                            </button>
+                          </div>
+                        )}
                       </div>
 
                   {/* Bottom Row: AI Selector + Model Selector + Send Button */}
@@ -12727,13 +12845,13 @@ ${prompt || userDisplayPrompt}`;
                                 }}
                                 title="Diário"
                               >
-                                D
+                                {selectedAiProvider === 'claude' ? '5h' : 'D'}
                               </span>
                               <span
                                 style={{
                                   fontSize: 9.5,
                                   fontWeight: 700,
-                                  color: currentQuota.weeklyPercent === 0 ? '#ef4444' : currentQuota.weeklyPercent <= 15 ? '#f97316' : themeTokens.textPrimary,
+                                  color: currentQuota.dailyPercent === 0 ? '#ef4444' : currentQuota.dailyPercent <= 15 ? '#f97316' : themeTokens.textPrimary,
                                   fontFamily: 'Poppins, -apple-system, sans-serif',
                                   letterSpacing: '-0.02em',
                                 }}
@@ -12749,15 +12867,15 @@ ${prompt || userDisplayPrompt}`;
                                   color: accentColor,
                                   fontFamily: 'Poppins, -apple-system, sans-serif',
                                 }}
-                                title="Semanal"
+                                title={selectedAiProvider === 'claude' ? 'Semanal (7 dias)' : 'Semanal'}
                               >
-                                S
+                                {selectedAiProvider === 'claude' ? 'Sem' : 'S'}
                               </span>
                               <span
                                 style={{
                                   fontSize: 9.5,
                                   fontWeight: 700,
-                                  color: currentQuota.dailyPercent === 0 ? '#ef4444' : currentQuota.dailyPercent <= 15 ? '#f97316' : themeTokens.textPrimary,
+                                  color: currentQuota.weeklyPercent === 0 ? '#ef4444' : currentQuota.weeklyPercent <= 15 ? '#f97316' : themeTokens.textPrimary,
                                   fontFamily: 'Poppins, -apple-system, sans-serif',
                                   letterSpacing: '-0.02em',
                                 }}
@@ -12825,13 +12943,20 @@ ${prompt || userDisplayPrompt}`;
                                   </span>
                                 </div>
 
-                                {/* Daily Quota */}
+                                {/* Daily / Session Quota */}
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, fontFamily: 'Poppins, sans-serif' }}>
-                                    <span style={{ color: themeTokens.textSecondary }}>Limite diário:</span>
-                                    <span style={{ color: themeTokens.textPrimary, fontWeight: 700 }}>
-                                      {currentQuota.dailyPercent}% disponível
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11.5, fontFamily: 'Poppins, sans-serif' }}>
+                                    <span style={{ color: themeTokens.textSecondary }}>
+                                      {selectedAiProvider === 'claude' ? 'Sessão atual (5h):' : 'Limite diário:'}
                                     </span>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                      <span style={{ color: themeTokens.textPrimary, fontWeight: 700 }}>
+                                        {currentQuota.dailyPercent}% disp.
+                                      </span>
+                                      <span style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>
+                                        ({100 - currentQuota.dailyPercent}% usado)
+                                      </span>
+                                    </div>
                                   </div>
                                   {/* Accent progress bar */}
                                   <div style={{ width: '100%', height: 4, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)', borderRadius: 2, overflow: 'hidden' }}>
@@ -12856,17 +12981,24 @@ ${prompt || userDisplayPrompt}`;
                                       lineHeight: '14px',
                                     }}
                                   >
-                                    Reset diário: {formatQuotaResetDisplay(currentQuota.dailyResetTime, currentQuota.dailyResetDay || 'Hoje', false)}
+                                    Reset {selectedAiProvider === 'claude' ? 'da sessão' : 'diário'}: {formatQuotaResetDisplay(currentQuota.dailyResetTime, currentQuota.dailyResetDay || 'Hoje', false)}
                                   </div>
                                 </div>
 
                                 {/* Weekly Quota */}
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, fontFamily: 'Poppins, sans-serif' }}>
-                                    <span style={{ color: themeTokens.textSecondary }}>Limite semanal:</span>
-                                    <span style={{ color: themeTokens.textPrimary, fontWeight: 700 }}>
-                                      {currentQuota.weeklyPercent}% disponível
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11.5, fontFamily: 'Poppins, sans-serif' }}>
+                                    <span style={{ color: themeTokens.textSecondary }}>
+                                      {selectedAiProvider === 'claude' ? 'Semana atual (7d):' : 'Limite semanal:'}
                                     </span>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                      <span style={{ color: themeTokens.textPrimary, fontWeight: 700 }}>
+                                        {currentQuota.weeklyPercent}% disp.
+                                      </span>
+                                      <span style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>
+                                        ({100 - currentQuota.weeklyPercent}% usado)
+                                      </span>
+                                    </div>
                                   </div>
                                   {/* Accent progress bar */}
                                   <div style={{ width: '100%', height: 4, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)', borderRadius: 2, overflow: 'hidden' }}>

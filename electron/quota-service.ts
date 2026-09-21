@@ -14,7 +14,7 @@ export class QuotaService {
   private cache: Record<string, AiQuotaConfig> | null = null;
   private lastFetchTime = 0;
   private isFetching = false;
-  private readonly CACHE_TTL_MS = 180000; // 3 minutes cache
+  private readonly CACHE_TTL_MS = 30000; // 30s cache for timely quota updates
 
   private getAgyBinPath(): string | null {
     const userHome = process.env.HOME || '';
@@ -56,15 +56,17 @@ export class QuotaService {
     return null;
   }
 
-  // Parses Claude Code's own "/usage" reset phrasing, e.g. "Sep 18 at 6:30pm", into a Date.
+  // Parses Claude Code's own "/usage" reset phrasing, e.g. "Sep 18 at 6:30pm" or "Sep 21 at 1pm (America/Sao_Paulo)", into a Date.
   private parseClaudeResetClock(text: string, now: Date): Date | null {
-    const m = text.trim().match(/^([A-Za-z]{3})\w*\s+(\d{1,2})\s+at\s+(\d{1,2}):(\d{2})\s*(am|pm)$/i);
+    if (!text) return null;
+    const cleaned = text.replace(/\s*\([^)]*\)/g, '').trim();
+    const m = cleaned.match(/^([A-Za-z]{3})\w*\s+(\d{1,2})\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
     if (!m) return null;
     const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
     const monIdx = months.indexOf(m[1].toLowerCase());
     if (monIdx === -1) return null;
     let hour = parseInt(m[3], 10);
-    const minute = parseInt(m[4], 10);
+    const minute = m[4] ? parseInt(m[4], 10) : 0;
     const ampm = m[5].toLowerCase();
     if (ampm === 'pm' && hour !== 12) hour += 12;
     if (ampm === 'am' && hour === 12) hour = 0;
@@ -229,8 +231,8 @@ export class QuotaService {
           const dailyAvail = fiveHourPassed ? 100 : Math.max(0, Math.min(100, 100 - Math.round(fiveHourUtil)));
           const weeklyAvail = sevenDayPassed ? 100 : Math.max(0, Math.min(100, 100 - Math.round(sevenDayUtil)));
 
-          const dailyInfo = formatReset(fiveHourPassed ? null : util.five_hour?.resets_at);
-          const weeklyInfo = formatReset(sevenDayPassed ? null : util.seven_day?.resets_at);
+          const dailyInfo = formatReset(fiveHourPassed ? null : util.five_hour?.resets_at, false);
+          const weeklyInfo = formatReset(sevenDayPassed ? null : util.seven_day?.resets_at, true);
 
           quotas.claude = {
             dailyPercent: dailyAvail,
@@ -274,8 +276,8 @@ export class QuotaService {
           });
         });
 
-        const sessionMatch = out.match(/Current session:\s*(\d+)%\s*used\s*·\s*resets\s*([^(\n]+)/i);
-        const weekMatch = out.match(/Current week[^:]*:\s*(\d+)%\s*used\s*·\s*resets\s*([^(\n]+)/i);
+        const sessionMatch = out.match(/Current session:\s*(\d+)%\s*used\s*·\s*resets\s*([^\n]+)/i);
+        const weekMatch = out.match(/Current week[^:]*:\s*(\d+)%\s*used\s*·\s*resets\s*([^\n]+)/i);
 
         if (sessionMatch || weekMatch) {
           const nowDate = new Date();
@@ -283,15 +285,15 @@ export class QuotaService {
           const weeklyUsed = weekMatch ? parseInt(weekMatch[1], 10) : null;
           const dailyResetDate = sessionMatch ? this.parseClaudeResetClock(sessionMatch[2], nowDate) : null;
           const weeklyResetDate = weekMatch ? this.parseClaudeResetClock(weekMatch[2], nowDate) : null;
-          const dailyInfo = formatReset(dailyResetDate ? dailyResetDate.toISOString() : null, false);
-          const weeklyInfo = formatReset(weeklyResetDate ? weeklyResetDate.toISOString() : null, true);
+          const dailyInfo = dailyResetDate ? formatReset(dailyResetDate.toISOString(), false) : null;
+          const weeklyInfo = weeklyResetDate ? formatReset(weeklyResetDate.toISOString(), true) : null;
 
           quotas.claude = {
             dailyPercent: dailyUsed !== null ? Math.max(0, Math.min(100, 100 - dailyUsed)) : quotas.claude.dailyPercent,
             weeklyPercent: weeklyUsed !== null ? Math.max(0, Math.min(100, 100 - weeklyUsed)) : quotas.claude.weeklyPercent,
-            dailyResetTime: dailyInfo.timeStr,
-            weeklyResetDay: weeklyInfo.dayStr,
-            weeklyResetTime: weeklyInfo.fullStr,
+            dailyResetTime: dailyInfo ? dailyInfo.timeStr : quotas.claude.dailyResetTime,
+            weeklyResetDay: dailyInfo ? dailyInfo.dayStr : quotas.claude.weeklyResetDay,
+            weeklyResetTime: weeklyInfo ? weeklyInfo.fullStr : quotas.claude.weeklyResetTime,
           };
         }
       } catch (err) {

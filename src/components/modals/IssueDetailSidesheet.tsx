@@ -910,8 +910,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   const controlElementBg = isEffectiveDark ? '#1e1e1e' : '#ffffff';
   const controlElementHoverBg = isEffectiveDark ? '#262626' : '#f1f5f9';
   const dropdownSurfaceBg = isEffectiveDark ? '#1e1e1e' : '#ffffff';
-
-  const showContent = isVisible !== false && !isLocalClosing;
+  const isClosing = isLocalClosing || !isOpen;
 
   if (!issue) return null;
 
@@ -928,9 +927,10 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
         justifyContent: 'flex-end',
         background: theme?.modalOverlay || 'rgba(0, 0, 0, 0.72)',
         backdropFilter: 'blur(6px)',
-        opacity: showContent ? 1 : 0,
-        transition: 'opacity 0.28s cubic-bezier(0.16, 1, 0.3, 1)',
-        pointerEvents: showContent ? 'auto' : 'none',
+        animation: isClosing
+          ? 'sidesheetOverlayFadeOut 0.26s cubic-bezier(0.16, 1, 0.3, 1) forwards'
+          : 'sidesheetOverlayFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+        pointerEvents: isClosing ? 'none' : 'auto',
       }}
       onClick={isPinned ? undefined : handleClose}
     >
@@ -944,15 +944,14 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
           background: sidesheetBg,
           borderRadius: '16px 0 0 16px',
           border: 'none',
-          boxShadow: showContent
-            ? (isEffectiveDark ? '-16px 0 48px rgba(0, 0, 0, 0.8)' : '-12px 0 36px rgba(0, 0, 0, 0.14)')
-            : 'none',
+          boxShadow: isEffectiveDark ? '-16px 0 48px rgba(0, 0, 0, 0.8)' : '-12px 0 36px rgba(0, 0, 0, 0.14)',
           display: 'flex',
           flexDirection: 'column',
           zIndex: 99991,
           overflow: 'hidden',
-          transform: showContent ? 'translateX(0)' : 'translateX(100%)',
-          transition: 'transform 0.28s cubic-bezier(0.16, 1, 0.3, 1)',
+          animation: isClosing
+            ? 'sidesheetPanelSlideOut 0.26s cubic-bezier(0.16, 1, 0.3, 1) forwards'
+            : 'sidesheetPanelSlideIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards',
           willChange: 'transform',
         }}
       >
@@ -5428,8 +5427,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
               <div
                 style={{
                   borderRadius: 8,
-                  border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.12)' : '1px solid #d0d7de',
-                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : '#f6f8fa',
+                  border: 'none',
+                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f6f8fa',
                   padding: '10px 12px',
                   display: 'flex',
                   flexDirection: 'column',
@@ -5493,8 +5492,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 {isProjectCardExpanded && (
                   <div
                     style={{
-                      borderTop: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid #e1e4e8',
-                      paddingTop: 8,
+                      borderTop: 'none',
+                      paddingTop: 4,
                       display: 'flex',
                       flexDirection: 'column',
                       gap: 8,
@@ -6547,7 +6546,6 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
 
 export const IssueDetailSidesheet: React.FC<IssueDetailSidesheetProps> = (props) => {
   const [isRendered, setIsRendered] = useState(props.isOpen && Boolean(props.issue));
-  const [isVisible, setIsVisible] = useState(false);
   const cachedPropsRef = useRef<IssueDetailSidesheetProps>(props);
 
   if (props.isOpen && props.issue) {
@@ -6557,12 +6555,7 @@ export const IssueDetailSidesheet: React.FC<IssueDetailSidesheetProps> = (props)
   useEffect(() => {
     if (props.isOpen && props.issue) {
       setIsRendered(true);
-      const raf = requestAnimationFrame(() => {
-        setIsVisible(true);
-      });
-      return () => cancelAnimationFrame(raf);
     } else {
-      setIsVisible(false);
       const timer = setTimeout(() => {
         setIsRendered(false);
       }, 300);
@@ -6577,7 +6570,6 @@ export const IssueDetailSidesheet: React.FC<IssueDetailSidesheetProps> = (props)
       <IssueDetailSidesheetInner
         {...cachedPropsRef.current}
         isOpen={props.isOpen}
-        isVisible={isVisible}
         onClose={props.onClose}
       />
     </SidesheetErrorBoundary>

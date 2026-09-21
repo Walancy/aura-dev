@@ -231,3 +231,50 @@ body.resizing-row {
   }
 }
 
+/* Sidesheet In / Out Keyframes */
+@keyframes sidesheetOverlayFadeIn {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+    -webkit-backdrop-filter: blur(0px);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+}
+
+@keyframes sidesheetOverlayFadeOut {
+  from {
+    opacity: 1;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+  to {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+    -webkit-backdrop-filter: blur(0px);
+  }
+}
+
+@keyframes sidesheetPanelSlideIn {
+  from {
+    transform: translateX(100%);
+    box-shadow: none;
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes sidesheetPanelSlideOut {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+    box-shadow: none;
+  }
+}
+
