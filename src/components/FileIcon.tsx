@@ -375,3 +375,55 @@ export const FolderIcon: React.FC<FolderIconProps> = ({
     />
   );
 };
+
+export function getLanguageSvgUrl(language?: string | null): string | null {
+  if (!language) return null;
+  const l = language.trim().toLowerCase();
+  const map: Record<string, string> = {
+    typescript: 'ts',
+    ts: 'ts',
+    javascript: 'js',
+    js: 'js',
+    dart: 'dart',
+    flutter: 'dart',
+    html: 'code-orange',
+    htm: 'code-orange',
+    css: 'code-sky',
+    scss: 'sass',
+    sass: 'sass',
+    python: 'python',
+    py: 'python',
+    rust: 'rust',
+    rs: 'rust',
+    go: 'go',
+    golang: 'go',
+    java: 'java',
+    kotlin: 'kotlin',
+    kt: 'kotlin',
+    swift: 'swift',
+    csharp: 'csharp',
+    'c#': 'csharp',
+    cpp: 'cplus',
+    'c++': 'cplus',
+    c: 'c',
+    php: 'php',
+    ruby: 'ruby',
+    rb: 'ruby',
+    vue: 'vue',
+    svelte: 'svelte',
+    astro: 'astro',
+    shell: 'shell',
+    bash: 'shell',
+    sh: 'shell',
+    sql: 'database',
+    elixir: 'elixir',
+    lua: 'lua',
+    markdown: 'markdown',
+    md: 'markdown',
+  };
+  const iconBase = map[l];
+  if (!iconBase) return null;
+  const url = getFileSvgUrl(iconBase);
+  return url || null;
+}
+

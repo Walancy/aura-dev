@@ -181,6 +181,63 @@ body.resizing-row {
   scrollbar-width: none;
 }
 
+/* Responsive Workspace Tabs (Chrome/VS Code style auto-shrinking down to icon-only) */
+.workspace-tab {
+  container-type: inline-size;
+}
+
+@container (max-width: 110px) {
+  .workspace-tab-badge {
+    display: none !important;
+  }
+}
+
+@container (max-width: 92px) {
+  .workspace-tab.is-grid .workspace-tab-text {
+    display: none !important;
+  }
+  .workspace-tab.is-grid .workspace-tab-close {
+    display: none !important;
+  }
+  .workspace-tab.is-grid {
+    justify-content: center !important;
+  }
+}
+
+@container (max-width: 76px) {
+  .workspace-tab-text {
+    display: none !important;
+  }
+  .workspace-tab-close {
+    display: none !important;
+  }
+  .workspace-tab {
+    justify-content: center !important;
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+  }
+  .workspace-tab:hover .workspace-tab-close {
+    display: flex !important;
+    position: absolute;
+    right: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(22, 22, 26, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+    padding: 2px;
+    z-index: 10;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  }
+}
+
+:root[data-theme="light"] .workspace-tab:hover .workspace-tab-close {
+  background: rgba(240, 240, 245, 0.95);
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+
+
 @keyframes spin {
   from {
     transform: rotate(0deg);
@@ -188,6 +245,10 @@ body.resizing-row {
   to {
     transform: rotate(360deg);
   }
+}
+
+.spin-animate {
+  animation: spin 1s linear infinite;
 }
 
 @keyframes thinkingBounce {

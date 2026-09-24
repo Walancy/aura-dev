@@ -50,10 +50,13 @@ import {
   GitFork,
   ChevronLeft,
   ChevronRight,
+  CornerDownRight,
   Calendar,
   CalendarDays,
   List,
   LayoutGrid,
+  FolderGit2,
+  FolderKanban,
   PanelLeftClose,
   PanelLeftOpen,
   ArrowLeft,
@@ -74,6 +77,7 @@ import {
   FolderDown,
   RefreshCw,
   FileText,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { getContrastTextColor, hexToRgba } from '../utils/color';
 import { DatePickerField } from './ui/DatePickerField';
@@ -83,23 +87,47 @@ import { ConfirmDeleteModal } from './modals/ConfirmDeleteModal';
 import { IssueDetailSidesheet } from './modals/IssueDetailSidesheet';
 import { AssignMemberModal } from './modals/AssignMemberModal';
 import { ManageAccessView, type AccessItem } from './team/ManageAccessView';
-import { GithubProjectsKanbanBoard } from './kanban/GithubProjectsKanbanBoard';
+import { GithubProjectsKanbanBoard, type KanbanColumnDef } from './kanban/GithubProjectsKanbanBoard';
 import { GithubProjectsRoadmapView } from './roadmap/GithubProjectsRoadmapView';
 import { ProjectRisksDashboard } from './risks/ProjectRisksDashboard';
+import { getLanguageSvgUrl } from './FileIcon';
+import { ProjectIconModal } from './modals/ProjectIconModal';
 
 export interface ProjectsSchedulerViewProps {
+  workspacePath?: string;
+  repoName?: string;
+  onSelectWorkspace?: (dirPath: string, repoName?: string) => Promise<void> | void;
   accentColor?: string;
   isEffectiveDark?: boolean;
   themeTokens?: {
     bgApp?: string;
     bgCard?: string;
     bgCardSecondary?: string;
-    bgCardElevated?: string;
+    bgFloating?: string;
+    borderSubtle?: string;
+    borderMedium?: string;
     textPrimary?: string;
     textSecondary?: string;
     textMuted?: string;
-    borderSubtle?: string;
-    hoverBg?: string;
+    accentBg?: string;
+    accentBorder?: string;
+    accentContrastText?: string;
+    actionHoverBg?: string;
+    badgeBackground?: string;
+    badgeBorder?: string;
+    badgeText?: string;
+    dropdownBg?: string;
+    dropdownItemHover?: string;
+    dropdownBorder?: string;
+    cardBg?: string;
+    cardHoverBg?: string;
+    activeCardBorder?: string;
+    progressBarBackground?: string;
+    calendarCellBorder?: string;
+    calendarHeaderBackground?: string;
+    calendarWeekendBackground?: string;
+    calendarTodayBorder?: string;
+    calendarSelectionBorder?: string;
   };
   selectedAiProvider?: string;
   selectedModel?: string;
@@ -111,7 +139,7 @@ export interface ProjectsSchedulerViewProps {
 }
 
 interface ProjectCardData {
-  id: number;
+  id: number | string;
   badge: number;
   title: string;
   name?: string;
@@ -136,11 +164,180 @@ interface ProjectCardData {
   owner?: string;
   repoName?: string;
   htmlUrl?: string;
+  isCloned?: boolean;
+  localDir?: string;
+  ownerAvatarUrl?: string;
+  defaultBranch?: string;
+  currentSprint?: {
+    number: number;
+    title: string;
+    dueDateIso?: string;
+    daysBadge?: {
+      text: string;
+      color: string;
+      bg: string;
+      diffDays?: number;
+    } | null;
+  } | null;
 }
+
+export function calculateSprintDaysBadge(
+  dueDateIso?: string,
+  isEffectiveDark = true
+): { text: string; color: string; bg: string; diffDays?: number } | null {
+  if (!dueDateIso) {
+    return {
+      text: 'Em andamento',
+      color: '#38bdf8',
+      bg: isEffectiveDark ? 'rgba(56, 189, 248, 0.15)' : 'rgba(56, 189, 248, 0.10)',
+    };
+  }
+  try {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const parts = dueDateIso.slice(0, 10).split('-');
+    if (parts.length < 3) return null;
+    const due = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+    const diffTime = due.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 0) {
+      return {
+        text: 'Encerrada',
+        color: '#ef4444',
+        bg: isEffectiveDark ? 'rgba(239, 68, 68, 0.18)' : 'rgba(239, 68, 68, 0.12)',
+        diffDays,
+      };
+    }
+    if (diffDays === 0) {
+      return {
+        text: 'Termina hoje',
+        color: '#ef4444',
+        bg: isEffectiveDark ? 'rgba(239, 68, 68, 0.18)' : 'rgba(239, 68, 68, 0.12)',
+        diffDays: 0,
+      };
+    }
+    if (diffDays <= 3) {
+      return {
+        text: `Falta${diffDays === 1 ? '' : 'm'} ${diffDays}d`,
+        color: '#ef4444',
+        bg: isEffectiveDark ? 'rgba(239, 68, 68, 0.18)' : 'rgba(239, 68, 68, 0.12)',
+        diffDays,
+      };
+    }
+    if (diffDays <= 5) {
+      return {
+        text: `Falta${diffDays === 1 ? '' : 'm'} ${diffDays}d`,
+        color: '#eab308',
+        bg: isEffectiveDark ? 'rgba(234, 179, 8, 0.18)' : 'rgba(234, 179, 8, 0.12)',
+        diffDays,
+      };
+    }
+    return {
+      text: `Falta${diffDays === 1 ? '' : 'm'} ${diffDays}d`,
+      color: '#38bdf8',
+      bg: isEffectiveDark ? 'rgba(56, 189, 248, 0.15)' : 'rgba(56, 189, 248, 0.10)',
+      diffDays,
+    };
+  } catch {
+    return null;
+  }
+}
+
+interface ProjectIconBadgeProps {
+  card: ProjectCardData;
+  customIcon?: string;
+  badgeBg: string;
+  badgeColor: string;
+  size?: number;
+}
+
+const ProjectIconBadge: React.FC<ProjectIconBadgeProps> = ({
+  card,
+  customIcon,
+  badgeBg,
+  badgeColor,
+  size = 24,
+}) => {
+  const [imgError, setImgError] = useState(false);
+  const langSvg = useMemo(() => getLanguageSvgUrl(card.language), [card.language]);
+
+  // 1. Ícone personalizado salvo pelo usuário (sem clonar repo)
+  if (customIcon && !imgError) {
+    return (
+      <img
+        src={customIcon}
+        alt={card.title}
+        onError={() => setImgError(true)}
+        style={{
+          width: size,
+          height: size,
+          borderRadius: '50%',
+          objectFit: 'cover',
+          display: 'block',
+        }}
+        draggable={false}
+      />
+    );
+  }
+
+  // 2. Ícone oficial da tecnologia/linguagem (ex: TypeScript, Dart, HTML, etc.)
+  if (langSvg) {
+    return (
+      <img
+        src={langSvg}
+        alt={card.language || ''}
+        style={{
+          width: Math.round(size * 0.65),
+          height: Math.round(size * 0.65),
+          objectFit: 'contain',
+          display: 'block',
+          userSelect: 'none',
+        }}
+        draggable={false}
+      />
+    );
+  }
+
+  // 3. Avatar da organização ou proprietário do repositório
+  if (card.ownerAvatarUrl && !imgError) {
+    return (
+      <img
+        src={card.ownerAvatarUrl}
+        alt={card.owner || card.title}
+        onError={() => setImgError(true)}
+        style={{
+          width: size,
+          height: size,
+          borderRadius: '50%',
+          objectFit: 'cover',
+          display: 'block',
+        }}
+        draggable={false}
+      />
+    );
+  }
+
+  // 4. Fallback numérico padrão
+  return (
+    <span
+      style={{
+        textAlign: 'center',
+        color: badgeColor,
+        fontSize: size <= 20 ? 9.5 : 11.5,
+        fontWeight: '300',
+        lineHeight: 1,
+        transition: 'color 0.18s ease',
+      }}
+    >
+      {card.badge}
+    </span>
+  );
+};
 
 export interface ProjectIssue {
   id: string;
-  projectId: number;
+  projectId: number | string;
   title: string;
   description: string;
   dateStr: string;
@@ -150,6 +347,8 @@ export interface ProjectIssue {
   dueDateIso?: string; // YYYY-MM-DD, derivada da sprint (milestone) atribuída à issue
   milestoneNumber?: number;
   milestoneTitle?: string;
+  iterationId?: string; // ID da iteração (Sprint no GitHub Projects V2)
+  iterationTitle?: string; // Título da iteração vinculada
   tag: string;
   tagColor: { bg: string; text: string };
   priority: 'Baixa' | 'Média' | 'Alta' | 'Urgente';
@@ -175,6 +374,18 @@ export interface ProjectIssue {
     ciStatus?: 'success' | 'failure' | 'pending';
     url?: string;
   };
+  parentIssueNumber?: number; // Número da issue pai se esta for uma sub-issue
+  subIssuesSummary?: {
+    total: number;
+    completed: number;
+    percent_completed: number;
+  };
+  subIssueNumbers?: number[]; // Lista de números de sub-issues pertencentes a esta issue
+  projectV2ItemId?: string;
+  projectV2Status?: string;
+  projectV2StatusOptionId?: string;
+  projectV2Estimate?: number;
+  kanbanColumnId?: string;
 }
 
 interface GithubRepoSummary {
@@ -203,10 +414,13 @@ interface GithubRepoSummary {
 // então guardamos isso como um comentário HTML invisível na descrição do milestone.
 export interface SprintOption {
   number: number;
+  iterationId?: string;
+  isProjectIteration?: boolean;
   title: string;
   state: 'open' | 'closed';
   startDateIso?: string;
   dueDateIso?: string;
+  durationLabel?: string;
   openIssues: number;
   closedIssues: number;
 }
@@ -239,6 +453,20 @@ export interface ProjectRelease {
 
 export const RELEASES_DATA: Record<string, ProjectRelease> = {};
 
+function extractOwnerRepo(urlOrFullName?: string): { owner: string; repo: string } | null {
+  if (!urlOrFullName) return null;
+  const match = urlOrFullName.match(/[:/]([^/:]+)\/([^/:]+?)(?:\.git)?$/);
+  if (match) {
+    return { owner: match[1], repo: match[2] };
+  }
+  if (urlOrFullName.includes('/')) {
+    const parts = urlOrFullName.split('/');
+    if (parts.length >= 2 && parts[0] && parts[1]) {
+      return { owner: parts[0], repo: parts[1] };
+    }
+  }
+  return null;
+}
 
 const STATUS_FILTER_OPTIONS = [
   'Todos os Projetos',
@@ -283,6 +511,45 @@ const PRIORITY_LABELS: Record<'Baixa' | 'Média' | 'Alta' | 'Urgente', { name: s
 };
 
 const IN_PROGRESS_LABEL = { name: 'em-progresso', color: '0ea5e9' };
+
+const isProgressLabel = (name: string): boolean => {
+  if (!name) return false;
+  const l = name.toLowerCase().trim();
+  return (
+    l === 'in progress' ||
+    l === 'in-progress' ||
+    l === 'in_progress' ||
+    l === 'inprogress' ||
+    l === 'em progresso' ||
+    l === 'em-progresso' ||
+    l === 'em_progresso' ||
+    l === 'em andamento' ||
+    l === 'em-andamento' ||
+    l === 'em_andamento' ||
+    l === 'doing' ||
+    l === 'wip' ||
+    l === 'development' ||
+    l === 'dev' ||
+    l === 'em desenvolvimento' ||
+    l === 'test' ||
+    l === 'testing' ||
+    l === 'em teste' ||
+    l === 'under review' ||
+    l === 'in review' ||
+    l.includes('in progress') ||
+    l.includes('in-progress') ||
+    l.includes('em progresso') ||
+    l.includes('em-progresso') ||
+    l.includes('em andamento') ||
+    l.includes('em-andamento') ||
+    l.includes('doing') ||
+    l.startsWith('status: in') ||
+    l.startsWith('status: in-progress') ||
+    l.startsWith('status: em') ||
+    l.startsWith('status/in') ||
+    l.startsWith('status/em')
+  );
+};
 
 // GitHub Milestones não têm campo nativo de "data de início" (só due_on), então guardamos
 // isso como um comentário HTML invisível na descrição do milestone (não aparece no GitHub.com).
@@ -747,6 +1014,8 @@ const SAMPLE_GITHUB_ISSUES: ProjectIssue[] = [
 export interface GithubSprintItem {
   id: string;
   number: number;
+  iterationId?: string;
+  isProjectIteration?: boolean;
   title: string;
   durationLabel: string;
   startDateIso: string;
@@ -878,16 +1147,205 @@ const SAMPLE_GITHUB_SPRINTS: GithubSprintItem[] = [
   },
 ];
 
+// Extrai iterações (Sprints) dos campos de Projects V2 do GitHub
+function extractProjectIterations(projects: any[]): SprintOption[] {
+  const result: SprintOption[] = [];
+  const seenIds = new Set<string>();
+  const seenTitles = new Set<string>();
+
+  for (const proj of projects) {
+    if (!proj) continue;
+    const fields = proj.fields?.nodes || [];
+    for (const f of fields) {
+      if (f?.configuration?.iterations || f?.configuration?.completedIterations) {
+        const activeIts = f.configuration.iterations || [];
+        const completedIts = f.configuration.completedIterations || [];
+        const allIts = [
+          ...activeIts.map((it: any) => ({ ...it, state: 'open' as const })),
+          ...completedIts.map((it: any) => ({ ...it, state: 'closed' as const })),
+        ];
+
+        allIts.forEach((it, idx) => {
+          if (!it || seenIds.has(it.id) || seenTitles.has(it.title)) return;
+          seenIds.add(it.id);
+          seenTitles.add(it.title);
+
+          const startIso = it.startDate ? it.startDate.slice(0, 10) : undefined;
+          let dueIso: string | undefined = undefined;
+          if (startIso && it.duration) {
+            const d = new Date(`${startIso}T00:00:00`);
+            if (!Number.isNaN(d.getTime())) {
+              d.setDate(d.getDate() + (it.duration - 1));
+              dueIso = d.toISOString().slice(0, 10);
+            }
+          }
+
+          const numMatch = it.title.match(/(?:sprint|iteração|iteracao|sp)\s*#?(\d+)/i);
+          const sprintNum = numMatch ? parseInt(numMatch[1], 10) : (1000 + idx);
+
+          result.push({
+            number: sprintNum,
+            iterationId: it.id,
+            isProjectIteration: true,
+            title: it.title,
+            state: it.state,
+            startDateIso: startIso,
+            dueDateIso: dueIso,
+            durationLabel: it.duration ? `${Math.round(it.duration / 7)} semanas` : 'Sprint',
+            openIssues: 0,
+            closedIssues: 0,
+          });
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
+// Mapeia o número da issue para sua iteração/sprint correspondente no Project V2
+function extractIssueIterationsMap(projectItems: any[], repoFullName: string): Map<number, { iterationId?: string; iterationTitle?: string }> {
+  const map = new Map<number, { iterationId?: string; iterationTitle?: string }>();
+  if (!projectItems || !Array.isArray(projectItems)) return map;
+
+  for (const item of projectItems) {
+    const content = item.content;
+    if (!content || content.number == null) continue;
+    const contentRepo = content.repository?.nameWithOwner;
+    if (contentRepo && contentRepo.toLowerCase() !== repoFullName.toLowerCase()) continue;
+
+    const fieldValues = item.fieldValues?.nodes || [];
+    for (const fv of fieldValues) {
+      if (fv && (fv.iterationId || fv.title)) {
+        map.set(content.number, {
+          iterationId: fv.iterationId,
+          iterationTitle: fv.title,
+        });
+        break;
+      }
+    }
+  }
+
+  return map;
+}
+
+const GITHUB_PROJECT_COLOR_MAP: Record<string, string> = {
+  GRAY: '#94a3b8',
+  BLUE: '#38bdf8',
+  GREEN: '#22c55e',
+  YELLOW: '#f59e0b',
+  ORANGE: '#f97316',
+  RED: '#ef4444',
+  PINK: '#ec4899',
+  PURPLE: '#8957e5',
+};
+
+export interface ProjectV2ItemData {
+  itemId: string;
+  statusName?: string;
+  statusOptionId?: string;
+  estimate?: number;
+  iterationId?: string;
+  iterationTitle?: string;
+}
+
+function extractProjectV2ColumnsAndItems(project: any): {
+  columns: KanbanColumnDef[];
+  statusFieldId: string | null;
+  projectId: string | null;
+  itemsMap: Map<string, ProjectV2ItemData>;
+} {
+  const columns: KanbanColumnDef[] = [];
+  let statusFieldId: string | null = null;
+  const projectId: string | null = project?.id || null;
+  const itemsMap = new Map<string, ProjectV2ItemData>();
+
+  if (!project) return { columns, statusFieldId, projectId, itemsMap };
+
+  // 1. Procurar o campo Status no Project V2
+  const fields = project.fields?.nodes || [];
+  const statusField = fields.find(
+    (f: any) =>
+      f &&
+      Array.isArray(f.options) &&
+      (f.name?.toLowerCase() === 'status' || f.__typename === 'ProjectV2SingleSelectField')
+  );
+
+  if (statusField) {
+    statusFieldId = statusField.id;
+    const options = statusField.options || [];
+    options.forEach((opt: any, idx: number) => {
+      const colorKey = String(opt.color || '').toUpperCase();
+      const dotColor = GITHUB_PROJECT_COLOR_MAP[colorKey] || (opt.color?.startsWith('#') ? opt.color : '#94a3b8');
+      const isDone =
+        opt.name.toLowerCase().includes('done') ||
+        opt.name.toLowerCase().includes('conclu') ||
+        opt.name.toLowerCase().includes('finaliz') ||
+        opt.name.toLowerCase().includes('closed') ||
+        idx === options.length - 1;
+
+      columns.push({
+        id: opt.id,
+        optionId: opt.id,
+        title: opt.name,
+        subtitle: opt.description || undefined,
+        dotColor,
+        isDoneType: isDone,
+      });
+    });
+  }
+
+  // 2. Extrair itens do Project V2
+  const items = project.items?.nodes || [];
+  for (const item of items) {
+    const content = item.content;
+    if (!content || content.number == null) continue;
+    const repoFullName = content.repository?.nameWithOwner;
+    const itemData: ProjectV2ItemData = {
+      itemId: item.id,
+    };
+
+    const fieldValues = item.fieldValues?.nodes || [];
+    for (const fv of fieldValues) {
+      if (!fv) continue;
+      // Single select: Status
+      if (fv.optionId || (fv.name && fv.field)) {
+        const fieldName = fv.field?.name?.toLowerCase();
+        if (!fieldName || fieldName === 'status') {
+          itemData.statusName = fv.name;
+          itemData.statusOptionId = fv.optionId;
+        }
+      }
+      // Number: Estimate / Story Points
+      if (typeof fv.number === 'number') {
+        itemData.estimate = fv.number;
+      }
+      // Iteration: Sprint
+      if (fv.iterationId || fv.title) {
+        itemData.iterationId = fv.iterationId;
+        itemData.iterationTitle = fv.title;
+      }
+    }
+
+    if (repoFullName) {
+      itemsMap.set(`${repoFullName.toLowerCase()}#${content.number}`, itemData);
+    }
+    itemsMap.set(String(content.number), itemData);
+  }
+
+  return { columns, statusFieldId, projectId, itemsMap };
+}
+
 function getStatusBarColor(status: ProjectIssue['status'], isEffectiveDark: boolean): string {
   if (status === 'Concluído') return '#10b981';
   if (status === 'Em Progresso') return '#f59e0b';
   return isEffectiveDark ? '#444444' : '#cbd5e1';
 }
 
-function mapGithubIssueToProjectIssue(gh: any, projectId: number, pulls: any[]): ProjectIssue {
-  const labelObjs: Array<{ name: string; color?: string }> = (gh.labels || []).map((l: any) =>
-    typeof l === 'string' ? { name: l } : { name: l.name, color: l.color }
-  );
+function mapGithubIssueToProjectIssue(gh: any, projectId: number | string, pulls: any[]): ProjectIssue {
+  const labelObjs: Array<{ name: string; color?: string }> = (gh.labels || [])
+    .map((l: any) => (typeof l === 'string' ? { name: l } : { name: l?.name || '', color: l?.color }))
+    .filter((l: any) => Boolean(l.name));
   const labelNames = labelObjs.map((l) => l.name);
   const lowerLabels = labelNames.map((l) => l.toLowerCase());
 
@@ -902,33 +1360,6 @@ function mapGithubIssueToProjectIssue(gh: any, projectId: number, pulls: any[]):
   const priorityColor =
     priority === 'Urgente' ? '#dc2626' : priority === 'Alta' ? '#ef4444' : priority === 'Baixa' ? '#22c55e' : '#f59e0b';
 
-  const hasInProgress = lowerLabels.includes('em-progresso');
-  const status: ProjectIssue['status'] = gh.state === 'closed' ? 'Concluído' : hasInProgress ? 'Em Progresso' : 'A Fazer';
-
-  const tagLabelObj = labelObjs.find((l) => {
-    const name = l.name.toLowerCase();
-    return !name.startsWith('priority:') && name !== 'em-progresso';
-  });
-  const tagName = tagLabelObj?.name || 'Geral';
-  const tagColor =
-    TAG_LABEL_STYLE[tagName.toLowerCase()] ||
-    (tagLabelObj?.color
-      ? { bg: hexToRgba(`#${tagLabelObj.color}`, 0.15), text: `#${tagLabelObj.color}` }
-      : { bg: 'rgba(148, 163, 184, 0.15)', text: '#94a3b8' });
-
-  const createdAt = gh.created_at ? new Date(gh.created_at) : new Date();
-  const closedAt = gh.closed_at ? new Date(gh.closed_at) : null;
-  const endReference = closedAt || new Date();
-  const daysOpen = Math.max(1, Math.round((endReference.getTime() - createdAt.getTime()) / 86400000));
-
-  const assigneeList: any[] = gh.assignees && gh.assignees.length > 0 ? gh.assignees : gh.assignee ? [gh.assignee] : [];
-  const assignees = assigneeList.map((a: any) => ({
-    name: a.login,
-    initial: (a.login || '?').charAt(0).toUpperCase(),
-    avatarBg: '#6366f1',
-    avatarUrl: a.avatar_url,
-  }));
-
   // Best-effort link to a pull request that mentions "#<issue number>" in its title or body.
   const matchedPull = (pulls || []).find((pr: any) => {
     const text = `${pr.title || ''} ${pr.body || ''}`.toLowerCase();
@@ -941,25 +1372,106 @@ function mapGithubIssueToProjectIssue(gh: any, projectId: number, pulls: any[]):
         branch: matchedPull.head?.ref || '',
         status: (matchedPull.merged_at ? 'merged' : matchedPull.draft ? 'draft' : 'open') as 'open' | 'merged' | 'draft',
         reviewStatus: (matchedPull.merged_at ? 'approved' : 'review_required') as 'approved' | 'review_required',
-        url: matchedPull.html_url,
+        url: matchedPull.html_url || matchedPull.url,
       }
     : undefined;
 
+  const isClosed = String(gh.state || '').toLowerCase() === 'closed';
+  const hasInProgress =
+    lowerLabels.some((l) => isProgressLabel(l)) ||
+    Boolean(matchedPull && !matchedPull.merged_at && matchedPull.status !== 'merged');
+  const status: ProjectIssue['status'] = isClosed ? 'Concluído' : hasInProgress ? 'Em Progresso' : 'A Fazer';
+
+  const tagLabelObj = labelObjs.find((l) => {
+    const name = l.name.toLowerCase();
+    return !name.startsWith('priority:') && !isProgressLabel(name);
+  });
+  const tagName = tagLabelObj?.name || 'Geral';
+  const tagColor =
+    TAG_LABEL_STYLE[tagName.toLowerCase()] ||
+    (tagLabelObj?.color
+      ? { bg: hexToRgba(`#${tagLabelObj.color}`, 0.15), text: `#${tagLabelObj.color}` }
+      : { bg: 'rgba(148, 163, 184, 0.15)', text: '#94a3b8' });
+
+  const rawCreatedAt = gh.created_at || gh.createdAt;
+  const createdAt = rawCreatedAt ? new Date(rawCreatedAt) : new Date();
+  const rawClosedAt = gh.closed_at || gh.closedAt;
+  const closedAt = rawClosedAt ? new Date(rawClosedAt) : null;
+  const endReference = closedAt || new Date();
+  const daysOpen = Math.max(1, Math.round((endReference.getTime() - createdAt.getTime()) / 86400000));
+
+  const assigneeList: any[] = Array.isArray(gh.assignees) && gh.assignees.length > 0
+    ? gh.assignees
+    : gh.assignee
+    ? [gh.assignee]
+    : [];
+  const assignees = assigneeList.map((a: any) => {
+    const login = typeof a === 'string' ? a : (a?.login || a?.name || 'user');
+    const avatarUrl = a?.avatar_url || a?.avatarUrl || `https://github.com/${login}.png?size=40`;
+    return {
+      name: login,
+      initial: (login || '?').charAt(0).toUpperCase(),
+      avatarBg: '#6366f1',
+      avatarUrl,
+    };
+  });
+
+  const authorLogin =
+    gh.user?.login ||
+    (typeof gh.author === 'object' && gh.author !== null ? gh.author.login || gh.author.name : gh.author) ||
+    'gh-user';
+  const authorAvatarUrl =
+    gh.user?.avatar_url ||
+    gh.authorAvatar ||
+    (authorLogin ? `https://github.com/${authorLogin}.png?size=40` : undefined);
+
   // Datas de início/término vêm da sprint (milestone) atribuída à issue, não da própria issue.
   const milestone = gh.milestone;
-  const startDateIso = milestone ? parseSprintStart(milestone.description) : undefined;
-  const dueDateIso = milestone?.due_on ? toIsoDateOnly(milestone.due_on) : undefined;
+  const milestoneTitle = typeof milestone === 'string' ? milestone : milestone?.title;
+  const milestoneNumber = milestone?.number;
+  const milestoneDue = milestone?.due_on || milestone?.dueOn;
+  const startDateIso = milestone?.description ? parseSprintStart(milestone.description) : undefined;
+  const dueDateIso = milestoneDue ? toIsoDateOnly(milestoneDue) : undefined;
+
+  // Extrai parent issue se existir (via API ou texto "Parte de #XX")
+  let parentIssueNumber: number | undefined = undefined;
+  if (gh.parent_issue_url) {
+    const m = String(gh.parent_issue_url).match(/\/issues\/(\d+)$/);
+    if (m) parentIssueNumber = parseInt(m[1], 10);
+  }
+  if (!parentIssueNumber && gh.body) {
+    const partOfMatch = String(gh.body).match(/(?:parte de|part of)\s+#(\d+)/i);
+    if (partOfMatch) parentIssueNumber = parseInt(partOfMatch[1], 10);
+  }
+
+  // Extrai números de sub-issues referenciadas na descrição (ex: - [ ] #40 ou - [x] #41)
+  const subIssueNumbers: number[] = [];
+  if (gh.body) {
+    const lines = String(gh.body).split('\n');
+    lines.forEach((line) => {
+      const match = line.match(/^\s*[-*]\s*\[([ xX])\]\s+(?:.*?)#(\d+)\b/);
+      if (match) {
+        subIssueNumbers.push(parseInt(match[2], 10));
+      }
+    });
+  }
+
+  const subIssuesSummary = gh.sub_issues_summary || (subIssueNumbers.length > 0 ? {
+    total: subIssueNumbers.length,
+    completed: 0,
+    percent_completed: 0,
+  } : undefined);
 
   return {
     id: `#${gh.number}`,
     projectId,
     githubNumber: gh.number,
     nodeId: gh.node_id,
-    htmlUrl: gh.html_url,
+    htmlUrl: gh.html_url || gh.url,
     rawLabels: labelNames,
-    rawState: (gh.state === 'closed' ? 'closed' : 'open') as 'open' | 'closed',
-    author: gh.user?.login || 'gh-user',
-    authorAvatarUrl: gh.user?.avatar_url,
+    rawState: isClosed ? 'closed' : 'open',
+    author: authorLogin,
+    authorAvatarUrl,
     commentsCount: gh.comments || 0,
     title: gh.title,
     description: gh.body || '',
@@ -968,8 +1480,8 @@ function mapGithubIssueToProjectIssue(gh: any, projectId: number, pulls: any[]):
     durationDays: daysOpen,
     startDateIso,
     dueDateIso,
-    milestoneNumber: milestone?.number,
-    milestoneTitle: milestone?.title,
+    milestoneNumber,
+    milestoneTitle,
     tag: tagName,
     tagColor,
     priority,
@@ -978,10 +1490,315 @@ function mapGithubIssueToProjectIssue(gh: any, projectId: number, pulls: any[]):
     assignees,
     progress: status === 'Concluído' ? 100 : status === 'Em Progresso' ? 50 : 0,
     pullRequest,
+    parentIssueNumber,
+    subIssuesSummary,
+    subIssueNumbers: subIssueNumbers.length > 0 ? subIssueNumbers : undefined,
   };
 }
 
-export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
+export interface ParsedSubIssueItem {
+  id: string;
+  issueNumber?: number;
+  linkedIssue?: ProjectIssue;
+  title: string;
+  completed: boolean;
+  lineIndex?: number;
+}
+
+// Extrai as sub-issues vinculadas a uma issue (sejam issues reais referenciadas ou itens de checklist)
+export function extractSubIssuesForIssue(
+  issue: ProjectIssue,
+  allIssuesMap: Map<number, ProjectIssue>
+): ParsedSubIssueItem[] {
+  const result: ParsedSubIssueItem[] = [];
+  const seenNumbers = new Set<number>();
+
+  // 1. Extrai da descrição da issue (linhas no formato - [ ] ou - [x])
+  if (issue.description) {
+    const lines = String(issue.description).split('\n');
+    lines.forEach((line, idx) => {
+      const match = line.match(/^(\s*[-*]\s*\[([ xX])\]\s+)(.+)$/);
+      if (match) {
+        const completed = match[2].toLowerCase() === 'x';
+        const rawText = match[3].trim();
+        const numMatch = rawText.match(/#(\d+)\b/);
+        const childNum = numMatch ? parseInt(numMatch[1], 10) : undefined;
+
+        let linked: ProjectIssue | undefined = undefined;
+        if (childNum) {
+          linked = allIssuesMap.get(childNum);
+          seenNumbers.add(childNum);
+        }
+
+        const cleanTitle = linked?.title || (numMatch ? rawText.replace(numMatch[0], '').trim() || rawText : rawText);
+
+        result.push({
+          id: linked ? linked.id : `${issue.id}-sub-${idx}`,
+          issueNumber: childNum,
+          linkedIssue: linked,
+          title: cleanTitle,
+          completed: linked ? (linked.status === 'Concluído' || linked.rawState === 'closed') : completed,
+          lineIndex: idx,
+        });
+      }
+    });
+  }
+
+  // 2. Se houver outras issues cujo parentIssueNumber aponta para esta issue
+  if (issue.githubNumber) {
+    allIssuesMap.forEach((otherIssue) => {
+      if (
+        otherIssue.parentIssueNumber === issue.githubNumber &&
+        otherIssue.githubNumber &&
+        !seenNumbers.has(otherIssue.githubNumber)
+      ) {
+        seenNumbers.add(otherIssue.githubNumber);
+        result.push({
+          id: otherIssue.id,
+          issueNumber: otherIssue.githubNumber,
+          linkedIssue: otherIssue,
+          title: otherIssue.title,
+          completed: otherIssue.status === 'Concluído' || otherIssue.rawState === 'closed',
+        });
+      }
+    });
+  }
+
+  return result;
+}
+
+// Localiza o card correspondente ao projeto/repositório selecionado na header
+function findMatchingCard(
+  cards: ProjectCardData[],
+  wsPath?: string,
+  rName?: string
+): ProjectCardData | null {
+  if (!cards || cards.length === 0) return null;
+
+  const cleanRepoName = rName ? rName.trim().toLowerCase() : '';
+  const repoBaseName = cleanRepoName.includes('/') ? cleanRepoName.split('/').pop()! : cleanRepoName;
+  const folderName = wsPath ? wsPath.split('/').filter(Boolean).pop()?.toLowerCase() : '';
+  const isAuraDevFolder = folderName === 'devflow-desktop';
+
+  // 1. Correspondência exata pelo fullName (ex: "walancy/cooperaagro-app" ou "walancy/aura-dev")
+  if (cleanRepoName) {
+    const fullMatch = cards.find(
+      (c) => c.fullName && c.fullName.toLowerCase() === cleanRepoName
+    );
+    if (fullMatch) return fullMatch;
+  }
+
+  // 2. Correspondência exata por repoName / name / title usando o baseName
+  if (repoBaseName) {
+    const nameMatch = cards.find(
+      (c) =>
+        (c.repoName && c.repoName.toLowerCase() === repoBaseName) ||
+        (c.name && c.name.toLowerCase() === repoBaseName) ||
+        (c.title && c.title.toLowerCase() === repoBaseName)
+    );
+    if (nameMatch) return nameMatch;
+  }
+
+  // 3. Correspondência pelo nome da pasta do workspace (tratando mapeamento devflow-desktop -> aura-dev)
+  if (folderName) {
+    const folderMatch = cards.find(
+      (c) =>
+        (c.repoName && c.repoName.toLowerCase() === folderName) ||
+        (c.name && c.name.toLowerCase() === folderName) ||
+        (c.title && c.title.toLowerCase() === folderName) ||
+        (isAuraDevFolder && (
+          c.name?.toLowerCase() === 'aura-dev' ||
+          c.title?.toLowerCase() === 'aura dev' ||
+          (c.fullName && c.fullName.toLowerCase().includes('aura-dev'))
+        ))
+    );
+    if (folderMatch) return folderMatch;
+  }
+
+  // 4. Correspondência se o workspacePath termina com o nome do repo do card ou pelo localDir
+  if (wsPath) {
+    const lowerWs = wsPath.toLowerCase();
+    const pathMatch = cards.find(
+      (c) =>
+        (c.localDir && c.localDir.toLowerCase() === lowerWs) ||
+        (c.name &&
+          (lowerWs.endsWith(`/${c.name.toLowerCase()}`) ||
+           lowerWs.endsWith(`/${c.name.toLowerCase()}/`)))
+    );
+    if (pathMatch) return pathMatch;
+  }
+
+  return null;
+}
+
+interface ProjectsViewErrorBoundaryProps {
+  children: React.ReactNode;
+  isEffectiveDark?: boolean;
+}
+
+interface ProjectsViewErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+export class ProjectsViewErrorBoundary extends React.Component<
+  ProjectsViewErrorBoundaryProps,
+  ProjectsViewErrorBoundaryState
+> {
+  state: ProjectsViewErrorBoundaryState = { hasError: false, error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('[ProjectsSchedulerView] Erro capturado pelo ErrorBoundary:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      const isDark = this.props.isEffectiveDark ?? true;
+      return (
+        <div
+          style={{
+            flex: 1,
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 32,
+            gap: 16,
+            background: isDark ? '#101010' : '#f8fafc',
+            color: isDark ? '#ffffff' : '#0f172a',
+            fontFamily: "'Poppins', sans-serif",
+          }}
+        >
+          <div
+            style={{
+              padding: 12,
+              borderRadius: 12,
+              background: 'rgba(239, 68, 68, 0.12)',
+              color: '#ef4444',
+            }}
+          >
+            <AlertTriangle size={32} />
+          </div>
+          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>
+            Ocorreu um erro ao carregar a tela de projetos
+          </h3>
+          <p style={{ margin: 0, fontSize: 12.5, color: isDark ? '#888' : '#64748b', maxWidth: 480, textAlign: 'center' }}>
+            {this.state.error?.message || 'Erro inesperado na renderização.'}
+          </p>
+          <button
+            type="button"
+            onClick={() => this.setState({ hasError: false, error: null })}
+            style={{
+              padding: '8px 18px',
+              borderRadius: 8,
+              border: 'none',
+              background: '#ef4444',
+              color: '#fff',
+              fontSize: 13,
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+          >
+            Tentar Novamente
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// =========================================================================
+// CACHE GLOBAL EM MEMÓRIA & PERSISTÊNCIA EM DISCO (0ms de latência)
+// Permite que a prateleira e todas as tarefas já estejam pré-carregadas
+// =========================================================================
+interface ProjectsGlobalCache {
+  currentUser: { login: string; avatarUrl: string } | null;
+  repos: GithubRepoSummary[];
+  localClonedRepos: Array<{ dir: string; name: string; repoFullName?: string; remoteUrl?: string }>;
+  orgs: Array<{ login: string; avatarUrl: string }>;
+  repoDetailsCache: Record<
+    string,
+    { issues: ProjectIssue[]; sprints: SprintOption[]; collaborators: RepoCollaborator[]; isLoading: boolean; error: string | null }
+  >;
+  lastFetchedAt: number;
+}
+
+export const GLOBAL_PROJECTS_CACHE: ProjectsGlobalCache = {
+  currentUser: null,
+  repos: [],
+  localClonedRepos: [],
+  orgs: [],
+  repoDetailsCache: {},
+  lastFetchedAt: 0,
+};
+
+// Hidratação instantânea do cache via localStorage no carregamento do script
+try {
+  const savedCache = localStorage.getItem('devflow_projects_global_cache_v2');
+  if (savedCache) {
+    const parsed = JSON.parse(savedCache);
+    if (Array.isArray(parsed.repos) && parsed.repos.length > 0) {
+      GLOBAL_PROJECTS_CACHE.repos = parsed.repos;
+    }
+    if (Array.isArray(parsed.localClonedRepos) && parsed.localClonedRepos.length > 0) {
+      GLOBAL_PROJECTS_CACHE.localClonedRepos = parsed.localClonedRepos;
+    }
+    if (Array.isArray(parsed.orgs) && parsed.orgs.length > 0) {
+      GLOBAL_PROJECTS_CACHE.orgs = parsed.orgs;
+    }
+    if (parsed.currentUser) {
+      GLOBAL_PROJECTS_CACHE.currentUser = parsed.currentUser;
+    }
+    if (parsed.repoDetailsCache && typeof parsed.repoDetailsCache === 'object') {
+      const details = { ...parsed.repoDetailsCache };
+      for (const k of Object.keys(details)) {
+        if (details[k]) {
+          details[k].isLoading = false;
+        }
+      }
+      GLOBAL_PROJECTS_CACHE.repoDetailsCache = details;
+    }
+    if (parsed.lastFetchedAt) {
+      GLOBAL_PROJECTS_CACHE.lastFetchedAt = parsed.lastFetchedAt;
+    }
+  }
+} catch (e) {
+  console.warn('Aviso ao carregar cache de projetos:', e);
+}
+
+let saveProjectsCacheTimeout: any = null;
+function persistProjectsCache() {
+  if (saveProjectsCacheTimeout) clearTimeout(saveProjectsCacheTimeout);
+  saveProjectsCacheTimeout = setTimeout(() => {
+    try {
+      localStorage.setItem(
+        'devflow_projects_global_cache_v2',
+        JSON.stringify({
+          currentUser: GLOBAL_PROJECTS_CACHE.currentUser,
+          repos: GLOBAL_PROJECTS_CACHE.repos,
+          localClonedRepos: GLOBAL_PROJECTS_CACHE.localClonedRepos,
+          orgs: GLOBAL_PROJECTS_CACHE.orgs,
+          repoDetailsCache: GLOBAL_PROJECTS_CACHE.repoDetailsCache,
+          lastFetchedAt: GLOBAL_PROJECTS_CACHE.lastFetchedAt,
+        })
+      );
+    } catch (err) {
+      console.warn('Aviso ao persistir cache de projetos:', err);
+    }
+  }, 100);
+}
+
+const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
+  workspacePath,
+  repoName,
+  onSelectWorkspace,
   accentColor: propAccentColor,
   isEffectiveDark: propIsEffectiveDark,
   themeTokens,
@@ -1108,8 +1925,8 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     modalInputBorder: 'none',
     avatarBorder: isEffectiveDark ? '#181818' : '#ffffff',
   };
-  const [hoveredCardId, setHoveredCardId] = useState<number | null>(null);
-  const [selectedCardId, setSelectedCardId] = useState<number | null>(null);
+  const [hoveredCardId, setHoveredCardId] = useState<number | string | null>(null);
+  const [selectedCardId, setSelectedCardId] = useState<number | string | null>(null);
   const [projectLayoutMode, setProjectLayoutMode] = useState<'grid' | 'list'>('grid');
   const isGridMode = selectedCardId === null;
   // Quando um projeto estiver selecionado, deve mostrar a view em cards ('grid') e não em lista
@@ -1122,12 +1939,213 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   const [selectedVersion, setSelectedVersion] = useState('v2.4 - Produção');
   const [selectedOrg, setSelectedOrg] = useState('Todas');
 
+  // GitHub Projects da Organização
+  interface GithubOrgProjectItem {
+    id: string;
+    number: number;
+    title: string;
+    url: string;
+    shortDescription?: string;
+    closed?: boolean;
+    updatedAt?: string;
+    isCustom?: boolean;
+  }
+
+  const [githubOrgProjects, setGithubOrgProjects] = useState<GithubOrgProjectItem[]>([]);
+  const [selectedGithubProjectNumber, setSelectedGithubProjectNumber] = useState<number | null>(null);
+  const [isLoadingGithubProjects, setIsLoadingGithubProjects] = useState(false);
+  const [githubProjectDropdownOpen, setGithubProjectDropdownOpen] = useState(false);
+  const [githubProjectSearch, setGithubProjectSearch] = useState('');
+  const [githubProjectError, setGithubProjectError] = useState<string | null>(null);
+  const [isAddCustomProjectModalOpen, setIsAddCustomProjectModalOpen] = useState(false);
+  const [customProjectInputTitle, setCustomProjectInputTitle] = useState('');
+  const [customProjectInputUrl, setCustomProjectInputUrl] = useState('');
+  const [selectedGithubProjectRepos, setSelectedGithubProjectRepos] = useState<Set<string> | null>(null);
+  const [isLoadingProjectItems, setIsLoadingProjectItems] = useState(false);
+  const [projectV2Columns, setProjectV2Columns] = useState<KanbanColumnDef[] | null>(null);
+  const [projectV2StatusFieldId, setProjectV2StatusFieldId] = useState<string | null>(null);
+  const [projectV2Id, setProjectV2Id] = useState<string | null>(null);
+  const projectV2ItemsMapRef = useRef<Map<string, ProjectV2ItemData>>(new Map());
+
+  const selectedGithubProject = useMemo(() => {
+    if (selectedGithubProjectNumber == null) return null;
+    return githubOrgProjects.find((p) => p.number === selectedGithubProjectNumber) || null;
+  }, [selectedGithubProjectNumber, githubOrgProjects]);
+
+  const filteredGithubOrgProjects = useMemo(() => {
+    if (!githubProjectSearch.trim()) return githubOrgProjects;
+    const q = githubProjectSearch.toLowerCase().trim();
+    return githubOrgProjects.filter((p) => {
+      const matchTitle = (p.title || '').toLowerCase().includes(q);
+      const matchNumber = String(p.number || '').includes(q);
+      const matchDesc = (p.shortDescription || '').toLowerCase().includes(q);
+      return matchTitle || matchNumber || matchDesc;
+    });
+  }, [githubOrgProjects, githubProjectSearch]);
+
+  const loadCustomProjects = useCallback((org: string): GithubOrgProjectItem[] => {
+    try {
+      const saved = localStorage.getItem(`devflow_custom_projects_${org}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const saveCustomProjects = useCallback((org: string, list: GithubOrgProjectItem[]) => {
+    try {
+      localStorage.setItem(`devflow_custom_projects_${org}`, JSON.stringify(list));
+    } catch {}
+  }, []);
+
+  const fetchGithubProjectsForOrg = useCallback(async (org: string) => {
+    setIsLoadingGithubProjects(true);
+    setGithubProjectError(null);
+    const customList = loadCustomProjects(org);
+    try {
+      if (window.electronAPI?.github?.fetchOrgProjects) {
+        const res = await window.electronAPI.github.fetchOrgProjects(org);
+        if (res.success && Array.isArray(res.projects)) {
+          const apiProjects: GithubOrgProjectItem[] = res.projects;
+          const merged = [...apiProjects];
+          for (const c of customList) {
+            if (!merged.some((p) => p.number === c.number || p.id === c.id)) {
+              merged.push(c);
+            }
+          }
+          setGithubOrgProjects(merged);
+          return;
+        }
+        if (res.error) {
+          if (res.error.includes('read:project') || res.error.includes('INSUFFICIENT_SCOPES')) {
+            setGithubProjectError('O token precisa do escopo "read:project" para listar projects automaticamente.');
+          } else {
+            setGithubProjectError(res.error);
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err?.message?.includes('read:project') || err?.message?.includes('INSUFFICIENT_SCOPES')) {
+        setGithubProjectError('O token precisa do escopo "read:project" para listar projects automaticamente.');
+      } else if (err?.message?.includes('No handler registered')) {
+        setGithubProjectError('Reinicie o aplicativo para aplicar o manipulador de Projects.');
+      } else {
+        setGithubProjectError(err?.message || 'Erro ao carregar projects');
+      }
+    } finally {
+      setIsLoadingGithubProjects(false);
+    }
+    setGithubOrgProjects(customList);
+  }, [loadCustomProjects]);
+
+  useEffect(() => {
+    fetchGithubProjectsForOrg(selectedOrg);
+    setSelectedGithubProjectNumber(null);
+  }, [selectedOrg, fetchGithubProjectsForOrg]);
+
+  // Carrega os repositórios vinculados ao Project selecionado e suas colunas/itens
+  useEffect(() => {
+    if (selectedGithubProjectNumber == null) {
+      setSelectedGithubProjectRepos(null);
+      setProjectV2Columns(null);
+      setProjectV2StatusFieldId(null);
+      setProjectV2Id(null);
+      projectV2ItemsMapRef.current.clear();
+      return;
+    }
+    let isCancelled = false;
+    const loadItems = async () => {
+      setIsLoadingProjectItems(true);
+      try {
+        if (window.electronAPI?.github?.fetchProjectItems) {
+          const res = await window.electronAPI.github.fetchProjectItems(selectedGithubProjectNumber, selectedOrg);
+          if (!isCancelled && res.success && res.project) {
+            const { columns, statusFieldId, projectId, itemsMap } = extractProjectV2ColumnsAndItems(res.project);
+            if (columns.length > 0) {
+              setProjectV2Columns(columns);
+            } else {
+              setProjectV2Columns(null);
+            }
+            setProjectV2StatusFieldId(statusFieldId);
+            setProjectV2Id(projectId);
+            projectV2ItemsMapRef.current = itemsMap;
+
+            const repoSet = new Set<string>();
+            for (const item of res.project.items?.nodes || []) {
+              const repoNameWithOwner = item.content?.repository?.nameWithOwner;
+              if (repoNameWithOwner) {
+                repoSet.add(repoNameWithOwner.toLowerCase());
+              }
+            }
+            if (repoSet.size > 0) {
+              setSelectedGithubProjectRepos(repoSet);
+            } else {
+              setSelectedGithubProjectRepos(null);
+            }
+
+            // Atualiza imediatamente as issues em cache com os dados do Project V2
+            setRepoDetailsCache((prev) => {
+              let hasChanges = false;
+              const nextCache = { ...prev };
+              for (const key of Object.keys(nextCache)) {
+                const entry = nextCache[key];
+                if (!entry?.issues?.length) continue;
+                const newIssues = entry.issues.map((iss) => {
+                  const itData =
+                    (iss.githubNumber && itemsMap.get(`${key.toLowerCase()}#${iss.githubNumber}`)) ||
+                    (iss.githubNumber && itemsMap.get(String(iss.githubNumber)));
+                  if (itData) {
+                    hasChanges = true;
+                    return {
+                      ...iss,
+                      projectV2ItemId: itData.itemId,
+                      projectV2Status: itData.statusName || iss.projectV2Status,
+                      projectV2StatusOptionId: itData.statusOptionId || iss.projectV2StatusOptionId,
+                      projectV2Estimate: itData.estimate ?? iss.projectV2Estimate,
+                      iterationId: itData.iterationId || iss.iterationId,
+                      iterationTitle: itData.iterationTitle || iss.iterationTitle,
+                    };
+                  }
+                  return iss;
+                });
+                if (hasChanges) {
+                  nextCache[key] = { ...entry, issues: newIssues };
+                }
+              }
+              return hasChanges ? nextCache : prev;
+            });
+          }
+        }
+      } catch {
+        if (!isCancelled) {
+          setSelectedGithubProjectRepos(null);
+          setProjectV2Columns(null);
+        }
+      } finally {
+        if (!isCancelled) setIsLoadingProjectItems(false);
+      }
+    };
+    loadItems();
+    return () => { isCancelled = true; };
+  }, [selectedGithubProjectNumber, selectedOrg]);
+
+  // Ref e função de rolagem horizontal da prateleira de cards de projetos
+  const shelfCardsRef = useRef<HTMLDivElement>(null);
+  const scrollShelf = (direction: 'left' | 'right') => {
+    if (!shelfCardsRef.current) return;
+    const amount = shelfCardsRef.current.clientWidth * 0.75;
+    shelfCardsRef.current.scrollBy({
+      left: direction === 'left' ? -amount : amount,
+      behavior: 'smooth',
+    });
+  };
+
   // Menu de opções (...) do card de projeto
   const [activeProjectMenu, setActiveProjectMenu] = useState<{
     card: ProjectCardData;
     anchorRect: { top: number; bottom: number; left: number; right: number };
   } | null>(null);
-  const [cloneLoadingRepoId, setCloneLoadingRepoId] = useState<number | null>(null);
+  const [cloneLoadingRepoId, setCloneLoadingRepoId] = useState<number | string | null>(null);
 
   // Projetos fixados no topo (Pin)
   const [pinnedProjectFullNames, setPinnedProjectFullNames] = useState<string[]>(() => {
@@ -1146,6 +2164,40 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
       return next;
     });
   }, []);
+
+  // Ícones personalizados dos projetos salvos pelo usuário (sem necessidade de clonar)
+  const [customProjectIcons, setCustomProjectIcons] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem('devflow_custom_project_icons');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const saveCustomProjectIcon = useCallback((projectKey: string, iconUrlOrData: string) => {
+    setCustomProjectIcons((prev) => {
+      const next = { ...prev, [projectKey]: iconUrlOrData };
+      try {
+        localStorage.setItem('devflow_custom_project_icons', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  const removeCustomProjectIcon = useCallback((projectKey: string) => {
+    setCustomProjectIcons((prev) => {
+      const next = { ...prev };
+      delete next[projectKey];
+      try {
+        localStorage.setItem('devflow_custom_project_icons', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  const [iconModalProject, setIconModalProject] = useState<ProjectCardData | null>(null);
+
 
   // Fechar o menu de opções do card ao clicar fora, teclar Escape ou rolar a página
   useEffect(() => {
@@ -1173,27 +2225,53 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     isLoading: boolean;
   } | null>(null);
 
-  // Dados reais do GitHub (usuário, repositórios e organizações)
-  const [currentUser, setCurrentUser] = useState<{ login: string; avatarUrl: string } | null>(null);
-  const [repos, setRepos] = useState<GithubRepoSummary[]>([]);
-  const [orgs, setOrgs] = useState<Array<{ login: string; avatarUrl: string }>>([]);
-  const [isLoadingRepos, setIsLoadingRepos] = useState(true);
+  // Dados reais: usuário, repositórios do GitHub, repositórios clonados locais e organizações
+  const [currentUser, setCurrentUser] = useState<{ login: string; avatarUrl: string } | null>(
+    () => GLOBAL_PROJECTS_CACHE.currentUser
+  );
+  const [repos, setRepos] = useState<GithubRepoSummary[]>(() => GLOBAL_PROJECTS_CACHE.repos);
+  const [localClonedRepos, setLocalClonedRepos] = useState<
+    Array<{ dir: string; name: string; repoFullName?: string; remoteUrl?: string }>
+  >(() => GLOBAL_PROJECTS_CACHE.localClonedRepos);
+  const [orgs, setOrgs] = useState<Array<{ login: string; avatarUrl: string }>>(
+    () => GLOBAL_PROJECTS_CACHE.orgs
+  );
+
+  // Inicializa isLoadingRepos como false se já temos projetos/repos em cache para exibição instantânea
+  const hasCachedProjects = GLOBAL_PROJECTS_CACHE.repos.length > 0 || GLOBAL_PROJECTS_CACHE.localClonedRepos.length > 0;
+  const [isLoadingRepos, setIsLoadingRepos] = useState(!hasCachedProjects);
   const [reposError, setReposError] = useState<string | null>(null);
 
-  // Cache de issues/sprints/time por repositório (chave = "owner/repo"), carregado sob demanda ao selecionar um card
+  // Cache de issues/sprints/time por repositório (chave = "owner/repo"), inicializado com cache persistido
   const [repoDetailsCache, setRepoDetailsCache] = useState<
     Record<
       string,
       { issues: ProjectIssue[]; sprints: SprintOption[]; collaborators: RepoCollaborator[]; isLoading: boolean; error: string | null }
     >
-  >({});
+  >(() => GLOBAL_PROJECTS_CACHE.repoDetailsCache);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setIsLoadingRepos(true);
+      // Se já temos projetos no cache, NÃO bloqueia a UI nem exibe tela de carregamento.
+      // Revalida silenciosamente em segundo plano (Stale-While-Revalidate).
+      const hasCached = GLOBAL_PROJECTS_CACHE.repos.length > 0 || GLOBAL_PROJECTS_CACHE.localClonedRepos.length > 0;
+      if (!hasCached) {
+        setIsLoadingRepos(true);
+      }
       setReposError(null);
       try {
+        let localList: any[] = [];
+        if (window.electronAPI?.git?.scanLocalProjects) {
+          localList = await window.electronAPI.git.scanLocalProjects();
+        } else if (window.electronAPI?.git?.listRepos && workspacePath) {
+          localList = await window.electronAPI.git.listRepos(workspacePath);
+        }
+        if (!cancelled && localList) {
+          setLocalClonedRepos(localList);
+          GLOBAL_PROJECTS_CACHE.localClonedRepos = localList;
+        }
+
         const [userRes, reposRes, orgsRes] = await Promise.all([
           window.electronAPI?.github?.getUser?.(),
           window.electronAPI?.github?.fetchRepos?.(),
@@ -1202,17 +2280,22 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
         if (cancelled) return;
         if (userRes?.success && userRes.user) {
           setCurrentUser({ login: userRes.user.login, avatarUrl: userRes.user.avatarUrl });
+          GLOBAL_PROJECTS_CACHE.currentUser = { login: userRes.user.login, avatarUrl: userRes.user.avatarUrl };
         }
         if (reposRes?.success && reposRes.repos) {
           setRepos(reposRes.repos);
-        } else {
+          GLOBAL_PROJECTS_CACHE.repos = reposRes.repos;
+        } else if (!hasCached) {
           setReposError(reposRes?.error || 'Não foi possível carregar seus repositórios do GitHub.');
         }
         if (orgsRes?.success && orgsRes.orgs) {
           setOrgs(orgsRes.orgs);
+          GLOBAL_PROJECTS_CACHE.orgs = orgsRes.orgs;
         }
+        GLOBAL_PROJECTS_CACHE.lastFetchedAt = Date.now();
+        persistProjectsCache();
       } catch (err: any) {
-        if (!cancelled) setReposError(err?.message || 'Erro ao carregar dados do GitHub.');
+        if (!cancelled && !hasCached) setReposError(err?.message || 'Erro ao carregar dados do GitHub.');
       } finally {
         if (!cancelled) setIsLoadingRepos(false);
       }
@@ -1220,18 +2303,69 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [workspacePath]);
 
-  // Cards da prateleira superior = repositórios reais do GitHub
+  // Cards da prateleira superior = unificação de repositórios do GitHub, projetos locais e workspace ativa
   const allCards: ProjectCardData[] = useMemo(() => {
-    return repos.map((repo, idx) => {
-      const cached = repoDetailsCache[repo.full_name];
+    const list: ProjectCardData[] = [];
+    const seenNames = new Set<string>();
+
+    const resolveCurrentSprint = (cachedObj: any) => {
+      if (!cachedObj?.sprints || cachedObj.sprints.length === 0) return null;
+      const openSprints = cachedObj.sprints.filter((s: any) => s.state === 'open');
+      if (openSprints.length === 0) return null;
+
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const running = openSprints.find(
+        (s: any) => s.startDateIso && s.dueDateIso && todayIso >= s.startDateIso && todayIso <= s.dueDateIso
+      );
+      const withDue = openSprints
+        .filter((s: any) => s.dueDateIso)
+        .sort((a: any, b: any) => (a.dueDateIso > b.dueDateIso ? 1 : -1));
+      const active = running || (withDue.length > 0 ? withDue[0] : openSprints[0]);
+      if (!active) return null;
+
+      const daysBadge = calculateSprintDaysBadge(active.dueDateIso, isEffectiveDark);
+      return {
+        number: active.number,
+        title: active.title,
+        dueDateIso: active.dueDateIso,
+        daysBadge,
+      };
+    };
+
+    // 1. Repositórios do GitHub autenticado
+    repos.forEach((repo, idx) => {
+      seenNames.add(repo.name.toLowerCase());
+      if (repo.full_name) seenNames.add(repo.full_name.toLowerCase());
+
+      const localMatch = localClonedRepos.find((l) => {
+        if (l.repoFullName && repo.full_name && l.repoFullName.toLowerCase() === repo.full_name.toLowerCase()) return true;
+        if (l.name.toLowerCase() === repo.name.toLowerCase()) return true;
+        return false;
+      });
+
+      const isCurrentWorkspace =
+        Boolean(workspacePath && workspacePath.toLowerCase().endsWith(`/${repo.name.toLowerCase()}`)) ||
+        Boolean(workspacePath && workspacePath.toLowerCase().endsWith(`/${repo.name.toLowerCase()}/`)) ||
+        Boolean(localMatch && workspacePath && localMatch.dir.toLowerCase() === workspacePath.toLowerCase());
+
+      const localDir = isCurrentWorkspace ? workspacePath : localMatch?.dir;
+      const cached =
+        repoDetailsCache[repo.full_name] ||
+        (repo.owner?.login && repoDetailsCache[`${repo.owner.login}/${repo.name}`]) ||
+        repoDetailsCache[repo.name] ||
+        Object.entries(repoDetailsCache).find(
+          ([k]) => k.toLowerCase() === repo.full_name?.toLowerCase() || k.toLowerCase().endsWith(`/${repo.name.toLowerCase()}`)
+        )?.[1];
       const doneCount = cached ? cached.issues.filter((i) => i.status === 'Concluído').length : 0;
       const inProgressCount = cached ? cached.issues.filter((i) => i.status === 'Em Progresso').length : 0;
       const openCount = cached ? cached.issues.filter((i) => i.status === 'A Fazer').length : repo.open_issues_count;
       const total = cached ? cached.issues.length : 0;
       const percentValue = total > 0 ? Math.round((doneCount / total) * 100) : 0;
-      return {
+      const currentSprint = resolveCurrentSprint(cached);
+
+      list.push({
         id: repo.id,
         badge: idx + 1,
         title: repo.name,
@@ -1241,7 +2375,7 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
         isPrivate: repo.private,
         updatedAtIso: repo.updated_at,
         progressPercent: percentValue,
-        sprint: repo.language || '—',
+        sprint: currentSprint?.title || '',
         percentage: `${percentValue}%`,
         percentValue,
         solidFlex: '1 1 0',
@@ -1256,15 +2390,177 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
         owner: repo.owner?.login,
         repoName: repo.name,
         htmlUrl: repo.html_url,
-      };
+        isCloned: Boolean(localMatch || isCurrentWorkspace),
+        localDir,
+        ownerAvatarUrl: repo.owner?.avatar_url,
+        defaultBranch: repo.default_branch || 'main',
+        currentSprint,
+      });
     });
-  }, [repos, repoDetailsCache]);
+
+    // 2. Repositórios locais clonados que não foram listados via GitHub
+    localClonedRepos.forEach((locRepo) => {
+      if (seenNames.has(locRepo.name.toLowerCase())) return;
+      if (locRepo.repoFullName && seenNames.has(locRepo.repoFullName.toLowerCase())) return;
+      seenNames.add(locRepo.name.toLowerCase());
+      if (locRepo.repoFullName) seenNames.add(locRepo.repoFullName.toLowerCase());
+
+      let owner = locRepo.repoFullName?.split('/')[0] || '';
+      let repoName = locRepo.repoFullName?.split('/')[1] || locRepo.name;
+      if (!owner && locRepo.remoteUrl) {
+        const parsed = extractOwnerRepo(locRepo.remoteUrl);
+        if (parsed) {
+          owner = parsed.owner;
+          repoName = parsed.repo;
+        }
+      }
+      if (!owner && currentUser?.login) {
+        owner = currentUser.login;
+      }
+      const fullName = (owner && repoName) ? `${owner}/${repoName}` : (locRepo.repoFullName || locRepo.name);
+      const isCurrentWorkspace = Boolean(
+        workspacePath &&
+          (workspacePath.toLowerCase() === locRepo.dir.toLowerCase() ||
+           workspacePath.toLowerCase().endsWith(`/${locRepo.name.toLowerCase()}`))
+      );
+      const cached =
+        repoDetailsCache[fullName] ||
+        (owner && repoName ? repoDetailsCache[`${owner}/${repoName}`] : undefined) ||
+        repoDetailsCache[repoName] ||
+        repoDetailsCache[locRepo.name] ||
+        Object.entries(repoDetailsCache).find(
+          ([k]) => k.toLowerCase() === fullName.toLowerCase() || k.toLowerCase().endsWith(`/${repoName.toLowerCase()}`)
+        )?.[1];
+      const doneCount = cached ? cached.issues.filter((i) => i.status === 'Concluído').length : 0;
+      const inProgressCount = cached ? cached.issues.filter((i) => i.status === 'Em Progresso').length : 0;
+      const openCount = cached ? cached.issues.filter((i) => i.status === 'A Fazer').length : 0;
+      const total = cached ? cached.issues.length : 0;
+      const percentValue = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+      const currentSprint = resolveCurrentSprint(cached);
+
+      const locOwnerAvatar =
+        (owner && orgs.find((o) => o.login.toLowerCase() === owner.toLowerCase())?.avatarUrl) ||
+        (currentUser && owner?.toLowerCase() === currentUser.login.toLowerCase() ? currentUser.avatarUrl : undefined);
+
+      list.push({
+        id: `local-${locRepo.name}`,
+        badge: list.length + 1,
+        title: locRepo.name,
+        name: locRepo.name,
+        description: `Projeto local em ${locRepo.dir}`,
+        language: undefined,
+        isPrivate: false,
+        updatedAtIso: undefined,
+        progressPercent: percentValue,
+        sprint: currentSprint?.title || 'Local',
+        percentage: `${percentValue}%`,
+        percentValue,
+        solidFlex: '1 1 0',
+        dottedWidth: 52,
+        faintWidth: 36,
+        issuesDone: doneCount,
+        issuesOpen: openCount,
+        issuesInProgress: inProgressCount,
+        alertStatus: null,
+        org: owner || undefined,
+        fullName,
+        owner,
+        repoName,
+        htmlUrl: locRepo.remoteUrl,
+        isCloned: true,
+        localDir: locRepo.dir,
+        ownerAvatarUrl: locOwnerAvatar,
+        defaultBranch: 'main',
+        currentSprint,
+      });
+    });
+
+    // 3. Workspace ativa se não estiver presente na lista
+    if (workspacePath && !list.some((p) => p.localDir && p.localDir.toLowerCase() === workspacePath.toLowerCase())) {
+      const folderName = workspacePath.split('/').filter(Boolean).pop() || 'Workspace';
+      const localMatch = localClonedRepos.find((l) => l.dir.toLowerCase() === workspacePath.toLowerCase());
+      let owner = localMatch?.repoFullName?.split('/')[0] || '';
+      let repoName = localMatch?.repoFullName?.split('/')[1] || folderName;
+      if (!owner && localMatch?.remoteUrl) {
+        const parsed = extractOwnerRepo(localMatch.remoteUrl);
+        if (parsed) {
+          owner = parsed.owner;
+          repoName = parsed.repo;
+        }
+      }
+      if (!owner && folderName.toLowerCase() === 'devflow-desktop') {
+        owner = 'Walancy';
+        repoName = 'aura-dev';
+      }
+      if (!owner && currentUser?.login) {
+        owner = currentUser.login;
+      }
+      const fullName = (owner && repoName) ? `${owner}/${repoName}` : folderName;
+      const displayName = folderName.toLowerCase() === 'devflow-desktop' ? 'Aura Dev' : repoName;
+      const cached =
+        repoDetailsCache[fullName] ||
+        (owner && repoName ? repoDetailsCache[`${owner}/${repoName}`] : undefined) ||
+        repoDetailsCache[repoName] ||
+        repoDetailsCache[displayName] ||
+        Object.entries(repoDetailsCache).find(
+          ([k]) => k.toLowerCase() === fullName.toLowerCase() || k.toLowerCase().endsWith(`/${repoName.toLowerCase()}`)
+        )?.[1];
+      const doneCount = cached ? cached.issues.filter((i) => i.status === 'Concluído').length : 0;
+      const inProgressCount = cached ? cached.issues.filter((i) => i.status === 'Em Progresso').length : 0;
+      const openCount = cached ? cached.issues.filter((i) => i.status === 'A Fazer').length : 0;
+      const total = cached ? cached.issues.length : 0;
+      const percentValue = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+      const currentSprint = resolveCurrentSprint(cached);
+
+      const wsOwnerAvatar =
+        (owner && orgs.find((o) => o.login.toLowerCase() === owner.toLowerCase())?.avatarUrl) ||
+        (currentUser && owner?.toLowerCase() === currentUser.login.toLowerCase() ? currentUser.avatarUrl : undefined);
+
+      list.unshift({
+        id: 'active-workspace',
+        badge: 1,
+        title: displayName,
+        name: displayName,
+        description: `Workspace ativa em ${workspacePath}`,
+        language: undefined,
+        isPrivate: false,
+        updatedAtIso: undefined,
+        progressPercent: percentValue,
+        sprint: currentSprint?.title || 'Local',
+        percentage: `${percentValue}%`,
+        percentValue,
+        solidFlex: '1 1 0',
+        dottedWidth: 52,
+        faintWidth: 36,
+        issuesDone: doneCount,
+        issuesOpen: openCount,
+        issuesInProgress: inProgressCount,
+        alertStatus: null,
+        org: owner || undefined,
+        fullName,
+        owner,
+        repoName,
+        htmlUrl: localMatch?.remoteUrl,
+        isCloned: true,
+        localDir: workspacePath,
+        ownerAvatarUrl: wsOwnerAvatar,
+        defaultBranch: 'main',
+        currentSprint,
+      });
+    }
+
+    return list;
+  }, [repos, localClonedRepos, workspacePath, repoDetailsCache, orgs, currentUser]);
 
   // Opções do filtro de "linguagem" derivadas dos repositórios reais (substitui as sprints fictícias)
   const sprintFilterOptions = useMemo(() => {
-    const langs = Array.from(new Set(repos.map((r) => r.language).filter(Boolean))) as string[];
+    const langs = Array.from(new Set(allCards.map((r) => r.language).filter(Boolean))) as string[];
     return ['Todas as Linguagens', ...langs.sort()];
-  }, [repos]);
+  }, [allCards]);
+
+  const selectedProject = useMemo(() => {
+    return allCards.find((p) => p.id === selectedCardId) || allCards[0];
+  }, [allCards, selectedCardId]);
 
   // Organizações reais do usuário + conta pessoal
   const organizationOptions: OrganizationOption[] = useMemo(() => {
@@ -1285,82 +2581,496 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
   }, [orgs, currentUser, accentColor]);
 
   const hasAutoSelectedRef = useRef(false);
+  const lastSyncedHeaderProjectRef = useRef<string>('');
 
-  // Seleciona automaticamente o primeiro repositório apenas na carga inicial
+  // Seleciona automaticamente o repositório correspondente ao projeto ativo na header
   useEffect(() => {
-    if (!hasAutoSelectedRef.current && allCards.length > 0) {
+    if (allCards.length === 0) return;
+
+    const currentHeaderKey = `${workspacePath || ''}::${repoName || ''}`;
+    const isFirstRun = !hasAutoSelectedRef.current;
+    const headerProjectChanged = lastSyncedHeaderProjectRef.current !== currentHeaderKey;
+
+    if (isFirstRun || headerProjectChanged) {
       hasAutoSelectedRef.current = true;
-      setSelectedCardId(allCards[0].id);
+      lastSyncedHeaderProjectRef.current = currentHeaderKey;
+
+      const matchingCard = findMatchingCard(allCards, workspacePath, repoName);
+      if (matchingCard) {
+        setSelectedCardId(matchingCard.id);
+        // Garante que o card correspondente não esteja oculto por filtros de organização
+        if (selectedOrg !== 'Todas' && matchingCard.org && matchingCard.org !== selectedOrg) {
+          setSelectedOrg('Todas');
+        }
+      } else if (isFirstRun && allCards.length > 0) {
+        setSelectedCardId(allCards[0].id);
+      }
     }
-  }, [allCards]);
+  }, [allCards, workspacePath, repoName, selectedOrg]);
+
+  // Scroll suave do card selecionado para o campo visual no shelf superior
+  useEffect(() => {
+    if (selectedCardId === null) return;
+    const el = document.getElementById(`project-card-${selectedCardId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }
+  }, [selectedCardId]);
 
   // Busca as issues (e PRs) reais do repositório selecionado, com cache por repositório
   const fetchRepoDetails = useCallback(async (fullName: string, force = false) => {
-    const card = allCards.find((c) => c.fullName === fullName);
-    if (!card || !card.owner || !card.repoName) return;
-    if (!force && repoDetailsCache[fullName] && !repoDetailsCache[fullName].isLoading && repoDetailsCache[fullName].issues.length > 0) return;
+    let card = allCards.find((c) => c.fullName === fullName);
+    if (!card) card = allCards.find((c) => c.name.toLowerCase() === fullName.toLowerCase() || c.repoName?.toLowerCase() === fullName.toLowerCase());
 
-    const owner = card.owner;
-    const repoName = card.repoName;
-    setRepoDetailsCache((prev) => ({
-      ...prev,
-      [fullName]: {
-        issues: prev[fullName]?.issues || [],
-        sprints: prev[fullName]?.sprints || [],
-        collaborators: prev[fullName]?.collaborators || [],
-        isLoading: true,
-        error: null,
-      },
-    }));
+    let owner = card?.owner;
+    let repoName = card?.repoName;
+    if (!owner && fullName.includes('/')) {
+      const parts = fullName.split('/');
+      owner = parts[0];
+      repoName = parts[1];
+    }
+    if (!owner && card?.htmlUrl) {
+      const parsed = extractOwnerRepo(card.htmlUrl);
+      if (parsed) {
+        owner = parsed.owner;
+        repoName = parsed.repo;
+      }
+    }
+    if (!owner && currentUser?.login) {
+      owner = currentUser.login;
+      if (!repoName) repoName = card?.name || fullName;
+    }
+    if (!owner || !repoName) return;
+
+    const existing = repoDetailsCache[fullName] || repoDetailsCache[`${owner}/${repoName}`] || (repoName ? repoDetailsCache[repoName] : undefined);
+    const hasCachedIssues = (existing?.issues?.length || 0) > 0;
+
+    if (!force && hasCachedIssues && !existing?.isLoading && existing?.error === null) {
+      return;
+    }
+
+    setRepoDetailsCache((prev) => {
+      const cur = prev[fullName] || prev[`${owner}/${repoName}`] || (repoName ? prev[repoName] : undefined);
+      const hasIssues = (cur?.issues?.length || 0) > 0;
+      return {
+        ...prev,
+        [fullName]: {
+          issues: cur?.issues || [],
+          sprints: cur?.sprints || [],
+          collaborators: cur?.collaborators || [],
+          isLoading: !hasIssues,
+          error: null,
+        },
+        [`${owner}/${repoName}`]: {
+          issues: cur?.issues || [],
+          sprints: cur?.sprints || [],
+          collaborators: cur?.collaborators || [],
+          isLoading: !hasIssues,
+          error: null,
+        },
+      };
+    });
 
     try {
-      const [issuesRes, pullsRes, milestonesRes, collaboratorsRes] = await Promise.all([
+      const [issuesRes, pullsRes, milestonesRes, collaboratorsRes, repoProjectsRes] = await Promise.allSettled([
         window.electronAPI?.github?.fetchRepoIssues?.(owner, repoName),
         window.electronAPI?.github?.fetchRepoPulls?.(owner, repoName),
         window.electronAPI?.github?.fetchRepoMilestones?.(owner, repoName),
         window.electronAPI?.github?.fetchRepoCollaborators?.(owner, repoName),
+        window.electronAPI?.github?.fetchRepoProjects?.(owner, repoName),
       ]);
-      if (!issuesRes?.success) throw new Error(issuesRes?.error || 'Falha ao buscar issues do repositório.');
-      const pulls = pullsRes?.success ? pullsRes.pulls || [] : [];
-      const mapped = (issuesRes.issues || []).map((gh: any) => mapGithubIssueToProjectIssue(gh, card.id, pulls));
-      const sprints: SprintOption[] = milestonesRes?.success
-        ? (milestonesRes.milestones || []).map((m: any) => ({
+
+      const milestonesRaw = milestonesRes.status === 'fulfilled' && milestonesRes.value?.success ? milestonesRes.value.milestones || [] : [];
+      const repoProjectsRaw = repoProjectsRes.status === 'fulfilled' && repoProjectsRes.value?.success ? repoProjectsRes.value.projects || [] : [];
+
+      // 1. Projects da organização correspondentes a este repositório
+      const matchedOrgProjects = (githubOrgProjects || []).filter((p) => {
+        if (!p) return false;
+        if (p.repositories && Array.isArray(p.repositories)) {
+          if (p.repositories.some((r: any) => (r.nameWithOwner || '').toLowerCase() === fullName.toLowerCase())) return true;
+        }
+        const cleanRepo = repoName.toLowerCase().replace(/[-_]/g, ' ');
+        const cleanProj = (p.title || '').toLowerCase().replace(/[-_]/g, ' ');
+        if (cleanProj.includes(cleanRepo) || cleanRepo.includes(cleanProj)) return true;
+        if (cleanRepo.includes('estancia') && cleanProj.includes('estancia')) return true;
+        if (selectedGithubProjectNumber != null && p.number === selectedGithubProjectNumber) return true;
+        return false;
+      });
+
+      const allRelevantProjects: any[] = [...repoProjectsRaw];
+      for (const op of matchedOrgProjects) {
+        if (!allRelevantProjects.some((p) => p.number === op.number || (p.id && op.id && p.id === op.id))) {
+          allRelevantProjects.push(op);
+        }
+      }
+
+      // 2. Extrai iterações/sprints dos projects encontrados
+      let issueIterationsMap = new Map<number, { iterationId?: string; iterationTitle?: string }>();
+      const projectIterationsList: SprintOption[] = [];
+
+      for (const proj of allRelevantProjects) {
+        const its = extractProjectIterations([proj]);
+        for (const it of its) {
+          if (!projectIterationsList.some((s) => s.iterationId === it.iterationId || s.title.toLowerCase() === it.title.toLowerCase())) {
+            projectIterationsList.push(it);
+          }
+        }
+
+        try {
+          if (window.electronAPI?.github?.fetchProjectItems) {
+            const itemsRes = await window.electronAPI.github.fetchProjectItems(proj.number, owner);
+            if (itemsRes?.success && itemsRes.project) {
+              const moreIts = extractProjectIterations([itemsRes.project]);
+              for (const it of moreIts) {
+                if (!projectIterationsList.some((s) => s.iterationId === it.iterationId || s.title.toLowerCase() === it.title.toLowerCase())) {
+                  projectIterationsList.push(it);
+                }
+              }
+              const map = extractIssueIterationsMap(itemsRes.project.items?.nodes || [], fullName);
+              map.forEach((val, key) => issueIterationsMap.set(key, val));
+
+              const v2Details = extractProjectV2ColumnsAndItems(itemsRes.project);
+              if (v2Details.columns.length > 0) {
+                setProjectV2Columns((curr) => curr || v2Details.columns);
+                setProjectV2StatusFieldId((curr) => curr || v2Details.statusFieldId);
+                setProjectV2Id((curr) => curr || v2Details.projectId);
+              }
+              v2Details.itemsMap.forEach((v, k) => {
+                projectV2ItemsMapRef.current.set(k, v);
+              });
+            }
+          }
+        } catch (err) {
+          console.warn('Erro ao carregar itens do project:', err);
+        }
+      }
+
+      // Fallback Estância Bahia: se as iterações do project ainda não vieram pela API (ex: escopo do token),
+      // injeta as iterações conhecidas do project Estância Bahia para que a aba de sprints mostre todas as sprints
+      if (projectIterationsList.length === 0 && (repoName.includes('estancia-bahia') || fullName.includes('estancia-bahia'))) {
+        SAMPLE_GITHUB_SPRINTS.forEach((sp) => {
+          projectIterationsList.push({
+            number: sp.number,
+            iterationId: sp.id,
+            isProjectIteration: true,
+            title: sp.title,
+            state: sp.status === 'Completed' ? 'closed' : 'open',
+            startDateIso: sp.startDateIso,
+            dueDateIso: sp.dueDateIso,
+            durationLabel: sp.durationLabel,
+            openIssues: 0,
+            closedIssues: 0,
+          });
+        });
+      }
+
+      // 3. Sprints customizadas/locais salvas no localStorage para este projeto
+      const localCustomSprints: SprintOption[] = (() => {
+        try {
+          const saved = localStorage.getItem(`devflow_custom_sprints_${fullName}`);
+          return saved ? JSON.parse(saved) : [];
+        } catch {
+          return [];
+        }
+      })();
+
+      // Mapeamento local de sprints por issue (compatível com a aba de Tarefas da IDE)
+      const localSprintMap: Record<number, string> = (() => {
+        try {
+          const k1 = `devflow_issue_sprints_${repoName}`;
+          const k2 = `devflow_issue_sprints_${fullName}`;
+          const k3 = 'devflow_issue_sprints';
+          const saved = localStorage.getItem(k1) || localStorage.getItem(k2) || localStorage.getItem(k3);
+          return saved ? JSON.parse(saved) : {};
+        } catch {
+          return {};
+        }
+      })();
+
+      // 4. Obtenção das issues: Estratégia multi-tier idêntica à IDE (App.tsx / ProjectTasksDockTab)
+      // Nível 1: GitHub REST API oficial via IPC (fetchRepoIssues)
+      let issuesData: any[] =
+        issuesRes.status === 'fulfilled' && issuesRes.value?.success && Array.isArray(issuesRes.value.issues)
+          ? issuesRes.value.issues
+          : [];
+
+      // Nível 2: Fallback Git IPC local (git.getIssues)
+      if (issuesData.length === 0 && window.electronAPI?.git?.getIssues) {
+        try {
+          const targetDir =
+            card?.localDir ||
+            (workspacePath && workspacePath.toLowerCase().includes(repoName.toLowerCase()) ? workspacePath : undefined);
+          if (targetDir) {
+            const gitIssues = await window.electronAPI.git.getIssues(targetDir);
+            if (Array.isArray(gitIssues) && gitIssues.length > 0) {
+              issuesData = gitIssues;
+            }
+          }
+        } catch (err) {
+          console.warn('[fetchRepoDetails] git.getIssues fallback error:', err);
+        }
+      }
+
+      // Nível 3: Fallback gh CLI via terminal local
+      if (issuesData.length === 0 && window.electronAPI?.shell?.exec) {
+        try {
+          const targetDir = card?.localDir || workspacePath;
+          if (targetDir) {
+            const res = await window.electronAPI.shell.exec(
+              'export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh issue list --limit 100 --state all --json number,title,author,updatedAt,createdAt,closedAt,labels,state,milestone,assignees,body,url',
+              targetDir
+            );
+            if (res.exitCode === 0 && res.stdout?.trim()) {
+              const parsed = JSON.parse(res.stdout.trim());
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                issuesData = parsed;
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[fetchRepoDetails] gh issue list localDir fallback error:', err);
+        }
+      }
+
+      // Nível 4: Fallback gh CLI com repositório explícito (--repo <fullName>)
+      if (issuesData.length === 0 && window.electronAPI?.shell?.exec) {
+        try {
+          const repoTarget = (fullName && fullName.includes('/')) ? fullName : `${owner}/${repoName}`;
+          const res = await window.electronAPI.shell.exec(
+            `export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh issue list --repo ${repoTarget} --limit 100 --state all --json number,title,author,updatedAt,createdAt,closedAt,labels,state,milestone,assignees,body,url`,
+            workspacePath || '/tmp'
+          );
+          if (res.exitCode === 0 && res.stdout?.trim()) {
+            const parsed = JSON.parse(res.stdout.trim());
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              issuesData = parsed;
+            }
+          }
+        } catch (err) {
+          console.warn('[fetchRepoDetails] gh issue list --repo fallback error:', err);
+        }
+      }
+
+      // 5. Fallback de Milestones via gh api se estiver vazio
+      let resolvedMilestones: any[] = [...milestonesRaw];
+      if (resolvedMilestones.length === 0 && window.electronAPI?.shell?.exec) {
+        try {
+          const repoTarget = (fullName && fullName.includes('/')) ? fullName : `${owner}/${repoName}`;
+          const res = await window.electronAPI.shell.exec(
+            `export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh api "repos/${repoTarget}/milestones?state=all&per_page=100"`,
+            workspacePath || '/tmp'
+          );
+          if (res.exitCode === 0 && res.stdout?.trim()) {
+            const parsed = JSON.parse(res.stdout.trim());
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              resolvedMilestones = parsed;
+            }
+          }
+        } catch (err) {
+          console.warn('[fetchRepoDetails] gh api milestones error:', err);
+        }
+      }
+
+      const sprints: SprintOption[] = [
+        ...projectIterationsList,
+        ...resolvedMilestones
+          .filter((m: any) => !projectIterationsList.some((pi) => pi.title.toLowerCase() === m.title.toLowerCase() || pi.number === m.number))
+          .map((m: any) => ({
             number: m.number,
             title: m.title,
             state: m.state,
-            startDateIso: parseSprintStart(m.description),
+            startDateIso: parseSprintStart(m.description) || (m.created_at ? toIsoDateOnly(m.created_at) : undefined),
             dueDateIso: m.due_on ? toIsoDateOnly(m.due_on) : undefined,
             openIssues: m.open_issues ?? 0,
             closedIssues: m.closed_issues ?? 0,
-          }))
-        : [];
-      const collaborators: RepoCollaborator[] = collaboratorsRes?.success
-        ? (collaboratorsRes.collaborators || []).map((c: any) => ({
-            login: c.login,
-            avatarUrl: c.avatar_url,
-            htmlUrl: c.html_url,
-            contributions: c.contributions,
-          }))
-        : [];
-      setRepoDetailsCache((prev) => ({
-        ...prev,
-        [fullName]: { issues: mapped, sprints, collaborators, isLoading: false, error: null },
+          })),
+        ...localCustomSprints.filter((ls) => !projectIterationsList.some((pi) => pi.title.toLowerCase() === ls.title.toLowerCase())),
+      ];
+
+      // Descobre sprints adicionais a partir de localSprintMap, labels das issues ou milestones
+      const discoveredSprintTitles = new Set<string>();
+      Object.values(localSprintMap).forEach((st) => {
+        if (st && typeof st === 'string' && st.trim()) discoveredSprintTitles.add(st.trim());
+      });
+      issuesData.forEach((gh: any) => {
+        const mTitle = typeof gh.milestone === 'string' ? gh.milestone : gh.milestone?.title;
+        if (mTitle && typeof mTitle === 'string' && mTitle.trim()) {
+          discoveredSprintTitles.add(mTitle.trim());
+        }
+        if (Array.isArray(gh.labels)) {
+          gh.labels.forEach((l: any) => {
+            const name = typeof l === 'string' ? l : l?.name;
+            if (name && /sprint/i.test(name)) {
+              discoveredSprintTitles.add(name.trim());
+            }
+          });
+        }
+      });
+      discoveredSprintTitles.forEach((st) => {
+        if (!sprints.some((sp) => sp.title.toLowerCase() === st.toLowerCase())) {
+          sprints.push({
+            number: sprints.length + 1,
+            title: st,
+            state: 'open',
+            openIssues: 0,
+            closedIssues: 0,
+          });
+        }
+      });
+
+      // 6. Mapeamento das issues vinculando às iterações e Project V2
+      const pulls = pullsRes.status === 'fulfilled' && pullsRes.value?.success ? pullsRes.value.pulls || [] : [];
+      const cardId = card?.id || fullName;
+      const mapped = issuesData.map((gh: any) => {
+        const issue = mapGithubIssueToProjectIssue(gh, cardId, pulls);
+        
+        // Aplica sprint vinda do localSprintMap se ainda não tiver milestoneTitle
+        if (!issue.milestoneTitle) {
+          const spTitle =
+            localSprintMap[gh.number] ||
+            (Array.isArray(gh.labels)
+              ? gh.labels
+                  .map((l: any) => (typeof l === 'string' ? l : l?.name))
+                  .find((n: string) => /sprint/i.test(n || ''))
+              : undefined);
+          if (spTitle) {
+            issue.milestoneTitle = spTitle.trim();
+          }
+        }
+
+        const itInfo = issueIterationsMap.get(gh.number);
+        if (itInfo) {
+          issue.iterationId = itInfo.iterationId;
+          issue.iterationTitle = itInfo.iterationTitle;
+        } else if (projectIterationsList.length > 0) {
+          const lowerTitle = (gh.title || '').toLowerCase();
+          for (const it of projectIterationsList) {
+            const cleanIt = it.title.toLowerCase();
+            if (
+              (lowerTitle.includes('cadastro') && cleanIt.includes('cadastro')) ||
+              (lowerTitle.includes('catálogo') || lowerTitle.includes('catalogo')) && cleanIt.includes('catálogo') ||
+              (lowerTitle.includes('habilitação') || lowerTitle.includes('habilitacao')) && cleanIt.includes('habilitação') ||
+              (lowerTitle.includes('lance') && cleanIt.includes('lance')) ||
+              (lowerTitle.includes('samsung') && cleanIt.includes('samsung')) ||
+              (lowerTitle.includes('tv lg') && cleanIt.includes('lg')) ||
+              (lowerTitle.includes('carga') && cleanIt.includes('carga'))
+            ) {
+              issue.iterationId = it.iterationId;
+              issue.iterationTitle = it.title;
+              break;
+            }
+          }
+        }
+
+        const v2Data =
+          projectV2ItemsMapRef.current.get(`${fullName.toLowerCase()}#${gh.number}`) ||
+          projectV2ItemsMapRef.current.get(String(gh.number));
+        if (v2Data) {
+          issue.projectV2ItemId = v2Data.itemId;
+          if (v2Data.statusName) {
+            issue.projectV2Status = v2Data.statusName;
+            const sLower = v2Data.statusName.toLowerCase().trim();
+            if (
+              sLower.includes('progress') ||
+              sLower.includes('andamento') ||
+              sLower.includes('doing') ||
+              sLower.includes('wip') ||
+              sLower.includes('fazendo') ||
+              sLower.includes('desenvolv') ||
+              sLower.includes('dev') ||
+              sLower.includes('test') ||
+              sLower.includes('review') ||
+              sLower.includes('revis') ||
+              sLower.includes('qa')
+            ) {
+              if (gh.state !== 'closed') {
+                issue.status = 'Em Progresso';
+              }
+            } else if (
+              sLower.includes('done') ||
+              sLower.includes('conclu') ||
+              sLower.includes('finaliz') ||
+              sLower.includes('closed') ||
+              sLower.includes('pronto')
+            ) {
+              issue.status = 'Concluído';
+            } else if (
+              sLower.includes('todo') ||
+              sLower.includes('to do') ||
+              sLower.includes('a fazer') ||
+              sLower.includes('backlog') ||
+              sLower.includes('pendente')
+            ) {
+              if (gh.state !== 'closed') {
+                issue.status = 'A Fazer';
+              }
+            }
+          }
+          if (v2Data.statusOptionId) issue.projectV2StatusOptionId = v2Data.statusOptionId;
+          if (v2Data.estimate != null) issue.projectV2Estimate = v2Data.estimate;
+          if (v2Data.iterationId && !issue.iterationId) issue.iterationId = v2Data.iterationId;
+          if (v2Data.iterationTitle && !issue.iterationTitle) issue.iterationTitle = v2Data.iterationTitle;
+        }
+
+        return issue;
+      });
+
+      // Atualiza contagem de issues em cada sprint descoberta
+      sprints.forEach((sp) => {
+        const spLower = sp.title.toLowerCase().trim();
+        const sprintIssues = mapped.filter(
+          (i) => (i.milestoneTitle || i.iterationTitle || '').toLowerCase().trim() === spLower
+        );
+        if (sprintIssues.length > 0) {
+          sp.openIssues = sprintIssues.filter((i) => i.status !== 'Concluído').length;
+          sp.closedIssues = sprintIssues.filter((i) => i.status === 'Concluído').length;
+        }
+      });
+
+      const collaboratorsRaw = collaboratorsRes.status === 'fulfilled' && collaboratorsRes.value?.success ? collaboratorsRes.value.collaborators || [] : [];
+      const collaborators: RepoCollaborator[] = collaboratorsRaw.map((c: any) => ({
+        login: c.login,
+        avatarUrl: c.avatar_url,
+        htmlUrl: c.html_url,
+        contributions: c.contributions,
       }));
+
+      setRepoDetailsCache((prev) => {
+        const next = {
+          ...prev,
+          [fullName]: { issues: mapped, sprints, collaborators, isLoading: false, error: null },
+          [`${owner}/${repoName}`]: { issues: mapped, sprints, collaborators, isLoading: false, error: null },
+          ...(repoName ? { [repoName]: { issues: mapped, sprints, collaborators, isLoading: false, error: null } } : {}),
+        };
+        GLOBAL_PROJECTS_CACHE.repoDetailsCache = next;
+        persistProjectsCache();
+        return next;
+      });
     } catch (err: any) {
-      setRepoDetailsCache((prev) => ({
-        ...prev,
-        [fullName]: { issues: [], sprints: [], collaborators: [], isLoading: false, error: err?.message || 'Erro ao buscar dados do repositório.' },
-      }));
+      setRepoDetailsCache((prev) => {
+        const cur = prev[fullName] || prev[`${owner}/${repoName}`] || (repoName ? prev[repoName] : undefined);
+        return {
+          ...prev,
+          [fullName]: { issues: cur?.issues || [], sprints: cur?.sprints || [], collaborators: cur?.collaborators || [], isLoading: false, error: err?.message || 'Erro ao buscar dados do repositório.' },
+          [`${owner}/${repoName}`]: { issues: cur?.issues || [], sprints: cur?.sprints || [], collaborators: cur?.collaborators || [], isLoading: false, error: err?.message || 'Erro ao buscar dados do repositório.' },
+          ...(repoName ? { [repoName]: { issues: cur?.issues || [], sprints: cur?.sprints || [], collaborators: cur?.collaborators || [], isLoading: false, error: err?.message || 'Erro ao buscar dados do repositório.' } } : {}),
+        };
+      });
     }
-  }, [allCards, repoDetailsCache]);
+  }, [allCards, repoDetailsCache, currentUser, githubOrgProjects, selectedGithubProjectNumber]);
 
   useEffect(() => {
-    const card = allCards.find((c) => c.id === selectedCardId);
-    if (!card || !card.fullName) return;
-    if (!repoDetailsCache[card.fullName]) {
-      fetchRepoDetails(card.fullName);
+    const targetProject = (selectedCardId ? allCards.find((c) => c.id === selectedCardId) : null) || selectedProject || allCards[0];
+    if (!targetProject || !targetProject.fullName) return;
+    if (!repoDetailsCache[targetProject.fullName] || repoDetailsCache[targetProject.fullName].error) {
+      fetchRepoDetails(targetProject.fullName);
     }
-  }, [selectedCardId, allCards, repoDetailsCache, fetchRepoDetails]);
+  }, [selectedCardId, selectedProject?.fullName, allCards, repoDetailsCache, fetchRepoDetails]);
+
+  // Ao trocar de card de projeto, reseta a sprint aberta para selecionar a sprint ativa do novo projeto
+  useEffect(() => {
+    setOpenedSprintNumber(null);
+  }, [selectedCardId]);
 
   const [sprintDropdownOpen, setSprintDropdownOpen] = useState(false);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
@@ -1742,13 +3452,14 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchesTitle = card.title.toLowerCase().includes(q);
-      const matchesSprint = card.sprint.toLowerCase().includes(q);
+      const matchesSprint = (card.sprint || card.language || '').toLowerCase().includes(q);
       const matchesBadge = card.badge.toString() === q;
       if (!matchesTitle && !matchesSprint && !matchesBadge) return false;
     }
 
     if (selectedSprint !== 'Todas as Linguagens') {
-      if (card.sprint.toLowerCase() !== selectedSprint.toLowerCase()) return false;
+      const cardLang = card.language || card.sprint || '';
+      if (cardLang.toLowerCase() !== selectedSprint.toLowerCase()) return false;
     }
 
     if (selectedStatus === 'Em Andamento (<90%)') {
@@ -1761,6 +3472,12 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
       if (card.org && card.org !== selectedOrg) return false;
     }
 
+    if (selectedGithubProjectNumber != null && selectedGithubProjectRepos && selectedGithubProjectRepos.size > 0) {
+      const match = (card.fullName && selectedGithubProjectRepos.has(card.fullName.toLowerCase())) ||
+                    (card.repoName && Array.from(selectedGithubProjectRepos).some((r) => r.endsWith(`/${card.repoName.toLowerCase()}`)));
+      if (!match) return false;
+    }
+
     return true;
   }).sort((a, b) => {
     const aPinned = a.fullName && pinnedProjectFullNames.includes(a.fullName);
@@ -1770,9 +3487,50 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = ({
     return 0;
   });
 
-  // Projeto (repositório) atualmente selecionado
-  const selectedProject = allCards.find((p) => p.id === selectedCardId) || allCards[0];
-  const selectedRepoDetail = selectedProject?.fullName ? repoDetailsCache[selectedProject.fullName] : undefined;
+  // Carrega em background os detalhes (sprints e issues) dos cards filtrados para exibir a sprint e dias restantes
+  useEffect(() => {
+    const toFetch = filteredCards
+      .filter((c) => c.fullName && (!repoDetailsCache[c.fullName] || repoDetailsCache[c.fullName].error))
+      .slice(0, 10);
+
+    if (toFetch.length === 0) return;
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      for (const card of toFetch) {
+        if (cancelled) break;
+        if (card.fullName) {
+          await fetchRepoDetails(card.fullName);
+        }
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [filteredCards, repoDetailsCache, fetchRepoDetails]);
+
+  const selectedRepoDetail = useMemo(() => {
+    if (!selectedProject) return undefined;
+    if (selectedProject.fullName && repoDetailsCache[selectedProject.fullName]) {
+      return repoDetailsCache[selectedProject.fullName];
+    }
+    const altKey = selectedProject.owner && selectedProject.repoName ? `${selectedProject.owner}/${selectedProject.repoName}` : undefined;
+    if (altKey && repoDetailsCache[altKey]) {
+      return repoDetailsCache[altKey];
+    }
+    const matchedKey = Object.keys(repoDetailsCache).find(
+      (k) => k.toLowerCase() === selectedProject.name.toLowerCase() ||
+             (selectedProject.repoName && k.toLowerCase().endsWith(`/${selectedProject.repoName.toLowerCase()}`))
+    );
+    return matchedKey ? repoDetailsCache[matchedKey] : undefined;
+  }, [selectedProject, repoDetailsCache]);
+
+  // Card correspondente ao projeto atualmente ativo na workspace/header
+  const activeWorkspaceMatchingCard = useMemo(() => {
+    return findMatchingCard(allCards, workspacePath, repoName);
+  }, [allCards, workspacePath, repoName]);
   const isLoadingProjectIssues = !!selectedRepoDetail?.isLoading;
   const projectIssuesError = selectedRepoDetail?.error || null;
   const rawProjectIssues = selectedRepoDetail?.issues || [];
@@ -2096,8 +3854,7 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
   const [selectedAssigneeFilter, setSelectedAssigneeFilter] = useState<string>('all');
   const [issuesSortMode, setIssuesSortMode] = useState<'newest' | 'oldest' | 'comments'>('newest');
   const [hoveredIssueId, setHoveredIssueId] = useState<string | null>(null);
-
-  const [sampleIssuesList, setSampleIssuesList] = useState<ProjectIssue[]>(SAMPLE_GITHUB_ISSUES);
+  const [sampleIssuesList, setSampleIssuesList] = useState<ProjectIssue[]>([]);
 
   // Issues combinadas: usa issues reais do repositório selecionado se existirem,
   // ou os dados realistas de exemplo do GitHub da captura de tela enviada pelo usuário
@@ -2249,7 +4006,7 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
   const [sprintFieldName, setSprintFieldName] = useState('Sprint');
   const [sprintsTab, setSprintsTab] = useState<'active' | 'completed'>('active');
   const [sprintMoreOptionsOpen, setSprintMoreOptionsOpen] = useState(false);
-  const [customSprintsList, setCustomSprintsList] = useState<GithubSprintItem[]>(SAMPLE_GITHUB_SPRINTS);
+  const [customSprintsList, setCustomSprintsList] = useState<GithubSprintItem[]>([]);
   const [hoveredSprintRowId, setHoveredSprintRowId] = useState<string | null>(null);
 
   // Detalhe de uma sprint aberta: lista de tarefas + visualização lista/calendário/issues
@@ -2267,36 +4024,140 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
   const [selectedCalendarDayIso, setSelectedCalendarDayIso] = useState<string | null>(null);
   const [sprintSidebarFilter, setSprintSidebarFilter] = useState<'all' | 'active' | 'completed'>('all');
 
+  // Estado de expansão das issues com sub-issues
+  const [expandedIssueIds, setExpandedIssueIds] = useState<Set<string>>(new Set());
+  const toggleIssueExpanded = useCallback((issueId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setExpandedIssueIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(issueId)) next.delete(issueId);
+      else next.add(issueId);
+      return next;
+    });
+  }, []);
+
+  // Mapa de todas as issues do projeto para lookup rápido por githubNumber
+  const allIssuesMap = useMemo(() => {
+    const map = new Map<number, ProjectIssue>();
+    (rawProjectIssues || []).forEach((i) => {
+      if (i.githubNumber) map.set(i.githubNumber, i);
+    });
+    return map;
+  }, [rawProjectIssues]);
+
+  // Conjunto de IDs de issues que são filhas (sub-issues) de outra issue existente
+  const childIssueIdSet = useMemo(() => {
+    const set = new Set<string>();
+    (rawProjectIssues || []).forEach((issue) => {
+      const subs = extractSubIssuesForIssue(issue, allIssuesMap);
+      subs.forEach((s) => {
+        if (s.linkedIssue) set.add(s.linkedIssue.id);
+      });
+    });
+    return set;
+  }, [rawProjectIssues, allIssuesMap]);
+
+  // Alternar checkbox de checklist de sub-issue dentro da descrição da issue pai
+  const handleToggleChecklistSubIssue = useCallback(
+    async (parentTask: ProjectIssue, lineIndex: number, currentlyCompleted: boolean) => {
+      if (!parentTask.description) return;
+      const lines = parentTask.description.split('\n');
+      if (lineIndex < 0 || lineIndex >= lines.length) return;
+      const targetLine = lines[lineIndex];
+      const nextCheck = currentlyCompleted ? ' ' : 'x';
+      lines[lineIndex] = targetLine.replace(/\[([ xX])\]/, `[${nextCheck}]`);
+      const newDescription = lines.join('\n');
+
+      setSampleIssuesList((prev) =>
+        prev.map((i) => (i.id === parentTask.id ? { ...i, description: newDescription } : i))
+      );
+
+      const card = allCards.find((c) => c.id === parentTask.projectId);
+      if (card?.owner && card?.repoName && parentTask.githubNumber) {
+        try {
+          await window.electronAPI?.github?.updateIssue?.(card.owner, card.repoName, parentTask.githubNumber, {
+            body: newDescription,
+          });
+          const fullName = card.fullName || `${card.owner}/${card.repoName}`;
+          setRepoDetailsCache((prev) => {
+            if (!prev[fullName]) return prev;
+            return {
+              ...prev,
+              [fullName]: {
+                ...prev[fullName],
+                issues: (prev[fullName].issues || []).map((i) =>
+                  i.id === parentTask.id ? { ...i, description: newDescription } : i
+                ),
+              },
+            };
+          });
+          showToast(currentlyCompleted ? 'Sub-issue reaberta.' : 'Sub-issue concluída!');
+        } catch (err: any) {
+          showToast(err?.message || 'Erro ao sincronizar sub-issue no GitHub.');
+        }
+      }
+    },
+    [allCards, showToast]
+  );
+
   const combinedSprints = useMemo<GithubSprintItem[]>(() => {
+    const list: GithubSprintItem[] = [];
     if (sprintsForSelectedRepo && sprintsForSelectedRepo.length > 0) {
       const todayIso = new Date().toISOString().slice(0, 10);
-      return sprintsForSelectedRepo.map((sp) => {
+      sprintsForSelectedRepo.forEach((sp) => {
         const isClosed = sp.state === 'closed';
-        const isCurrent =
-          !isClosed &&
-          sp.startDateIso &&
-          sp.dueDateIso &&
-          todayIso >= sp.startDateIso &&
-          todayIso <= sp.dueDateIso;
+        const isPlanned = !isClosed && sp.startDateIso && sp.startDateIso > todayIso;
+        const isCurrent = !isClosed && !isPlanned;
         const status: GithubSprintItem['status'] = isClosed ? 'Completed' : isCurrent ? 'Current' : 'Planned';
         const startFmt = sp.startDateIso ? formatShortDate(sp.startDateIso) : '';
         const dueFmt = sp.dueDateIso ? formatShortDate(sp.dueDateIso) : '';
         const dateRangeLabel =
-          startFmt && dueFmt ? `${startFmt} - ${dueFmt}` : startFmt || dueFmt || 'Sem data definida';
-        return {
-          id: `sprint-${sp.number}`,
+          startFmt && dueFmt ? `${startFmt} - ${dueFmt}` : startFmt || dueFmt || 'Em andamento';
+        list.push({
+          id: sp.iterationId ? `iteration-${sp.iterationId}` : `sprint-${sp.number}`,
           number: sp.number,
           title: sp.title,
-          durationLabel: '2 weeks',
+          durationLabel: sp.durationLabel || 'Sprint',
           startDateIso: sp.startDateIso || '',
           dueDateIso: sp.dueDateIso || '',
           dateRangeLabel,
           status,
-        };
+          iterationId: sp.iterationId,
+          isProjectIteration: sp.isProjectIteration,
+        });
       });
     }
-    return customSprintsList;
-  }, [sprintsForSelectedRepo, customSprintsList]);
+
+    if (customSprintsList && customSprintsList.length > 0) {
+      list.push(...customSprintsList);
+    }
+
+    // Se houver tarefas sem sprint associada OU se o repositório não tiver nenhum marco/sprint,
+    // disponibilizamos a seção de tarefas do projeto para que nenhuma tarefa fique oculta
+    const unassignedTasks = rawProjectIssues.filter(
+      (i) => (i.milestoneNumber == null || i.milestoneNumber === 0) && !i.iterationId && !i.iterationTitle
+    );
+    if (unassignedTasks.length > 0 || list.length === 0) {
+      const title = list.length === 0 ? 'Tarefas do Projeto' : 'Backlog Geral';
+      const backlogItem: GithubSprintItem = {
+        id: 'sprint-backlog',
+        number: -1,
+        title,
+        durationLabel: 'Geral',
+        startDateIso: '',
+        dueDateIso: '',
+        dateRangeLabel: `${unassignedTasks.length} tarefa${unassignedTasks.length === 1 ? '' : 's'}${list.length > 0 ? ' sem sprint' : ''}`,
+        status: list.length === 0 ? 'Current' : 'Planned',
+      };
+      if (list.length === 0) {
+        list.unshift(backlogItem);
+      } else {
+        list.push(backlogItem);
+      }
+    }
+
+    return list;
+  }, [sprintsForSelectedRepo, customSprintsList, rawProjectIssues]);
 
   const activeSprintsCount = useMemo(() => {
     return combinedSprints.filter((s) => s.status !== 'Completed').length;
@@ -2406,7 +4267,7 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
 
     const nextStatus: 'A Fazer' | 'Em Progresso' | 'Concluído' =
       issue.status === 'A Fazer' ? 'Em Progresso' : issue.status === 'Em Progresso' ? 'Concluído' : 'A Fazer';
-    const nextLabels = (issue.rawLabels || []).filter((l) => l.toLowerCase() !== 'em-progresso');
+    const nextLabels = (issue.rawLabels || []).filter((l) => !isProgressLabel(l));
     if (nextStatus === 'Em Progresso') nextLabels.push(IN_PROGRESS_LABEL.name);
     const nextState: 'open' | 'closed' = nextStatus === 'Concluído' ? 'closed' : 'open';
 
@@ -2470,31 +4331,54 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
     const issue = rawProjectIssues.find((i) => i.id === issueId) || sampleIssuesList.find((i) => i.id === issueId);
     if (!issue) return;
 
+    const targetCol = (projectV2Columns || []).find((c) => c.id === targetColumnId || c.optionId === targetColumnId);
+
     let nextStatus: 'A Fazer' | 'Em Progresso' | 'Concluído' = 'A Fazer';
     let nextLabels = (issue.rawLabels || []).filter(
-      (l) => !['em-progresso', 'em teste', 'test', 'testing', 'backlog'].includes(l.toLowerCase())
+      (l) => !isProgressLabel(l) && !['backlog'].includes(l.toLowerCase())
     );
     let nextState: 'open' | 'closed' = 'open';
 
-    if (targetColumnId === 'done') {
-      nextStatus = 'Concluído';
-      nextState = 'closed';
-    } else if (targetColumnId === 'in_progress') {
-      nextStatus = 'Em Progresso';
-      nextLabels.push(IN_PROGRESS_LABEL.name);
-      nextState = 'open';
-    } else if (targetColumnId === 'test') {
-      nextStatus = 'Em Progresso';
-      nextLabels.push('test');
-      nextState = 'open';
-    } else if (targetColumnId === 'backlog') {
-      nextStatus = 'A Fazer';
-      nextLabels.push('backlog');
-      nextState = 'open';
+    if (targetCol) {
+      if (targetCol.isDoneType) {
+        nextStatus = 'Concluído';
+        nextState = 'closed';
+      } else {
+        const titleLower = targetCol.title.toLowerCase();
+        if (titleLower.includes('progress') || titleLower.includes('andamento') || titleLower.includes('desenvolvimento') || titleLower.includes('fazendo')) {
+          nextStatus = 'Em Progresso';
+          nextLabels.push(IN_PROGRESS_LABEL.name);
+          nextState = 'open';
+        } else if (titleLower.includes('test') || titleLower.includes('review') || titleLower.includes('revisão') || titleLower.includes('qa')) {
+          nextStatus = 'Em Progresso';
+          nextLabels.push('test');
+          nextState = 'open';
+        } else {
+          nextStatus = 'A Fazer';
+          nextState = 'open';
+        }
+      }
     } else {
-      // todo
-      nextStatus = 'A Fazer';
-      nextState = 'open';
+      if (targetColumnId === 'done') {
+        nextStatus = 'Concluído';
+        nextState = 'closed';
+      } else if (targetColumnId === 'in_progress') {
+        nextStatus = 'Em Progresso';
+        nextLabels.push(IN_PROGRESS_LABEL.name);
+        nextState = 'open';
+      } else if (targetColumnId === 'test') {
+        nextStatus = 'Em Progresso';
+        nextLabels.push('test');
+        nextState = 'open';
+      } else if (targetColumnId === 'backlog') {
+        nextStatus = 'A Fazer';
+        nextLabels.push('backlog');
+        nextState = 'open';
+      } else {
+        // todo
+        nextStatus = 'A Fazer';
+        nextState = 'open';
+      }
     }
 
     setSampleIssuesList((prev) =>
@@ -2507,6 +4391,8 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
               rawLabels: nextLabels,
               rawState: nextState,
               kanbanColumnId: targetColumnId,
+              projectV2Status: targetCol?.title || i.projectV2Status,
+              projectV2StatusOptionId: targetCol?.optionId || i.projectV2StatusOptionId,
             }
           : i
       )
@@ -2531,6 +4417,8 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
                     rawLabels: nextLabels,
                     rawState: nextState,
                     kanbanColumnId: targetColumnId,
+                    projectV2Status: targetCol?.title || i.projectV2Status,
+                    projectV2StatusOptionId: targetCol?.optionId || i.projectV2StatusOptionId,
                   }
                 : i
             ),
@@ -2542,6 +4430,30 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
         };
       });
 
+      // Se a tarefa pertencer a um GitHub Projects V2 e a coluna tiver optionId, sincroniza via GraphQL
+      const activeProjId = projectV2Id;
+      const activeStatusFieldId = projectV2StatusFieldId;
+      const projectItemId =
+        issue.projectV2ItemId ||
+        projectV2ItemsMapRef.current.get(`${card.fullName.toLowerCase()}#${issue.githubNumber}`)?.itemId ||
+        projectV2ItemsMapRef.current.get(String(issue.githubNumber))?.itemId;
+
+      if (activeProjId && activeStatusFieldId && targetCol?.optionId && projectItemId) {
+        try {
+          if (window.electronAPI?.github?.updateProjectItemStatus) {
+            await window.electronAPI.github.updateProjectItemStatus(
+              activeProjId,
+              projectItemId,
+              activeStatusFieldId,
+              targetCol.optionId
+            );
+          }
+        } catch (v2Err) {
+          console.error('Falha ao atualizar status no GitHub Projects V2:', v2Err);
+        }
+      }
+
+      // Sincroniza estado e labels na issue do repositório
       try {
         await window.electronAPI?.github?.updateIssue?.(owner, repoName, issue.githubNumber, {
           state: nextState,
@@ -2559,7 +4471,7 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
       test: 'Test',
       done: 'Done',
     };
-    showToast(`Tarefa movida para "${columnLabels[targetColumnId] || targetColumnId}".`);
+    showToast(`Tarefa movida para "${targetCol ? targetCol.title : (columnLabels[targetColumnId] || targetColumnId)}".`);
   };
 
   const handleAssignToMe = async (issueId: string) => {
@@ -2677,23 +4589,25 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
       state?: 'open' | 'closed';
       milestoneNumber?: number | null;
       assignees?: Array<{ name: string; avatarBg: string; initial: string; avatarUrl?: string }>;
-    }
+    },
+    targetIssue?: ProjectIssue
   ) => {
-    if (!activeSidesheetIssue) return;
-    const card = allCards.find((c) => c.id === activeSidesheetIssue.projectId) || selectedProject;
-    if (!card || !card.owner || !card.repoName || !card.fullName || activeSidesheetIssue.githubNumber == null) return;
+    const current = targetIssue || activeSidesheetIssue;
+    if (!current) return;
+    const card = allCards.find((c) => c.id === current.projectId) || selectedProject;
+    if (!card || !card.owner || !card.repoName || !card.fullName || current.githubNumber == null) return;
 
     const fullName = card.fullName;
     const owner = card.owner;
     const repoName = card.repoName;
-    const issueNumber = activeSidesheetIssue.githubNumber;
+    const issueNumber = current.githubNumber;
 
-    const newTitle = updatedFields.title ?? activeSidesheetIssue.title;
-    const newBody = updatedFields.description ?? activeSidesheetIssue.description;
-    const newMilestone = updatedFields.milestoneNumber !== undefined ? updatedFields.milestoneNumber : (activeSidesheetIssue.milestoneNumber ?? null);
-    const newState = updatedFields.state ?? (activeSidesheetIssue.status === 'Concluído' ? 'closed' : 'open');
+    const newTitle = updatedFields.title ?? current.title;
+    const newBody = updatedFields.description ?? current.description;
+    const newMilestone = updatedFields.milestoneNumber !== undefined ? updatedFields.milestoneNumber : (current.milestoneNumber ?? null);
+    const newState = updatedFields.state ?? (current.status === 'Concluído' ? 'closed' : 'open');
     const newAssignees = updatedFields.assignees ? updatedFields.assignees.map((a) => a.name) : undefined;
-    const newLabels = updatedFields.rawLabels ?? activeSidesheetIssue.rawLabels ?? (activeSidesheetIssue.tag ? [activeSidesheetIssue.tag] : []);
+    const newLabels = updatedFields.rawLabels ?? current.rawLabels ?? (current.tag ? [current.tag] : []);
 
     try {
       const res = await window.electronAPI?.github?.updateIssue?.(owner, repoName, issueNumber, {
@@ -2713,7 +4627,7 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
       setRepoDetailsCache((prev) => ({
         ...prev,
         [fullName]: {
-          issues: (prev[fullName]?.issues || []).map((i) => (i.id === activeSidesheetIssue.id ? mapped : i)),
+          issues: (prev[fullName]?.issues || []).map((i) => (i.id === current.id ? mapped : i)),
           sprints: prev[fullName]?.sprints || [],
           collaborators: prev[fullName]?.collaborators || [],
           isLoading: false,
@@ -2721,7 +4635,9 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
         },
       }));
 
-      setActiveSidesheetIssue(mapped);
+      if (activeSidesheetIssue?.id === current.id) {
+        setActiveSidesheetIssue(mapped);
+      }
       showToast('Issue atualizada no GitHub.');
     } catch (err: any) {
       showToast(err?.message || 'Erro ao atualizar a issue no GitHub.');
@@ -2890,45 +4806,64 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
     const description = encodeSprintDescription(`Sprint de ${newSprintDuration} dias.`, newSprintStartDate);
 
     setIsCreatingSprint(true);
+    let sprintNumber = Date.now();
     try {
       const res = await window.electronAPI?.github?.createMilestone?.(owner, repoName, {
         title,
         description,
         due_on: dueDate.toISOString(),
       });
-      if (!res?.success || !res.milestone) throw new Error(res?.error || 'Falha ao criar sprint no GitHub.');
-
-      const sprint: SprintOption = {
-        number: res.milestone.number,
-        title: res.milestone.title,
-        state: 'open',
-        startDateIso: newSprintStartDate,
-        dueDateIso,
-        openIssues: 0,
-        closedIssues: 0,
-      };
-      setRepoDetailsCache((prev) => ({
-        ...prev,
-        [fullName]: {
-          issues: prev[fullName]?.issues || [],
-          sprints: [...(prev[fullName]?.sprints || []), sprint],
-          collaborators: prev[fullName]?.collaborators || [],
-          isLoading: false,
-          error: null,
-        },
-      }));
-
-      if (sprintCreationContext === 'create') setNewTaskMilestoneNumber(sprint.number);
-      if (sprintCreationContext === 'edit') setEditIssueMilestoneNumber(sprint.number);
-
-      showToast(`Sprint "${sprint.title}" criada.`);
-      setIsCreateSprintModalOpen(false);
-      setSprintCreationContext(null);
-    } catch (err: any) {
-      showToast(err?.message || 'Erro ao criar a sprint no GitHub.');
-    } finally {
-      setIsCreatingSprint(false);
+      if (res?.success && res.milestone) {
+        sprintNumber = res.milestone.number;
+      }
+    } catch {
+      // Cria localmente se o GitHub falhar ou não tiver permissão
     }
+
+    const sprint: SprintOption = {
+      number: sprintNumber,
+      title,
+      state: 'open',
+      startDateIso: newSprintStartDate,
+      dueDateIso,
+      openIssues: 0,
+      closedIssues: 0,
+    };
+
+    // Salva localmente para persistência garantida
+    try {
+      const savedKey = `devflow_custom_sprints_${fullName}`;
+      const existing: SprintOption[] = JSON.parse(localStorage.getItem(savedKey) || '[]');
+      existing.push(sprint);
+      localStorage.setItem(savedKey, JSON.stringify(existing));
+    } catch {}
+
+    setRepoDetailsCache((prev) => ({
+      ...prev,
+      [fullName]: {
+        issues: prev[fullName]?.issues || [],
+        sprints: [...(prev[fullName]?.sprints || []), sprint],
+        collaborators: prev[fullName]?.collaborators || [],
+        isLoading: false,
+        error: null,
+      },
+      [`${owner}/${repoName}`]: {
+        issues: prev[`${owner}/${repoName}`]?.issues || [],
+        sprints: [...(prev[`${owner}/${repoName}`]?.sprints || []), sprint],
+        collaborators: prev[`${owner}/${repoName}`]?.collaborators || [],
+        isLoading: false,
+        error: null,
+      },
+    }));
+
+    if (sprintCreationContext === 'create') setNewTaskMilestoneNumber(sprint.number);
+    if (sprintCreationContext === 'edit') setEditIssueMilestoneNumber(sprint.number);
+
+    setOpenedSprintNumber(sprint.number);
+    showToast(`Sprint "${sprint.title}" criada.`);
+    setIsCreateSprintModalOpen(false);
+    setSprintCreationContext(null);
+    setIsCreatingSprint(false);
   };
 
   // Clonar Repositório Git Localmente
@@ -3041,15 +4976,28 @@ Formate com seções bem organizadas:
   );
 
   const sprintDetailTasks = useMemo(() => {
-    const fromRepo = rawProjectIssues.filter((i) => i.milestoneNumber === openedSprintNumber);
-    if (fromRepo.length > 0) return fromRepo;
-    return sampleIssuesList.filter((i) => i.milestoneNumber === openedSprintNumber);
-  }, [rawProjectIssues, sampleIssuesList, openedSprintNumber]);
+    if (!openedSprint || openedSprint.number === -1 || (openedSprintNumber == null && combinedSprints.some((s) => s.number === -1))) {
+      return rawProjectIssues.filter(
+        (i) => (!i.milestoneNumber || i.milestoneNumber === 0 || i.milestoneNumber === -1) && !i.iterationId && !i.iterationTitle
+      );
+    }
+    if (openedSprint.isProjectIteration || openedSprint.iterationId) {
+      return rawProjectIssues.filter((i) => {
+        if (openedSprint.iterationId && i.iterationId === openedSprint.iterationId) return true;
+        if (i.iterationTitle && openedSprint.title && i.iterationTitle.toLowerCase().trim() === openedSprint.title.toLowerCase().trim()) return true;
+        return false;
+      });
+    }
+    return rawProjectIssues.filter((i) => i.milestoneNumber === openedSprintNumber);
+  }, [rawProjectIssues, openedSprintNumber, openedSprint, combinedSprints]);
 
   const tasksAvailableToAddToSprint = useMemo(() => {
-    const source = rawProjectIssues.length > 0 ? rawProjectIssues : sampleIssuesList;
-    return source.filter((i) => i.milestoneNumber !== openedSprintNumber);
-  }, [rawProjectIssues, sampleIssuesList, openedSprintNumber]);
+    if (!openedSprint || openedSprintNumber === -1) {
+      return [];
+    }
+    const currentDetailTaskNumbers = new Set(sprintDetailTasks.map((t) => t.number));
+    return rawProjectIssues.filter((i) => !currentDetailTaskNumbers.has(i.number));
+  }, [rawProjectIssues, openedSprintNumber, openedSprint, sprintDetailTasks]);
 
   // Visibilidade e dimensões da barra de sprints e contêiner central da sprint (estilo IDE)
   const [isSprintSidebarVisible, setIsSprintSidebarVisible] = useState<boolean>(() => {
@@ -3134,7 +5082,10 @@ Formate com seções bem organizadas:
   useEffect(() => {
     if (selectedSection === 'sprints' && combinedSprints.length > 0) {
       if (openedSprintNumber == null || !combinedSprints.some((s) => s.number === openedSprintNumber)) {
-        const currentSprint = combinedSprints.find((s) => s.status === 'Current') || combinedSprints[0];
+        const currentSprint =
+          combinedSprints.find((s) => s.number !== -1 && s.status === 'Current') ||
+          combinedSprints.find((s) => s.number !== -1) ||
+          combinedSprints[0];
         if (currentSprint) {
           setOpenedSprintNumber(currentSprint.number);
           if (currentSprint.startDateIso) {
@@ -3171,45 +5122,129 @@ Formate com seções bem organizadas:
 
   const handleStartEditSprintDates = () => {
     if (!openedSprint) return;
-    setEditSprintStartDate(openedSprint.startDateIso || '');
-    setEditSprintDueDate(openedSprint.dueDateIso || '');
+    const today = new Date().toISOString().slice(0, 10);
+    let start = openedSprint.startDateIso;
+    let due = openedSprint.dueDateIso;
+    if (!start && due) {
+      const d = new Date(`${due}T00:00:00`);
+      if (!Number.isNaN(d.getTime())) {
+        d.setDate(d.getDate() - 13);
+        start = d.toISOString().slice(0, 10);
+      }
+    }
+    if (!due && start) {
+      const d = new Date(`${start}T00:00:00`);
+      if (!Number.isNaN(d.getTime())) {
+        d.setDate(d.getDate() + 13);
+        due = d.toISOString().slice(0, 10);
+      }
+    }
+    if (!start && !due) {
+      start = today;
+      const d = new Date();
+      d.setDate(d.getDate() + 13);
+      due = d.toISOString().slice(0, 10);
+    }
+    setEditSprintStartDate(start || today);
+    setEditSprintDueDate(due || today);
     setIsEditingSprintDates(true);
   };
 
   const handleSaveSprintDates = async () => {
     const card = selectedProject;
-    if (!card || !card.owner || !card.repoName || !card.fullName || openedSprintNumber == null || isSavingSprintDates) return;
+    if (!card || openedSprintNumber == null || isSavingSprintDates) return;
     if (!editSprintStartDate || !editSprintDueDate) {
       showToast('Informe as datas de início e fim da sprint.');
       return;
     }
-    const fullName = card.fullName;
+    let finalStart = editSprintStartDate;
+    let finalDue = editSprintDueDate;
+    if (finalStart > finalDue) {
+      [finalStart, finalDue] = [finalDue, finalStart];
+      setEditSprintStartDate(finalStart);
+      setEditSprintDueDate(finalDue);
+    }
+
+    const fullName = card.fullName || `${card.owner || ''}/${card.repoName || ''}` || 'local-project';
     const owner = card.owner;
     const repoName = card.repoName;
     const sprintNumber = openedSprintNumber;
-    const description = encodeSprintDescription('Sprint atualizada.', editSprintStartDate);
 
     setIsSavingSprintDates(true);
     try {
-      const res = await window.electronAPI?.github?.updateMilestone?.(owner, repoName, sprintNumber, {
-        description,
-        due_on: new Date(`${editSprintDueDate}T00:00:00`).toISOString(),
-      });
-      if (!res?.success || !res.milestone) throw new Error(res?.error || 'Falha ao atualizar a sprint no GitHub.');
+      if (owner && repoName && sprintNumber > 0 && window.electronAPI?.github?.updateMilestone) {
+        try {
+          const description = encodeSprintDescription('Sprint atualizada.', finalStart);
+          await window.electronAPI.github.updateMilestone(owner, repoName, sprintNumber, {
+            description,
+            due_on: new Date(`${finalDue}T12:00:00`).toISOString(),
+          });
+        } catch (ghErr) {
+          console.warn('Não foi possível sincronizar com o GitHub, salvando localmente:', ghErr);
+        }
+      }
 
-      setRepoDetailsCache((prev) => ({
-        ...prev,
-        [fullName]: {
-          issues: prev[fullName]?.issues || [],
-          sprints: (prev[fullName]?.sprints || []).map((s) =>
-            s.number === sprintNumber ? { ...s, startDateIso: editSprintStartDate, dueDateIso: editSprintDueDate } : s
-          ),
-          collaborators: prev[fullName]?.collaborators || [],
+      try {
+        const storageKey = `devflow_custom_sprints_${fullName}`;
+        const saved = localStorage.getItem(storageKey);
+        const list: SprintOption[] = saved ? JSON.parse(saved) : [];
+        const existingIdx = list.findIndex((s) => s.number === sprintNumber);
+        if (existingIdx >= 0) {
+          list[existingIdx] = {
+            ...list[existingIdx],
+            startDateIso: finalStart,
+            dueDateIso: finalDue,
+          };
+        } else {
+          list.push({
+            number: sprintNumber,
+            title: openedSprint?.title || `Sprint ${sprintNumber}`,
+            startDateIso: finalStart,
+            dueDateIso: finalDue,
+            state: 'open',
+          });
+        }
+        localStorage.setItem(storageKey, JSON.stringify(list));
+      } catch (storageErr) {
+        console.warn('Erro ao salvar sprint no localStorage:', storageErr);
+      }
+
+      setRepoDetailsCache((prev) => {
+        const cur = prev[fullName] || {
+          issues: [],
+          sprints: [],
+          collaborators: [],
           isLoading: false,
           error: null,
-        },
-      }));
-      showToast('Datas da sprint atualizadas.');
+        };
+        const updatedSprints = (cur.sprints || []).map((s) =>
+          s.number === sprintNumber ? { ...s, startDateIso: finalStart, dueDateIso: finalDue } : s
+        );
+        if (!updatedSprints.some((s) => s.number === sprintNumber)) {
+          updatedSprints.push({
+            number: sprintNumber,
+            title: openedSprint?.title || `Sprint ${sprintNumber}`,
+            startDateIso: finalStart,
+            dueDateIso: finalDue,
+            state: 'open',
+          });
+        }
+        return {
+          ...prev,
+          [fullName]: {
+            ...cur,
+            sprints: updatedSprints,
+          },
+        };
+      });
+
+      setCustomSprintsList((prev) =>
+        prev.map((s) =>
+          s.number === sprintNumber ? { ...s, startDateIso: finalStart, dueDateIso: finalDue } : s
+        )
+      );
+
+      showToast('Datas da sprint atualizadas com sucesso.');
       setIsEditingSprintDates(false);
     } catch (err: any) {
       showToast(err?.message || 'Erro ao atualizar as datas da sprint.');
@@ -3219,13 +5254,24 @@ Formate com seções bem organizadas:
   };
 
   const handleSetIssueSprint = async (issue: ProjectIssue, sprintNumber: number | null) => {
+    const targetSprint = sprintNumber != null ? combinedSprints.find((s) => s.number === sprintNumber) : null;
+    const targetMilestone = (!targetSprint || targetSprint.number === -1 || targetSprint.isProjectIteration) ? null : targetSprint.number;
     setSampleIssuesList((prev) =>
-      prev.map((i) => (i.id === issue.id ? { ...i, milestoneNumber: sprintNumber ?? undefined } : i))
+      prev.map((i) =>
+        i.id === issue.id
+          ? {
+              ...i,
+              milestoneNumber: targetMilestone ?? undefined,
+              iterationId: targetSprint?.iterationId,
+              iterationTitle: targetSprint?.title,
+            }
+          : i
+      )
     );
 
     const card = allCards.find((c) => c.id === issue.projectId);
     if (!card || !card.owner || !card.repoName || !card.fullName || issue.githubNumber == null) {
-      showToast(sprintNumber == null ? 'Tarefa removida da sprint.' : 'Tarefa adicionada à sprint.');
+      showToast(sprintNumber == null || sprintNumber === -1 ? 'Tarefa no backlog do projeto.' : 'Tarefa adicionada à sprint.');
       return;
     }
     const fullName = card.fullName;
@@ -3233,20 +5279,49 @@ Formate com seções bem organizadas:
     const repoName = card.repoName;
 
     try {
-      const res = await window.electronAPI?.github?.updateIssue?.(owner, repoName, issue.githubNumber, { milestone: sprintNumber });
-      if (!res?.success || !res.issue) throw new Error(res?.error || 'Falha ao atualizar a tarefa no GitHub.');
-      const mapped = mapGithubIssueToProjectIssue(res.issue, card.id, []);
-      setRepoDetailsCache((prev) => ({
-        ...prev,
-        [fullName]: {
-          issues: (prev[fullName]?.issues || []).map((i) => (i.id === issue.id ? mapped : i)),
-          sprints: prev[fullName]?.sprints || [],
-          collaborators: prev[fullName]?.collaborators || [],
-          isLoading: false,
-          error: null,
-        },
-      }));
-      showToast(sprintNumber == null ? 'Tarefa removida da sprint.' : 'Tarefa adicionada à sprint.');
+      if (targetMilestone !== null || !targetSprint?.isProjectIteration) {
+        const res = await window.electronAPI?.github?.updateIssue?.(owner, repoName, issue.githubNumber, { milestone: targetMilestone });
+        if (!res?.success || !res.issue) throw new Error(res?.error || 'Falha ao atualizar a tarefa no GitHub.');
+        const mapped = mapGithubIssueToProjectIssue(res.issue, card.id, []);
+        setRepoDetailsCache((prev) => ({
+          ...prev,
+          [fullName]: {
+            issues: (prev[fullName]?.issues || []).map((i) =>
+              i.id === issue.id
+                ? {
+                    ...mapped,
+                    iterationId: targetSprint?.iterationId,
+                    iterationTitle: targetSprint?.title,
+                  }
+                : i
+            ),
+            sprints: prev[fullName]?.sprints || [],
+            collaborators: prev[fullName]?.collaborators || [],
+            isLoading: false,
+            error: null,
+          },
+        }));
+      } else {
+        setRepoDetailsCache((prev) => ({
+          ...prev,
+          [fullName]: {
+            issues: (prev[fullName]?.issues || []).map((i) =>
+              i.id === issue.id
+                ? {
+                    ...i,
+                    iterationId: targetSprint?.iterationId,
+                    iterationTitle: targetSprint?.title,
+                  }
+                : i
+            ),
+            sprints: prev[fullName]?.sprints || [],
+            collaborators: prev[fullName]?.collaborators || [],
+            isLoading: false,
+            error: null,
+          },
+        }));
+      }
+      showToast(sprintNumber == null || sprintNumber === -1 ? 'Tarefa no backlog.' : 'Tarefa adicionada à sprint.');
     } catch (err: any) {
       showToast(err?.message || 'Erro ao atualizar a tarefa no GitHub.');
     }
@@ -3392,6 +5467,7 @@ Formate com seções bem organizadas:
         if (versionDropdownOpen) setVersionDropdownOpen(false);
         if (orgDropdownOpen) setOrgDropdownOpen(false);
         if (filterDropdownOpen) setFilterDropdownOpen(false);
+        if (githubProjectDropdownOpen) setGithubProjectDropdownOpen(false);
         if (openIssueMenuId) setOpenIssueMenuId(null);
       }}
     >
@@ -3416,8 +5492,8 @@ Formate com seções bem organizadas:
         {/* Cabeçalho de Controles e Filtros */}
         <div
           style={{
-            width: isGridMode ? 'calc(100% - 96px)' : '100%',
-            maxWidth: isGridMode ? 1400 : '100%',
+            width: isGridMode ? 'calc(100% - 48px)' : '100%',
+            maxWidth: isGridMode ? 1860 : '100%',
             alignSelf: isGridMode ? 'center' : 'stretch',
             flexShrink: 0,
             display: 'flex',
@@ -3439,18 +5515,38 @@ Formate com seções bem organizadas:
               border: 'none',
             }}
           >
-            {/* Título "Projetos" */}
+            {/* Título "Projetos" com contador */}
             <div
               style={{
-                fontSize: 26,
-                fontWeight: 500,
-                color: theme.textPrimary,
-                letterSpacing: '-0.02em',
-                lineHeight: 1.1,
-                border: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
               }}
             >
-              Projetos
+              <span
+                style={{
+                  fontSize: 26,
+                  fontWeight: 500,
+                  color: theme.textPrimary,
+                  letterSpacing: '-0.02em',
+                  lineHeight: 1.1,
+                }}
+              >
+                Projetos
+              </span>
+              <span
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: theme.textSecondary,
+                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
+                  padding: '2px 8px',
+                  borderRadius: 10,
+                }}
+                title={`Total: ${filteredCards.length} projeto(s)`}
+              >
+                {filteredCards.length}
+              </span>
             </div>
           </div>
 
@@ -3573,7 +5669,7 @@ Formate com seções bem organizadas:
               </div>
             </div>
 
-            {/* Grupo da Direita: Versão + Status (no canto direito) */}
+            {/* Grupo da Direita: Organização + Project + Status (no canto direito) */}
             <div
               style={{
                 display: 'flex',
@@ -3598,6 +5694,7 @@ Formate com seções bem organizadas:
                     onClick={(e) => {
                       e.stopPropagation();
                       setOrgDropdownOpen((prev) => !prev);
+                      setGithubProjectDropdownOpen(false);
                       setSprintDropdownOpen(false);
                       setStatusDropdownOpen(false);
                       setVersionDropdownOpen(false);
@@ -3758,7 +5855,468 @@ Formate com seções bem organizadas:
                   )}
                 </div>
 
-                {/* Seletor de Status (substituindo "Routing" da foto) */}
+              {/* Seletor de GitHub Project da Organização */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
+                <span
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 400,
+                    color: theme.textSecondary,
+                    letterSpacing: '-0.01em',
+                  }}
+                >
+                  Project
+                </span>
+
+                {selectedGithubProject && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '2px 7px',
+                      borderRadius: 6,
+                      background: hexToRgba(accentColor, isEffectiveDark ? 0.15 : 0.1),
+                      color: accentColor,
+                      fontSize: 11,
+                      fontWeight: 500,
+                    }}
+                  >
+                    <span>Filtrando</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedGithubProjectNumber(null);
+                      }}
+                      title="Remover filtro de Project"
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: accentColor,
+                        cursor: 'pointer',
+                        fontSize: 13,
+                        lineHeight: 1,
+                        padding: '0 2px',
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
+
+                <div
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setGithubProjectDropdownOpen((prev) => !prev);
+                    setOrgDropdownOpen(false);
+                    setSprintDropdownOpen(false);
+                    setStatusDropdownOpen(false);
+                    setVersionDropdownOpen(false);
+                  }}
+                  title={selectedGithubProject ? `Project: ${selectedGithubProject.title}` : 'Selecionar GitHub Project da organização'}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    background: theme.controlBg,
+                    borderRadius: 8,
+                    padding: '6px 12px',
+                    cursor: 'pointer',
+                    border: selectedGithubProjectNumber != null ? `1px solid ${accentColor}` : theme.controlBorder,
+                    transition: 'background 0.15s ease, border-color 0.15s ease',
+                    userSelect: 'none',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = theme.controlHoverBg;
+                    if (selectedGithubProjectNumber == null) {
+                      e.currentTarget.style.borderColor = accentColor;
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = theme.controlBg;
+                    if (selectedGithubProjectNumber == null) {
+                      e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
+                    }
+                  }}
+                >
+                  <FolderKanban size={13.5} color={selectedGithubProjectNumber != null ? accentColor : theme.textSecondary} />
+                  <span
+                    style={{
+                      fontSize: 12.5,
+                      fontWeight: selectedGithubProjectNumber != null ? 500 : 400,
+                      color: selectedGithubProjectNumber != null ? accentColor : theme.textPrimary,
+                      maxWidth: 160,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {selectedGithubProject ? selectedGithubProject.title : 'Todos os Projects'}
+                  </span>
+                  {isLoadingGithubProjects || isLoadingProjectItems ? (
+                    <RefreshCw size={11} className="animate-spin" color={theme.textSecondary} />
+                  ) : (
+                    <ChevronDown size={13} color={theme.textSecondary} />
+                  )}
+                </div>
+
+                {/* Botão rápido para abrir o Project selecionado no GitHub */}
+                {selectedGithubProject?.url && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (window.electronAPI?.shell?.openExternal) {
+                        window.electronAPI.shell.openExternal(selectedGithubProject.url);
+                      }
+                    }}
+                    title="Abrir Project no GitHub"
+                    style={{
+                      background: theme.controlBg,
+                      border: theme.controlBorder,
+                      borderRadius: 7,
+                      padding: '6px 8px',
+                      color: theme.textSecondary,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.color = accentColor;
+                      e.currentTarget.style.borderColor = accentColor;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.color = theme.textSecondary;
+                      e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
+                    }}
+                  >
+                    <ExternalLink size={12} />
+                  </button>
+                )}
+
+                {/* Menu Dropdown de Projects */}
+                {githubProjectDropdownOpen && (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                      position: 'absolute',
+                      top: 'calc(100% + 6px)',
+                      left: 0,
+                      zIndex: 9999,
+                      background: isEffectiveDark ? '#161616' : '#ffffff',
+                      border: `1px solid ${isEffectiveDark ? '#2e2e2e' : '#e2e8f0'}`,
+                      borderRadius: 10,
+                      boxShadow: isEffectiveDark ? '0 12px 32px rgba(0,0,0,0.6)' : '0 12px 32px rgba(0,0,0,0.12)',
+                      padding: '6px',
+                      minWidth: 260,
+                      maxWidth: 320,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                    }}
+                  >
+                    {/* Cabeçalho com título e botão de reload */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '4px 8px 6px',
+                        borderBottom: `1px solid ${hexToRgba(theme.textSecondary, isEffectiveDark ? 0.12 : 0.08)}`,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, color: theme.textSecondary, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        <FolderKanban size={12} color={accentColor} />
+                        <span>Projects (GitHub)</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          fetchGithubProjectsForOrg(selectedOrg);
+                        }}
+                        title="Recarregar Projects da organização"
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          cursor: 'pointer',
+                          padding: 2,
+                          color: theme.textSecondary,
+                          display: 'flex',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <RefreshCw size={11} className={isLoadingGithubProjects ? 'animate-spin' : ''} />
+                      </button>
+                    </div>
+
+                    {/* Campo de Busca de Projects */}
+                    <div style={{ padding: '4px 4px 2px' }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : '#f1f5f9',
+                          borderRadius: 6,
+                          padding: '5px 8px',
+                          border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
+                        }}
+                      >
+                        <Search size={12} color={theme.textSecondary} style={{ flexShrink: 0 }} />
+                        <input
+                          type="text"
+                          value={githubProjectSearch}
+                          onChange={(e) => setGithubProjectSearch(e.target.value)}
+                          placeholder="Buscar project..."
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            outline: 'none',
+                            fontSize: 11.5,
+                            color: theme.textPrimary,
+                            width: '100%',
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        {githubProjectSearch && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setGithubProjectSearch('');
+                            }}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: theme.textSecondary,
+                              cursor: 'pointer',
+                              padding: 0,
+                              display: 'flex',
+                              alignItems: 'center',
+                            }}
+                          >
+                            <X size={11} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Opção "Todos os Projects" */}
+                    <div
+                      onClick={() => {
+                        setSelectedGithubProjectNumber(null);
+                        setGithubProjectDropdownOpen(false);
+                      }}
+                      style={{
+                        padding: '7px 8px',
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        background: selectedGithubProjectNumber == null ? hexToRgba(accentColor, isEffectiveDark ? 0.18 : 0.1) : 'transparent',
+                        color: selectedGithubProjectNumber == null ? accentColor : theme.textPrimary,
+                        fontSize: 12,
+                        fontWeight: selectedGithubProjectNumber == null ? 600 : 400,
+                        transition: 'background 0.12s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (selectedGithubProjectNumber != null) e.currentTarget.style.background = theme.dropdownItemHover;
+                      }}
+                      onMouseLeave={(e) => {
+                        if (selectedGithubProjectNumber != null) e.currentTarget.style.background = 'transparent';
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                        <Layers size={13} color={selectedGithubProjectNumber == null ? accentColor : theme.textSecondary} />
+                        <span>Todos os Projects</span>
+                      </div>
+                      {selectedGithubProjectNumber == null && <Check size={13} color={accentColor} />}
+                    </div>
+
+                    {/* Divisor */}
+                    <div style={{ height: 1, background: hexToRgba(theme.textSecondary, isEffectiveDark ? 0.12 : 0.08), margin: '2px 0' }} />
+
+                    {/* Lista de Projects */}
+                    <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }} className="no-scrollbar">
+                      {isLoadingGithubProjects && githubOrgProjects.length === 0 && (
+                        <div style={{ padding: '12px 8px', textAlign: 'center', fontSize: 11, color: theme.textSecondary }}>
+                          Carregando projects...
+                        </div>
+                      )}
+
+                      {!isLoadingGithubProjects && filteredGithubOrgProjects.length === 0 && (
+                        <div style={{ padding: '12px 8px', textAlign: 'center', fontSize: 11, color: theme.textSecondary }}>
+                          {githubProjectSearch.trim()
+                            ? `Nenhum project encontrado para "${githubProjectSearch}".`
+                            : 'Nenhum project encontrado na organização.'}
+                        </div>
+                      )}
+
+                      {filteredGithubOrgProjects.map((p) => {
+                        const isSelected = selectedGithubProjectNumber === p.number;
+                        return (
+                          <div
+                            key={p.id}
+                            onClick={() => {
+                              setSelectedGithubProjectNumber(p.number);
+                              setGithubProjectDropdownOpen(false);
+                            }}
+                            style={{
+                              padding: '6px 8px',
+                              borderRadius: 6,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              background: isSelected ? hexToRgba(accentColor, isEffectiveDark ? 0.18 : 0.1) : 'transparent',
+                              transition: 'background 0.12s ease',
+                            }}
+                            onMouseEnter={(e) => {
+                              if (!isSelected) e.currentTarget.style.background = theme.dropdownItemHover;
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isSelected) e.currentTarget.style.background = 'transparent';
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0, flex: 1 }}>
+                              <FolderKanban size={13} color={isSelected ? accentColor : theme.textSecondary} style={{ flexShrink: 0 }} />
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: 12, fontWeight: isSelected ? 600 : 400, color: isSelected ? accentColor : theme.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {p.title}
+                                </div>
+                                <div style={{ fontSize: 10, color: theme.textSecondary }}>
+                                  #{p.number} {p.isCustom ? '• manual' : ''}
+                                </div>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                              {p.url && (
+                                <button
+                                  type="button"
+                                  onClick={(ev) => {
+                                    ev.stopPropagation();
+                                    if (window.electronAPI?.shell?.openExternal) {
+                                      window.electronAPI.shell.openExternal(p.url);
+                                    }
+                                  }}
+                                  title="Abrir no GitHub"
+                                  style={{
+                                    background: 'transparent',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    padding: 2,
+                                    color: theme.textSecondary,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                  }}
+                                  onMouseEnter={(ev) => (ev.currentTarget.style.color = accentColor)}
+                                  onMouseLeave={(ev) => (ev.currentTarget.style.color = theme.textSecondary)}
+                                >
+                                  <ExternalLink size={11} />
+                                </button>
+                              )}
+                              {p.isCustom && (
+                                <button
+                                  type="button"
+                                  onClick={(ev) => {
+                                    ev.stopPropagation();
+                                    setDeleteConfirmState({
+                                      isOpen: true,
+                                      title: 'Remover Project',
+                                      message: 'Tem certeza que deseja remover este Project da lista?',
+                                      itemDescription: p.title,
+                                      confirmLabel: 'Remover Project',
+                                      isDeleting: false,
+                                      onConfirm: () => {
+                                        const updated = githubOrgProjects.filter((item) => item.id !== p.id);
+                                        setGithubOrgProjects(updated);
+                                        saveCustomProjects(selectedOrg, updated.filter((item) => item.isCustom));
+                                        if (selectedGithubProjectNumber === p.number) {
+                                          setSelectedGithubProjectNumber(null);
+                                        }
+                                        setDeleteConfirmState((prev) => ({ ...prev, isOpen: false }));
+                                      },
+                                    });
+                                  }}
+                                  title="Remover Project manual"
+                                  style={{
+                                    background: 'transparent',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    padding: 2,
+                                    color: theme.textSecondary,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                  }}
+                                  onMouseEnter={(ev) => (ev.currentTarget.style.color = '#ef4444')}
+                                  onMouseLeave={(ev) => (ev.currentTarget.style.color = theme.textSecondary)}
+                                >
+                                  <Trash2 size={11} />
+                                </button>
+                              )}
+                              {isSelected && <Check size={13} color={accentColor} />}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Aviso de escopo read:project se houver */}
+                    {githubProjectError && (
+                      <div
+                        style={{
+                          padding: '6px 8px',
+                          borderRadius: 6,
+                          background: hexToRgba('#f59e0b', isEffectiveDark ? 0.15 : 0.08),
+                          border: `1px solid ${hexToRgba('#f59e0b', 0.25)}`,
+                          fontSize: 10.5,
+                          color: isEffectiveDark ? '#fbbf24' : '#d97706',
+                          lineHeight: 1.35,
+                          marginTop: 4,
+                        }}
+                      >
+                        {githubProjectError}
+                      </div>
+                    )}
+
+                    {/* Divisor */}
+                    <div style={{ height: 1, background: hexToRgba(theme.textSecondary, isEffectiveDark ? 0.12 : 0.08), margin: '2px 0' }} />
+
+                    {/* Botão para Adicionar Project Manualmente */}
+                    <div
+                      onClick={() => {
+                        setGithubProjectDropdownOpen(false);
+                        setIsAddCustomProjectModalOpen(true);
+                        setCustomProjectInputTitle('');
+                        setCustomProjectInputUrl('');
+                      }}
+                      style={{
+                        padding: '6px 8px',
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 7,
+                        color: accentColor,
+                        fontSize: 11.5,
+                        fontWeight: 500,
+                        transition: 'background 0.12s ease',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = theme.dropdownItemHover)}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      <Plus size={13} color={accentColor} />
+                      <span>Adicionar Project por URL ou Número</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Seletor de Status (substituindo "Routing" da foto) */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
                   <span
                     style={{
@@ -3924,6 +6482,7 @@ Formate com seções bem organizadas:
 
       {/* Div dos cards / lista posicionada logo abaixo dos controles */}
       <div
+        ref={shelfCardsRef}
         onWheel={(e) => {
           if (!isGridMode && effectiveProjectLayoutMode === 'grid' && e.currentTarget.scrollWidth > e.currentTarget.clientWidth) {
             if (e.deltaY !== 0 && e.deltaX === 0) {
@@ -3932,12 +6491,13 @@ Formate com seções bem organizadas:
           }
         }}
         style={{
-          width: isGridMode ? 'calc(100% - 96px)' : '100%',
-          maxWidth: isGridMode ? 1400 : '100%',
-          margin: isGridMode ? 'auto auto' : '0',
+          width: isGridMode ? 'calc(100% - 48px)' : '100%',
+          maxWidth: isGridMode ? 1860 : '100%',
+          margin: isGridMode ? '0 auto' : '0',
           alignSelf: isGridMode ? 'center' : 'stretch',
-          height: isGridMode ? 745 : 190,
-          minHeight: isGridMode ? 745 : 190,
+          height: isGridMode ? 'auto' : 190,
+          minHeight: isGridMode ? 'auto' : 190,
+          maxHeight: isGridMode ? 'calc(100vh - 220px)' : 190,
           flexShrink: 0,
           padding: effectiveProjectLayoutMode === 'list' ? 0 : 5,
           background: theme.bgShelf,
@@ -3946,10 +6506,12 @@ Formate com seções bem organizadas:
           boxShadow: theme.shelfShadow,
           justifyContent: isGridMode ? undefined : 'flex-start',
           alignItems: 'stretch',
+          alignContent: isGridMode ? 'start' : undefined,
           gap: effectiveProjectLayoutMode === 'list' ? 0 : 5,
           display: effectiveProjectLayoutMode === 'list' ? 'flex' : (isGridMode ? 'grid' : 'flex'),
           flexDirection: effectiveProjectLayoutMode === 'list' ? 'column' : undefined,
           gridTemplateColumns: isGridMode && effectiveProjectLayoutMode === 'grid' ? 'repeat(4, minmax(0, 1fr))' : undefined,
+          gridAutoRows: isGridMode && effectiveProjectLayoutMode === 'grid' ? '180px' : undefined,
           flexWrap: isGridMode || effectiveProjectLayoutMode === 'list' ? undefined : 'nowrap',
           overflowX: isGridMode && effectiveProjectLayoutMode === 'grid' ? 'hidden' : 'auto',
           overflowY: 'auto',
@@ -3990,9 +6552,12 @@ Formate com seções bem organizadas:
                     const inProgressGrow = card.issuesInProgress;
                     const openGrow = totalTasksForBar > 0 ? card.issuesOpen : 1;
 
+                    const isCardActiveWorkspace = activeWorkspaceMatchingCard?.id === card.id;
+
                     return (
                       <tr
                         key={card.id}
+                        id={`project-card-${card.id}`}
                         onClick={() => setSelectedCardId((prev) => (prev === card.id ? null : card.id))}
                         onMouseEnter={() => setHoveredCardId(card.id)}
                         onMouseLeave={() => setHoveredCardId(null)}
@@ -4038,6 +6603,28 @@ Formate com seções bem organizadas:
                               >
                                 {card.title || card.name || card.repoName || 'Sem título'}
                               </span>
+                              {isCardActiveWorkspace && (
+                                <span
+                                  title="Projeto atualmente ativo no editor / header"
+                                  style={{
+                                    fontSize: 9.5,
+                                    fontWeight: 600,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.04em',
+                                    padding: '1.5px 5px',
+                                    borderRadius: 4,
+                                    background: hexToRgba(accentColor, 0.16),
+                                    color: accentColor,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 3,
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  <span style={{ width: 4.5, height: 4.5, borderRadius: '50%', background: accentColor }} />
+                                  Ativo
+                                </span>
+                              )}
                               {card.isPrivate && (
                                 <Lock size={12} color={theme.textSecondary} style={{ opacity: 0.7 }} />
                               )}
@@ -4161,6 +6748,21 @@ Formate com seções bem organizadas:
 
             const secondaryTextColor = isHovered ? theme.textPrimary : theme.textSecondary;
 
+            const effectiveSprint =
+              card.currentSprint ||
+              (isSelected && combinedSprints && combinedSprints.length > 0
+                ? (() => {
+                    const active = combinedSprints.find((s) => s.number !== -1 && s.status !== 'Completed');
+                    if (!active) return null;
+                    return {
+                      number: active.number,
+                      title: active.title,
+                      dueDateIso: active.dueDateIso,
+                      daysBadge: calculateSprintDaysBadge(active.dueDateIso, isEffectiveDark),
+                    };
+                  })()
+                : null);
+
             // Barra de progresso: concluídas e em progresso na cor destaque quando o card estiver selecionado
             const progressSolidBg = isSelected
               ? accentColor
@@ -4187,13 +6789,14 @@ Formate com seções bem organizadas:
             return (
               <div
                 key={card.id}
+                id={`project-card-${card.id}`}
                 onClick={() => setSelectedCardId((prev) => (prev === card.id ? null : card.id))}
                 onMouseEnter={() => setHoveredCardId(card.id)}
                 onMouseLeave={() => setHoveredCardId(null)}
                 style={{
                   flex: isGridMode ? 'none' : '0 0 calc((100% - 15px) / 4)',
                   width: isGridMode ? '100%' : 'calc((100% - 15px) / 4)',
-                  minWidth: isGridMode ? 0 : 'clamp(240px, calc((100% - 15px) / 4), calc((100% - 15px) / 4))',
+                  minWidth: isGridMode ? 0 : 240,
                   height: 180,
                   minHeight: 180,
                   flexShrink: 0,
@@ -4291,18 +6894,16 @@ Formate com seções bem organizadas:
                             title={card.alertStatus === 'critico' ? 'Status: Crítico' : 'Status: Alerta'}
                           />
                         )}
-                        <span
-                          style={{
-                            textAlign: 'center',
-                            color: badgeColor,
-                            fontSize: 11.5,
-                            fontWeight: '300',
-                            lineHeight: 1,
-                            transition: 'color 0.18s ease',
-                          }}
-                        >
-                          {card.badge}
-                        </span>
+                        <ProjectIconBadge
+                          card={card}
+                          customIcon={
+                            customProjectIcons[card.fullName || ''] ||
+                            customProjectIcons[card.title] ||
+                            customProjectIcons[String(card.id)]
+                          }
+                          badgeBg={badgeBg}
+                          badgeColor={badgeColor}
+                        />
                       </div>
 
                       {/* Title & Sprint */}
@@ -4319,21 +6920,46 @@ Formate com seções bem organizadas:
                           border: 'none',
                         }}
                       >
-                        <span
-                          style={{
-                            color: isSelected ? accentColor : theme.textPrimary,
-                            fontSize: 'clamp(12px, 0.95vw, 16px)',
-                            fontWeight: isSelected ? '500' : '300',
-                            lineHeight: 1.2,
-                            letterSpacing: '-0.01em',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            width: '100%',
-                          }}
-                        >
-                          {card.title}
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', minWidth: 0 }}>
+                          <span
+                            style={{
+                              color: isSelected ? accentColor : theme.textPrimary,
+                              fontSize: 'clamp(12px, 0.95vw, 16px)',
+                              fontWeight: isSelected ? '500' : '300',
+                              lineHeight: 1.2,
+                              letterSpacing: '-0.01em',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              flex: 1,
+                              minWidth: 0,
+                            }}
+                          >
+                            {card.title}
+                          </span>
+                          {activeWorkspaceMatchingCard?.id === card.id && (
+                            <span
+                              title="Projeto atualmente ativo no editor / header"
+                              style={{
+                                fontSize: 9,
+                                fontWeight: 600,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.04em',
+                                padding: '1px 5px',
+                                borderRadius: 4,
+                                background: hexToRgba(accentColor, 0.16),
+                                color: accentColor,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 3,
+                                flexShrink: 0,
+                              }}
+                            >
+                              <span style={{ width: 4, height: 4, borderRadius: '50%', background: accentColor }} />
+                              Ativo
+                            </span>
+                          )}
+                        </div>
                         <span
                           style={{
                             color: secondaryTextColor,
@@ -4344,7 +6970,7 @@ Formate com seções bem organizadas:
                             transition: 'color 0.18s ease',
                           }}
                         >
-                          {card.sprint}
+                          {card.language || (effectiveSprint ? effectiveSprint.title : '')}
                         </span>
                       </div>
                     </div>
@@ -4437,24 +7063,89 @@ Formate com seções bem organizadas:
                     alignSelf: 'stretch',
                     flexDirection: 'column',
                     justifyContent: 'flex-start',
-                    alignItems: 'flex-end',
+                    alignItems: 'stretch',
                     gap: 5,
                     display: 'flex',
                     border: 'none',
                   }}
                 >
-                  <span
+                  <div
                     style={{
-                      textAlign: 'right',
-                      color: isSelected ? accentColor : isHovered ? theme.textPrimary : theme.textSecondary,
-                      fontSize: 12,
-                      fontWeight: isSelected ? '500' : '300',
-                      lineHeight: 1,
-                      transition: 'color 0.18s ease',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      width: '100%',
+                      minWidth: 0,
                     }}
                   >
-                    {card.percentage}
-                  </span>
+                    {/* Sprint atual e dias restantes (se não tiver sprint não mostra nada) */}
+                    {effectiveSprint ? (
+                      <div
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          minWidth: 0,
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: 'clamp(10px, 0.8vw, 11.5px)',
+                            fontWeight: 500,
+                            color: isSelected ? accentColor : theme.textPrimary,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            maxWidth: 'clamp(100px, 16vw, 260px)',
+                          }}
+                          title={`Sprint Atual: ${effectiveSprint.title}`}
+                        >
+                          {effectiveSprint.title}
+                        </span>
+
+                        {effectiveSprint.daysBadge && (
+                          <span
+                            style={{
+                              fontSize: 9,
+                              fontWeight: 600,
+                              padding: '1px 5px',
+                              borderRadius: 4,
+                              color: effectiveSprint.daysBadge.color,
+                              background: effectiveSprint.daysBadge.bg,
+                              whiteSpace: 'nowrap',
+                              lineHeight: 1.15,
+                              letterSpacing: '0.01em',
+                              flexShrink: 0,
+                            }}
+                            title={
+                              effectiveSprint.dueDateIso
+                                ? `Término da Sprint: ${effectiveSprint.dueDateIso}`
+                                : undefined
+                            }
+                          >
+                            {effectiveSprint.daysBadge.text}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <div />
+                    )}
+
+                    <span
+                      style={{
+                        textAlign: 'right',
+                        color: isSelected ? accentColor : isHovered ? theme.textPrimary : theme.textSecondary,
+                        fontSize: 12,
+                        fontWeight: isSelected ? '500' : '300',
+                        lineHeight: 1,
+                        transition: 'color 0.18s ease',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {card.percentage}
+                    </span>
+                  </div>
                   <div
                     style={{
                       alignSelf: 'stretch',
@@ -5626,6 +8317,7 @@ Formate com seções bem organizadas:
                   <div style={{ flex: 1, minHeight: 460, display: 'flex', flexDirection: 'column', padding: '4px 0' }}>
                     <GithubProjectsKanbanBoard
                       issues={filteredGithubIssues}
+                      columns={projectV2Columns || undefined}
                       repoName={selectedRepoRaw?.full_name || selectedProject?.repoName || selectedProject?.title || 'repositório'}
                       theme={theme}
                       isEffectiveDark={isEffectiveDark}
@@ -5661,19 +8353,25 @@ Formate com seções bem organizadas:
                   }}
                   className="no-scrollbar"
                 >
-                  {filteredGithubIssues.length === 0 ? (
-                    <div
-                      style={{
-                        padding: '48px 24px',
-                        textAlign: 'center',
-                        color: theme.textSecondary,
-                        fontSize: 13,
-                      }}
-                    >
-                      Nenhuma issue encontrada com os filtros selecionados.
-                    </div>
-                  ) : (
-                    filteredGithubIssues.map((issue, index) => {
+                  {(() => {
+                    const topLevelGithubIssues = filteredGithubIssues.filter((issue) => !childIssueIdSet.has(issue.id));
+
+                    if (topLevelGithubIssues.length === 0) {
+                      return (
+                        <div
+                          style={{
+                            padding: '48px 24px',
+                            textAlign: 'center',
+                            color: theme.textSecondary,
+                            fontSize: 13,
+                          }}
+                        >
+                          Nenhuma issue encontrada com os filtros selecionados.
+                        </div>
+                      );
+                    }
+
+                    return topLevelGithubIssues.map((issue, index) => {
                       const isHovered = hoveredIssueId === issue.id;
                       const isChecked = selectedIssueCheckboxes.has(issue.id);
                       const isClosed = issue.rawState === 'closed' || issue.status === 'Concluído';
@@ -5681,246 +8379,464 @@ Formate com seções bem organizadas:
                       const comments = issue.commentsCount || 0;
                       const labels = issue.rawLabels || (issue.tag ? [issue.tag] : []);
 
+                      const subIssues = extractSubIssuesForIssue(issue, allIssuesMap);
+                      const hasSubIssues = subIssues.length > 0;
+                      const isExpanded = expandedIssueIds.has(issue.id);
+                      const completedSubsCount = subIssues.filter((s) => s.completed).length;
+
                       return (
-                        <div
-                          key={issue.id}
-                          onMouseEnter={() => setHoveredIssueId(issue.id)}
-                          onMouseLeave={() => setHoveredIssueId(null)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'flex-start',
-                            gap: 12,
-                            padding: '11px 14px',
-                            borderTop:
-                              index > 0
-                                ? `1px solid ${hexToRgba(theme.textSecondary, 0.08)}`
-                                : 'none',
-                            background: isHovered
-                              ? isEffectiveDark
-                                ? '#1a1a1a'
-                                : '#f1f5f9'
-                              : 'transparent',
-                            transition: 'background 0.12s ease',
-                          }}
-                        >
-                          {/* Checkbox individual */}
+                        <React.Fragment key={issue.id}>
                           <div
-                            onClick={(e) => handleToggleIssueCheckbox(issue.id, e)}
+                            onMouseEnter={() => setHoveredIssueId(issue.id)}
+                            onMouseLeave={() => setHoveredIssueId(null)}
                             style={{
-                              cursor: 'pointer',
-                              marginTop: 2,
                               display: 'flex',
-                              alignItems: 'center',
+                              alignItems: 'flex-start',
+                              gap: 10,
+                              padding: '11px 14px',
+                              borderTop:
+                                index > 0
+                                  ? `1px solid ${hexToRgba(theme.textSecondary, 0.08)}`
+                                  : 'none',
+                              background: isHovered
+                                ? isEffectiveDark
+                                  ? '#1a1a1a'
+                                  : '#f1f5f9'
+                                : 'transparent',
+                              transition: 'background 0.12s ease',
                             }}
                           >
-                            {isChecked ? (
-                              <CheckSquare size={15} color={accentColor} />
+                            {/* Botão de Dropdown Chevron para Sub-issues */}
+                            {hasSubIssues ? (
+                              <button
+                                type="button"
+                                onClick={(e) => toggleIssueExpanded(issue.id, e)}
+                                title={isExpanded ? 'Recolher sub-issues' : `Expandir ${subIssues.length} sub-issues`}
+                                style={{
+                                  marginTop: 2,
+                                  background: 'transparent',
+                                  border: 'none',
+                                  padding: '2px 3px',
+                                  cursor: 'pointer',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  color: isExpanded ? accentColor : theme.textSecondary,
+                                  borderRadius: 4,
+                                  flexShrink: 0,
+                                  transition: 'transform 0.15s ease, color 0.12s ease',
+                                  transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.color = accentColor)}
+                                onMouseLeave={(e) => (e.currentTarget.style.color = isExpanded ? accentColor : theme.textSecondary)}
+                              >
+                                <ChevronRight size={14} />
+                              </button>
                             ) : (
-                              <Square size={15} color={theme.textSecondary} />
+                              <div style={{ width: 18, flexShrink: 0 }} />
                             )}
-                          </div>
 
-                          {/* Ícone de status (CircleDot verde se aberta, CheckCircle2 roxo se fechada) */}
-                          <div style={{ marginTop: 2, flexShrink: 0 }}>
-                            {isClosed ? (
-                              <CheckCircle2 size={16} color="#8250df" />
-                            ) : (
-                              <CircleDot size={16} color="#22c55e" />
-                            )}
-                          </div>
-
-                          {/* Conteúdo Central: Título + Badges + Subtítulo */}
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            {/* Linha 1: Título da Issue + Labels inline + Contador de comentários */}
+                            {/* Checkbox individual */}
                             <div
+                              onClick={(e) => handleToggleIssueCheckbox(issue.id, e)}
                               style={{
+                                cursor: 'pointer',
+                                marginTop: 2,
                                 display: 'flex',
                                 alignItems: 'center',
-                                flexWrap: 'wrap',
-                                gap: 6,
                               }}
                             >
-                              <span
-                                onClick={() => handleOpenEditIssue(issue)}
+                              {isChecked ? (
+                                <CheckSquare size={15} color={accentColor} />
+                              ) : (
+                                <Square size={15} color={theme.textSecondary} />
+                              )}
+                            </div>
+
+                            {/* Ícone de status (CircleDot verde se aberta, CheckCircle2 roxo se fechada) */}
+                            <div style={{ marginTop: 2, flexShrink: 0 }}>
+                              {isClosed ? (
+                                <CheckCircle2 size={16} color="#8250df" />
+                              ) : (
+                                <CircleDot size={16} color="#22c55e" />
+                              )}
+                            </div>
+
+                            {/* Conteúdo Central: Título + Badges + Subtítulo */}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              {/* Linha 1: Título da Issue + Labels inline + Contador de comentários */}
+                              <div
                                 style={{
-                                  fontSize: 13.5,
-                                  fontWeight: 500,
-                                  color: theme.textPrimary,
-                                  cursor: 'pointer',
-                                  transition: 'color 0.12s ease',
-                                }}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.color = accentColor;
-                                  e.currentTarget.style.textDecoration = 'underline';
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.color = theme.textPrimary;
-                                  e.currentTarget.style.textDecoration = 'none';
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  flexWrap: 'wrap',
+                                  gap: 6,
                                 }}
                               >
-                                {issue.title}
-                              </span>
-
-                              {/* Badges de Labels no estilo GitHub */}
-                              {labels.map((lbl) => {
-                                const isBug = lbl.toLowerCase() === 'bug';
-                                const isPainel = lbl.toLowerCase() === 'painel';
-                                const isBackend = lbl.toLowerCase() === 'backend';
-                                const isInfra = lbl.toLowerCase() === 'infra';
-
-                                const bg = isBug
-                                  ? 'rgba(248, 81, 73, 0.18)'
-                                  : isPainel
-                                  ? 'rgba(56, 139, 253, 0.18)'
-                                  : isBackend
-                                  ? 'rgba(56, 189, 248, 0.18)'
-                                  : isInfra
-                                  ? 'rgba(168, 85, 247, 0.18)'
-                                  : 'rgba(148, 163, 184, 0.15)';
-
-                                const color = isBug
-                                  ? '#f85149'
-                                  : isPainel
-                                  ? '#58a6ff'
-                                  : isBackend
-                                  ? '#38bdf8'
-                                  : isInfra
-                                  ? '#c084fc'
-                                  : theme.textSecondary;
-
-                                return (
-                                  <span
-                                    key={lbl}
-                                    style={{
-                                      fontSize: 10.5,
-                                      fontWeight: 500,
-                                      padding: '1.5px 7px',
-                                      borderRadius: 10,
-                                      background: bg,
-                                      color,
-                                      userSelect: 'none',
-                                      lineHeight: 1.3,
-                                    }}
-                                  >
-                                    {lbl}
-                                  </span>
-                                );
-                              })}
-
-                              {/* Contador de Comentários */}
-                              {comments > 0 && (
-                                <div
+                                <span
+                                  onClick={() => handleOpenEditIssue(issue)}
                                   style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: 3.5,
-                                    fontSize: 11,
-                                    color: theme.textSecondary,
-                                    marginLeft: 4,
+                                    fontSize: 13.5,
+                                    fontWeight: 500,
+                                    color: theme.textPrimary,
+                                    cursor: 'pointer',
+                                    transition: 'color 0.12s ease',
                                   }}
-                                  title={`${comments} comentário(s)`}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.color = accentColor;
+                                    e.currentTarget.style.textDecoration = 'underline';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.color = theme.textPrimary;
+                                    e.currentTarget.style.textDecoration = 'none';
+                                  }}
                                 >
-                                  <MessageSquare size={12} color={theme.textSecondary} />
-                                  <span>{comments}</span>
+                                  {issue.title}
+                                </span>
+
+                                {/* Badge de Sub-issues se houver */}
+                                {hasSubIssues && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => toggleIssueExpanded(issue.id, e)}
+                                    title={`${completedSubsCount} de ${subIssues.length} sub-issues concluídas. Clique para ${isExpanded ? 'recolher' : 'expandir'}.`}
+                                    style={{
+                                      background: isEffectiveDark ? 'rgba(56, 189, 248, 0.14)' : 'rgba(2, 132, 199, 0.1)',
+                                      color: isEffectiveDark ? '#38bdf8' : '#0284c7',
+                                      fontSize: 11,
+                                      fontWeight: 500,
+                                      borderRadius: 12,
+                                      padding: '1px 8px',
+                                      border: 'none',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: 4,
+                                      cursor: 'pointer',
+                                      whiteSpace: 'nowrap',
+                                      transition: 'opacity 0.12s ease',
+                                    }}
+                                    onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.85')}
+                                    onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                                  >
+                                    <Layers size={11} />
+                                    <span>
+                                      {completedSubsCount}/{subIssues.length} sub-issues
+                                    </span>
+                                  </button>
+                                )}
+
+                                {/* Badges de Labels no estilo GitHub */}
+                                {labels.map((lbl) => {
+                                  const isBug = lbl.toLowerCase() === 'bug';
+                                  const isPainel = lbl.toLowerCase() === 'painel';
+                                  const isBackend = lbl.toLowerCase() === 'backend';
+                                  const isInfra = lbl.toLowerCase() === 'infra';
+
+                                  const bg = isBug
+                                    ? 'rgba(248, 81, 73, 0.18)'
+                                    : isPainel
+                                    ? 'rgba(56, 139, 253, 0.18)'
+                                    : isBackend
+                                    ? 'rgba(56, 189, 248, 0.18)'
+                                    : isInfra
+                                    ? 'rgba(168, 85, 247, 0.18)'
+                                    : 'rgba(148, 163, 184, 0.15)';
+
+                                  const color = isBug
+                                    ? '#f85149'
+                                    : isPainel
+                                    ? '#58a6ff'
+                                    : isBackend
+                                    ? '#38bdf8'
+                                    : isInfra
+                                    ? '#c084fc'
+                                    : theme.textSecondary;
+
+                                  return (
+                                    <span
+                                      key={lbl}
+                                      style={{
+                                        fontSize: 10.5,
+                                        fontWeight: 500,
+                                        padding: '1.5px 7px',
+                                        borderRadius: 10,
+                                        background: bg,
+                                        color,
+                                        userSelect: 'none',
+                                        lineHeight: 1.3,
+                                      }}
+                                    >
+                                      {lbl}
+                                    </span>
+                                  );
+                                })}
+
+                                {/* Contador de Comentários */}
+                                {comments > 0 && (
+                                  <div
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: 3.5,
+                                      fontSize: 11,
+                                      color: theme.textSecondary,
+                                      marginLeft: 4,
+                                    }}
+                                    title={`${comments} comentário(s)`}
+                                  >
+                                    <MessageSquare size={12} color={theme.textSecondary} />
+                                    <span>{comments}</span>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Linha 2: Subtítulo no padrão GitHub (#246 · autor opened 2w ago) */}
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  fontSize: 11.5,
+                                  color: theme.textSecondary,
+                                  marginTop: 3,
+                                  flexWrap: 'wrap',
+                                }}
+                              >
+                                <span>#{issueNumber}</span>
+                                <span>·</span>
+                                <span style={{ color: theme.textPrimary, fontWeight: 400 }}>
+                                  {issue.author || 'nelsonappmoove'}
+                                </span>
+                                <span>aberta {formatGithubTimeAgo(issue.createdAtIso)}</span>
+                                {issue.milestoneTitle && (
+                                  <>
+                                    <span>·</span>
+                                    <Milestone size={11} color={theme.textSecondary} />
+                                    <span>{issue.milestoneTitle}</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Lado Direito: Avatar do Assignee e Ações */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                              {issue.assignees && issue.assignees.length > 0 && (
+                                <div style={{ display: 'flex', alignItems: 'center' }}>
+                                  {issue.assignees.map((a, aIdx) => (
+                                    <div
+                                      key={aIdx}
+                                      title={`Atribuído a ${a.name}`}
+                                      style={{
+                                        width: 20,
+                                        height: 20,
+                                        borderRadius: '50%',
+                                        overflow: 'hidden',
+                                        background: a.avatarBg || '#10b981',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        fontSize: 10,
+                                        fontWeight: 600,
+                                        color: '#ffffff',
+                                        border: `1.5px solid ${theme.viewCanvasBg}`,
+                                      }}
+                                    >
+                                      {a.avatarUrl ? (
+                                        <img
+                                          src={a.avatarUrl}
+                                          alt={a.name}
+                                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                          onError={(e) => {
+                                            (e.currentTarget as HTMLElement).style.display = 'none';
+                                          }}
+                                        />
+                                      ) : (
+                                        a.initial || a.name.charAt(0).toUpperCase()
+                                      )}
+                                    </div>
+                                  ))}
                                 </div>
                               )}
-                            </div>
 
-                            {/* Linha 2: Subtítulo no padrão GitHub (#246 · autor opened 2w ago) */}
+                              {/* Botão de Opções Rápidas (Editar, etc.) */}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditIssue(issue)}
+                                title="Editar tarefa"
+                                style={{
+                                  background: 'transparent',
+                                  border: 'none',
+                                  color: theme.textSecondary,
+                                  cursor: 'pointer',
+                                  padding: 3,
+                                  borderRadius: 4,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  opacity: isHovered ? 1 : 0.3,
+                                  transition: 'all 0.12s ease',
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.color = theme.textPrimary)}
+                                onMouseLeave={(e) => (e.currentTarget.style.color = theme.textSecondary)}
+                              >
+                                <MoreVertical size={14} />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Container de Sub-issues Expandidas */}
+                          {hasSubIssues && isExpanded && (
                             <div
                               style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 4,
-                                fontSize: 11.5,
-                                color: theme.textSecondary,
-                                marginTop: 3,
-                                flexWrap: 'wrap',
+                                background: isEffectiveDark ? 'rgba(0, 0, 0, 0.16)' : 'rgba(0, 0, 0, 0.02)',
+                                borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)'}`,
+                                paddingLeft: 46,
+                                paddingRight: 16,
+                                paddingTop: 4,
+                                paddingBottom: 6,
                               }}
                             >
-                              <span>#{issueNumber}</span>
-                              <span>·</span>
-                              <span style={{ color: theme.textPrimary, fontWeight: 400 }}>
-                                {issue.author || 'nelsonappmoove'}
-                              </span>
-                              <span>aberta {formatGithubTimeAgo(issue.createdAtIso)}</span>
-                              {issue.milestoneTitle && (
-                                <>
-                                  <span>·</span>
-                                  <Milestone size={11} color={theme.textSecondary} />
-                                  <span>{issue.milestoneTitle}</span>
-                                </>
-                              )}
-                            </div>
-                          </div>
+                              <div
+                                style={{
+                                  borderLeft: `2px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.12)'}`,
+                                  paddingLeft: 12,
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: 2,
+                                }}
+                              >
+                                {subIssues.map((sub, sIdx) => {
+                                  const subLinked = sub.linkedIssue;
+                                  const isSubClosed = sub.completed;
+                                  const subTaskNum = sub.issueNumber || (subLinked ? subLinked.githubNumber : undefined);
 
-                          {/* Lado Direito: Avatar do Assignee e Ações */}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-                            {issue.assignees && issue.assignees.length > 0 && (
-                              <div style={{ display: 'flex', alignItems: 'center' }}>
-                                {issue.assignees.map((a, aIdx) => (
-                                  <div
-                                    key={aIdx}
-                                    title={`Atribuído a ${a.name}`}
-                                    style={{
-                                      width: 20,
-                                      height: 20,
-                                      borderRadius: '50%',
-                                      overflow: 'hidden',
-                                      background: a.avatarBg || '#10b981',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      fontSize: 10,
-                                      fontWeight: 600,
-                                      color: '#ffffff',
-                                      border: `1.5px solid ${theme.viewCanvasBg}`,
-                                    }}
-                                  >
-                                    {a.avatarUrl ? (
-                                      <img
-                                        src={a.avatarUrl}
-                                        alt={a.name}
-                                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                        onError={(e) => {
-                                          (e.currentTarget as HTMLElement).style.display = 'none';
-                                        }}
-                                      />
-                                    ) : (
-                                      a.initial || a.name.charAt(0).toUpperCase()
-                                    )}
-                                  </div>
-                                ))}
+                                  return (
+                                    <div
+                                      key={sub.id || sIdx}
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        padding: '6px 8px',
+                                        borderRadius: 6,
+                                        gap: 10,
+                                        transition: 'background 0.12s ease',
+                                      }}
+                                      onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)')}
+                                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                                    >
+                                      {/* Lado Esquerdo da Sub-issue */}
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                                        <CornerDownRight size={13} color={theme.textSecondary} style={{ flexShrink: 0, opacity: 0.6 }} />
+
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (subLinked) {
+                                              handleToggleIssueStatus(subLinked.id);
+                                            } else if (sub.lineIndex != null) {
+                                              handleToggleChecklistSubIssue(issue, sub.lineIndex, sub.completed);
+                                            }
+                                          }}
+                                          title={isSubClosed ? 'Sub-issue concluída (clique para reabrir)' : 'Sub-issue aberta (clique para concluir)'}
+                                          style={{
+                                            background: 'transparent',
+                                            border: 'none',
+                                            padding: 0,
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            flexShrink: 0,
+                                          }}
+                                        >
+                                          {isSubClosed ? (
+                                            <CheckCircle2 size={15} color="#8957e5" />
+                                          ) : (
+                                            <CircleDot size={15} color="#22c55e" />
+                                          )}
+                                        </button>
+
+                                        <span
+                                          onClick={() => {
+                                            if (subLinked) {
+                                              handleOpenEditIssue(subLinked);
+                                            } else {
+                                              handleOpenEditIssue(issue);
+                                            }
+                                          }}
+                                          style={{
+                                            fontSize: 12.5,
+                                            fontWeight: 500,
+                                            color: isSubClosed ? theme.textSecondary : theme.textPrimary,
+                                            textDecoration: isSubClosed ? 'line-through' : 'none',
+                                            cursor: 'pointer',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            whiteSpace: 'nowrap',
+                                          }}
+                                          onMouseEnter={(e) => (e.currentTarget.style.color = accentColor)}
+                                          onMouseLeave={(e) => (e.currentTarget.style.color = isSubClosed ? theme.textSecondary : theme.textPrimary)}
+                                        >
+                                          {subTaskNum && <strong style={{ color: theme.textSecondary, marginRight: 6 }}>#{subTaskNum}</strong>}
+                                          {sub.title}
+                                        </span>
+
+                                        {subLinked?.tag && (
+                                          <span
+                                            style={{
+                                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#e2e8f0',
+                                              color: theme.textSecondary,
+                                              fontSize: 10.5,
+                                              fontWeight: 500,
+                                              borderRadius: 10,
+                                              padding: '1px 6px',
+                                              whiteSpace: 'nowrap',
+                                            }}
+                                          >
+                                            {subLinked.tag}
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      {/* Lado Direito da Sub-issue: Avatares */}
+                                      {subLinked && subLinked.assignees && subLinked.assignees.length > 0 && (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                                          {subLinked.assignees.map((assignee, aIdx) => (
+                                            <div
+                                              key={assignee.name || aIdx}
+                                              title={assignee.name}
+                                              style={{
+                                                width: 18,
+                                                height: 18,
+                                                borderRadius: '50%',
+                                                overflow: 'hidden',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                background: assignee.avatarBg || accentColor,
+                                                color: '#fff',
+                                                fontSize: 9,
+                                                fontWeight: 600,
+                                              }}
+                                            >
+                                              {assignee.avatarUrl ? (
+                                                <img src={assignee.avatarUrl} alt={assignee.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                              ) : (
+                                                <span>{assignee.initial || assignee.name?.slice(0, 1).toUpperCase()}</span>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
-                            )}
-
-                            {/* Botão de Opções Rápidas (Editar, etc.) */}
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditIssue(issue)}
-                              title="Editar tarefa"
-                              style={{
-                                background: 'transparent',
-                                border: 'none',
-                                color: theme.textSecondary,
-                                cursor: 'pointer',
-                                padding: 3,
-                                borderRadius: 4,
-                                display: 'flex',
-                                alignItems: 'center',
-                                opacity: isHovered ? 1 : 0.3,
-                                transition: 'all 0.12s ease',
-                              }}
-                              onMouseEnter={(e) => (e.currentTarget.style.color = theme.textPrimary)}
-                              onMouseLeave={(e) => (e.currentTarget.style.color = theme.textSecondary)}
-                            >
-                              <MoreVertical size={14} />
-                            </button>
-                          </div>
-                        </div>
+                            </div>
+                          )}
+                        </React.Fragment>
                       );
-                    })
-                  )}
+                    });
+                  })()}
                 </div>
                 )}
               </div>
@@ -6023,6 +8939,9 @@ Formate com seções bem organizadas:
             )}
 
               <SprintDetailPanel
+                allCards={allCards}
+                selectedProject={selectedProject}
+                onSelectProject={(cardId) => setSelectedCardId(cardId)}
                 isSprintSidebarVisible={isSprintSidebarVisible}
                 toggleSprintSidebar={toggleSprintSidebar}
                 currentUser={currentUser}
@@ -6053,7 +8972,7 @@ Formate com seções bem organizadas:
                 onCancelEditSprintDates={() => setIsEditingSprintDates(false)}
                 onSaveSprintDates={handleSaveSprintDates}
                 sprintDetailTasks={sprintDetailTasks}
-                allProjectIssues={rawProjectIssues.length > 0 ? rawProjectIssues : sampleIssuesList}
+                allProjectIssues={rawProjectIssues}
                 tasksAvailableToAddToSprint={tasksAvailableToAddToSprint}
                 isAddExistingTaskOpen={isAddExistingTaskOpen}
                 setIsAddExistingTaskOpen={setIsAddExistingTaskOpen}
@@ -6076,12 +8995,13 @@ Formate com seções bem organizadas:
                 sprintCalendarMonthOffset={sprintCalendarMonthOffset}
                 setSprintCalendarMonthOffset={setSprintCalendarMonthOffset}
                 onMoveIssue={handleMoveIssueToColumn}
+                projectV2Columns={projectV2Columns}
                 showToast={showToast}
               />
             </div>
         ) : selectedSection === 'riscos' ? (
           <ProjectRisksDashboard
-            issues={rawProjectIssues.length > 0 ? rawProjectIssues : sampleIssuesList}
+            issues={rawProjectIssues}
             sprints={combinedSprints}
             collaborators={collaboratorsForSelectedRepo}
             repoName={selectedRepoRaw?.full_name || selectedProject?.repoName || selectedProject?.title || 'repositório'}
@@ -8137,6 +11057,7 @@ Formate com seções bem organizadas:
             <div style={{ flex: 1, minHeight: 460, display: 'flex', flexDirection: 'column' }}>
               <GithubProjectsKanbanBoard
                 issues={projectIssues}
+                columns={projectV2Columns || undefined}
                 repoName={selectedRepoRaw?.full_name || selectedProject?.repoName || selectedProject?.title || 'repositório'}
                 theme={theme}
                 isEffectiveDark={isEffectiveDark}
@@ -9558,6 +12479,7 @@ Formate com seções bem organizadas:
         <IssueDetailSidesheet
           isOpen={Boolean(activeSidesheetIssue)}
           issue={activeSidesheetIssue}
+          allProjectIssues={rawProjectIssues}
           repoFullName={
             allCards.find((c) => c.id === activeSidesheetIssue?.projectId)?.fullName ||
             selectedProject?.fullName
@@ -9916,6 +12838,183 @@ Formate com seções bem organizadas:
           </div>
         )}
 
+        {/* Modal para Adicionar GitHub Project da Organização */}
+        {isAddCustomProjectModalOpen && (
+          <div
+            onClick={() => setIsAddCustomProjectModalOpen(false)}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.65)',
+              backdropFilter: 'blur(4px)',
+              zIndex: 99999,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 16,
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: '100%',
+                maxWidth: 440,
+                background: theme.cardBg,
+                border: theme.cardBorder,
+                borderRadius: 14,
+                boxShadow: theme.dropdownShadow,
+                padding: '22px 24px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 16,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <FolderKanban size={18} color={accentColor} />
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: theme.textPrimary }}>
+                      Adicionar GitHub Project
+                    </h3>
+                    <p style={{ margin: '2px 0 0', fontSize: 12, color: theme.textSecondary }}>
+                      {selectedOrg !== 'Todas' ? `Organização: ${selectedOrg}` : 'GitHub Projects'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsAddCustomProjectModalOpen(false)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: theme.textSecondary,
+                    cursor: 'pointer',
+                    fontSize: 18,
+                    padding: 4,
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: theme.textSecondary, marginBottom: 5 }}>
+                    Título / Nome do Project (opcional)
+                  </label>
+                  <input
+                    type="text"
+                    value={customProjectInputTitle}
+                    onChange={(e) => setCustomProjectInputTitle(e.target.value)}
+                    placeholder="ex: Sprint Board Mobile"
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      borderRadius: 8,
+                      border: theme.controlBorder,
+                      background: theme.controlBg,
+                      color: theme.textPrimary,
+                      fontSize: 13,
+                      boxSizing: 'border-box',
+                      outline: 'none',
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: theme.textSecondary, marginBottom: 5 }}>
+                    URL ou Número do Project *
+                  </label>
+                  <input
+                    type="text"
+                    value={customProjectInputUrl}
+                    onChange={(e) => setCustomProjectInputUrl(e.target.value)}
+                    placeholder="ex: https://github.com/orgs/appmoove/projects/1 ou 1"
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      borderRadius: 8,
+                      border: theme.controlBorder,
+                      background: theme.controlBg,
+                      color: theme.textPrimary,
+                      fontSize: 13,
+                      boxSizing: 'border-box',
+                      outline: 'none',
+                    }}
+                  />
+                  <span style={{ fontSize: 11, color: theme.textSecondary, marginTop: 4, display: 'block' }}>
+                    Cole o link do board no GitHub ou digite o número do project.
+                  </span>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setIsAddCustomProjectModalOpen(false)}
+                  style={{
+                    padding: '7px 14px',
+                    borderRadius: 8,
+                    border: theme.controlBorder,
+                    background: 'transparent',
+                    color: theme.textPrimary,
+                    fontSize: 13,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={!customProjectInputUrl.trim()}
+                  onClick={() => {
+                    const raw = customProjectInputUrl.trim();
+                    let projectNum = 1;
+                    const match = raw.match(/projects\/(\d+)/);
+                    if (match) {
+                      projectNum = parseInt(match[1], 10);
+                    } else {
+                      const num = parseInt(raw, 10);
+                      if (!isNaN(num) && num > 0) projectNum = num;
+                    }
+                    const title = customProjectInputTitle.trim() || `Project #${projectNum}`;
+                    const url = raw.startsWith('http') ? raw : `https://github.com/orgs/${selectedOrg !== 'Todas' ? selectedOrg : 'appmoove'}/projects/${projectNum}`;
+                    const newProj: GithubOrgProjectItem = {
+                      id: `custom_${Date.now()}`,
+                      number: projectNum,
+                      title,
+                      url,
+                      isCustom: true,
+                      updatedAt: new Date().toISOString(),
+                    };
+                    const updated = [...githubOrgProjects, newProj];
+                    setGithubOrgProjects(updated);
+                    saveCustomProjects(selectedOrg, updated.filter((p) => p.isCustom));
+                    setSelectedGithubProjectNumber(projectNum);
+                    setIsAddCustomProjectModalOpen(false);
+                  }}
+                  style={{
+                    padding: '7px 16px',
+                    borderRadius: 8,
+                    border: 'none',
+                    background: accentColor,
+                    color: '#ffffff',
+                    fontSize: 13,
+                    fontWeight: 500,
+                    cursor: customProjectInputUrl.trim() ? 'pointer' : 'not-allowed',
+                    opacity: customProjectInputUrl.trim() ? 1 : 0.5,
+                  }}
+                >
+                  Salvar Project
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Modal de Confirmação de Exclusão (Padrão DevFlow para Deletar Recursos) */}
         <ConfirmDeleteModal
           isOpen={deleteConfirmState.isOpen}
@@ -10126,6 +13225,39 @@ Formate com seções bem organizadas:
                     <Pin size={11} color={accentColor} style={{ transform: 'rotate(45deg)' }} />
                   )}
               </div>
+
+              {/* DEFINIR COMO PROJETO ATIVO NO EDITOR / HEADER */}
+              {onSelectWorkspace && activeWorkspaceMatchingCard?.id !== activeProjectMenu.card.id && (
+                <div
+                  onClick={async () => {
+                    const card = activeProjectMenu.card;
+                    setActiveProjectMenu(null);
+                    let targetDir = card.repoName ? `/Users/walancy/Documents/codes/${card.repoName}` : '';
+                    if (card.repoName === 'aura-dev' || card.name === 'aura-dev') {
+                      targetDir = '/Users/walancy/Documents/codes/devflow-desktop';
+                    }
+                    await onSelectWorkspace(targetDir || card.name, card.repoName || card.name);
+                    showToast(`Projeto ativo alterado para ${card.title}.`);
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '6px 8px',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    color: accentColor,
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    transition: 'background 0.12s ease',
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = theme.dropdownItemHover)}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <FolderGit2 size={13.5} color={accentColor} />
+                  <span>Definir como Projeto Ativo</span>
+                </div>
+              )}
 
               {/* SEÇÃO 1: IA & SPRINT */}
               <div
@@ -10375,8 +13507,58 @@ Formate com seções bem organizadas:
                 <RefreshCw size={13.5} color={theme.textSecondary} />
                 <span>Sincronizar com GitHub</span>
               </div>
+
+              <div
+                onClick={() => {
+                  setIconModalProject(activeProjectMenu.card);
+                  setActiveProjectMenu(null);
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '6px 8px',
+                  borderRadius: 6,
+                  fontSize: 12,
+                  color: theme.textPrimary,
+                  cursor: 'pointer',
+                  transition: 'background 0.12s ease',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = theme.dropdownItemHover)}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              >
+                <ImageIcon size={13.5} color={theme.textSecondary} />
+                <span>Alterar Ícone do Projeto</span>
+              </div>
             </div>
           </>
+        )}
+
+        {/* Modal de Personalização do Ícone do Projeto (Sem clonar) */}
+        {iconModalProject && (
+          <ProjectIconModal
+            isOpen={Boolean(iconModalProject)}
+            project={iconModalProject}
+            currentCustomIcon={
+              customProjectIcons[iconModalProject.fullName || ''] ||
+              customProjectIcons[iconModalProject.title] ||
+              customProjectIcons[String(iconModalProject.id)]
+            }
+            themeTokens={themeTokens}
+            accentColor={accentColor}
+            isEffectiveDark={isEffectiveDark}
+            onSave={(iconUrlOrData) => {
+              const projectKey = iconModalProject.fullName || iconModalProject.title || String(iconModalProject.id);
+              saveCustomProjectIcon(projectKey, iconUrlOrData);
+              showToast(`Ícone de "${iconModalProject.title}" salvo com sucesso!`);
+            }}
+            onRemove={() => {
+              const projectKey = iconModalProject.fullName || iconModalProject.title || String(iconModalProject.id);
+              removeCustomProjectIcon(projectKey);
+              showToast(`Ícone de "${iconModalProject.title}" restaurado para o padrão.`);
+            }}
+            onClose={() => setIconModalProject(null)}
+          />
         )}
 
         {/* Toast Notificação de Feedback Rápido */}
@@ -10416,6 +13598,9 @@ Formate com seções bem organizadas:
 // (lista ou calendário), edição de datas e adição/remoção de tarefas.
 // =========================================================================
 function SprintDetailPanel(props: {
+  allCards?: ProjectCardData[];
+  selectedProject?: ProjectCardData;
+  onSelectProject?: (projectId: number | string) => void;
   currentUser?: { login: string; avatarUrl: string } | null;
   theme: any;
   isEffectiveDark: boolean;
@@ -10464,8 +13649,12 @@ function SprintDetailPanel(props: {
   showToast?: (msg: string) => void;
   isSprintSidebarVisible: boolean;
   toggleSprintSidebar: () => void;
+  projectV2Columns?: any[] | null;
 }) {
   const {
+    allCards = [],
+    selectedProject,
+    onSelectProject,
     currentUser,
     theme,
     isEffectiveDark,
@@ -10474,6 +13663,7 @@ function SprintDetailPanel(props: {
     combinedSprints,
     openedSprint,
     onSelectSprint,
+    projectV2Columns,
     onDeleteSprint,
     onCreateSprint,
     sprintSidebarFilter,
@@ -10516,6 +13706,22 @@ function SprintDetailPanel(props: {
     toggleSprintSidebar,
   } = props;
 
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [projectPickerSearch, setProjectPickerSearch] = useState('');
+
+  const filteredPickerProjects = useMemo(() => {
+    if (!allCards || allCards.length === 0) return [];
+    if (!projectPickerSearch.trim()) return allCards;
+    const q = projectPickerSearch.toLowerCase();
+    return allCards.filter(
+      (c) =>
+        c.title.toLowerCase().includes(q) ||
+        (c.language && c.language.toLowerCase().includes(q)) ||
+        (c.owner && c.owner.toLowerCase().includes(q)) ||
+        (c.repoName && c.repoName.toLowerCase().includes(q))
+    );
+  }, [allCards, projectPickerSearch]);
+
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [taskMenuOpenId, setTaskMenuOpenId] = useState<string | null>(null);
   const [reassignSubmenuOpen, setReassignSubmenuOpen] = useState(false);
@@ -10546,6 +13752,66 @@ function SprintDetailPanel(props: {
   const [issueLabelFilter, setIssueLabelFilter] = useState<string | null>(null);
   const [issueAssigneeFilter, setIssueAssigneeFilter] = useState<string | null>(null);
   const [issueSortFilter, setIssueSortFilter] = useState<'recent' | 'oldest' | 'title'>('recent');
+
+  // Estado de expansão das issues com sub-issues
+  const [expandedIssueIds, setExpandedIssueIds] = useState<Set<string>>(new Set());
+  const toggleIssueExpanded = useCallback((issueId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setExpandedIssueIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(issueId)) next.delete(issueId);
+      else next.add(issueId);
+      return next;
+    });
+  }, []);
+
+  // Mapa de todas as issues do projeto para lookup rápido por githubNumber
+  const allIssuesMap = useMemo(() => {
+    const map = new Map<number, ProjectIssue>();
+    (allProjectIssues || []).forEach((i) => {
+      if (i.githubNumber) map.set(i.githubNumber, i);
+    });
+    return map;
+  }, [allProjectIssues]);
+
+  // Conjunto de IDs de issues que são filhas (sub-issues) de outra issue existente
+  const childIssueIdSet = useMemo(() => {
+    const set = new Set<string>();
+    (allProjectIssues || []).forEach((issue) => {
+      const subs = extractSubIssuesForIssue(issue, allIssuesMap);
+      subs.forEach((s) => {
+        if (s.linkedIssue) set.add(s.linkedIssue.id);
+      });
+    });
+    return set;
+  }, [allProjectIssues, allIssuesMap]);
+
+  // Alternar checkbox de checklist de sub-issue dentro da descrição da issue pai
+  const handleToggleChecklistSubIssue = useCallback(
+    async (parentTask: ProjectIssue, lineIndex: number, currentlyCompleted: boolean) => {
+      if (!parentTask.description) return;
+      const lines = parentTask.description.split('\n');
+      if (lineIndex < 0 || lineIndex >= lines.length) return;
+      const targetLine = lines[lineIndex];
+      const nextCheck = currentlyCompleted ? ' ' : 'x';
+      lines[lineIndex] = targetLine.replace(/\[([ xX])\]/, `[${nextCheck}]`);
+      const newDescription = lines.join('\n');
+
+      const card = allCards.find((c) => c.id === parentTask.projectId);
+      if (card?.owner && card?.repoName && parentTask.githubNumber) {
+        try {
+          await window.electronAPI?.github?.updateIssue?.(card.owner, card.repoName, parentTask.githubNumber, {
+            body: newDescription,
+          });
+          parentTask.description = newDescription;
+          showToast(currentlyCompleted ? 'Sub-issue reaberta.' : 'Sub-issue concluída!');
+        } catch (err: any) {
+          showToast(err?.message || 'Erro ao sincronizar sub-issue no GitHub.');
+        }
+      }
+    },
+    [allCards, showToast]
+  );
 
   // Helper para renderizar checkbox customizado padronizado
   const renderCustomCheckbox = (
@@ -11086,19 +14352,49 @@ function SprintDetailPanel(props: {
     [sprintSidebarWidth]
   );
 
-  // Dias da sprint atual (mostra somente os dias que têm sprint)
+  // Dias da sprint atual (mostra somente os dias que têm sprint, com fallback inteligente)
   const sprintDays = useMemo(() => {
-    if (!openedSprint?.startDateIso || !openedSprint?.dueDateIso) return [];
-    const start = new Date(`${openedSprint.startDateIso}T00:00:00`);
-    const end = new Date(`${openedSprint.dueDateIso}T00:00:00`);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return [];
+    let startIso = openedSprint?.startDateIso;
+    let dueIso = openedSprint?.dueDateIso;
 
+    if (!startIso && !dueIso) return [];
+
+    // Se tiver apenas a data final, recua 13 dias para formar um período típico de 14 dias
+    if (!startIso && dueIso) {
+      const d = new Date(`${dueIso}T00:00:00`);
+      if (!Number.isNaN(d.getTime())) {
+        d.setDate(d.getDate() - 13);
+        startIso = d.toISOString().slice(0, 10);
+      }
+    }
+    // Se tiver apenas a data inicial, avança 13 dias
+    if (startIso && !dueIso) {
+      const d = new Date(`${startIso}T00:00:00`);
+      if (!Number.isNaN(d.getTime())) {
+        d.setDate(d.getDate() + 13);
+        dueIso = d.toISOString().slice(0, 10);
+      }
+    }
+
+    if (!startIso || !dueIso) return [];
+
+    let start = new Date(`${startIso}T00:00:00`);
+    let end = new Date(`${dueIso}T00:00:00`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [];
+    if (start > end) {
+      const tmp = start;
+      start = end;
+      end = tmp;
+    }
+
+    const maxDays = 60;
     const days: { day: number; wd: string; iso: string; monthName: string; monthIndex: number; year: number }[] = [];
     const cur = new Date(start);
     const weekdayAbbrPt = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
     const monthAbbrPt = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
 
-    while (cur <= end) {
+    let count = 0;
+    while (cur <= end && count < maxDays) {
       const day = cur.getDate();
       const wd = weekdayAbbrPt[cur.getDay()];
       const mIdx = cur.getMonth();
@@ -11113,6 +14409,7 @@ function SprintDetailPanel(props: {
         year: yr,
       });
       cur.setDate(cur.getDate() + 1);
+      count++;
     }
     return days;
   }, [openedSprint?.startDateIso, openedSprint?.dueDateIso]);
@@ -11359,8 +14656,40 @@ function SprintDetailPanel(props: {
           className="no-scrollbar"
         >
           {sprintDays.length === 0 ? (
-            <div style={{ fontSize: 10, color: theme.textSecondary, textAlign: 'center', padding: '16px 2px', opacity: 0.5 }}>
-              Sem datas
+            <div
+              onClick={onStartEditSprintDates}
+              role="button"
+              tabIndex={0}
+              title="Clique para definir as datas da sprint"
+              style={{
+                fontSize: 10,
+                color: theme.textSecondary,
+                textAlign: 'center',
+                padding: '14px 2px',
+                cursor: 'pointer',
+                borderRadius: 6,
+                border: `1px dashed ${isEffectiveDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)'}`,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 4,
+                margin: '4px 2px',
+                transition: 'background 0.15s, border-color 0.15s',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = accentColor;
+                e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)';
+                e.currentTarget.style.background = 'transparent';
+              }}
+            >
+              <Calendar size={13} style={{ color: accentColor, opacity: 0.85 }} />
+              <span style={{ fontSize: 9.5 }}>Sem datas</span>
+              <span style={{ fontSize: 8.5, color: accentColor, textDecoration: 'underline' }}>
+                Definir
+              </span>
             </div>
           ) : (
             sprintDays.map((item, idx) => {
@@ -11479,20 +14808,49 @@ function SprintDetailPanel(props: {
             borderBottom: `1px solid ${hexToRgba(theme.textSecondary, isEffectiveDark ? 0.07 : 0.05)}`,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: 12.5, fontWeight: 700, color: theme.textPrimary }}>Sprints</span>
-            <span
-              style={{
-                fontSize: 10.5,
-                background: hexToRgba(theme.textSecondary, 0.15),
-                color: theme.textSecondary,
-                padding: '1px 6px',
-                borderRadius: 10,
-                fontWeight: 600,
-              }}
-            >
-              {combinedSprints.length}
-            </span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: theme.textPrimary }}>Sprints</span>
+              <span
+                style={{
+                  fontSize: 10.5,
+                  background: hexToRgba(theme.textSecondary, 0.15),
+                  color: theme.textSecondary,
+                  padding: '1px 6px',
+                  borderRadius: 10,
+                  fontWeight: 600,
+                }}
+              >
+                {combinedSprints.length}
+              </span>
+            </div>
+            {selectedProject && (
+              <div
+                onClick={() => setProjectPickerOpen((prev) => !prev)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 3,
+                  cursor: 'pointer',
+                  maxWidth: 160,
+                }}
+                title="Clique para alternar o projeto da sprint"
+              >
+                <span
+                  style={{
+                    fontSize: 10.5,
+                    color: accentColor,
+                    fontWeight: 600,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {selectedProject.title}
+                </span>
+                <ChevronDown size={11} color={accentColor} />
+              </div>
+            )}
           </div>
 
           {onCreateSprint && (
@@ -11578,7 +14936,7 @@ function SprintDetailPanel(props: {
         >
           {filteredSprints.length === 0 ? (
             <div style={{ padding: '24px 8px', textAlign: 'center', color: theme.textSecondary, fontSize: 11.5 }}>
-              Nenhuma sprint encontrada.
+              Nenhuma sprint encontrada{selectedProject?.title ? ` para ${selectedProject.title}` : ''}.
             </div>
           ) : (
             filteredSprints.map((sp) => {
@@ -11586,7 +14944,17 @@ function SprintDetailPanel(props: {
               const dotColor = sp.status === 'Current' ? '#58a6ff' : sp.status === 'Completed' ? '#22c55e' : '#94a3b8';
 
               // Obter tarefas reais desta sprint
-              const sprintIssues = (allProjectIssues || []).filter((i) => i.milestoneNumber === sp.number);
+              const sprintIssues = (allProjectIssues || []).filter((i) => {
+                if (sp.number === -1) {
+                  return (!i.milestoneNumber || i.milestoneNumber === 0 || i.milestoneNumber === -1) && !i.iterationId && !i.iterationTitle;
+                }
+                if (sp.isProjectIteration || sp.iterationId) {
+                  if (sp.iterationId && i.iterationId === sp.iterationId) return true;
+                  if (i.iterationTitle && sp.title && i.iterationTitle.toLowerCase().trim() === sp.title.toLowerCase().trim()) return true;
+                  return false;
+                }
+                return i.milestoneNumber === sp.number;
+              });
               const effectiveTasks = (openedSprint && sp.number === openedSprint.number && sprintDetailTasks.length > 0)
                 ? sprintDetailTasks
                 : sprintIssues;
@@ -11712,7 +15080,7 @@ function SprintDetailPanel(props: {
                       </span>
                     </div>
 
-                    {onDeleteSprint && (
+                    {sp.number !== -1 && onDeleteSprint && (
                       <button
                         type="button"
                         onClick={(e) => {
@@ -12029,56 +15397,77 @@ function SprintDetailPanel(props: {
                   </div>
 
                 {!isEditingSprintDates ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 12, color: theme.textSecondary }}>{openedSprint.dateRangeLabel}</span>
-                    <button
-                      type="button"
-                      onClick={onStartEditSprintDates}
-                      title="Editar datas da sprint"
-                      style={{
-                        background: 'transparent',
-                        border: 'none',
-                        color: theme.textSecondary,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        padding: 2,
-                      }}
-                    >
-                      <Pencil size={12} />
-                    </button>
+                  <div
+                    onClick={onStartEditSprintDates}
+                    role="button"
+                    tabIndex={0}
+                    title="Clique para editar as datas da sprint"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '4px 8px',
+                      borderRadius: 6,
+                      cursor: 'pointer',
+                      border: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+                      background: isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
+                      transition: 'background 0.15s, border-color 0.15s',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = accentColor;
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)';
+                    }}
+                  >
+                    <Calendar size={13} style={{ color: accentColor }} />
+                    <span style={{ fontSize: 12, fontWeight: 500, color: theme.textSecondary }}>
+                      {openedSprint.dateRangeLabel && openedSprint.dateRangeLabel !== 'Sem datas'
+                        ? openedSprint.dateRangeLabel
+                        : 'Definir datas da sprint'}
+                    </span>
+                    <Pencil size={11} style={{ color: theme.textSecondary, opacity: 0.7, marginLeft: 2 }} />
                   </div>
                 ) : (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <input
-                      type="date"
-                      value={editSprintStartDate}
-                      onChange={(e) => setEditSprintStartDate(e.target.value)}
-                      style={{
-                        background: isEffectiveDark ? '#242424' : '#e2e8f0',
-                        border: 'none',
-                        borderRadius: 6,
-                        padding: '4px 8px',
-                        fontSize: 11.5,
-                        color: theme.textPrimary,
-                        outline: 'none',
-                      }}
-                    />
-                    <span style={{ color: theme.textSecondary, fontSize: 11.5 }}>até</span>
-                    <input
-                      type="date"
-                      value={editSprintDueDate}
-                      onChange={(e) => setEditSprintDueDate(e.target.value)}
-                      style={{
-                        background: isEffectiveDark ? '#242424' : '#e2e8f0',
-                        border: 'none',
-                        borderRadius: 6,
-                        padding: '4px 8px',
-                        fontSize: 11.5,
-                        color: theme.textPrimary,
-                        outline: 'none',
-                      }}
-                    />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ fontSize: 11, color: theme.textSecondary }}>De:</span>
+                      <input
+                        type="date"
+                        value={editSprintStartDate}
+                        onChange={(e) => setEditSprintStartDate(e.target.value)}
+                        style={{
+                          background: isEffectiveDark ? '#222' : '#f1f5f9',
+                          border: `1px solid ${isEffectiveDark ? '#444' : '#cbd5e1'}`,
+                          borderRadius: 6,
+                          padding: '4px 8px',
+                          fontSize: 12,
+                          color: theme.textPrimary,
+                          colorScheme: isEffectiveDark ? 'dark' : 'light',
+                          outline: 'none',
+                        }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ fontSize: 11, color: theme.textSecondary }}>Até:</span>
+                      <input
+                        type="date"
+                        value={editSprintDueDate}
+                        onChange={(e) => setEditSprintDueDate(e.target.value)}
+                        style={{
+                          background: isEffectiveDark ? '#222' : '#f1f5f9',
+                          border: `1px solid ${isEffectiveDark ? '#444' : '#cbd5e1'}`,
+                          borderRadius: 6,
+                          padding: '4px 8px',
+                          fontSize: 12,
+                          color: theme.textPrimary,
+                          colorScheme: isEffectiveDark ? 'dark' : 'light',
+                          outline: 'none',
+                        }}
+                      />
+                    </div>
                     <button
                       type="button"
                       onClick={onSaveSprintDates}
@@ -12088,18 +15477,18 @@ function SprintDetailPanel(props: {
                         color: accentContrastText,
                         border: 'none',
                         borderRadius: 6,
-                        padding: '4px 10px',
-                        fontSize: 11.5,
-                        fontWeight: 500,
+                        padding: '5px 12px',
+                        fontSize: 12,
+                        fontWeight: 600,
                         cursor: isSavingSprintDates ? 'default' : 'pointer',
                         opacity: isSavingSprintDates ? 0.6 : 1,
                         display: 'flex',
                         alignItems: 'center',
-                        gap: 4,
+                        gap: 5,
                       }}
                     >
-                      <Check size={12} />
-                      <span>Salvar</span>
+                      <Check size={13} />
+                      <span>{isSavingSprintDates ? 'Salvando...' : 'Salvar'}</span>
                     </button>
                     <button
                       type="button"
@@ -12108,9 +15497,9 @@ function SprintDetailPanel(props: {
                         background: 'transparent',
                         border: 'none',
                         color: theme.textSecondary,
-                        fontSize: 11.5,
+                        fontSize: 12,
                         cursor: 'pointer',
-                        padding: '4px 6px',
+                        padding: '5px 8px',
                       }}
                     >
                       Cancelar
@@ -13096,22 +16485,162 @@ function SprintDetailPanel(props: {
                       <div style={{ position: 'relative' }}>
                         <button
                           type="button"
+                          onClick={() => setProjectPickerOpen((prev) => !prev)}
                           style={{
                             display: 'flex',
                             alignItems: 'center',
-                            gap: 4,
-                            background: 'transparent',
+                            gap: 5,
+                            background: projectPickerOpen
+                              ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)')
+                              : 'transparent',
                             border: 'none',
-                            color: theme.textSecondary,
+                            color: theme.textPrimary,
                             fontSize: 12,
+                            fontWeight: 500,
                             cursor: 'pointer',
-                            padding: '3px 6px',
+                            padding: '3px 7px',
                             borderRadius: 4,
+                            transition: 'all 0.12s ease',
                           }}
                         >
-                          <span>Projetos</span>
-                          <ChevronDown size={11} />
+                          <FolderGit2 size={13} color={accentColor} />
+                          <span style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {selectedProject?.title || selectedProject?.name || 'Projetos'}
+                          </span>
+                          <ChevronDown size={11} color={theme.textSecondary} />
                         </button>
+
+                        {projectPickerOpen && (
+                          <>
+                            <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setProjectPickerOpen(false)} />
+                            <div
+                              style={{
+                                position: 'absolute',
+                                top: 'calc(100% + 4px)',
+                                left: 0,
+                                background: theme.dropdownBg,
+                                border: `1px solid ${hexToRgba(theme.textSecondary, isEffectiveDark ? 0.2 : 0.15)}`,
+                                borderRadius: 8,
+                                boxShadow: theme.dropdownShadow,
+                                padding: '6px',
+                                zIndex: 9999,
+                                width: 280,
+                                maxHeight: 320,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 4,
+                              }}
+                            >
+                              {/* Campo de busca de projetos */}
+                              <div
+                                style={{
+                                  padding: '4px 7px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  background: isEffectiveDark ? '#1a1a1a' : '#f1f5f9',
+                                  borderRadius: 5,
+                                }}
+                              >
+                                <Search size={12} color={theme.textSecondary} />
+                                <input
+                                  type="text"
+                                  placeholder="Filtrar projetos..."
+                                  value={projectPickerSearch}
+                                  onChange={(e) => setProjectPickerSearch(e.target.value)}
+                                  autoFocus
+                                  style={{
+                                    border: 'none',
+                                    outline: 'none',
+                                    background: 'transparent',
+                                    fontSize: 11.5,
+                                    color: theme.textPrimary,
+                                    width: '100%',
+                                  }}
+                                />
+                                {projectPickerSearch && (
+                                  <X
+                                    size={12}
+                                    color={theme.textSecondary}
+                                    style={{ cursor: 'pointer' }}
+                                    onClick={() => setProjectPickerSearch('')}
+                                  />
+                                )}
+                              </div>
+
+                              <div style={{ maxHeight: 240, overflowY: 'auto' }} className="no-scrollbar">
+                                {filteredPickerProjects.length === 0 ? (
+                                  <div style={{ padding: '12px 8px', textAlign: 'center', color: theme.textSecondary, fontSize: 11 }}>
+                                    Nenhum projeto encontrado.
+                                  </div>
+                                ) : (
+                                  filteredPickerProjects.map((card) => {
+                                    const isCurrent = selectedProject?.id === card.id;
+                                    return (
+                                      <div
+                                        key={card.id}
+                                        onClick={() => {
+                                          onSelectProject?.(card.id);
+                                          setProjectPickerOpen(false);
+                                        }}
+                                        style={{
+                                          padding: '6px 8px',
+                                          borderRadius: 5,
+                                          cursor: 'pointer',
+                                          fontSize: 12,
+                                          color: isCurrent ? accentColor : theme.textPrimary,
+                                          fontWeight: isCurrent ? 600 : 400,
+                                          background: isCurrent
+                                            ? hexToRgba(accentColor, isEffectiveDark ? 0.18 : 0.12)
+                                            : 'transparent',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'space-between',
+                                          gap: 8,
+                                        }}
+                                        onMouseEnter={(e) => {
+                                          if (!isCurrent) e.currentTarget.style.background = theme.dropdownItemHover;
+                                        }}
+                                        onMouseLeave={(e) => {
+                                          if (!isCurrent) e.currentTarget.style.background = 'transparent';
+                                        }}
+                                      >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0, flex: 1 }}>
+                                          <div
+                                            style={{
+                                              width: 18,
+                                              height: 18,
+                                              borderRadius: '50%',
+                                              background: isCurrent
+                                                ? accentColor
+                                                : (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'),
+                                              color: isCurrent ? accentContrastText : theme.textSecondary,
+                                              fontSize: 9.5,
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              justifyContent: 'center',
+                                              flexShrink: 0,
+                                            }}
+                                          >
+                                            {card.badge}
+                                          </div>
+                                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {card.title}
+                                          </span>
+                                        </div>
+                                        {card.language && (
+                                          <span style={{ fontSize: 10, color: theme.textSecondary, flexShrink: 0 }}>
+                                            {card.language}
+                                          </span>
+                                        )}
+                                      </div>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            </div>
+                          </>
+                        )}
                       </div>
 
                       {/* Marcos */}
@@ -13316,7 +16845,9 @@ function SprintDetailPanel(props: {
                       });
                     }
 
-                    if (list.length === 0) {
+                    const topLevelList = list.filter((task) => !childIssueIdSet.has(task.id));
+
+                    if (topLevelList.length === 0) {
                       return (
                         <div style={{ padding: '40px 20px', textAlign: 'center', color: theme.textSecondary, fontSize: 12.5 }}>
                           Nenhuma issue encontrada com os filtros selecionados.
@@ -13326,105 +16857,124 @@ function SprintDetailPanel(props: {
 
                     return (
                       <div style={{ width: '100%', overflowY: 'auto', flex: 1, minHeight: 0 }} className="no-scrollbar">
-                        {list.map((task, taskIdx) => {
+                        {topLevelList.map((task, taskIdx) => {
                           const isSelected = selectedIssueIds.includes(task.id);
                           const isClosed = task.status === 'Concluído';
                           const taskNum = task.githubNumber || task.id.replace(/\D/g, '') || (taskIdx + 1);
                           const authorName = task.author || (currentUser as any)?.login || 'Walancy';
                           const timeAgo = formatGithubTimeAgo(task.createdAtIso || task.dateStr);
 
+                          const subIssues = extractSubIssuesForIssue(task, allIssuesMap);
+                          const hasSubIssues = subIssues.length > 0;
+                          const isExpanded = expandedIssueIds.has(task.id);
+                          const completedSubsCount = subIssues.filter((s) => s.completed).length;
+
                           return (
-                            <div
-                              key={task.id}
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                padding: '11px 16px',
-                                borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)'}`,
-                                background: isSelected
-                                  ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)')
-                                  : 'transparent',
-                                transition: 'background 0.12s ease',
-                                gap: 12,
-                                position: taskMenuOpenId === task.id ? 'relative' : undefined,
-                                zIndex: taskMenuOpenId === task.id ? 20 : undefined,
-                              }}
-                              onMouseEnter={(e) => {
-                                if (!isSelected) {
-                                  e.currentTarget.style.background = isEffectiveDark ? '#1a1a1a' : '#f8fafc';
-                                }
-                              }}
-                              onMouseLeave={(e) => {
-                                if (!isSelected) {
-                                  e.currentTarget.style.background = 'transparent';
-                                }
-                              }}
-                            >
-                              {/* Lado Esquerdo: Checkbox + Ícone de Status + Título + Badges + Subtítulo */}
-                              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, minWidth: 0, flex: 1 }}>
-                                <div style={{ marginTop: 3, display: 'flex', alignItems: 'center' }}>
-                                  {renderCustomCheckbox(
-                                    isSelected,
-                                    false,
-                                    () => {
-                                      setSelectedIssueIds((prev) =>
-                                        prev.includes(task.id) ? prev.filter((i) => i !== task.id) : [...prev, task.id]
-                                      );
-                                    },
-                                    isSelected ? 'Desmarcar issue' : 'Selecionar issue'
-                                  )}
-                                </div>
-
-                                {/* Ícone de Status (CircleDot verde ou CheckCircle roxo) */}
-                                <div
-                                  onClick={() => onToggleTaskStatus(task.id)}
-                                  title={isClosed ? 'Concluída (Clique para reabrir)' : 'Aberta (Clique para concluir)'}
-                                  style={{ cursor: 'pointer', marginTop: 2, display: 'flex', alignItems: 'center' }}
-                                >
-                                  {isClosed ? (
-                                    <CheckCircle2 size={16} color="#a855f7" />
-                                  ) : (
-                                    <CircleDot size={16} color="#22c55e" />
-                                  )}
-                                </div>
-
-                                {/* Conteúdo: Linha 1 (Título + Badges), Linha 2 (Metadados) */}
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, flex: 1 }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                                    <span
-                                      onClick={() => onEditTask?.(task)}
+                            <React.Fragment key={task.id}>
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  padding: '11px 16px',
+                                  borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)'}`,
+                                  background: isSelected
+                                    ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)')
+                                    : 'transparent',
+                                  transition: 'background 0.12s ease',
+                                  gap: 12,
+                                  position: taskMenuOpenId === task.id ? 'relative' : undefined,
+                                  zIndex: taskMenuOpenId === task.id ? 20 : undefined,
+                                }}
+                                onMouseEnter={(e) => {
+                                  if (!isSelected) {
+                                    e.currentTarget.style.background = isEffectiveDark ? '#1a1a1a' : '#f8fafc';
+                                  }
+                                }}
+                                onMouseLeave={(e) => {
+                                  if (!isSelected) {
+                                    e.currentTarget.style.background = 'transparent';
+                                  }
+                                }}
+                              >
+                                {/* Lado Esquerdo: Expansor Chevron + Checkbox + Ícone de Status + Título + Badges + Subtítulo */}
+                                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, minWidth: 0, flex: 1 }}>
+                                  {/* Botão de Dropdown Chevron para Sub-issues */}
+                                  {hasSubIssues ? (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => toggleIssueExpanded(task.id, e)}
+                                      title={isExpanded ? 'Recolher sub-issues' : `Expandir ${subIssues.length} sub-issues`}
                                       style={{
-                                        fontWeight: 600,
-                                        fontSize: 13.5,
-                                        color: theme.textPrimary,
+                                        marginTop: 2,
+                                        background: 'transparent',
+                                        border: 'none',
+                                        padding: '2px 3px',
                                         cursor: 'pointer',
-                                        textDecoration: isClosed ? 'line-through' : 'none',
-                                        opacity: isClosed ? 0.75 : 1,
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        color: isExpanded ? accentColor : theme.textSecondary,
+                                        borderRadius: 4,
+                                        flexShrink: 0,
+                                        transition: 'transform 0.15s ease, color 0.12s ease',
+                                        transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
                                       }}
                                       onMouseEnter={(e) => (e.currentTarget.style.color = accentColor)}
-                                      onMouseLeave={(e) => (e.currentTarget.style.color = theme.textPrimary)}
+                                      onMouseLeave={(e) => (e.currentTarget.style.color = isExpanded ? accentColor : theme.textSecondary)}
                                     >
-                                      {task.title}
-                                    </span>
+                                      <ChevronRight size={14} />
+                                    </button>
+                                  ) : (
+                                    <div style={{ width: 18, flexShrink: 0 }} />
+                                  )}
 
-                                    {/* Badge de Status */}
-                                    <span
-                                      style={{
-                                        background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#e2e8f0',
-                                        color: theme.textSecondary,
-                                        fontSize: 11,
-                                        fontWeight: 500,
-                                        borderRadius: 12,
-                                        padding: '1px 8px',
-                                        whiteSpace: 'nowrap',
-                                      }}
-                                    >
-                                      {task.status.toLowerCase().replace(/\s+/g, '-')}
-                                    </span>
+                                  <div style={{ marginTop: 3, display: 'flex', alignItems: 'center' }}>
+                                    {renderCustomCheckbox(
+                                      isSelected,
+                                      false,
+                                      () => {
+                                        setSelectedIssueIds((prev) =>
+                                          prev.includes(task.id) ? prev.filter((i) => i !== task.id) : [...prev, task.id]
+                                        );
+                                      },
+                                      isSelected ? 'Desmarcar issue' : 'Selecionar issue'
+                                    )}
+                                  </div>
 
-                                    {/* Badge de Tag/Categoria */}
-                                    {task.tag && (
+                                  {/* Ícone de Status (CircleDot verde ou CheckCircle roxo) */}
+                                  <div
+                                    onClick={() => onToggleTaskStatus(task.id)}
+                                    title={isClosed ? 'Concluída (Clique para reabrir)' : 'Aberta (Clique para concluir)'}
+                                    style={{ cursor: 'pointer', marginTop: 2, display: 'flex', alignItems: 'center' }}
+                                  >
+                                    {isClosed ? (
+                                      <CheckCircle2 size={16} color="#a855f7" />
+                                    ) : (
+                                      <CircleDot size={16} color="#22c55e" />
+                                    )}
+                                  </div>
+
+                                  {/* Conteúdo: Linha 1 (Título + Badges), Linha 2 (Metadados) */}
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, flex: 1 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                      <span
+                                        onClick={() => onEditTask?.(task)}
+                                        style={{
+                                          fontWeight: 600,
+                                          fontSize: 13.5,
+                                          color: theme.textPrimary,
+                                          cursor: 'pointer',
+                                          textDecoration: isClosed ? 'line-through' : 'none',
+                                          opacity: isClosed ? 0.75 : 1,
+                                        }}
+                                        onMouseEnter={(e) => (e.currentTarget.style.color = accentColor)}
+                                        onMouseLeave={(e) => (e.currentTarget.style.color = theme.textPrimary)}
+                                      >
+                                        {task.title}
+                                      </span>
+
+                                      {/* Badge de Status */}
                                       <span
                                         style={{
                                           background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#e2e8f0',
@@ -13436,68 +16986,286 @@ function SprintDetailPanel(props: {
                                           whiteSpace: 'nowrap',
                                         }}
                                       >
-                                        {task.tag}
+                                        {task.status.toLowerCase().replace(/\s+/g, '-')}
                                       </span>
-                                    )}
 
-                                    {/* Badge de Prioridade */}
-                                    <span
-                                      style={{
-                                        background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#e2e8f0',
-                                        color: theme.textSecondary,
-                                        fontSize: 11,
-                                        fontWeight: 500,
-                                        borderRadius: 12,
-                                        padding: '1px 8px',
-                                        whiteSpace: 'nowrap',
-                                      }}
-                                    >
-                                      priority: {task.priority.toLowerCase()}
-                                    </span>
-                                  </div>
-
-                                  {/* Subtítulo: #num · Autor aberta há Xh */}
-                                  <div style={{ fontSize: 11.5, color: theme.textSecondary }}>
-                                    #{taskNum} · {authorName} aberta {timeAgo}
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* Lado Direito: Avatares de Responsáveis + Menu ... */}
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-                                {/* Responsáveis */}
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                  {task.assignees.map((assignee, aIdx) => (
-                                    <div
-                                      key={assignee.name || aIdx}
-                                      title={assignee.name}
-                                      style={{
-                                        width: 20,
-                                        height: 20,
-                                        borderRadius: '50%',
-                                        overflow: 'hidden',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        background: assignee.avatarBg || accentColor,
-                                        color: '#fff',
-                                        fontSize: 10,
-                                        fontWeight: 600,
-                                      }}
-                                    >
-                                      {assignee.avatarUrl ? (
-                                        <img src={assignee.avatarUrl} alt={assignee.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                      ) : (
-                                        <span>{assignee.initial || assignee.name?.slice(0, 1).toUpperCase()}</span>
+                                      {/* Badge de Sub-issues se houver */}
+                                      {hasSubIssues && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => toggleIssueExpanded(task.id, e)}
+                                          title={`${completedSubsCount} de ${subIssues.length} sub-issues concluídas. Clique para ${isExpanded ? 'recolher' : 'expandir'}.`}
+                                          style={{
+                                            background: isEffectiveDark ? 'rgba(56, 189, 248, 0.14)' : 'rgba(2, 132, 199, 0.1)',
+                                            color: isEffectiveDark ? '#38bdf8' : '#0284c7',
+                                            fontSize: 11,
+                                            fontWeight: 500,
+                                            borderRadius: 12,
+                                            padding: '1px 8px',
+                                            border: 'none',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: 4,
+                                            cursor: 'pointer',
+                                            whiteSpace: 'nowrap',
+                                            transition: 'opacity 0.12s ease',
+                                          }}
+                                          onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.85')}
+                                          onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                                        >
+                                          <Layers size={11} />
+                                          <span>
+                                            {completedSubsCount}/{subIssues.length} sub-issues
+                                          </span>
+                                        </button>
                                       )}
+
+                                      {/* Badge de Tag/Categoria */}
+                                      {task.tag && (
+                                        <span
+                                          style={{
+                                            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#e2e8f0',
+                                            color: theme.textSecondary,
+                                            fontSize: 11,
+                                            fontWeight: 500,
+                                            borderRadius: 12,
+                                            padding: '1px 8px',
+                                            whiteSpace: 'nowrap',
+                                          }}
+                                        >
+                                          {task.tag}
+                                        </span>
+                                      )}
+
+                                      {/* Badge de Prioridade */}
+                                      <span
+                                        style={{
+                                          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#e2e8f0',
+                                          color: theme.textSecondary,
+                                          fontSize: 11,
+                                          fontWeight: 500,
+                                          borderRadius: 12,
+                                          padding: '1px 8px',
+                                          whiteSpace: 'nowrap',
+                                        }}
+                                      >
+                                        priority: {task.priority.toLowerCase()}
+                                      </span>
                                     </div>
-                                  ))}
+
+                                    {/* Subtítulo: #num · Autor aberta há Xh */}
+                                    <div style={{ fontSize: 11.5, color: theme.textSecondary }}>
+                                      #{taskNum} · {authorName} aberta {timeAgo}
+                                    </div>
+                                  </div>
                                 </div>
 
-                                {/* Menu de Ações (...) */}
-                                {renderTaskActionMenu(task, taskIdx, list.length)}
+                                {/* Lado Direito: Avatares de Responsáveis + Menu ... */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                                  {/* Responsáveis */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    {task.assignees.map((assignee, aIdx) => (
+                                      <div
+                                        key={assignee.name || aIdx}
+                                        title={assignee.name}
+                                        style={{
+                                          width: 20,
+                                          height: 20,
+                                          borderRadius: '50%',
+                                          overflow: 'hidden',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          background: assignee.avatarBg || accentColor,
+                                          color: '#fff',
+                                          fontSize: 10,
+                                          fontWeight: 600,
+                                        }}
+                                      >
+                                        {assignee.avatarUrl ? (
+                                          <img src={assignee.avatarUrl} alt={assignee.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                        ) : (
+                                          <span>{assignee.initial || assignee.name?.slice(0, 1).toUpperCase()}</span>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+
+                                  {/* Menu de Ações (...) */}
+                                  {renderTaskActionMenu(task, taskIdx, topLevelList.length)}
+                                </div>
                               </div>
-                            </div>
+
+                              {/* ÁREA EXPANDIDA DAS SUB-ISSUES */}
+                              {hasSubIssues && isExpanded && (
+                                <div
+                                  style={{
+                                    background: isEffectiveDark ? 'rgba(0, 0, 0, 0.16)' : 'rgba(0, 0, 0, 0.02)',
+                                    borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)'}`,
+                                    paddingLeft: 46,
+                                    paddingRight: 16,
+                                    paddingTop: 4,
+                                    paddingBottom: 6,
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      borderLeft: `2px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.12)'}`,
+                                      paddingLeft: 12,
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: 2,
+                                    }}
+                                  >
+                                    {subIssues.map((sub, sIdx) => {
+                                      const subLinked = sub.linkedIssue;
+                                      const isSubClosed = sub.completed;
+                                      const subTaskNum = sub.issueNumber || (subLinked ? subLinked.githubNumber : undefined);
+
+                                      return (
+                                        <div
+                                          key={sub.id || sIdx}
+                                          style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            padding: '6px 8px',
+                                            borderRadius: 6,
+                                            gap: 10,
+                                            transition: 'background 0.12s ease',
+                                          }}
+                                          onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)')}
+                                          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                                        >
+                                          {/* Lado Esquerdo da Sub-issue: Ícone conector + Status + Título + Badges */}
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                                            <CornerDownRight size={13} color={theme.textSecondary} style={{ flexShrink: 0, opacity: 0.6 }} />
+
+                                            {/* Botão de alternar status da sub-issue */}
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                if (subLinked) {
+                                                  onToggleTaskStatus(subLinked.id);
+                                                } else if (sub.lineIndex != null) {
+                                                  handleToggleChecklistSubIssue(task, sub.lineIndex, sub.completed);
+                                                }
+                                              }}
+                                              title={isSubClosed ? 'Sub-issue concluída (clique para reabrir)' : 'Sub-issue aberta (clique para concluir)'}
+                                              style={{
+                                                background: 'transparent',
+                                                border: 'none',
+                                                padding: 0,
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                flexShrink: 0,
+                                              }}
+                                            >
+                                              {isSubClosed ? (
+                                                <CheckCircle2 size={15} color="#8957e5" />
+                                              ) : (
+                                                <CircleDot size={15} color="#22c55e" />
+                                              )}
+                                            </button>
+
+                                            {/* Título da sub-issue */}
+                                            <span
+                                              onClick={() => {
+                                                if (subLinked) {
+                                                  onEditTask?.(subLinked);
+                                                } else {
+                                                  onEditTask?.(task);
+                                                }
+                                              }}
+                                              style={{
+                                                fontSize: 12.5,
+                                                fontWeight: 500,
+                                                color: isSubClosed ? theme.textSecondary : theme.textPrimary,
+                                                textDecoration: isSubClosed ? 'line-through' : 'none',
+                                                cursor: 'pointer',
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                whiteSpace: 'nowrap',
+                                              }}
+                                              onMouseEnter={(e) => (e.currentTarget.style.color = accentColor)}
+                                              onMouseLeave={(e) => (e.currentTarget.style.color = isSubClosed ? theme.textSecondary : theme.textPrimary)}
+                                            >
+                                              {subTaskNum && <strong style={{ color: theme.textSecondary, marginRight: 6 }}>#{subTaskNum}</strong>}
+                                              {sub.title}
+                                            </span>
+
+                                            {/* Badges da sub-issue */}
+                                            {subLinked?.tag && (
+                                              <span
+                                                style={{
+                                                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#e2e8f0',
+                                                  color: theme.textSecondary,
+                                                  fontSize: 10.5,
+                                                  fontWeight: 500,
+                                                  borderRadius: 10,
+                                                  padding: '1px 6px',
+                                                  whiteSpace: 'nowrap',
+                                                }}
+                                              >
+                                                {subLinked.tag}
+                                              </span>
+                                            )}
+
+                                            {subLinked?.priority && (
+                                              <span
+                                                style={{
+                                                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#e2e8f0',
+                                                  color: theme.textSecondary,
+                                                  fontSize: 10.5,
+                                                  fontWeight: 500,
+                                                  borderRadius: 10,
+                                                  padding: '1px 6px',
+                                                  whiteSpace: 'nowrap',
+                                                }}
+                                              >
+                                                {subLinked.priority.toLowerCase()}
+                                              </span>
+                                            )}
+                                          </div>
+
+                                          {/* Lado Direito da Sub-issue: Avatares de responsáveis */}
+                                          {subLinked && subLinked.assignees && subLinked.assignees.length > 0 && (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                                              {subLinked.assignees.map((assignee, aIdx) => (
+                                                <div
+                                                  key={assignee.name || aIdx}
+                                                  title={assignee.name}
+                                                  style={{
+                                                    width: 18,
+                                                    height: 18,
+                                                    borderRadius: '50%',
+                                                    overflow: 'hidden',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    background: assignee.avatarBg || accentColor,
+                                                    color: '#fff',
+                                                    fontSize: 9,
+                                                    fontWeight: 600,
+                                                  }}
+                                                >
+                                                  {assignee.avatarUrl ? (
+                                                    <img src={assignee.avatarUrl} alt={assignee.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                  ) : (
+                                                    <span>{assignee.initial || assignee.name?.slice(0, 1).toUpperCase()}</span>
+                                                  )}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                            </React.Fragment>
                           );
                         })}
                       </div>
@@ -13932,6 +17700,7 @@ function SprintDetailPanel(props: {
                 <div style={{ flex: 1, minHeight: 460, display: 'flex', flexDirection: 'column', padding: '6px 8px' }}>
                   <GithubProjectsKanbanBoard
                     issues={displayedTasks}
+                    columns={projectV2Columns || undefined}
                     repoName={openedSprint ? openedSprint.title : 'Sprint'}
                     theme={theme}
                     isEffectiveDark={isEffectiveDark}
@@ -13983,4 +17752,56 @@ function SprintDetailPanel(props: {
       />
     </div>
   );
+};
+
+export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = (props) => {
+  return (
+    <ProjectsViewErrorBoundary isEffectiveDark={props.isEffectiveDark}>
+      <ProjectsSchedulerViewInner {...props} />
+    </ProjectsViewErrorBoundary>
+  );
+};
+
+/**
+ * Pré-carrega projetos locais e repositórios do GitHub em segundo plano
+ * para que, quando o usuário abrir a tela de projetos, ela já esteja instantaneamente pronta.
+ */
+export async function prefetchProjectsData(workspacePath?: string) {
+  try {
+    const hasCached = GLOBAL_PROJECTS_CACHE.repos.length > 0 || GLOBAL_PROJECTS_CACHE.localClonedRepos.length > 0;
+    if (hasCached && Date.now() - GLOBAL_PROJECTS_CACHE.lastFetchedAt < 120000) {
+      return;
+    }
+
+    let localList: any[] = [];
+    if (window.electronAPI?.git?.scanLocalProjects) {
+      localList = await window.electronAPI.git.scanLocalProjects();
+    } else if (window.electronAPI?.git?.listRepos && workspacePath) {
+      localList = await window.electronAPI.git.listRepos(workspacePath);
+    }
+    if (localList && localList.length > 0) {
+      GLOBAL_PROJECTS_CACHE.localClonedRepos = localList;
+    }
+
+    const [userRes, reposRes, orgsRes] = await Promise.all([
+      window.electronAPI?.github?.getUser?.(),
+      window.electronAPI?.github?.fetchRepos?.(),
+      window.electronAPI?.github?.fetchOrgs?.(),
+    ]);
+
+    if (userRes?.success && userRes.user) {
+      GLOBAL_PROJECTS_CACHE.currentUser = { login: userRes.user.login, avatarUrl: userRes.user.avatarUrl };
+    }
+    if (reposRes?.success && reposRes.repos) {
+      GLOBAL_PROJECTS_CACHE.repos = reposRes.repos;
+    }
+    if (orgsRes?.success && orgsRes.orgs) {
+      GLOBAL_PROJECTS_CACHE.orgs = orgsRes.orgs;
+    }
+    GLOBAL_PROJECTS_CACHE.lastFetchedAt = Date.now();
+    persistProjectsCache();
+  } catch (err) {
+    console.warn('[prefetchProjectsData] erro silencioso:', err);
+  }
 }
+

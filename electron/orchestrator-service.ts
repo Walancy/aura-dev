@@ -57,11 +57,36 @@ export class OrchestratorService {
     return response;
   }
 
-  cancel(runId: string): boolean {
-    const child = this.activeProcesses.get(runId);
-    if (!child) return false;
-    child.kill('SIGTERM');
-    return true;
+  cancel(runId?: string): boolean {
+    if (runId) {
+      const child = this.activeProcesses.get(runId);
+      if (child) {
+        try {
+          child.kill('SIGTERM');
+          if (child.pid) {
+            try { process.kill(-child.pid, 'SIGTERM'); } catch {}
+          }
+        } catch {}
+        this.activeProcesses.delete(runId);
+        return true;
+      }
+    }
+    return this.cancelAll();
+  }
+
+  cancelAll(): boolean {
+    let killed = false;
+    for (const [id, child] of this.activeProcesses.entries()) {
+      try {
+        child.kill('SIGTERM');
+        if (child.pid) {
+          try { process.kill(-child.pid, 'SIGTERM'); } catch {}
+        }
+        killed = true;
+      } catch {}
+    }
+    this.activeProcesses.clear();
+    return killed;
   }
 
   private persist(input: OrchestratorRunInput, result: { stdout: string; stderr: string; exitCode: number }): void {

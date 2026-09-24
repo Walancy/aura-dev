@@ -26,22 +26,15 @@ export interface Task {
 export class NativeProjectsService {
   private projects: Project[] = [
     {
-      id: 'ainaobra',
-      name: 'Ainaobra Monorepo',
-      path: '/Users/walancy/Documents/codes/Ainaobra/ainaobra',
-      description: 'Plataforma Ainaobra (painel web, wireframe, backend NestJS, supabase)',
-      lastActive: new Date().toISOString(),
-    },
-    {
-      id: 'devflow-desktop',
-      name: 'DevFlow Desktop App',
+      id: 'aura-dev',
+      name: 'Aura Dev',
       path: '/Users/walancy/Documents/codes/devflow-desktop',
-      description: 'Aplicativo Desktop Nativo com IDE e CLIs de IA integrados',
+      description: 'Plataforma Desktop Aura Dev com IDE e Orquestrador integrados',
       lastActive: new Date().toISOString(),
     },
   ];
 
-  private activeProjectId: string = 'ainaobra';
+  private activeProjectId: string = 'aura-dev';
 
   private tasks: Task[] = [
     {

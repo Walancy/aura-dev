@@ -112,6 +112,14 @@ export interface ChatMessageItem {
   changedFiles?: ChangedFileItem[];
   attachedFiles?: Array<{ id: string; name: string; path: string; isDirectory?: boolean }>;
   attachedImages?: Array<{ id: string; name: string; dataUrl: string; size?: number }>;
+  attachedTask?: {
+    number: number;
+    title: string;
+    body?: string;
+    state?: string;
+    labels?: Array<{ name: string; color?: string }>;
+    url?: string;
+  };
 }
 
 export interface AttachedFileItem {

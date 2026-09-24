@@ -387,7 +387,13 @@ where
     match request.provider {
         ProviderId::Claude => {
             args.extend(
-                ["--print", "--output-format", "stream-json", "--verbose"].map(String::from),
+                [
+                    "--print".into(),
+                    "--output-format".into(),
+                    "stream-json".into(),
+                    "--verbose".into(),
+                    "--dangerously-skip-permissions".into(),
+                ],
             );
             if let Some(model) = &request.model {
                 args.extend(["--model".into(), model.clone()]);

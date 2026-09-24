@@ -21,12 +21,14 @@
     "node-pty": "^1.1.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "vscode-symbols": "^0.0.20"
+    "vscode-symbols": "^0.0.20",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.1.1",
     "electron": "^44.4.1",
     "typescript": "^5.7.3",

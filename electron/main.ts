@@ -5,6 +5,7 @@ import { NativePtyService } from './pty-service';
 import { NativeFileSystemService } from './fs-service';
 import { NativeProjectsService } from './projects-service';
 import { NativePortsService } from './ports-service';
+import { DesignRoomService } from './design-room-service';
 import { setupApplicationMenu } from './menu';
 import { NativeCommandsService } from './commands-service';
 import { quotaService } from './quota-service';
@@ -52,6 +53,7 @@ const fsService = new NativeFileSystemService();
 const projectsService = new NativeProjectsService();
 const portsService = new NativePortsService();
 const commandsService = new NativeCommandsService();
+const designRoomService = new DesignRoomService();
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -68,7 +70,18 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
+      webviewTag: true,
     },
+  });
+
+  mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, params) => {
+    delete webPreferences.preload;
+    delete (webPreferences as any).preloadURL;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    if (!/^https:\/\/([a-z0-9-]+\.)*penpot\.app(\/|$)/i.test(params.src) && !/^http:\/\/localhost:9001(\/|$)/i.test(params.src)) {
+      params.src = 'about:blank';
+    }
   });
 
   if (process.platform === 'darwin' && appIconImage && app.dock) {
@@ -78,6 +91,7 @@ function createWindow() {
   }
 
   ptyService.setWindow(mainWindow);
+  designRoomService.setWindow(mainWindow);
 
   mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
     console.log(`[Renderer] [level ${level}] ${message} (${sourceId}:${line})`);
@@ -201,6 +215,15 @@ ipcMain.on('pty:kill', (_event, { id }) => {
   ptyService.kill(id);
 });
 
+ipcMain.handle('pty:setCwd', (_event, { id, cwd }) => {
+  return ptyService.setCwd(id, cwd);
+});
+
+ipcMain.handle('pty:setAllCwd', (_event, { cwd }) => {
+  ptyService.setAllCwd(cwd);
+  return { success: true };
+});
+
 // File System
 ipcMain.handle('fs:getTree', (_event, { dirPath, depth }) => {
   return fsService.getTree(dirPath, depth);
@@ -305,6 +328,29 @@ ipcMain.handle('projects:updateTaskStatus', (_event, { id, status }) => {
 ipcMain.handle('ports:scan', async () => {
   const ports = await portsService.scan();
   return { ports };
+});
+
+// Design Room (LAN collaboration)
+ipcMain.handle('design-room:host', async (_event, { roomName }: { roomName: string }) => {
+  return designRoomService.hostRoom(roomName);
+});
+ipcMain.handle('design-room:stop-hosting', () => {
+  designRoomService.stopHosting();
+});
+ipcMain.handle('design-room:start-discovery', () => {
+  designRoomService.startDiscovery();
+});
+ipcMain.handle('design-room:stop-discovery', () => {
+  designRoomService.stopDiscovery();
+});
+ipcMain.handle('design-room:join', (_event, { ip, port }: { ip: string; port: number }) => {
+  designRoomService.joinRoom(ip, port);
+});
+ipcMain.handle('design-room:leave', () => {
+  designRoomService.leaveRoom();
+});
+ipcMain.on('design-room:broadcast-state', (_event, { shapes }: { shapes: unknown[] }) => {
+  designRoomService.broadcastState(shapes);
 });
 
 // Extensions Management via Open VSX Registry & Local Engine
@@ -412,9 +458,42 @@ ipcMain.handle('ai:checkClis', async () => {
   };
 });
 
+let activeDirectCliChild: any = null;
+let isCurrentDirectCliCancelled = false;
+
+function killProcessTree(child: any): void {
+  if (!child || !child.pid) return;
+  const pid = child.pid;
+  try {
+    if (process.platform === 'win32') {
+      const { execSync } = require('node:child_process');
+      execSync(`taskkill /pid ${pid} /T /F 2>nul`);
+    } else {
+      try { process.kill(-pid, 'SIGKILL'); } catch {}
+      try { process.kill(pid, 'SIGKILL'); } catch {}
+      try {
+        const { execSync } = require('node:child_process');
+        execSync(`pkill -9 -P ${pid} 2>/dev/null || true`);
+      } catch {}
+    }
+  } catch {}
+  try { child.kill('SIGKILL'); } catch {}
+}
+
 ipcMain.handle('ai:orchestratorProviders', async () => orchestratorService.providers());
 ipcMain.handle('ai:orchestrate', async (_event, input) => orchestratorService.run(input, (event) => mainWindow?.webContents.send('ai:orchestrator-event', event)));
-ipcMain.handle('ai:orchestratorCancel', async (_event, runId: string) => ({ cancelled: orchestratorService.cancel(runId) }));
+ipcMain.handle('ai:orchestratorCancel', async (_event, runId?: string) => ({ cancelled: orchestratorService.cancel(runId) }));
+ipcMain.handle('ai:cancel', async (_event, runId?: string) => {
+  let cancelled = orchestratorService.cancel(runId);
+  if (activeDirectCliChild) {
+    const child = activeDirectCliChild;
+    activeDirectCliChild = null;
+    isCurrentDirectCliCancelled = true;
+    killProcessTree(child);
+    cancelled = true;
+  }
+  return { cancelled };
+});
 ipcMain.handle('ai:autonomousRun', async (_event, input) => autonomousService.run(input, (event) => mainWindow?.webContents.send('ai:orchestrator-event', event)));
 ipcMain.handle('ai:autonomousCancel', async (_event, runId: string) => ({ cancelled: autonomousService.cancel(runId) }));
 
@@ -466,12 +545,16 @@ ipcMain.handle('ai:runCli', async (_event, {
   model,
   cwd,
   additionalDirs,
+  useOrchestrator,
+  orchestratorConfig,
 }: {
   cliCmd: string;
   prompt: string;
   model?: string;
   cwd?: string;
   additionalDirs?: string[];
+  useOrchestrator?: boolean;
+  orchestratorConfig?: any;
 }) => {
   const fs = require('node:fs');
   const path = require('node:path');
@@ -556,6 +639,13 @@ ipcMain.handle('ai:runCli', async (_event, {
     args.push('--dangerously-bypass-approvals-and-sandbox');
     args.push('--cd', targetCwd);
     args.push(prompt);
+  } else if (cliCmd === 'gemini') {
+    if (model && !prompt.startsWith('/')) {
+      args.push('--model', model);
+    }
+    args.push('-p', prompt);
+  } else if (cliCmd === 'ollama') {
+    args.push('run', model || 'llama3', prompt);
   } else {
     args.push(prompt);
   }
@@ -581,15 +671,21 @@ ipcMain.handle('ai:runCli', async (_event, {
     HOME: userHome,
   };
 
-  // Claude, Codex and Antigravity requests go through the Rust orchestrator. Other
-  // providers keep the existing direct-CLI path until their protocol is normalized there.
-  if ((cliCmd === 'claude' || cliCmd === 'codex' || cliCmd === 'agy' || cliCmd === 'antigravity') && !prompt.startsWith('/')) {
+  // If the orchestrator is active, follow the orchestrator configuration and route through the Rust orchestrator service.
+  // Otherwise, use direct CLI execution of the selected AI.
+  if (useOrchestrator && !prompt.startsWith('/')) {
+    const orchestratorProvider =
+      cliCmd === 'agy' || cliCmd === 'antigravity'
+        ? 'antigravity'
+        : (cliCmd === 'codex' ? 'codex' : 'claude');
+
     return orchestratorService.run({
-      provider: cliCmd === 'agy' || cliCmd === 'antigravity' ? 'antigravity' : cliCmd as 'claude' | 'codex',
+      provider: orchestratorProvider,
       request: prompt,
       cwd: targetCwd,
       model,
       additionalDirs,
+      mode: orchestratorConfig?.mode || 'execute',
     }, (event) => mainWindow?.webContents.send('ai:orchestrator-event', event));
   }
 
@@ -598,38 +694,55 @@ ipcMain.handle('ai:runCli', async (_event, {
     let stderr = '';
     let resolved = false;
 
+    isCurrentDirectCliCancelled = false;
     const child = spawn(binaryPath, args, {
       cwd: targetCwd,
       env,
+      detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    activeDirectCliChild = child;
 
     child.stdout?.on('data', (data: Buffer) => {
-      stdout += data.toString();
+      if (isCurrentDirectCliCancelled) return;
+      const chunk = data.toString();
+      stdout += chunk;
+      mainWindow?.webContents.send('ai:orchestrator-event', {
+        provider: cliCmd,
+        kind: 'progress',
+        message: 'stdout',
+        payload: { text: chunk },
+        timestamp_ms: Date.now(),
+      });
     });
 
     child.stderr?.on('data', (data: Buffer) => {
+      if (isCurrentDirectCliCancelled) return;
       stderr += data.toString();
     });
 
     child.on('error', (err: Error) => {
+      activeDirectCliChild = null;
       if (!resolved) {
         resolved = true;
         resolve({
-          stdout: stdout.trim(),
+          stdout: isCurrentDirectCliCancelled ? '' : stdout.trim(),
           stderr: (stderr + '\n' + err.message).trim(),
           exitCode: 1,
+          cancelled: isCurrentDirectCliCancelled,
         });
       }
     });
 
     child.on('close', (code: number) => {
+      activeDirectCliChild = null;
       if (!resolved) {
         resolved = true;
         resolve({
-          stdout: stdout.trim(),
-          stderr: stderr.trim(),
-          exitCode: code ?? 0,
+          stdout: isCurrentDirectCliCancelled ? '' : stdout.trim(),
+          stderr: isCurrentDirectCliCancelled ? 'Interrompido pelo usuário' : stderr.trim(),
+          exitCode: isCurrentDirectCliCancelled ? 130 : (code ?? 0),
+          cancelled: isCurrentDirectCliCancelled,
         });
       }
     });
@@ -974,9 +1087,27 @@ ipcMain.handle('github:fetchProjects', async () => {
   }
 });
 
-ipcMain.handle('github:fetchProjectItems', async (_event, { projectNumber }: { projectNumber: number }) => {
+ipcMain.handle('github:fetchOrgProjects', async (_event, { org }: { org: string }) => {
   try {
-    const project = await githubAuthService.fetchProjectItems(projectNumber);
+    const projects = await githubAuthService.fetchOrgProjects(org);
+    return { success: true, projects };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:fetchRepoProjects', async (_event, { owner, repo }: { owner: string; repo: string }) => {
+  try {
+    const projects = await githubAuthService.fetchRepoProjects(owner, repo);
+    return { success: true, projects };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:fetchProjectItems', async (_event, { projectNumber, org }: { projectNumber: number; org?: string }) => {
+  try {
+    const project = await githubAuthService.fetchProjectItems(projectNumber, org);
     return { success: true, project };
   } catch (err: any) {
     return { success: false, error: err.message };
@@ -1164,6 +1295,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  designRoomService.dispose();
   if (process.platform !== 'darwin') {
     app.quit();
   }

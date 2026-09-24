@@ -122,7 +122,7 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
                 </span>
               </div>
               <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>
-                {gitRepoName || 'appmoove/ainaobra'}
+                {gitRepoName || 'Walancy/aura-dev'}
               </div>
             </div>
           </div>

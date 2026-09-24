@@ -27,6 +27,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.send('pty:resize', { id, cols, rows }),
     kill: (id: string) =>
       ipcRenderer.send('pty:kill', { id }),
+    setCwd: (id: string, cwd: string) =>
+      ipcRenderer.invoke('pty:setCwd', { id, cwd }),
+    setAllCwd: (cwd: string) =>
+      ipcRenderer.invoke('pty:setAllCwd', { cwd }),
     setAccentColor: (accentColor: string) =>
       ipcRenderer.invoke('pty:setAccentColor', { accentColor }),
     getHistory: (id: string) =>
@@ -40,6 +44,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const handler = (_event: any, payload: any) => callback(payload);
       ipcRenderer.on('pty:exit', handler);
       return () => ipcRenderer.removeListener('pty:exit', handler);
+    },
+  },
+
+  // Design Room (LAN collaboration) Methods
+  designRoom: {
+    host: (roomName: string) => ipcRenderer.invoke('design-room:host', { roomName }),
+    stopHosting: () => ipcRenderer.invoke('design-room:stop-hosting'),
+    startDiscovery: () => ipcRenderer.invoke('design-room:start-discovery'),
+    stopDiscovery: () => ipcRenderer.invoke('design-room:stop-discovery'),
+    join: (ip: string, port: number) => ipcRenderer.invoke('design-room:join', { ip, port }),
+    leave: () => ipcRenderer.invoke('design-room:leave'),
+    broadcastState: (shapes: unknown[]) => ipcRenderer.send('design-room:broadcast-state', { shapes }),
+    onRoomsUpdated: (callback: (rooms: any[]) => void) => {
+      const handler = (_event: any, rooms: any[]) => callback(rooms);
+      ipcRenderer.on('design-room:rooms-updated', handler);
+      return () => ipcRenderer.removeListener('design-room:rooms-updated', handler);
+    },
+    onStateUpdate: (callback: (shapes: any[]) => void) => {
+      const handler = (_event: any, shapes: any[]) => callback(shapes);
+      ipcRenderer.on('design-room:state-update', handler);
+      return () => ipcRenderer.removeListener('design-room:state-update', handler);
+    },
+    onViewersChanged: (callback: (count: number) => void) => {
+      const handler = (_event: any, count: number) => callback(count);
+      ipcRenderer.on('design-room:viewers-changed', handler);
+      return () => ipcRenderer.removeListener('design-room:viewers-changed', handler);
+    },
+    onDisconnected: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('design-room:disconnected', handler);
+      return () => ipcRenderer.removeListener('design-room:disconnected', handler);
     },
   },
 
@@ -129,8 +164,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('ai:loadSavedChat', sessionId),
     deleteSavedChat: (sessionId: string) =>
       ipcRenderer.invoke('ai:deleteSavedChat', sessionId),
-    runCli: (payload: { cliCmd: string; prompt: string; model?: string; cwd?: string; additionalDirs?: string[] }) =>
+    runCli: (payload: { cliCmd: string; prompt: string; model?: string; cwd?: string; additionalDirs?: string[]; useOrchestrator?: boolean; orchestratorConfig?: any }) =>
       ipcRenderer.invoke('ai:runCli', payload),
+    cancel: (runId?: string) =>
+      ipcRenderer.invoke('ai:cancel', runId),
   },
 
   // Native Menu Listeners
@@ -195,7 +232,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     cancelLogin: () => ipcRenderer.invoke('github:cancelLogin'),
     fetchRepos: () => ipcRenderer.invoke('github:fetchRepos'),
     fetchProjects: () => ipcRenderer.invoke('github:fetchProjects'),
-    fetchProjectItems: (projectNumber: number) => ipcRenderer.invoke('github:fetchProjectItems', { projectNumber }),
+    fetchOrgProjects: (org: string) => ipcRenderer.invoke('github:fetchOrgProjects', { org }),
+    fetchRepoProjects: (owner: string, repo: string) => ipcRenderer.invoke('github:fetchRepoProjects', { owner, repo }),
+    fetchProjectItems: (projectNumber: number, org?: string) => ipcRenderer.invoke('github:fetchProjectItems', { projectNumber, org }),
     updateProjectItemStatus: (projectId: string, itemId: string, fieldId: string, optionId: string) =>
       ipcRenderer.invoke('github:updateProjectItemStatus', { projectId, itemId, fieldId, optionId }),
     fetchOrgs: () => ipcRenderer.invoke('github:fetchOrgs'),

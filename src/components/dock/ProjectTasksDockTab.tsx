@@ -21,6 +21,7 @@ interface ProjectTasksDockTabProps {
   onDoWithAi: (issue: GitHubIssueItem) => void;
   onOpenIssueDetails?: (issueNumber: number) => void;
   currentUserLogin?: string;
+  repoName?: string;
   sprints?: Array<{ title: string; number?: number }>;
   themeTokens: any;
   isEffectiveDark: boolean;
@@ -88,6 +89,7 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
   onDoWithAi,
   onOpenIssueDetails,
   currentUserLogin = 'walancy',
+  repoName,
   sprints = [],
   themeTokens,
   isEffectiveDark,
@@ -97,10 +99,11 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
   const [selectedSprint, setSelectedSprint] = useState<string>('ALL'); // 'ALL' | 'NO_SPRINT' | sprint title
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Local persistent mapping for sprints assigned to issues
+  // Local persistent mapping for sprints assigned to issues (scoped to project)
+  const storageKey = repoName ? `devflow_issue_sprints_${repoName}` : 'devflow_issue_sprints';
   const [localSprintMap, setLocalSprintMap] = useState<Record<number, string>>(() => {
     try {
-      const saved = localStorage.getItem('devflow_issue_sprints');
+      const saved = localStorage.getItem(storageKey);
       return saved ? JSON.parse(saved) : {};
     } catch {
       return {};
@@ -110,19 +113,22 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
   useEffect(() => {
     const handleStorageChange = () => {
       try {
-        const saved = localStorage.getItem('devflow_issue_sprints');
+        const saved = localStorage.getItem(storageKey);
         if (saved) {
           setLocalSprintMap(JSON.parse(saved));
+        } else {
+          setLocalSprintMap({});
         }
       } catch {}
     };
+    handleStorageChange();
     window.addEventListener('storage', handleStorageChange);
     window.addEventListener('devflow_issue_sprints_updated', handleStorageChange);
     return () => {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('devflow_issue_sprints_updated', handleStorageChange);
     };
-  }, []);
+  }, [storageKey]);
 
   const normalizedUser = (currentUserLogin || 'walancy').toLowerCase().replace('@', '');
 
@@ -189,14 +195,14 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
 
   // Helper to get issue's sprint title
   const getIssueSprint = (issue: GitHubIssueItem): string => {
-    // 1. From localStorage override
+    // 1. From localStorage override (scoped to current project)
     if (localSprintMap[issue.number]) {
       return localSprintMap[issue.number];
     }
 
     // 2. From issue.milestone.title
     if (issue.milestone?.title) {
-      return issue.milestone.title;
+      return issue.milestone.title.trim();
     }
 
     // 3. From labels matching /sprint/i
@@ -206,41 +212,23 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
         return /sprint/i.test(n);
       });
       if (sprintLabel) {
-        return typeof sprintLabel === 'string' ? sprintLabel : sprintLabel.name;
+        return typeof sprintLabel === 'string' ? sprintLabel.trim() : sprintLabel.name.trim();
       }
-    }
-
-    // 4. Default project sprint distribution (aligning with ProjectsSchedulerView):
-    // Issues #101 to #107 -> 'Sprint 01 - Aina Obra'
-    // Issues >= 108 or 200+ -> 'Sprint2 - Cadastro e Perfis de Acesso'
-    if (issue.number >= 101 && issue.number <= 107) {
-      return 'Sprint 01 - Aina Obra';
-    }
-    if (issue.number >= 108 || (issue.number >= 200 && issue.number <= 250)) {
-      return 'Sprint2 - Cadastro e Perfis de Acesso';
     }
 
     return '';
   };
 
-  // Discover and build sprints list with real counts
+  // Discover and build sprints list with real counts from current project
   const sprintOptions = useMemo(() => {
     const map = new Map<string, { title: string; count: number }>();
     let noSprintCount = 0;
 
-    // Seed default sprints
-    const defaults = [
-      'Sprint2 - Cadastro e Perfis de Acesso',
-      'Sprint 01 - Aina Obra',
-    ];
-    defaults.forEach((title) => {
-      map.set(title.toLowerCase(), { title, count: 0 });
-    });
-
-    // Seed passed sprints
+    // Seed passed sprints only if explicitly provided for this project
     sprints.forEach((sp) => {
-      if (sp.title) {
-        map.set(sp.title.toLowerCase(), { title: sp.title, count: 0 });
+      if (sp.title && sp.title.trim()) {
+        const title = sp.title.trim();
+        map.set(title.toLowerCase(), { title, count: 0 });
       }
     });
 
@@ -248,7 +236,7 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
     issues.forEach((i) => {
       const sp = getIssueSprint(i);
       if (sp) {
-        const key = sp.toLowerCase();
+        const key = sp.toLowerCase().trim();
         const existing = map.get(key) || { title: sp, count: 0 };
         existing.count += 1;
         map.set(key, existing);
@@ -257,9 +245,17 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
       }
     });
 
-    const list = Array.from(map.values());
+    // Only include sprints that actually have issues in this project
+    const list = Array.from(map.values()).filter((sp) => sp.count > 0);
     return { list, noSprintCount };
   }, [issues, sprints, localSprintMap]);
+
+  // Reset selectedSprint if project has no sprints
+  useEffect(() => {
+    if (sprintOptions.list.length === 0 && selectedSprint !== 'ALL') {
+      setSelectedSprint('ALL');
+    }
+  }, [sprintOptions.list.length, selectedSprint]);
 
   // Filtered issues
   const filteredIssues = useMemo(() => {
@@ -486,20 +482,21 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
 
       {/* Main Body: Sprints Left Panel + Tasks List */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Left: Sprint Selector Panel */}
-        <div
-          style={{
-            width: 185,
-            flexShrink: 0,
-            borderRight: '1px solid ' + (themeTokens?.border || (isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)')),
-            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.015)' : 'rgba(0, 0, 0, 0.015)',
-            display: 'flex',
-            flexDirection: 'column',
-            overflowY: 'auto',
-            padding: '8px 6px',
-            gap: 2,
-          }}
-        >
+        {/* Left: Sprint Selector Panel - Only rendered if project actually has sprints */}
+        {sprintOptions.list.length > 0 && (
+          <div
+            style={{
+              width: 185,
+              flexShrink: 0,
+              borderRight: '1px solid ' + (themeTokens?.border || (isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)')),
+              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.015)' : 'rgba(0, 0, 0, 0.015)',
+              display: 'flex',
+              flexDirection: 'column',
+              overflowY: 'auto',
+              padding: '8px 6px',
+              gap: 2,
+            }}
+          >
           {/* Section Header */}
           <div
             style={{
@@ -723,6 +720,7 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
             </button>
           )}
         </div>
+        )}
 
         {/* Right: Task List Content */}
         <div

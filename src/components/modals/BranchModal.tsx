@@ -106,7 +106,7 @@ export const BranchModal: React.FC<BranchModalProps> = ({
                 Gerenciador de Branches
               </div>
               <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>
-                {gitRepoName || 'ainaobra'} • Ativa: <span style={{ color: accentColor, fontWeight: 500 }}>{currentBranch}</span>
+                {gitRepoName || 'aura-dev'} • Ativa: <span style={{ color: accentColor, fontWeight: 500 }}>{currentBranch}</span>
               </div>
             </div>
           </div>

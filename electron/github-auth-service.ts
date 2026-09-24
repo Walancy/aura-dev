@@ -1,6 +1,7 @@
 import { app, safeStorage } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { execSync } from 'node:child_process';
 
 const GITHUB_CLIENT_ID = 'Ov23lioVknR6j6hlDhDU';
 const DEVICE_CODE_URL = 'https://github.com/login/device/code';
@@ -37,26 +38,49 @@ class GithubAuthService {
     return path.join(app.getPath('userData'), 'github-auth.enc');
   }
 
-  private readTokenData(): StoredTokenData | null {
-    if (this.cachedTokenData) return this.cachedTokenData;
+  private getCliToken(): string | null {
     try {
-      if (!fs.existsSync(this.tokenFilePath)) return null;
-      if (!safeStorage.isEncryptionAvailable()) return null;
-      const encrypted = fs.readFileSync(this.tokenFilePath);
-      const decrypted = safeStorage.decryptString(encrypted);
-      let data: StoredTokenData;
-      try {
-        const parsed = JSON.parse(decrypted);
-        data = parsed && parsed.accessToken ? parsed : { accessToken: decrypted };
-      } catch {
-        // Backward compatibility: older versions stored the raw access token string.
-        data = { accessToken: decrypted };
-      }
-      this.cachedTokenData = data;
-      return data;
+      const token = execSync('gh auth token', {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 3000,
+      }).trim();
+      return token || null;
     } catch {
       return null;
     }
+  }
+
+  private readTokenData(): StoredTokenData | null {
+    if (this.cachedTokenData) return this.cachedTokenData;
+    try {
+      if (fs.existsSync(this.tokenFilePath) && safeStorage.isEncryptionAvailable()) {
+        const encrypted = fs.readFileSync(this.tokenFilePath);
+        const decrypted = safeStorage.decryptString(encrypted);
+        let data: StoredTokenData;
+        try {
+          const parsed = JSON.parse(decrypted);
+          data = parsed && parsed.accessToken ? parsed : { accessToken: decrypted };
+        } catch {
+          // Backward compatibility: older versions stored the raw access token string.
+          data = { accessToken: decrypted };
+        }
+        if (data?.accessToken) {
+          this.cachedTokenData = data;
+          return data;
+        }
+      }
+    } catch {}
+
+    // Fallback para GitHub CLI (gh auth token) se estiver disponível na máquina
+    const cliToken = this.getCliToken();
+    if (cliToken) {
+      const data: StoredTokenData = { accessToken: cliToken };
+      this.cachedTokenData = data;
+      return data;
+    }
+
+    return null;
   }
 
   private writeTokenData(data: StoredTokenData): void {
@@ -132,12 +156,20 @@ class GithubAuthService {
   private async getValidAccessToken(): Promise<string> {
     const data = this.readTokenData();
     if (!data?.accessToken) throw new Error('not authenticated');
+    if (!data.accessTokenExpiresAt && !data.refreshToken) {
+      return data.accessToken;
+    }
     const SAFETY_MARGIN_MS = 60_000;
     const looksExpired = data.accessTokenExpiresAt != null && data.accessTokenExpiresAt - SAFETY_MARGIN_MS < Date.now();
     if (!looksExpired) return data.accessToken;
     if (data.refreshToken) {
       const refreshed = await this.refreshAccessToken(data.refreshToken);
       if (refreshed) return refreshed.accessToken;
+    }
+    const cliToken = this.getCliToken();
+    if (cliToken) {
+      this.cachedTokenData = { accessToken: cliToken };
+      return cliToken;
     }
     this.logout();
     throw new Error('reauth_required');
@@ -178,7 +210,13 @@ class GithubAuthService {
     if (!res.ok || data.error) {
       throw new Error(data.error_description || data.error || `GitHub respondeu ${res.status}`);
     }
-    return data as GithubDeviceCodeResponse;
+    return {
+      device_code: data.device_code,
+      user_code: data.user_code,
+      verification_uri: data.verification_uri,
+      expires_in: data.expires_in,
+      interval: data.interval,
+    };
   }
 
   public pollForToken(
@@ -214,7 +252,7 @@ class GithubAuthService {
           this.stopPolling();
           this.storeAccessTokenResponse(data);
           try {
-            const user = await this.fetchUser(data.access_token);
+            const user = await this.fetchUser();
             onSuccess(user);
           } catch (err: any) {
             onError(err?.message || 'Falha ao buscar dados do usuário');
@@ -260,12 +298,60 @@ class GithubAuthService {
   }
 
   public async fetchRepos(): Promise<any[]> {
-    const res = await this.authedFetch(
-      'https://api.github.com/user/repos?sort=updated&per_page=100&affiliation=owner,collaborator,organization_member',
-      { headers: { Accept: 'application/vnd.github+json' } },
-    );
-    if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
-    return res.json();
+    const repos: any[] = [];
+
+    // 1. Repositórios do usuário (pessoal + onde é colaborador ou membro de organização) com paginação
+    try {
+      let page = 1;
+      while (page <= 3) {
+        const res = await this.authedFetch(
+          `https://api.github.com/user/repos?sort=updated&per_page=100&page=${page}&affiliation=owner,collaborator,organization_member`,
+          { headers: { Accept: 'application/vnd.github+json' } },
+        );
+        if (!res.ok) break;
+        const pageData: any[] = await res.json();
+        if (!Array.isArray(pageData) || pageData.length === 0) break;
+        repos.push(...pageData);
+        if (pageData.length < 100) break;
+        page++;
+      }
+    } catch (err) {
+      console.warn('[GithubAuth] error fetching user repos:', err);
+    }
+
+    // 2. Repositórios de todas as organizações das quais o usuário faz parte
+    try {
+      const orgs = await this.fetchOrgs();
+      for (const org of orgs) {
+        try {
+          const orgRes = await this.authedFetch(
+            `https://api.github.com/orgs/${org.login}/repos?sort=updated&per_page=100`,
+            { headers: { Accept: 'application/vnd.github+json' } },
+          );
+          if (orgRes.ok) {
+            const orgRepos: any[] = await orgRes.json();
+            if (Array.isArray(orgRepos)) {
+              repos.push(...orgRepos);
+            }
+          }
+        } catch (orgErr) {
+          console.warn(`[GithubAuth] error fetching repos for org ${org.login}:`, orgErr);
+        }
+      }
+    } catch (orgsErr) {
+      console.warn('[GithubAuth] error fetching orgs for repos:', orgsErr);
+    }
+
+    // 3. Deduplicar por id ou full_name
+    const map = new Map<string, any>();
+    for (const r of repos) {
+      if (!r) continue;
+      const key = (r.full_name || r.name || String(r.id)).toLowerCase();
+      if (!map.has(key)) {
+        map.set(key, r);
+      }
+    }
+    return Array.from(map.values());
   }
 
   public async fetchProjects(): Promise<any[]> {
@@ -297,17 +383,244 @@ class GithubAuthService {
     return data.data?.viewer?.projectsV2?.nodes || [];
   }
 
-  public async fetchProjectItems(projectNumber: number): Promise<any> {
+  public async fetchOrgProjects(org: string): Promise<any[]> {
+    if (!org || org === 'Todas' || org === 'all') {
+      try {
+        return await this.fetchProjects();
+      } catch {
+        return [];
+      }
+    }
+
+    const queryOrg = `
+      query($org: String!) {
+        organization(login: $org) {
+          projectsV2(first: 50) {
+            nodes {
+              id
+              title
+              url
+              number
+              closed
+              updatedAt
+              shortDescription
+              repositories(first: 50) {
+                nodes {
+                  id
+                  name
+                  nameWithOwner
+                }
+              }
+              fields(first: 30) {
+                nodes {
+                  ... on ProjectV2IterationField {
+                    id
+                    name
+                    configuration {
+                      duration
+                      iterations {
+                        id
+                        title
+                        startDate
+                        duration
+                      }
+                      completedIterations {
+                        id
+                        title
+                        startDate
+                        duration
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    try {
+      const res = await this.authedFetch('https://api.github.com/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: queryOrg, variables: { org } }),
+      });
+      if (res.ok) {
+        const data: any = await res.json();
+        if (data.data?.organization?.projectsV2?.nodes) {
+          return data.data.organization.projectsV2.nodes;
+        }
+        if (data.errors) {
+          const isScopeError = data.errors.some((e: any) => e.message?.includes('read:project') || e.type === 'INSUFFICIENT_SCOPES');
+          if (isScopeError) {
+            throw new Error('O token do GitHub precisa do escopo "read:project" para listar os Projects da organização.');
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err?.message?.includes('read:project')) throw err;
+    }
+
+    // Se falhar como org, tenta como usuário (user projects)
+    const queryUser = `
+      query($login: String!) {
+        user(login: $login) {
+          projectsV2(first: 50) {
+            nodes {
+              id
+              title
+              url
+              number
+              closed
+              updatedAt
+              shortDescription
+              repositories(first: 50) {
+                nodes {
+                  id
+                  name
+                  nameWithOwner
+                }
+              }
+              fields(first: 30) {
+                nodes {
+                  ... on ProjectV2IterationField {
+                    id
+                    name
+                    configuration {
+                      duration
+                      iterations {
+                        id
+                        title
+                        startDate
+                        duration
+                      }
+                      completedIterations {
+                        id
+                        title
+                        startDate
+                        duration
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+    const resUser = await this.authedFetch('https://api.github.com/graphql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: queryUser, variables: { login: org } }),
+    });
+    if (!resUser.ok) return [];
+    const dataUser: any = await resUser.json();
+    if (dataUser.errors) {
+      const isScopeError = dataUser.errors.some((e: any) => e.message?.includes('read:project') || e.type === 'INSUFFICIENT_SCOPES');
+      if (isScopeError) {
+        throw new Error('O token do GitHub precisa do escopo "read:project" para listar os Projects.');
+      }
+      return [];
+    }
+    return dataUser.data?.user?.projectsV2?.nodes || [];
+  }
+
+  public async fetchRepoProjects(owner: string, repo: string): Promise<any[]> {
     const query = `
-      query($number: Int!) {
-        viewer {
+      query($owner: String!, $name: String!) {
+        repository(owner: $owner, name: $name) {
+          projectsV2(first: 20) {
+            nodes {
+              id
+              number
+              title
+              url
+              closed
+              updatedAt
+              fields(first: 50) {
+                nodes {
+                  ... on ProjectV2FieldCommon { id name }
+                  ... on ProjectV2IterationField {
+                    id
+                    name
+                    configuration {
+                      duration
+                      iterations {
+                        id
+                        title
+                        startDate
+                        duration
+                      }
+                      completedIterations {
+                        id
+                        title
+                        startDate
+                        duration
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+    try {
+      const res = await this.authedFetch('https://api.github.com/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, variables: { owner, name: repo } }),
+      });
+      if (!res.ok) return [];
+      const data: any = await res.json();
+      return data.data?.repository?.projectsV2?.nodes || [];
+    } catch {
+      return [];
+    }
+  }
+
+  public async fetchProjectItems(projectNumber: number, org?: string): Promise<any> {
+    const isOrg = org && org !== 'Todas' && org !== 'all';
+    const query = isOrg
+      ? `
+      query($org: String!, $number: Int!) {
+        organization(login: $org) {
           projectV2(number: $number) {
             id
             title
+            repositories(first: 50) {
+              nodes {
+                id
+                name
+                nameWithOwner
+              }
+            }
             fields(first: 100) {
               nodes {
                 ... on ProjectV2FieldCommon { id name }
-                ... on ProjectV2SingleSelectField { id name options { id name } }
+                ... on ProjectV2SingleSelectField { id name options { id name color description } }
+                ... on ProjectV2IterationField {
+                  id
+                  name
+                  configuration {
+                    duration
+                    iterations {
+                      id
+                      title
+                      startDate
+                      duration
+                    }
+                    completedIterations {
+                      id
+                      title
+                      startDate
+                      duration
+                    }
+                  }
+                }
               }
             }
             items(first: 100) {
@@ -316,11 +629,84 @@ class GithubAuthService {
                 content {
                   ... on Issue { id number title body state url repository { nameWithOwner } }
                   ... on PullRequest { id number title body state url repository { nameWithOwner } }
-              }
+                }
                 fieldValues(first: 30) {
                   nodes {
                     ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2FieldCommon { id name } } }
                     ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { id name } } }
+                    ... on ProjectV2ItemFieldIterationValue {
+                      iterationId
+                      title
+                      startDate
+                      duration
+                      field { ... on ProjectV2FieldCommon { id name } }
+                    }
+                    ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { id name } } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `
+      : `
+      query($number: Int!) {
+        viewer {
+          projectV2(number: $number) {
+            id
+            title
+            repositories(first: 50) {
+              nodes {
+                id
+                name
+                nameWithOwner
+              }
+            }
+            fields(first: 100) {
+              nodes {
+                ... on ProjectV2FieldCommon { id name }
+                ... on ProjectV2SingleSelectField { id name options { id name color description } }
+                ... on ProjectV2IterationField {
+                  id
+                  name
+                  configuration {
+                    duration
+                    iterations {
+                      id
+                      title
+                      startDate
+                      duration
+                    }
+                    completedIterations {
+                      id
+                      title
+                      startDate
+                      duration
+                    }
+                  }
+                }
+              }
+            }
+            items(first: 100) {
+              nodes {
+                id
+                content {
+                  ... on Issue { id number title body state url repository { nameWithOwner } }
+                  ... on PullRequest { id number title body state url repository { nameWithOwner } }
+                }
+                fieldValues(first: 30) {
+                  nodes {
+                    ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2FieldCommon { id name } } }
+                    ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { id name } } }
+                    ... on ProjectV2ItemFieldIterationValue {
+                      iterationId
+                      title
+                      startDate
+                      duration
+                      field { ... on ProjectV2FieldCommon { id name } }
+                    }
+                    ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { id name } } }
                   }
                 }
               }
@@ -332,12 +718,12 @@ class GithubAuthService {
     const res = await this.authedFetch('https://api.github.com/graphql', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, variables: { number: projectNumber } }),
+      body: JSON.stringify({ query, variables: isOrg ? { org, number: projectNumber } : { number: projectNumber } }),
     });
     if (!res.ok) throw new Error(`GitHub GraphQL respondeu ${res.status}`);
     const data: any = await res.json();
     if (data.errors) throw new Error(data.errors[0]?.message || 'Erro ao buscar itens do Project');
-    return data.data?.viewer?.projectV2 || null;
+    return isOrg ? data.data?.organization?.projectV2 || null : data.data?.viewer?.projectV2 || null;
   }
 
   public async updateProjectItemStatus(projectId: string, itemId: string, fieldId: string, optionId: string): Promise<any> {

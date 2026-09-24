@@ -427,20 +427,23 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
             display: 'flex',
             flexDirection: 'column',
             gap: 5,
-            alignSelf: 'start',
+            alignSelf: 'stretch',
+            maxHeight: '100%',
+            overflowY: 'auto',
             flexShrink: 0,
             flexGrow: 0,
             boxSizing: 'border-box',
+            paddingRight: 2,
           }}
         >
-          {/* 1. HERO CARD: SAÚDE DO PROJETO */}
+          {/* 1. HERO CARD: SAÚDE DO PROJETO (REORGANIZADO & COMPACTO) */}
           <div
             style={{
               width: '100%',
               background: accentColor,
               borderRadius: 8,
               border: 'none',
-              padding: '18px 20px',
+              padding: '11px 13px',
               display: 'flex',
               flexDirection: 'column',
               justifyContent: 'flex-start',
@@ -451,125 +454,126 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
               flexShrink: 0,
               flexGrow: 0,
               boxShadow: '0 4px 14px rgba(0,0,0,0.12)',
-              gap: 14,
+              gap: 8,
               color: '#ffffff',
               boxSizing: 'border-box',
             }}
           >
-            {/* Topo do Hero */}
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span
-                  style={{
-                    fontSize: 10.5,
-                    fontWeight: 400,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.5,
-                    color: 'rgba(255, 255, 255, 0.85)',
-                  }}
-                >
-                  Saúde do Projeto
-                </span>
-                <span
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 400,
-                    padding: '2px 8px',
-                    borderRadius: 10,
-                    background: 'rgba(0, 0, 0, 0.22)',
-                    color: '#ffffff',
-                  }}
-                >
-                  {metrics.label}
-                </span>
-              </div>
+            {/* Topo do Hero: Título + Badge de Status */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span
+                style={{
+                  fontSize: 10.5,
+                  fontWeight: 500,
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.5,
+                  color: 'rgba(255, 255, 255, 0.9)',
+                }}
+              >
+                Saúde do Projeto
+              </span>
+              <span
+                style={{
+                  fontSize: 9.5,
+                  fontWeight: 500,
+                  padding: '2px 7px',
+                  borderRadius: 10,
+                  background: 'rgba(0, 0, 0, 0.22)',
+                  color: '#ffffff',
+                }}
+              >
+                {metrics.label}
+              </span>
+            </div>
 
-              {/* Número em Fonte Regular */}
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 8 }}>
-                <span
+            {/* Linha Central Integrada: Score à esquerda + Grid 2x2 compacto à direita */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              {/* Score e total de pendências */}
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <div
                   style={{
-                    fontSize: 44,
+                    fontSize: 32,
                     fontWeight: 400,
                     lineHeight: 1,
                     color: '#ffffff',
-                    letterSpacing: -1,
+                    letterSpacing: -0.8,
                   }}
                 >
                   {metrics.score}%
-                </span>
-                <span style={{ fontSize: 12, color: 'rgba(255, 255, 255, 0.85)', fontWeight: 400 }}>
+                </div>
+                <div style={{ fontSize: 10, color: 'rgba(255, 255, 255, 0.85)', marginTop: 3 }}>
                   {metrics.totalRisksCount} pendências
+                </div>
+              </div>
+
+              {/* Grid 2x2 compacto de métricas monitoradas */}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(2, 1fr)',
+                  gap: '3px 8px',
+                  background: 'rgba(0, 0, 0, 0.15)',
+                  padding: '5px 8px',
+                  borderRadius: 6,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, fontSize: 9.5 }}>
+                  <span style={{ color: 'rgba(255, 255, 255, 0.75)' }}>Atrasos</span>
+                  <span style={{ fontWeight: 600, color: '#ffffff' }}>{metrics.overdueCount}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, fontSize: 9.5 }}>
+                  <span style={{ color: 'rgba(255, 255, 255, 0.75)' }}>Bloqueios</span>
+                  <span style={{ fontWeight: 600, color: '#ffffff' }}>{metrics.blockedCount}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, fontSize: 9.5 }}>
+                  <span style={{ color: 'rgba(255, 255, 255, 0.75)' }}>Gargalos</span>
+                  <span style={{ fontWeight: 600, color: '#ffffff' }}>{metrics.workloadBottlenecksCount}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, fontSize: 9.5 }}>
+                  <span style={{ color: 'rgba(255, 255, 255, 0.75)' }}>Estagnadas</span>
+                  <span style={{ fontWeight: 600, color: '#ffffff' }}>{metrics.staleCount}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Deduções Ativas (Compactas em linha horizontal) */}
+            {metrics.deductions.length > 0 && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  fontSize: 9.5,
+                  color: 'rgba(255, 255, 255, 0.9)',
+                  overflowX: 'auto',
+                  paddingTop: 4,
+                  borderTop: '1px solid rgba(255, 255, 255, 0.15)',
+                }}
+              >
+                <span style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: 9, flexShrink: 0 }}>
+                  Deduções:
                 </span>
-              </div>
-            </div>
-
-            {/* Grid Interno 2x2 com Métricas Monitoradas */}
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: 8,
-                padding: '10px 0',
-                borderTop: '1px solid rgba(255, 255, 255, 0.2)',
-                borderBottom: '1px solid rgba(255, 255, 255, 0.2)',
-              }}
-            >
-              <div>
-                <div style={{ fontSize: 10.5, color: 'rgba(255, 255, 255, 0.8)', fontWeight: 400 }}>Atrasos</div>
-                <div style={{ fontSize: 15, fontWeight: 400, color: '#ffffff', marginTop: 2 }}>
-                  {metrics.overdueCount}
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: 10.5, color: 'rgba(255, 255, 255, 0.8)', fontWeight: 400 }}>Bloqueios</div>
-                <div style={{ fontSize: 15, fontWeight: 400, color: '#ffffff', marginTop: 2 }}>
-                  {metrics.blockedCount}
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: 10.5, color: 'rgba(255, 255, 255, 0.8)', fontWeight: 400 }}>Gargalos</div>
-                <div style={{ fontSize: 15, fontWeight: 400, color: '#ffffff', marginTop: 2 }}>
-                  {metrics.workloadBottlenecksCount}
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: 10.5, color: 'rgba(255, 255, 255, 0.8)', fontWeight: 400 }}>Estagnadas</div>
-                <div style={{ fontSize: 15, fontWeight: 400, color: '#ffffff', marginTop: 2 }}>
-                  {metrics.staleCount}
-                </div>
-              </div>
-            </div>
-
-            {/* Deduções Ativas */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-              <span style={{ fontSize: 10.5, fontWeight: 400, color: 'rgba(255, 255, 255, 0.85)', textTransform: 'uppercase', letterSpacing: 0.3 }}>
-                Deduções do Score
-              </span>
-              {metrics.deductions.length === 0 ? (
-                <span style={{ fontSize: 11.5, color: '#ffffff', fontWeight: 400 }}>Tudo em dia</span>
-              ) : (
-                metrics.deductions.map((d, i) => (
-                  <div
+                {metrics.deductions.slice(0, 2).map((d, i) => (
+                  <span
                     key={i}
                     style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      fontSize: 11,
-                      color: 'rgba(255, 255, 255, 0.9)',
-                      fontWeight: 400,
+                      background: 'rgba(0, 0, 0, 0.18)',
+                      padding: '1px 5px',
+                      borderRadius: 4,
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0,
                     }}
                   >
-                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {d.reason}
-                    </span>
-                    <span style={{ background: 'rgba(0, 0, 0, 0.22)', padding: '1px 6px', borderRadius: 4, color: '#ffffff', fontWeight: 400, flexShrink: 0, marginLeft: 8 }}>
-                      -{d.points}%
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
+                    {d.reason} (-{d.points}%)
+                  </span>
+                ))}
+                {metrics.deductions.length > 2 && (
+                  <span style={{ fontSize: 8.5, opacity: 0.8, flexShrink: 0 }}>
+                    +{metrics.deductions.length - 2}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* 2. CARD DE DADOS: DEMANDAS (COMPACTO E REORGANIZADO) */}

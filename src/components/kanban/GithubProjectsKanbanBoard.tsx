@@ -17,17 +17,21 @@ export interface GithubProjectsKanbanBoardProps {
   accentColor: string;
   accentContrastText: string;
   onOpenIssueDetail: (issue: ProjectIssue) => void;
+  columns?: KanbanColumnDef[];
   onMoveIssue: (issueId: string, targetColumnId: string) => void;
   onAddNewIssue?: (defaultColumnId?: string) => void;
   showToast?: (msg: string) => void;
 }
 
 export interface KanbanColumnDef {
-  id: 'backlog' | 'todo' | 'in_progress' | 'test' | 'done';
+  id: string;
   title: string;
-  subtitle: string;
+  subtitle?: string;
   dotColor: string;
   isDoneType?: boolean;
+  optionId?: string;
+  limit?: number;
+  estimateTotal?: number;
 }
 
 export const KANBAN_COLUMNS: KanbanColumnDef[] = [
@@ -87,32 +91,102 @@ function getLabelStyle(labelName: string, isEffectiveDark: boolean) {
 }
 
 // Determinar coluna padrão de uma issue
-export function getIssueKanbanColumn(issue: any): 'backlog' | 'todo' | 'in_progress' | 'test' | 'done' {
+export function getIssueKanbanColumn(issue: any, availableColumns?: KanbanColumnDef[]): string {
+  const cols = availableColumns && availableColumns.length > 0 ? availableColumns : KANBAN_COLUMNS;
+
+  // 1. Vinculação direta por kanbanColumnId
   if (issue.kanbanColumnId) {
-    return issue.kanbanColumnId;
+    const target = String(issue.kanbanColumnId).toLowerCase().trim();
+    const found = cols.find(
+      (c) =>
+        c.id.toLowerCase().trim() === target ||
+        c.title.toLowerCase().trim() === target ||
+        (c.optionId && c.optionId.toLowerCase() === target)
+    );
+    if (found) return found.id;
   }
-  if (issue.status === 'Concluído' || issue.rawState === 'closed') {
-    return 'done';
+
+  // 2. Vinculação direta por projectV2StatusOptionId ou projectV2Status vindo do GitHub Projects
+  if (issue.projectV2StatusOptionId) {
+    const found = cols.find((c) => c.optionId === issue.projectV2StatusOptionId);
+    if (found) return found.id;
   }
+  if (issue.projectV2Status) {
+    const target = String(issue.projectV2Status).toLowerCase().trim();
+    const found = cols.find(
+      (c) =>
+        c.title.toLowerCase().trim() === target ||
+        c.id.toLowerCase().trim() === target
+    );
+    if (found) return found.id;
+  }
+
+  // 3. Fallback inteligente baseado no estado da issue
+  const isClosed = issue.status === 'Concluído' || issue.rawState === 'closed';
+  if (isClosed) {
+    const doneCol = cols.find(
+      (c) =>
+        c.isDoneType ||
+        c.id.toLowerCase().includes('done') ||
+        c.title.toLowerCase().includes('done') ||
+        c.title.toLowerCase().includes('conclu')
+    );
+    if (doneCol) return doneCol.id;
+  }
+
   const rawLabels = (issue.rawLabels || []).map((l: string) => l.toLowerCase());
-  if (rawLabels.includes('test') || rawLabels.includes('testing') || rawLabels.includes('em teste')) {
-    return 'test';
+  if (rawLabels.includes('test') || rawLabels.includes('testing') || rawLabels.includes('em teste') || rawLabels.includes('qa')) {
+    const testCol = cols.find((c) => c.id.toLowerCase().includes('test') || c.title.toLowerCase().includes('test'));
+    if (testCol) return testCol.id;
   }
-  if (issue.status === 'Em Progresso') {
-    return 'in_progress';
+
+  if (issue.status === 'Em Progresso' || rawLabels.includes('em-progresso') || rawLabels.includes('in progress')) {
+    const inProgCol = cols.find(
+      (c) =>
+        c.id.toLowerCase().includes('in_prog') ||
+        c.id.toLowerCase().includes('progress') ||
+        c.title.toLowerCase().includes('progress') ||
+        c.title.toLowerCase().includes('progresso')
+    );
+    if (inProgCol) return inProgCol.id;
   }
-  if (rawLabels.includes('backlog')) {
-    return 'backlog';
+
+  if (rawLabels.includes('waiting') || rawLabels.includes('bloqueado') || rawLabels.includes('blocked') || rawLabels.includes('espera')) {
+    const waitCol = cols.find(
+      (c) =>
+        c.id.toLowerCase().includes('wait') ||
+        c.title.toLowerCase().includes('wait') ||
+        c.title.toLowerCase().includes('espera') ||
+        c.title.toLowerCase().includes('bloq')
+    );
+    if (waitCol) return waitCol.id;
   }
-  // Se não tem milestone ou prioridade baixa, pode ser backlog
-  if (!issue.milestoneNumber && !issue.startDateIso && !issue.dueDateIso && issue.priority === 'Baixa') {
-    return 'backlog';
+
+  if (
+    rawLabels.includes('backlog') ||
+    (!issue.milestoneNumber && !issue.startDateIso && !issue.dueDateIso && issue.priority === 'Baixa')
+  ) {
+    const backlogCol = cols.find(
+      (c) => c.id.toLowerCase().includes('backlog') || c.title.toLowerCase().includes('backlog')
+    );
+    if (backlogCol) return backlogCol.id;
   }
-  return 'todo';
+
+  const todoCol = cols.find(
+    (c) =>
+      c.id.toLowerCase().includes('todo') ||
+      c.title.toLowerCase().includes('todo') ||
+      c.title.toLowerCase().includes('to-do') ||
+      c.title.toLowerCase().includes('fazer')
+  );
+  if (todoCol) return todoCol.id;
+
+  return cols[0]?.id || 'todo';
 }
 
 export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps> = ({
   issues,
+  columns,
   repoName = 'repositório',
   theme,
   isEffectiveDark,
@@ -126,6 +200,10 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
   const [draggedIssueId, setDraggedIssueId] = useState<string | null>(null);
   const [dragOverColumnId, setDragOverColumnId] = useState<string | null>(null);
   const [columnMenuOpenId, setColumnMenuOpenId] = useState<string | null>(null);
+
+  const activeColumns = useMemo(() => {
+    return columns && columns.length > 0 ? columns : KANBAN_COLUMNS;
+  }, [columns]);
 
   // Filtragem por busca
   const filteredIssues = useMemo(() => {
@@ -143,25 +221,25 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
 
   // Agrupamento por coluna
   const issuesByColumn = useMemo(() => {
-    const map: Record<string, ProjectIssue[]> = {
-      backlog: [],
-      todo: [],
-      in_progress: [],
-      test: [],
-      done: [],
-    };
+    const map: Record<string, ProjectIssue[]> = {};
+    activeColumns.forEach((c) => {
+      map[c.id] = [];
+    });
 
     filteredIssues.forEach((iss) => {
-      const colId = getIssueKanbanColumn(iss);
+      const colId = getIssueKanbanColumn(iss, activeColumns);
       if (map[colId]) {
         map[colId].push(iss);
       } else {
-        map.todo.push(iss);
+        const firstColId = activeColumns[0]?.id || 'todo';
+        if (map[firstColId]) {
+          map[firstColId].push(iss);
+        }
       }
     });
 
     return map;
-  }, [filteredIssues]);
+  }, [filteredIssues, activeColumns]);
 
   // Handlers de Drag and Drop
   const handleDragStart = (e: React.DragEvent, issueId: string) => {
@@ -233,9 +311,15 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
         }}
         className="no-scrollbar"
       >
-        {KANBAN_COLUMNS.map((col) => {
+        {activeColumns.map((col) => {
           const colCards = issuesByColumn[col.id] || [];
           const isDragOver = dragOverColumnId === col.id;
+          const colEstimateSum = colCards.reduce(
+            (acc, curr) => acc + (typeof curr.projectV2Estimate === 'number' ? curr.projectV2Estimate : 0),
+            0
+          );
+          const hasLimit = typeof col.limit === 'number' && col.limit > 0;
+          const isLimitExceeded = hasLimit && colCards.length > (col.limit as number);
 
           return (
             <div
@@ -279,9 +363,9 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                   position: 'relative',
                 }}
               >
-                {/* Linha 1: Dot/Icon + Título + Badge + Menus */}
+                {/* Linha 1: Dot/Icon + Título + Badge + Estimate + Menus */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <div
                       style={{
                         width: 14,
@@ -313,17 +397,38 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                     <span
                       style={{
                         fontSize: 11,
-                        fontWeight: 500,
-                        color: theme.textSecondary,
-                        background: isEffectiveDark
+                        fontWeight: 600,
+                        color: isLimitExceeded ? '#ffffff' : theme.textSecondary,
+                        background: isLimitExceeded
+                          ? '#dc2626'
+                          : isEffectiveDark
                           ? 'rgba(255, 255, 255, 0.08)'
                           : 'rgba(0, 0, 0, 0.06)',
                         padding: '1px 7px',
                         borderRadius: 10,
+                        lineHeight: 1.3,
                       }}
                     >
-                      {colCards.length}
+                      {hasLimit ? `${colCards.length} / ${col.limit}` : colCards.length}
                     </span>
+
+                    {(colEstimateSum > 0 || col.estimateTotal !== undefined) && (
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 500,
+                          color: theme.textSecondary,
+                          background: isEffectiveDark
+                            ? 'rgba(255, 255, 255, 0.08)'
+                            : 'rgba(0, 0, 0, 0.06)',
+                          padding: '1px 7px',
+                          borderRadius: 10,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Estimate: {col.estimateTotal ?? colEstimateSum}
+                      </span>
+                    )}
                   </div>
 
                   {/* Ações da Coluna (··· e +) */}
@@ -375,9 +480,11 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                 </div>
 
                 {/* Linha 2: Subtítulo descritivo estilo GitHub Projects */}
-                <div style={{ fontSize: 11, color: theme.textSecondary, lineHeight: 1.3 }}>
-                  {col.subtitle}
-                </div>
+                {col.subtitle && (
+                  <div style={{ fontSize: 11, color: theme.textSecondary, lineHeight: 1.3 }}>
+                    {col.subtitle}
+                  </div>
+                )}
               </div>
 
               {/* LISTA DE CARDS DRAGGABLE */}
@@ -535,32 +642,96 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                         </div>
                       )}
 
-                      {/* Rodapé: Pílulas de Etiquetas / Labels */}
-                      {labelsList.length > 0 && (
-                        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 5, marginTop: 2 }}>
-                          {labelsList.map((lbl, idx) => {
-                            const lblStyle = getLabelStyle(lbl, isEffectiveDark);
-                            return (
-                              <span
-                                key={idx}
-                                style={{
-                                  fontSize: 10,
-                                  fontWeight: 500,
-                                  padding: '1px 6px',
-                                  borderRadius: 10,
-                                  border: `1px solid ${lblStyle.border}`,
-                                  background: lblStyle.bg,
-                                  color: lblStyle.text,
-                                  lineHeight: 1.2,
-                                  letterSpacing: '0.01em',
-                                }}
-                              >
-                                {lbl}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      )}
+                      {/* Metadados: Estimate, Prioridade, Sprint e Labels */}
+                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 5, marginTop: 2 }}>
+                        {/* Estimate Pill */}
+                        {task.projectV2Estimate != null && (
+                          <span
+                            title={`Estimativa: ${task.projectV2Estimate}`}
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 600,
+                              color: theme.textSecondary,
+                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.05)',
+                              border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.12)'}`,
+                              padding: '1px 6px',
+                              borderRadius: 10,
+                              lineHeight: 1.2,
+                            }}
+                          >
+                            {task.projectV2Estimate}
+                          </span>
+                        )}
+
+                        {/* Prioridade Circle */}
+                        {task.priority && (
+                          <span
+                            title={`Prioridade: ${task.priority}`}
+                            style={{
+                              width: 17,
+                              height: 17,
+                              borderRadius: '50%',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: 9.5,
+                              fontWeight: 700,
+                              color: task.priorityColor || theme.textSecondary,
+                              border: `1px solid ${task.priorityColor || (isEffectiveDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)')}`,
+                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+                              boxSizing: 'border-box',
+                            }}
+                          >
+                            {task.priority === 'Baixa' ? 'B' : task.priority === 'Média' ? 'M' : task.priority === 'Alta' ? 'A' : 'U'}
+                          </span>
+                        )}
+
+                        {/* Sprint / Iteration Pill */}
+                        {(task.iterationTitle || task.milestoneTitle) && (
+                          <span
+                            title={`Sprint: ${task.iterationTitle || task.milestoneTitle}`}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 3.5,
+                              fontSize: 10,
+                              fontWeight: 500,
+                              color: theme.textSecondary,
+                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
+                              border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.1)'}`,
+                              padding: '1px 6px',
+                              borderRadius: 10,
+                              lineHeight: 1.2,
+                            }}
+                          >
+                            <Clock size={9.5} style={{ opacity: 0.75 }} />
+                            <span>{task.iterationTitle || task.milestoneTitle}</span>
+                          </span>
+                        )}
+
+                        {/* Rótulos / Labels */}
+                        {labelsList.map((lbl, idx) => {
+                          const lblStyle = getLabelStyle(lbl, isEffectiveDark);
+                          return (
+                            <span
+                              key={idx}
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 500,
+                                padding: '1px 6px',
+                                borderRadius: 10,
+                                border: `1px solid ${lblStyle.border}`,
+                                background: lblStyle.bg,
+                                color: lblStyle.text,
+                                lineHeight: 1.2,
+                                letterSpacing: '0.01em',
+                              }}
+                            >
+                              {lbl}
+                            </span>
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })}
@@ -580,6 +751,41 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                   >
                     Arraste tarefas para cá
                   </div>
+                )}
+
+                {/* Botão + Add item no rodapé da coluna */}
+                {onAddNewIssue && (
+                  <button
+                    type="button"
+                    onClick={() => onAddNewIssue(col.id)}
+                    style={{
+                      marginTop: 4,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 5,
+                      padding: '6px 10px',
+                      background: 'transparent',
+                      border: 'none',
+                      borderRadius: 6,
+                      color: theme.textSecondary,
+                      fontSize: 12,
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      transition: 'background 0.15s ease, color 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)';
+                      e.currentTarget.style.color = theme.textPrimary;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = theme.textSecondary;
+                    }}
+                  >
+                    <Plus size={13} />
+                    <span>Add item</span>
+                  </button>
                 )}
               </div>
             </div>

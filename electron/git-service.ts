@@ -74,7 +74,7 @@ export class GitService {
       return targetPath;
     }
 
-    // 2. Check immediate child folders (common in mono-repos or parent folders like /codes/Ainaobra)
+    // 2. Check immediate child folders (common in mono-repos or parent folders like /codes/aura-dev)
     try {
       const entries = fs.readdirSync(targetPath, { withFileTypes: true });
       for (const entry of entries) {
@@ -141,12 +141,31 @@ export class GitService {
    * Scans a base folder (or common code directories) up to depth 2,
    * discovering all local git repositories and resolving their remote URLs.
    */
+  private cachedLocalProjects: {
+    data: Array<{ dir: string; name: string; repoFullName?: string; remoteUrl?: string }>;
+    timestamp: number;
+    baseDir?: string;
+  } | null = null;
+
+  /**
+   * Scans a base folder (or common code directories) up to depth 2,
+   * discovering all local git repositories and resolving their remote URLs.
+   */
   public scanLocalProjects(baseDir?: string): Array<{
     dir: string;
     name: string;
     repoFullName?: string;
     remoteUrl?: string;
   }> {
+    // Retorna cache de 45 segundos para resposta instantânea
+    if (
+      this.cachedLocalProjects &&
+      this.cachedLocalProjects.baseDir === baseDir &&
+      Date.now() - this.cachedLocalProjects.timestamp < 45000
+    ) {
+      return this.cachedLocalProjects.data;
+    }
+
     const candidates: string[] = [];
     if (baseDir && fs.existsSync(baseDir)) {
       candidates.push(baseDir);
@@ -175,15 +194,35 @@ export class GitService {
       if (visitedDirs.has(dirPath)) return;
       visitedDirs.add(dirPath);
 
-      if (fs.existsSync(path.join(dirPath, '.git'))) {
+      const gitPath = path.join(dirPath, '.git');
+      if (fs.existsSync(gitPath)) {
         let remoteUrl = '';
         let repoFullName = '';
         try {
-          remoteUrl = execSync('git config --get remote.origin.url', {
-            cwd: dirPath,
-            encoding: 'utf8',
-            timeout: 2000,
-          }).trim();
+          // Otimização de performance: lê .git/config diretamente sem spawn de processo
+          const gitConfigPath = path.join(gitPath, 'config');
+          if (fs.existsSync(gitConfigPath)) {
+            const configText = fs.readFileSync(gitConfigPath, 'utf8');
+            const originMatch = configText.match(/\[remote\s+"origin"\][^\[]*?url\s*=\s*(.+)/);
+            if (originMatch && originMatch[1]) {
+              remoteUrl = originMatch[1].trim();
+            } else {
+              const anyUrlMatch = configText.match(/url\s*=\s*(.+)/);
+              if (anyUrlMatch && anyUrlMatch[1]) {
+                remoteUrl = anyUrlMatch[1].trim();
+              }
+            }
+          }
+
+          // Fallback seguro caso não tenha conseguido extrair do arquivo
+          if (!remoteUrl) {
+            remoteUrl = execSync('git config --get remote.origin.url', {
+              cwd: dirPath,
+              encoding: 'utf8',
+              timeout: 1000,
+            }).trim();
+          }
+
           if (remoteUrl) {
             const match = remoteUrl.match(/[:/]([^/:]+\/[^/:]+?)(?:\.git)?$/);
             if (match) repoFullName = match[1];
@@ -219,6 +258,12 @@ export class GitService {
         }
       } catch {}
     }
+
+    this.cachedLocalProjects = {
+      data: discovered,
+      timestamp: Date.now(),
+      baseDir,
+    };
 
     return discovered;
   }

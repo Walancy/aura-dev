@@ -17,6 +17,9 @@ export interface NativeXTermProps {
   cursorBlink?: boolean;
   scrollback?: number;
   copyOnSelect?: boolean;
+  onFocus?: () => void;
+  onTitleChange?: (title: string) => void;
+  alwaysVisible?: boolean;
 }
 
 export const NativeXTerm: React.FC<NativeXTermProps> = ({
@@ -32,12 +35,19 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
   cursorBlink = true,
   scrollback = 5000,
   copyOnSelect = false,
+  onFocus,
+  onTitleChange,
+  alwaysVisible = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const copyOnSelectRef = useRef(copyOnSelect);
   copyOnSelectRef.current = copyOnSelect;
+  const onFocusRef = useRef(onFocus);
+  onFocusRef.current = onFocus;
+  const onTitleChangeRef = useRef(onTitleChange);
+  onTitleChangeRef.current = onTitleChange;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -77,6 +87,10 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(containerRef.current);
+
+    const onTitleDisp = term.onTitleChange((title) => {
+      onTitleChangeRef.current?.(title);
+    });
 
     termRef.current = term;
     fitAddonRef.current = fitAddon;
@@ -138,11 +152,23 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         resizeObserver.observe(containerRef.current);
       }
 
+      const handleMouseDown = () => {
+        onFocusRef.current?.();
+      };
+      const containerEl = containerRef.current;
+      if (containerEl) {
+        containerEl.addEventListener('mousedown', handleMouseDown, true);
+      }
+
       window.addEventListener('resize', handleResize);
 
       return () => {
+        if (containerEl) {
+          containerEl.removeEventListener('mousedown', handleMouseDown, true);
+        }
         window.removeEventListener('resize', handleResize);
         resizeObserver.disconnect();
+        onTitleDisp.dispose();
         onDataDisp.dispose();
         onSelectionDisp.dispose();
         if (cleanupDataListener) cleanupDataListener();
@@ -154,7 +180,22 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         term.dispose();
       };
     }
-  }, [sessionId, sessionType, cwd]);
+  }, [sessionId, sessionType]);
+
+  // When cwd prop changes (e.g. user selected another project in the header),
+  // navigate the running shell session to the new project path immediately.
+  const prevCwdRef = useRef(cwd);
+  useEffect(() => {
+    if (prevCwdRef.current !== cwd && cwd) {
+      prevCwdRef.current = cwd;
+      if (window.electronAPI?.pty) {
+        window.electronAPI.pty.setCwd?.(sessionId, cwd);
+        if (sessionType === 'zsh' || sessionType === 'bash') {
+          window.electronAPI.pty.write(sessionId, `cd "${cwd}"\r`);
+        }
+      }
+    }
+  }, [cwd, sessionId, sessionType]);
 
   // Dynamically update terminal theme when accentColor or themeMode (isDark) changes
   useEffect(() => {
@@ -227,7 +268,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         flex: 1,
         overflow: 'hidden',
         background: isDark ? '#101010' : '#ffffff',
-        display: isActive ? 'block' : 'none',
+        display: (alwaysVisible || isActive) ? 'block' : 'none',
       }}
       onClick={() => termRef.current?.focus()}
     />

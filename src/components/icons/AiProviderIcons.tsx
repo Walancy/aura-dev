@@ -10,12 +10,16 @@ export const ClaudeIcon: React.FC<{ size?: number; style?: React.CSSProperties }
   <img
     src={claudeLogo}
     alt="Claude"
+    draggable={false}
+    onDragStart={(e) => e.preventDefault()}
     style={{
       width: size,
       height: size,
       objectFit: 'contain',
       flex: 'none',
       display: 'inline-block',
+      userSelect: 'none',
+      pointerEvents: 'none',
       ...style,
     }}
   />
@@ -26,6 +30,8 @@ export const AntigravityIcon: React.FC<{ size?: number; style?: React.CSSPropert
   <img
     src={antigravityLogo}
     alt="Google Antigravity"
+    draggable={false}
+    onDragStart={(e) => e.preventDefault()}
     style={{
       width: size,
       height: size,
@@ -33,6 +39,8 @@ export const AntigravityIcon: React.FC<{ size?: number; style?: React.CSSPropert
       borderRadius: 2,
       flex: 'none',
       display: 'inline-block',
+      userSelect: 'none',
+      pointerEvents: 'none',
       ...style,
     }}
   />
@@ -43,12 +51,16 @@ export const GeminiIcon: React.FC<{ size?: number; style?: React.CSSProperties }
   <img
     src={geminiLogo}
     alt="Google Gemini"
+    draggable={false}
+    onDragStart={(e) => e.preventDefault()}
     style={{
       width: size,
       height: size,
       objectFit: 'contain',
       flex: 'none',
       display: 'inline-block',
+      userSelect: 'none',
+      pointerEvents: 'none',
       ...style,
     }}
   />
@@ -59,12 +71,16 @@ export const OllamaIcon: React.FC<{ size?: number; style?: React.CSSProperties }
   <img
     src={ollamaLogo}
     alt="Ollama"
+    draggable={false}
+    onDragStart={(e) => e.preventDefault()}
     style={{
       width: size,
       height: size,
       objectFit: 'contain',
       flex: 'none',
       display: 'inline-block',
+      userSelect: 'none',
+      pointerEvents: 'none',
       ...style,
     }}
   />
@@ -75,12 +91,16 @@ export const CodexIcon: React.FC<{ size?: number; style?: React.CSSProperties }>
   <img
     src={codexLogo}
     alt="OpenAI Codex"
+    draggable={false}
+    onDragStart={(e) => e.preventDefault()}
     style={{
       width: size,
       height: size,
       objectFit: 'contain',
       flex: 'none',
       display: 'inline-block',
+      userSelect: 'none',
+      pointerEvents: 'none',
       ...style,
     }}
   />

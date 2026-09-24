@@ -40,3 +40,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # DevFlow runtime data
 .devflow
 
+# Local Penpot self-hosted stack (contains generated secret key)
+docker/penpot/docker-compose.yaml
+

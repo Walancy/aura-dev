@@ -43,7 +43,8 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
         position: 'fixed',
         left: themePopupPos.x,
         top: themePopupPos.y,
-        width: 320,
+        width: 380,
+        maxWidth: 'calc(100vw - 32px)',
         background: themeTokens.bgCard,
         borderRadius: 10,
         border: `1px solid ${themeTokens.border}`,
@@ -165,21 +166,41 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
           </div>
         </div>
 
-        {/* Section 2: Cor de Destaque (Presets) */}
+        {/* Section 2: Cor de Destaque (Presets - Apenas Bolinhas Coloridas) */}
         <div>
-          <div style={{ fontSize: 10, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 7 }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
             Cor de Destaque
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(10, 1fr)',
+              gap: 8,
+              justifyItems: 'center',
+              alignItems: 'center',
+            }}
+          >
             {[
-              { name: 'Laranja', color: '#FF6A00' },
-              { name: 'Azul', color: '#007ACC' },
-              { name: 'Esmeralda', color: '#10B981' },
-              { name: 'Roxo', color: '#8B5CF6' },
-              { name: 'Vermelho', color: '#EF4444' },
+              { name: 'Laranja DevFlow', color: '#FF6A00' },
+              { name: 'Âmbar Solar', color: '#FF8A00' },
+              { name: 'Coral', color: '#F97316' },
               { name: 'Dourado', color: '#F59E0B' },
+              { name: 'Amarelo Ouro', color: '#EAB308' },
+              { name: 'Verde Lima', color: '#84CC16' },
+              { name: 'Esmeralda', color: '#10B981' },
+              { name: 'Menta / Teal', color: '#14B8A6' },
               { name: 'Ciano', color: '#06B6D4' },
+              { name: 'Azul Céu', color: '#38BDF8' },
+              { name: 'Azul Real', color: '#3B82F6' },
+              { name: 'Azul Dev', color: '#007ACC' },
+              { name: 'Índigo', color: '#6366F1' },
+              { name: 'Violeta', color: '#8B5CF6' },
+              { name: 'Roxo Elétrico', color: '#A855F7' },
+              { name: 'Fúcsia', color: '#D946EF' },
               { name: 'Magenta', color: '#EC4899' },
+              { name: 'Rosa Vibrante', color: '#F43F5E' },
+              { name: 'Vermelho Ruby', color: '#EF4444' },
+              { name: 'Grafite Prateado', color: '#94A3B8' },
             ].map((c) => {
               const isSelected = accentColor.toUpperCase() === c.color.toUpperCase();
               return (
@@ -189,36 +210,38 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
                   onClick={() => setAccentColor(c.color)}
                   title={c.name}
                   style={{
+                    width: 27,
+                    height: 27,
+                    borderRadius: '50%',
+                    backgroundColor: c.color,
+                    cursor: 'pointer',
+                    border: isSelected
+                      ? '2px solid #ffffff'
+                      : (isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(0, 0, 0, 0.12)'),
+                    boxShadow: isSelected
+                      ? `0 0 0 2px ${c.color}, 0 0 10px ${hexToRgba(c.color, 0.6)}`
+                      : '0 2px 4px rgba(0, 0, 0, 0.15)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: 5,
-                    padding: '5px 4px',
-                    borderRadius: 6,
-                    cursor: 'pointer',
-                    border: 'none',
-                    background: isSelected ? hexToRgba(c.color, 0.16) : (isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.03)'),
-                    transition: 'all 0.15s ease',
+                    padding: 0,
+                    transform: isSelected ? 'scale(1.12)' : 'scale(1)',
+                    transition: 'transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.15s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isSelected) (e.currentTarget as HTMLElement).style.transform = 'scale(1.15)';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isSelected) (e.currentTarget as HTMLElement).style.transform = 'scale(1)';
                   }}
                 >
-                  <span
-                    style={{
-                      width: 13,
-                      height: 13,
-                      borderRadius: '50%',
-                      background: c.color,
-                      flexShrink: 0,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      boxShadow: isSelected ? `0 0 8px ${c.color}` : 'none',
-                    }}
-                  >
-                    {isSelected && <Check size={8} color={getContrastTextColor(c.color)} strokeWidth={3} />}
-                  </span>
-                  <span style={{ fontSize: 10.5, color: themeTokens.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {c.name}
-                  </span>
+                  {isSelected && (
+                    <Check
+                      size={13}
+                      color={getContrastTextColor(c.color)}
+                      strokeWidth={3}
+                    />
+                  )}
                 </button>
               );
             })}

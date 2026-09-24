@@ -65,6 +65,7 @@ export interface IssueDetailSidesheetProps {
   isOpen: boolean;
   isVisible?: boolean;
   issue: ProjectIssue | null;
+  allProjectIssues?: ProjectIssue[];
   repoFullName?: string;
   isRepoPrivate?: boolean;
   collaborators?: RepoCollaborator[];
@@ -81,7 +82,8 @@ export interface IssueDetailSidesheetProps {
       state?: 'open' | 'closed';
       milestoneNumber?: number | null;
       assignees?: Array<{ name: string; avatarBg: string; initial: string; avatarUrl?: string }>;
-    }
+    },
+    issueToUpdate?: ProjectIssue
   ) => Promise<void> | void;
   onDeleteIssue?: (issue: ProjectIssue) => void;
   onCreateBranchForIssue?: (issue: ProjectIssue) => void;
@@ -227,7 +229,8 @@ class SidesheetErrorBoundary extends Component<
 const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   isOpen,
   isVisible = true,
-  issue,
+  issue: initialIssue,
+  allProjectIssues = [],
   repoFullName,
   isRepoPrivate,
   collaborators = [],
@@ -238,30 +241,59 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   accentContrastText,
   currentUser,
   onClose,
-  onUpdateIssue,
+  onUpdateIssue: externalUpdateIssue,
   onDeleteIssue,
   onCreateBranchForIssue,
   onAskAiAboutIssue,
   showToast = (msg: string) => console.log(msg),
 }) => {
+  const [currentIssue, setCurrentIssue] = useState<ProjectIssue | null>(initialIssue);
+  const [historyStack, setHistoryStack] = useState<ProjectIssue[]>([]);
+
+  useEffect(() => {
+    setCurrentIssue(initialIssue);
+    setHistoryStack([]);
+  }, [initialIssue?.id, initialIssue?.githubNumber]);
+
+  const issue = currentIssue || initialIssue;
+
+  const onUpdateIssue = useCallback(
+    async (
+      updatedFields: Partial<ProjectIssue> & {
+        rawLabels?: string[];
+        state?: 'open' | 'closed';
+        milestoneNumber?: number | null;
+        assignees?: Array<{ name: string; avatarBg: string; initial: string; avatarUrl?: string }>;
+      }
+    ) => {
+      setCurrentIssue((prev) => (prev ? { ...prev, ...updatedFields } : null));
+      return externalUpdateIssue?.(updatedFields, issue);
+    },
+    [externalUpdateIssue, issue]
+  );
+
   // Design system tokens derivados do tema e accentColor
-  // Cor de fundo para cards levemente mais clara que o fundo da sidesheet (#101010 no dark / #ffffff no light)
+  // Cor de fundo para cards neutra DevFlow (#181818 / #161616 no dark / #f8fafc no light)
   const sysCardBg = isEffectiveDark
-    ? (theme?.cardBg || '#18181b')
-    : (theme?.cardBg && theme.cardBg !== '#ffffff' ? theme.cardBg : '#f8fafc');
+    ? (theme?.bgCardSecondary || theme?.cardBg || '#161616')
+    : (theme?.bgCardSecondary || (theme?.cardBg && theme.cardBg !== '#ffffff' ? theme.cardBg : '#f8fafc'));
   const sysCardHeaderBg = isEffectiveDark
-    ? 'rgba(255, 255, 255, 0.025)'
+    ? 'rgba(255, 255, 255, 0.02)'
     : 'rgba(0, 0, 0, 0.02)';
-  const sysBorder = theme?.border || (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#e2e8f0');
-  const sysBorderHover = theme?.borderHover || (isEffectiveDark ? 'rgba(255, 255, 255, 0.16)' : '#cbd5e1');
-  const sysTextPrimary = theme?.textPrimary || (isEffectiveDark ? '#f4f4f5' : '#18181b');
-  const sysTextSecondary = theme?.textSecondary || (isEffectiveDark ? '#a1a1aa' : '#71717a');
-  const sysTextMuted = theme?.textMuted || (isEffectiveDark ? '#71717a' : '#a1a1aa');
-  const sysPopupBg = theme?.modalBg || (isEffectiveDark ? '#1e1e20' : '#ffffff');
+  const sysBorder = (theme?.border && theme.border !== 'transparent')
+    ? theme.border
+    : (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : '#e2e8f0');
+  const sysBorderHover = (theme?.borderHover && theme.borderHover !== 'transparent')
+    ? theme.borderHover
+    : (isEffectiveDark ? 'rgba(255, 255, 255, 0.14)' : '#cbd5e1');
+  const sysTextPrimary = theme?.textPrimary || (isEffectiveDark ? '#ffffff' : '#0f172a');
+  const sysTextSecondary = theme?.textSecondary || (isEffectiveDark ? '#888888' : '#64748b');
+  const sysTextMuted = theme?.textMuted || (isEffectiveDark ? '#555555' : '#94a3b8');
+  const sysPopupBg = theme?.modalBg || (isEffectiveDark ? '#1a1a1a' : '#ffffff');
   const sysPopupBorder = theme?.modalBorder || (isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#e2e8f0');
   const sysPopupShadow = theme?.modalShadow || (isEffectiveDark ? '0 16px 36px rgba(0, 0, 0, 0.65)' : '0 16px 36px rgba(0, 0, 0, 0.12)');
   const sysHoverBg = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
-  const sysInputBg = isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f8fafc';
+  const sysInputBg = isEffectiveDark ? '#121212' : '#f8fafc';
 
   // Local closing state for smooth exit animation
   const [isLocalClosing, setIsLocalClosing] = useState(false);
@@ -317,6 +349,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   const [activeSubIssueMenuIdx, setActiveSubIssueMenuIdx] = useState<number | null>(null);
   const subIssueMenuRef = useRef<HTMLDivElement | null>(null);
   const commentFileInputRef = useRef<HTMLInputElement | null>(null);
+  const contentScrollRef = useRef<HTMLDivElement | null>(null);
 
   // Split button dropdown popup states
   const [isSubIssueSplitOpen, setIsSubIssueSplitOpen] = useState(false);
@@ -412,6 +445,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
       setProjectSearch('');
       setMilestoneSearch('');
       setPrSearch('');
+      setComments([]);
       loadComments(issue);
     }
   }, [issue?.id]);
@@ -559,26 +593,159 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
 
   // Sub-issues parser
   const subIssuesList = useMemo(() => {
-    if (!issue?.description) return [];
-    try {
-      const lines = String(issue.description).split('\n');
-      const items: Array<{ index: number; lineIndex: number; text: string; completed: boolean }> = [];
-      lines.forEach((line, idx) => {
-        const match = line.match(/^(\s*[-*]\s*\[([ xX])\]\s+)(.+)$/);
-        if (match) {
+    const items: Array<{
+      index: number;
+      lineIndex: number;
+      text: string;
+      completed: boolean;
+      issueNumber?: number;
+      linkedIssue?: ProjectIssue;
+    }> = [];
+    const seenNumbers = new Set<number>();
+    const seenTitles = new Set<string>();
+
+    if (issue?.description) {
+      try {
+        const lines = String(issue.description).split('\n');
+        lines.forEach((line, idx) => {
+          const match = line.match(/^(\s*[-*]\s*\[([ xX])\]\s+)(.+)$/);
+          if (match) {
+            const rawText = match[3].trim();
+            const numMatch = rawText.match(/#(\d+)\b/);
+            const childNum = numMatch ? parseInt(numMatch[1], 10) : undefined;
+            if (childNum) seenNumbers.add(childNum);
+            seenTitles.add(rawText.toLowerCase());
+
+            let linked: ProjectIssue | undefined = undefined;
+            if (childNum) {
+              linked = (allProjectIssues || []).find((i) => i.githubNumber === childNum);
+            }
+            if (!linked) {
+              const clean = rawText.replace(/#\d+\b/, '').trim();
+              linked = (allProjectIssues || []).find(
+                (i) => i.title.toLowerCase().trim() === clean.toLowerCase().trim()
+              );
+            }
+
+            items.push({
+              index: items.length,
+              lineIndex: idx,
+              completed: linked
+                ? linked.status === 'Concluído' || linked.rawState === 'closed'
+                : match[2].toLowerCase() === 'x',
+              text: rawText,
+              issueNumber: childNum || linked?.githubNumber,
+              linkedIssue: linked,
+            });
+          }
+        });
+      } catch {
+        // Fallback
+      }
+    }
+
+    // Também inclui issues cujo parentIssueNumber aponta para esta issue
+    if (issue?.githubNumber) {
+      (allProjectIssues || []).forEach((other) => {
+        if (
+          other.parentIssueNumber === issue.githubNumber &&
+          other.githubNumber &&
+          !seenNumbers.has(other.githubNumber) &&
+          !seenTitles.has(other.title.toLowerCase())
+        ) {
+          seenNumbers.add(other.githubNumber);
           items.push({
             index: items.length,
-            lineIndex: idx,
-            completed: match[2].toLowerCase() === 'x',
-            text: match[3],
+            lineIndex: -1,
+            completed: other.status === 'Concluído' || other.rawState === 'closed',
+            text: `#${other.githubNumber} ${other.title}`,
+            issueNumber: other.githubNumber,
+            linkedIssue: other,
           });
         }
       });
-      return items;
-    } catch {
-      return [];
     }
-  }, [issue?.description]);
+
+    return items;
+  }, [issue?.description, issue?.githubNumber, allProjectIssues]);
+
+  const handleSelectSubIssue = (item: {
+    text: string;
+    completed: boolean;
+    lineIndex?: number;
+    issueNumber?: number;
+    linkedIssue?: ProjectIssue;
+  }) => {
+    let target: ProjectIssue | undefined = item.linkedIssue;
+    if (!target && item.issueNumber) {
+      target = (allProjectIssues || []).find((i) => i.githubNumber === item.issueNumber);
+    }
+    if (!target) {
+      const clean = item.text.replace(/#\d+\b/, '').trim() || item.text;
+      target = (allProjectIssues || []).find(
+        (i) => i.title.toLowerCase().trim() === clean.toLowerCase().trim()
+      );
+    }
+
+    if (!target) {
+      const issueNumMatch = item.text.match(/#(\d+)\b/);
+      const childNum = item.issueNumber || (issueNumMatch ? parseInt(issueNumMatch[1], 10) : undefined);
+      const cleanTitle = item.text.replace(/#\d+\b/, '').trim() || item.text;
+
+      target = {
+        id: childNum ? `#${childNum}` : `${issue.id}-sub-${item.lineIndex ?? Date.now()}`,
+        projectId: issue.projectId,
+        githubNumber: childNum,
+        title: cleanTitle,
+        description: `Parte de #${issue.githubNumber || issue.id.replace('#', '')} (${issue.title})`,
+        dateStr: issue.dateStr,
+        createdAtIso: issue.createdAtIso,
+        durationDays: issue.durationDays,
+        tag: issue.tag,
+        tagColor: issue.tagColor,
+        priority: issue.priority,
+        priorityColor: issue.priorityColor,
+        status: item.completed ? 'Concluído' : 'A Fazer',
+        assignees: [],
+        progress: item.completed ? 100 : 0,
+        rawState: item.completed ? 'closed' : 'open',
+        parentIssueNumber: issue.githubNumber,
+      };
+    } else {
+      target = {
+        ...target,
+        parentIssueNumber: target.parentIssueNumber || issue.githubNumber,
+      };
+    }
+
+    setHistoryStack((prev) => [...prev, issue]);
+    setCurrentIssue(target);
+    contentScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const parentFromIssue = useMemo(() => {
+    if (historyStack.length > 0) return historyStack[historyStack.length - 1];
+    if (issue?.parentIssueNumber) {
+      return (allProjectIssues || []).find((i) => i.githubNumber === issue.parentIssueNumber) || null;
+    }
+    return null;
+  }, [historyStack, issue?.parentIssueNumber, allProjectIssues]);
+
+  const handleBackToParent = useCallback(() => {
+    if (historyStack.length > 0) {
+      setHistoryStack((prev) => {
+        const copy = [...prev];
+        const parent = copy.pop();
+        if (parent) {
+          setCurrentIssue(parent);
+        }
+        return copy;
+      });
+    } else if (parentFromIssue) {
+      setCurrentIssue(parentFromIssue);
+    }
+    contentScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [historyStack, parentFromIssue]);
 
   const completedSubIssuesCount = subIssuesList.filter((s) => s.completed).length;
   const totalSubIssuesCount = subIssuesList.length;
@@ -869,18 +1036,18 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   const safeRenderMarkdown = (content: string) => {
     try {
       return renderMarkdownPreview(content, {
-        textPrimary: isEffectiveDark ? '#e6edf3' : (theme?.textPrimary || '#1f2328'),
-        textSecondary: isEffectiveDark ? '#8b949e' : (theme?.textSecondary || '#656d76'),
-        textMuted: isEffectiveDark ? '#7d8590' : (theme?.textMuted || '#8c959f'),
-        border: isEffectiveDark ? '#30363d' : '#d0d7de',
-        accentColor: '#58a6ff',
+        textPrimary: sysTextPrimary,
+        textSecondary: sysTextSecondary,
+        textMuted: sysTextMuted,
+        border: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#e2e8f0',
+        accentColor: accentColor || '#a855f7',
         isEffectiveDark: Boolean(isEffectiveDark),
         onToggleTask: (lineIndex, completed) => handleToggleSubIssue({ lineIndex, completed }),
       });
     } catch (err) {
       console.error('Erro ao renderizar markdown:', err);
       return (
-        <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 13, color: theme?.textPrimary || '#f4f4f5' }}>
+        <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 13, color: sysTextPrimary }}>
           {content}
         </div>
       );
@@ -984,6 +1151,28 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
             <div>
               {isEditingTitle ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {Boolean(parentFromIssue) && (
+                    <button
+                      type="button"
+                      onClick={handleBackToParent}
+                      title={`Voltar para ${parentFromIssue.title || 'issue pai'} (#${parentFromIssue.githubNumber || ''})`}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        padding: '8px 12px',
+                        background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
+                        border: 'none',
+                        borderRadius: 8,
+                        color: theme?.textPrimary || '#fff',
+                        cursor: 'pointer',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <ArrowLeft size={16} />
+                    </button>
+                  )}
                   <input
                     type="text"
                     autoFocus
@@ -1042,11 +1231,49 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 <div
                   style={{
                     display: 'flex',
-                    alignItems: 'baseline',
+                    alignItems: 'center',
                     flexWrap: 'wrap',
-                    gap: '6px 10px',
+                    gap: '8px 12px',
                   }}
                 >
+                  {/* Botão de Voltar para a issue pai se estiver em uma sub-issue */}
+                  {Boolean(parentFromIssue) && (
+                    <button
+                      type="button"
+                      onClick={handleBackToParent}
+                      title={`Voltar para ${parentFromIssue.title || 'issue pai'} (#${parentFromIssue.githubNumber || ''})`}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        padding: '6px 12px',
+                        background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
+                        border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.12)'}`,
+                        borderRadius: 8,
+                        color: theme?.textPrimary || '#fff',
+                        cursor: 'pointer',
+                        fontSize: 13,
+                        fontWeight: 500,
+                        transition: 'all 0.15s ease',
+                        flexShrink: 0,
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = hexToRgba(accentColor, 0.18);
+                        e.currentTarget.style.color = accentColor;
+                        e.currentTarget.style.borderColor = accentColor;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+                        e.currentTarget.style.color = theme?.textPrimary || '#fff';
+                        e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.12)';
+                      }}
+                    >
+                      <ArrowLeft size={16} />
+                      <span>Voltar</span>
+                    </button>
+                  )}
+
                   <span
                     style={{
                       margin: 0,
@@ -1164,11 +1391,11 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     gap: 6,
                     padding: '4px 10px',
                     borderRadius: 16,
-                    background: isEffectiveDark ? '#21262d' : 'rgba(0, 0, 0, 0.06)',
+                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
                     border: 'none',
                     fontSize: 12,
                     fontWeight: 500,
-                    color: isEffectiveDark ? '#c9d1d9' : '#24292f',
+                    color: isEffectiveDark ? '#e4e4e7' : '#24292f',
                   }}
                   title={`Sub-tarefas: ${completedSubIssuesCount} concluídas de ${totalSubIssuesCount}`}
                 >
@@ -1194,13 +1421,11 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       strokeWidth="2.2"
                       fill="none"
                       strokeDasharray={2 * Math.PI * 6}
-                      strokeDashoffset={2 * Math.PI * 6 * (1 - (totalSubIssuesCount > 0 ? completedSubIssuesCount / totalSubIssuesCount : 0))}
+                      strokeDashoffset={2 * Math.PI * 6 * (1 - (completedSubIssuesCount / totalSubIssuesCount))}
                       strokeLinecap="round"
                     />
                   </svg>
-                  <span>
-                    {completedSubIssuesCount} / {totalSubIssuesCount}
-                  </span>
+                  <span>{completedSubIssuesCount}/{totalSubIssuesCount} sub-issues</span>
                 </div>
               )}
 
@@ -1213,10 +1438,10 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     gap: 6,
                     padding: '4px 10px',
                     borderRadius: 16,
-                    background: isEffectiveDark ? '#21262d' : 'rgba(0, 0, 0, 0.06)',
+                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
                     border: 'none',
                     fontSize: 12,
-                    color: isEffectiveDark ? '#c9d1d9' : '#57606a',
+                    color: isEffectiveDark ? '#e4e4e7' : '#57606a',
                     maxWidth: 340,
                   }}
                   title={repoFullName}
@@ -1560,6 +1785,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
           {/* COLUNA ESQUERDA: DESCRIÇÃO, SUB-ISSUES, TIMELINE E COMENTÁRIOS          */}
           {/* ======================================================================= */}
           <div
+            ref={contentScrollRef}
             style={{
               flex: 1,
               overflowY: 'auto',
@@ -2079,27 +2305,37 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
 
                   {descTab === 'write' ? (
                     <textarea
-                      rows={9}
+                      rows={11}
                       value={editedDescription}
                       onChange={(e) => setEditedDescription(e.target.value)}
                       placeholder="Descreva esta tarefa detalhadamente usando Markdown..."
                       style={{
                         width: '100%',
                         boxSizing: 'border-box',
-                        background: isEffectiveDark ? '#141414' : '#f8fafc',
+                        background: sysInputBg,
                         border: 'none',
                         borderRadius: 8,
                         padding: 12,
-                        color: theme?.textPrimary || '#fff',
+                        color: sysTextPrimary,
                         fontSize: 13,
                         lineHeight: 1.5,
                         fontFamily: 'inherit',
                         outline: 'none',
                         resize: 'vertical',
+                        minHeight: 220,
                       }}
                     />
                   ) : (
-                    <div style={{ padding: '8px 4px', minHeight: 120 }}>
+                    <div
+                      style={{
+                        padding: '8px 4px',
+                        minHeight: 220,
+                        maxHeight: 400,
+                        overflowY: 'auto',
+                        scrollbarWidth: 'thin',
+                        scrollbarColor: isEffectiveDark ? 'rgba(255,255,255,0.18) transparent' : 'rgba(0,0,0,0.18) transparent',
+                      }}
+                    >
                       {safeRenderMarkdown(editedDescription)}
                     </div>
                   )}
@@ -2139,14 +2375,37 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   </div>
                 </div>
               ) : (
-                <div style={{ padding: '16px 18px 14px 18px', fontSize: 14, lineHeight: 1.6, color: isEffectiveDark ? '#e6edf3' : (theme?.textPrimary || '#1f2328') }}>
-                  {displayDescription ? (
-                    safeRenderMarkdown(displayDescription)
-                  ) : (
-                    <div style={{ color: theme?.textSecondary || '#a1a1aa', fontStyle: 'italic', fontSize: 13 }}>
-                      Nenhuma descrição fornecida para esta tarefa.
-                    </div>
-                  )}
+                <div
+                  style={{
+                    padding: '16px 18px 14px 18px',
+                    fontSize: 14,
+                    lineHeight: 1.6,
+                    color: sysTextPrimary,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    minHeight: 240,
+                  }}
+                >
+                  {/* Container de descrição com rolagem vertical e altura maior */}
+                  <div
+                    style={{
+                      flex: 1,
+                      minHeight: 160,
+                      maxHeight: 380,
+                      overflowY: 'auto',
+                      paddingRight: 6,
+                      scrollbarWidth: 'thin',
+                      scrollbarColor: isEffectiveDark ? 'rgba(255,255,255,0.18) transparent' : 'rgba(0,0,0,0.18) transparent',
+                    }}
+                  >
+                    {displayDescription ? (
+                      safeRenderMarkdown(displayDescription)
+                    ) : (
+                      <div style={{ color: theme?.textSecondary || '#a1a1aa', fontStyle: 'italic', fontSize: 13 }}>
+                        Nenhuma descrição fornecida para esta tarefa.
+                      </div>
+                    )}
+                  </div>
 
                   {/* Barra inferior de reações com botão de Smile estilo GitHub */}
                   <div
@@ -2154,8 +2413,11 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       display: 'flex',
                       alignItems: 'center',
                       gap: 8,
-                      marginTop: 16,
+                      marginTop: 14,
+                      paddingTop: 10,
+                      borderTop: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)'}`,
                       position: 'relative',
+                      flexShrink: 0,
                     }}
                     ref={reactionPickerRef}
                   >
@@ -2170,22 +2432,22 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         background: showReactionPicker
                           ? (isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')
                           : (isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)'),
-                        border: `1px solid ${isEffectiveDark ? '#30363d' : '#d0d7de'}`,
+                        border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#d0d7de'}`,
                         display: 'inline-flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        color: isEffectiveDark ? '#8b949e' : '#656d76',
+                        color: sysTextSecondary,
                         cursor: 'pointer',
                         transition: 'all 0.15s ease',
                       }}
                       onMouseEnter={(e) => {
-                        e.currentTarget.style.borderColor = isEffectiveDark ? '#8b949e' : '#afb8c1';
-                        e.currentTarget.style.color = isEffectiveDark ? '#e6edf3' : '#1f2328';
+                        e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255, 255, 255, 0.22)' : '#afb8c1';
+                        e.currentTarget.style.color = sysTextPrimary;
                       }}
                       onMouseLeave={(e) => {
                         if (!showReactionPicker) {
-                          e.currentTarget.style.borderColor = isEffectiveDark ? '#30363d' : '#d0d7de';
-                          e.currentTarget.style.color = isEffectiveDark ? '#8b949e' : '#656d76';
+                          e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#d0d7de';
+                          e.currentTarget.style.color = sysTextSecondary;
                         }
                       }}
                     >
@@ -2444,13 +2706,13 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           gap: 8,
                           padding: '6px 14px',
                           fontSize: 13,
-                          color: isEffectiveDark ? '#e6edf3' : '#1f2328',
+                          color: sysTextPrimary,
                           background: 'transparent',
                           border: 'none',
                           cursor: 'pointer',
                           textAlign: 'left',
                         }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? '#1f242c' : '#f3f4f6')}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = sysHoverBg)}
                         onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                       >
                         <div style={{ width: 14, display: 'flex', alignItems: 'center' }}>
@@ -2471,13 +2733,13 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           gap: 8,
                           padding: '6px 14px',
                           fontSize: 13,
-                          color: isEffectiveDark ? '#e6edf3' : '#1f2328',
+                          color: sysTextPrimary,
                           background: 'transparent',
                           border: 'none',
                           cursor: 'pointer',
                           textAlign: 'left',
                         }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? '#1f242c' : '#f3f4f6')}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = sysHoverBg)}
                         onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                       >
                         <div style={{ width: 14, display: 'flex', alignItems: 'center' }}>
@@ -2518,6 +2780,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       return (
                         <div
                           key={item.index}
+                          onClick={() => handleSelectSubIssue(item)}
+                          title="Clique para ver os detalhes da sub-issue"
                           style={{
                             display: 'flex',
                             alignItems: 'center',
@@ -2527,8 +2791,9 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             borderBottom: `1px solid ${sysBorder}`,
                             transition: 'background 0.12s ease',
                             position: 'relative',
+                            cursor: 'pointer',
                           }}
-                          onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)')}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)')}
                           onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                         >
                           {/* Lado Esquerdo: Ícone de Status + Título + #ID */}
@@ -2536,7 +2801,10 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             {/* Botão de Status (Círculo Verde ou Check Roxo) */}
                             <button
                               type="button"
-                              onClick={() => handleToggleSubIssue(item)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleSubIssue(item);
+                              }}
                               title={item.completed ? 'Marcar como aberta' : 'Marcar como concluída'}
                               style={{
                                 display: 'inline-flex',
@@ -2565,15 +2833,22 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
                                 whiteSpace: 'nowrap',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                flex: 1,
+                                minWidth: 0,
                               }}
                             >
-                              <span>{cleanTitle}</span>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {cleanTitle}
+                              </span>
                               {issueNum && (
                                 <span
                                   style={{
                                     color: isEffectiveDark ? '#8b949e' : '#656d76',
                                     fontWeight: 400,
-                                    marginLeft: 6,
+                                    flexShrink: 0,
                                   }}
                                 >
                                   {issueNum}
@@ -2583,7 +2858,10 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           </div>
 
                           {/* Lado Direito: Placeholder de Assignee + Mais opções (...) */}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                          <div
+                            style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
                             {/* Avatar placeholder de responsável */}
                             <div
                               title="Sem responsável atribuído"
@@ -2591,11 +2869,11 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                 width: 20,
                                 height: 20,
                                 borderRadius: '50%',
-                                border: `1px solid ${isEffectiveDark ? '#30363d' : '#d0d7de'}`,
+                                border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#d0d7de'}`,
                                 display: 'flex',
                                 alignItems: 'center',
-                                justifyContent: 'center',
-                                color: isEffectiveDark ? '#8b949e' : '#656d76',
+                                justifyCenter: 'center',
+                                color: sysTextSecondary,
                               }}
                             >
                               <User size={12} strokeWidth={1.8} />
@@ -2605,7 +2883,10 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             <div style={{ position: 'relative' }}>
                               <button
                                 type="button"
-                                onClick={() => setActiveSubIssueMenuIdx(activeSubIssueMenuIdx === item.index ? null : item.index)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveSubIssueMenuIdx(activeSubIssueMenuIdx === item.index ? null : item.index);
+                                }}
                                 title="Opções da sub-issue"
                                 style={{
                                   display: 'inline-flex',
@@ -2616,7 +2897,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                   borderRadius: 4,
                                   background: 'transparent',
                                   border: 'none',
-                                  color: isEffectiveDark ? '#8b949e' : '#656d76',
+                                  color: sysTextSecondary,
                                   cursor: 'pointer',
                                 }}
                               >
@@ -2632,13 +2913,11 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                     top: 'calc(100% + 4px)',
                                     right: 0,
                                     zIndex: 70,
-                                    minWidth: 160,
-                                    background: isEffectiveDark ? '#161b22' : '#ffffff',
-                                    border: `1px solid ${isEffectiveDark ? '#30363d' : '#d0d7de'}`,
+                                    minWidth: 170,
+                                    background: sysPopupBg,
+                                    border: `1px solid ${sysPopupBorder}`,
                                     borderRadius: 8,
-                                    boxShadow: isEffectiveDark
-                                      ? '0 8px 24px rgba(0, 0, 0, 0.65)'
-                                      : '0 8px 24px rgba(140, 149, 159, 0.2)',
+                                    boxShadow: sysPopupShadow,
                                     padding: '4px 0',
                                     display: 'flex',
                                     flexDirection: 'column',
@@ -2648,18 +2927,39 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                     type="button"
                                     onClick={() => {
                                       setActiveSubIssueMenuIdx(null);
-                                      handleToggleSubIssue(item);
+                                      handleSelectSubIssue(item);
                                     }}
                                     style={{
                                       padding: '6px 12px',
                                       fontSize: 12.5,
-                                      color: isEffectiveDark ? '#e6edf3' : '#1f2328',
+                                      color: sysTextPrimary,
                                       background: 'transparent',
                                       border: 'none',
                                       cursor: 'pointer',
                                       textAlign: 'left',
                                     }}
-                                    onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? '#1f242c' : '#f3f4f6')}
+                                    onMouseEnter={(e) => (e.currentTarget.style.background = sysHoverBg)}
+                                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                                  >
+                                    Abrir detalhes da sub-issue
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setActiveSubIssueMenuIdx(null);
+                                      handleToggleSubIssue(item);
+                                    }}
+                                    style={{
+                                      padding: '6px 12px',
+                                      fontSize: 12.5,
+                                      color: sysTextPrimary,
+                                      background: 'transparent',
+                                      border: 'none',
+                                      cursor: 'pointer',
+                                      textAlign: 'left',
+                                    }}
+                                    onMouseEnter={(e) => (e.currentTarget.style.background = sysHoverBg)}
                                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                                   >
                                     {item.completed ? 'Reabrir sub-issue' : 'Concluir sub-issue'}
@@ -2675,19 +2975,19 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                     style={{
                                       padding: '6px 12px',
                                       fontSize: 12.5,
-                                      color: isEffectiveDark ? '#e6edf3' : '#1f2328',
+                                      color: sysTextPrimary,
                                       background: 'transparent',
                                       border: 'none',
                                       cursor: 'pointer',
                                       textAlign: 'left',
                                     }}
-                                    onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? '#1f242c' : '#f3f4f6')}
+                                    onMouseEnter={(e) => (e.currentTarget.style.background = sysHoverBg)}
                                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                                   >
                                     Copiar título
                                   </button>
 
-                                  <div style={{ height: 1, background: isEffectiveDark ? '#30363d' : '#d0d7de', margin: '4px 0' }} />
+                                  <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#d0d7de', margin: '4px 0' }} />
 
                                   <button
                                     type="button"
@@ -2704,7 +3004,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                       cursor: 'pointer',
                                       textAlign: 'left',
                                     }}
-                                    onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? '#1f242c' : '#f3f4f6')}
+                                    onMouseEnter={(e) => (e.currentTarget.style.background = sysHoverBg)}
                                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                                   >
                                     Remover sub-issue
@@ -3268,7 +3568,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           <Link2 size={13} />
                         </button>
 
-                        <div style={{ width: 1, height: 16, background: isEffectiveDark ? '#30363d' : '#d0d7de', margin: '0 3px' }} />
+                        <div style={{ width: 1, height: 16, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#d0d7de', margin: '0 3px' }} />
 
                         <button
                           type="button"
@@ -3280,14 +3580,14 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             borderRadius: 4,
                             border: 'none',
                             background: 'transparent',
-                            color: isEffectiveDark ? '#848d97' : '#656d76',
+                            color: sysTextSecondary,
                             cursor: 'pointer',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
                           }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'; e.currentTarget.style.color = isEffectiveDark ? '#e6edf3' : '#1f2328'; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = isEffectiveDark ? '#848d97' : '#656d76'; }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = sysHoverBg; e.currentTarget.style.color = sysTextPrimary; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = sysTextSecondary; }}
                         >
                           <List size={14} />
                         </button>
@@ -3301,14 +3601,14 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             borderRadius: 4,
                             border: 'none',
                             background: 'transparent',
-                            color: isEffectiveDark ? '#848d97' : '#656d76',
+                            color: sysTextSecondary,
                             cursor: 'pointer',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
                           }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'; e.currentTarget.style.color = isEffectiveDark ? '#e6edf3' : '#1f2328'; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = isEffectiveDark ? '#848d97' : '#656d76'; }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = sysHoverBg; e.currentTarget.style.color = sysTextPrimary; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = sysTextSecondary; }}
                         >
                           <ListOrdered size={14} />
                         </button>
@@ -3322,19 +3622,19 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             borderRadius: 4,
                             border: 'none',
                             background: 'transparent',
-                            color: isEffectiveDark ? '#848d97' : '#656d76',
+                            color: sysTextSecondary,
                             cursor: 'pointer',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
                           }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'; e.currentTarget.style.color = isEffectiveDark ? '#e6edf3' : '#1f2328'; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = isEffectiveDark ? '#848d97' : '#656d76'; }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = sysHoverBg; e.currentTarget.style.color = sysTextPrimary; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = sysTextSecondary; }}
                         >
                           <ListChecks size={14} />
                         </button>
 
-                        <div style={{ width: 1, height: 16, background: isEffectiveDark ? '#30363d' : '#d0d7de', margin: '0 3px' }} />
+                        <div style={{ width: 1, height: 16, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#d0d7de', margin: '0 3px' }} />
 
                         <button
                           type="button"
@@ -4085,7 +4385,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   padding: '4px 6px',
                   borderRadius: 6,
                   cursor: 'pointer',
-                  background: activeSidebarPopup === 'assignees' ? (isEffectiveDark ? '#21262d' : '#f0f2f5') : 'transparent',
+                  background: activeSidebarPopup === 'assignees' ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#f0f2f5') : 'transparent',
                   transition: 'background 0.15s ease',
                 }}
                 onMouseEnter={(e) => {
@@ -4377,7 +4677,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   padding: '4px 6px',
                   borderRadius: 6,
                   cursor: 'pointer',
-                  background: activeSidebarPopup === 'labels' ? (isEffectiveDark ? '#21262d' : '#f0f2f5') : 'transparent',
+                  background: activeSidebarPopup === 'labels' ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#f0f2f5') : 'transparent',
                   transition: 'background 0.15s ease',
                 }}
                 onMouseEnter={(e) => {
@@ -4528,11 +4828,11 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                               <div
                                 style={{
                                   padding: '6px 12px',
-                                  background: isEffectiveDark ? '#161b22' : '#f0f2f5',
+                                  background: isEffectiveDark ? '#161616' : '#f0f2f5',
                                   fontSize: 11.5,
                                   fontWeight: 600,
-                                  color: '#8b949e',
-                                  borderBottom: `1px solid ${isEffectiveDark ? '#21262d' : '#d0d7de'}`,
+                                  color: sysTextSecondary,
+                                  borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#d0d7de'}`,
                                 }}
                               >
                                 Selected
@@ -4734,7 +5034,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   padding: '4px 6px',
                   borderRadius: 6,
                   cursor: 'pointer',
-                  background: activeSidebarPopup === 'type' ? (isEffectiveDark ? '#21262d' : '#f0f2f5') : 'transparent',
+                  background: activeSidebarPopup === 'type' ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#f0f2f5') : 'transparent',
                   transition: 'background 0.15s ease',
                 }}
                 onMouseEnter={(e) => {
@@ -4920,7 +5220,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   padding: '4px 6px',
                   borderRadius: 6,
                   cursor: 'pointer',
-                  background: activeSidebarPopup === 'priority' ? (isEffectiveDark ? '#21262d' : '#f0f2f5') : 'transparent',
+                  background: activeSidebarPopup === 'priority' ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#f0f2f5') : 'transparent',
                   transition: 'background 0.15s ease',
                 }}
                 onMouseEnter={(e) => {
@@ -5136,7 +5436,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   padding: '4px 6px',
                   borderRadius: 6,
                   cursor: 'pointer',
-                  background: activeSidebarPopup === 'projects' ? (isEffectiveDark ? '#21262d' : '#f0f2f5') : 'transparent',
+                  background: activeSidebarPopup === 'projects' ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#f0f2f5') : 'transparent',
                   transition: 'background 0.15s ease',
                 }}
                 onMouseEnter={(e) => {
@@ -5223,7 +5523,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     {/* Section: Group selected */}
                     {(() => {
                       const activeProject = repoFullName?.split('/')[1] || issue.projectTitle || 'Estância Bahia';
-                      const recentProjects = ['AgroBravo', 'AI na Obra', 'Click Fan', 'Calcfarm'].filter((p) => p !== activeProject);
+                      const recentProjects = ['AgroBravo', 'Aura Dev', 'Click Fan', 'Calcfarm'].filter((p) => p !== activeProject);
                       const orgProjects = ['Sanspray'].filter((p) => p !== activeProject);
 
                       const matchesSearch = (title: string) => title.toLowerCase().includes(projectSearch.toLowerCase());
@@ -5641,7 +5941,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   padding: '4px 6px',
                   borderRadius: 6,
                   cursor: 'pointer',
-                  background: activeSidebarPopup === 'milestone' ? (isEffectiveDark ? '#21262d' : '#f0f2f5') : 'transparent',
+                  background: activeSidebarPopup === 'milestone' ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#f0f2f5') : 'transparent',
                   transition: 'background 0.15s ease',
                 }}
                 onMouseEnter={(e) => {
@@ -5889,7 +6189,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   padding: '4px 6px',
                   borderRadius: 6,
                   cursor: 'pointer',
-                  background: activeSidebarPopup === 'relationships' ? (isEffectiveDark ? '#21262d' : '#f0f2f5') : 'transparent',
+                  background: activeSidebarPopup === 'relationships' ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#f0f2f5') : 'transparent',
                   transition: 'background 0.15s ease',
                 }}
                 onMouseEnter={(e) => {
@@ -6019,7 +6319,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   padding: '4px 6px',
                   borderRadius: 6,
                   cursor: 'pointer',
-                  background: activeSidebarPopup === 'development' ? (isEffectiveDark ? '#21262d' : '#f0f2f5') : 'transparent',
+                  background: activeSidebarPopup === 'development' ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#f0f2f5') : 'transparent',
                   transition: 'background 0.15s ease',
                 }}
                 onMouseEnter={(e) => {
@@ -6252,8 +6552,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   width: '100%',
                   padding: '6px 12px',
                   borderRadius: 6,
-                  background: isEffectiveDark ? '#21262d' : '#f6f8fa',
-                  border: isEffectiveDark ? '1px solid #30363d' : '1px solid #d0d7de',
+                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : '#f6f8fa',
+                  border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid #d0d7de',
                   color: theme?.textPrimary || '#fff',
                   fontSize: 12,
                   fontWeight: 500,

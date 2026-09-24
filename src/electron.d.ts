@@ -10,6 +10,8 @@ export interface ElectronAPI {
     write: (id: string, data: string) => void;
     resize: (id: string, cols: number, rows: number) => void;
     kill: (id: string) => void;
+    setCwd?: (id: string, cwd: string) => Promise<boolean>;
+    setAllCwd?: (cwd: string) => Promise<{ success: boolean }>;
     setAccentColor?: (accentColor: string) => Promise<{ success: boolean; error?: string }>;
     getHistory?: (id: string) => Promise<string>;
     onData: (callback: (payload: { id: string; data: string }) => void) => () => void;
@@ -35,6 +37,19 @@ export interface ElectronAPI {
   };
   ports: {
     scan: () => Promise<{ ports: any[] }>;
+  };
+  designRoom: {
+    host: (roomName: string) => Promise<{ id: string; name: string; host: string; ip: string; port: number; updatedAt: number }>;
+    stopHosting: () => Promise<void>;
+    startDiscovery: () => Promise<void>;
+    stopDiscovery: () => Promise<void>;
+    join: (ip: string, port: number) => Promise<void>;
+    leave: () => Promise<void>;
+    broadcastState: (shapes: unknown[]) => void;
+    onRoomsUpdated: (callback: (rooms: Array<{ id: string; name: string; host: string; ip: string; port: number; updatedAt: number }>) => void) => () => void;
+    onStateUpdate: (callback: (shapes: any[]) => void) => () => void;
+    onViewersChanged: (callback: (count: number) => void) => () => void;
+    onDisconnected: (callback: () => void) => () => void;
   };
   extensions?: {
     search?: (query?: string, size?: number, category?: string) => Promise<{ success: boolean; extensions: any[]; totalSize?: number; error?: string }>;
@@ -62,7 +77,8 @@ export interface ElectronAPI {
     getSavedChats?: () => Promise<Array<{ id: string; title: string; provider: string; updatedAt: number; messageCount: number; path: string; projectName?: string; workspacePath?: string; model?: string }>>;
     loadSavedChat?: (sessionId: string) => Promise<any>;
     deleteSavedChat?: (sessionId: string) => Promise<{ success: boolean }>;
-    runCli?: (payload: { cliCmd: string; prompt: string; model?: string; cwd?: string; additionalDirs?: string[] }) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+    runCli?: (payload: { cliCmd: string; prompt: string; model?: string; cwd?: string; additionalDirs?: string[]; useOrchestrator?: boolean; orchestratorConfig?: any }) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+    cancel?: (runId?: string) => Promise<{ cancelled: boolean }>;
   };
   menu: {
     onAction: (callback: (action: string) => void) => () => void;
@@ -107,7 +123,9 @@ export interface ElectronAPI {
     cancelLogin: () => Promise<{ success: boolean }>;
     fetchRepos: () => Promise<{ success: boolean; repos?: any[]; error?: string }>;
     fetchProjects: () => Promise<{ success: boolean; projects?: any[]; error?: string }>;
-    fetchProjectItems: (projectNumber: number) => Promise<{ success: boolean; project?: any; error?: string }>;
+    fetchOrgProjects: (org: string) => Promise<{ success: boolean; projects?: any[]; error?: string }>;
+    fetchRepoProjects: (owner: string, repo: string) => Promise<{ success: boolean; projects?: any[]; error?: string }>;
+    fetchProjectItems: (projectNumber: number, org?: string) => Promise<{ success: boolean; project?: any; error?: string }>;
     updateProjectItemStatus: (projectId: string, itemId: string, fieldId: string, optionId: string) => Promise<{ success: boolean; item?: any; error?: string }>;
     fetchOrgs: () => Promise<{ success: boolean; orgs?: Array<{ login: string; avatarUrl: string }>; error?: string }>;
     fetchRepoIssues: (owner: string, repo: string) => Promise<{ success: boolean; issues?: any[]; error?: string }>;

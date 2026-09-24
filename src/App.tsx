@@ -21,6 +21,7 @@ import {
   Trash2,
   Maximize2,
   Minimize2,
+  Square,
   Terminal as TerminalIcon,
   ArrowRight,
   ArrowLeft,
@@ -68,9 +69,13 @@ import { FileIcon, FolderIcon } from './components/FileIcon';
 import { PromptEditor, PromptEditorRef } from './components/PromptEditor';
 import { SidebarPanels } from './components/ide/SidebarPanels';
 import { ExtensionDetailsView } from './components/ide/ExtensionDetailsView';
-import { ProjectsSchedulerView } from './components/ProjectsSchedulerView';
+import { ProjectsSchedulerView, prefetchProjectsData } from './components/ProjectsSchedulerView';
 import { ProjectWorkspaceSelector } from './components/ide/ProjectWorkspaceSelector';
+import { HeaderProjectSelector, type HeaderActiveProjectInfo, type HeaderProjectItem } from './components/HeaderProjectSelector';
 import { OrchestrationCanvas } from './components/OrchestrationCanvas';
+import { DailySchedulerView } from './components/daily/DailySchedulerView';
+import DesignStudioView from './components/design2/DesignStudioView';
+import { CliTerminalView } from './components/CliTerminalView';
 import { ProjectTasksDockTab } from './components/dock/ProjectTasksDockTab';
 import { IssueDetailSidesheet } from './components/modals/IssueDetailSidesheet';
 import type { ProjectIssue } from './components/ProjectsSchedulerView';
@@ -127,7 +132,7 @@ import type {
 } from './types/ide';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'projetos' | 'orchestration' | 'daily' | 'equipmentos' | 'ide' | 'design'>('projetos');
+  const [activeTab, setActiveTab] = useState<'projetos' | 'orchestration' | 'daily' | 'ide' | 'cli' | 'design'>('projetos');
   const [activeTermTab, setActiveTermTab] = useState<'problems' | 'output' | 'debug' | 'terminal' | 'ports' | 'tasks'>('terminal');
 
   // Code Review (Diff View) state
@@ -142,6 +147,20 @@ export const App: React.FC = () => {
   const [newIssueTitle, setNewIssueTitle] = useState('');
   const [isCreatingIssue, setIsCreatingIssue] = useState(false);
 
+  // Sprints / Milestones dynamically extracted from current project issues
+  const projectMilestones = useMemo(() => {
+    const map = new Map<string, { title: string; number?: number }>();
+    gitIssues.forEach((issue) => {
+      if (issue.milestone?.title) {
+        const title = issue.milestone.title.trim();
+        if (!map.has(title.toLowerCase())) {
+          map.set(title.toLowerCase(), { title, number: issue.milestone.number });
+        }
+      }
+    });
+    return Array.from(map.values());
+  }, [gitIssues]);
+
   // Attached Task for AI Chat prompt
   const [attachedTask, setAttachedTask] = useState<{
     number: number;
@@ -154,7 +173,9 @@ export const App: React.FC = () => {
 
   // Git Branches state
   const [currentBranch, setCurrentBranch] = useState('main');
-  const [gitRepoName, setGitRepoName] = useState('ainaobra');
+  const [gitRepoName, setGitRepoName] = useState('aura-dev');
+  const [activeHeaderProject, setActiveHeaderProject] = useState<HeaderActiveProjectInfo | null>(null);
+  const [headerProjectsList, setHeaderProjectsList] = useState<HeaderProjectItem[]>([]);
   const [branchesList, setBranchesList] = useState<GitBranchItem[]>([]);
   const [isBranchModalOpen, setIsBranchModalOpen] = useState(false);
   const [branchSearchQuery, setBranchSearchQuery] = useState('');
@@ -162,37 +183,59 @@ export const App: React.FC = () => {
   const [isCreatingBranch, setIsCreatingBranch] = useState(false);
   const [isSyncingGit, setIsSyncingGit] = useState(false);
 
-  // Open Files in Monaco Editor
-  const [openFiles, setOpenFiles] = useState<OpenFileItem[]>([
-    {
-      id: '/Users/walancy/Documents/codes/Ainaobra/ainaobra/apps/wireframe/src/pages/WireframeLogin.tsx',
-      name: 'WireframeLogin.tsx',
-      path: '/Users/walancy/Documents/codes/Ainaobra/ainaobra/apps/wireframe/src/pages/WireframeLogin.tsx',
-      content: '',
-      language: 'typescript',
-      isDirty: false,
-    },
-    {
-      id: '/Users/walancy/Documents/codes/Ainaobra/ainaobra/apps/wireframe/src/App.tsx',
-      name: 'App.tsx',
-      path: '/Users/walancy/Documents/codes/Ainaobra/ainaobra/apps/wireframe/src/App.tsx',
-      content: '',
-      language: 'typescript',
-      isDirty: false,
-    },
-    {
-      id: '/Users/walancy/Documents/codes/Ainaobra/ainaobra/apps/ainaobra-api/src/main.ts',
-      name: 'main.ts',
-      path: '/Users/walancy/Documents/codes/Ainaobra/ainaobra/apps/ainaobra-api/src/main.ts',
-      content: '',
-      language: 'typescript',
-      isDirty: false,
-    },
-  ]);
-  const [activeFileId, setActiveFileId] = useState<string | null>(
-    '/Users/walancy/Documents/codes/Ainaobra/ainaobra/apps/wireframe/src/pages/WireframeLogin.tsx'
-  );
-  const activeFile = openFiles.find((f) => f.id === activeFileId) || openFiles[0];
+  // Open Files in Monaco Editor (isolated per project workspace)
+  const [openFiles, setOpenFiles] = useState<OpenFileItem[]>(() => {
+    try {
+      const savedWs = localStorage.getItem('ide_workspace_path');
+      const currentWs = (savedWs && !savedWs.toLowerCase().includes('ainaobra'))
+        ? savedWs
+        : '/Users/walancy/Documents/codes/devflow-desktop';
+      const saved = localStorage.getItem(`ide_open_files_${currentWs}`);
+      if (saved) {
+        const parsed: OpenFileItem[] = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const valid = parsed.filter((f) => f.path && f.path.startsWith(currentWs));
+          if (valid.length > 0) return valid;
+        }
+      }
+      if (currentWs === '/Users/walancy/Documents/codes/devflow-desktop') {
+        return [
+          {
+            id: '/Users/walancy/Documents/codes/devflow-desktop/src/App.tsx',
+            name: 'App.tsx',
+            path: '/Users/walancy/Documents/codes/devflow-desktop/src/App.tsx',
+            content: '',
+            language: 'typescript',
+            isDirty: false,
+          },
+          {
+            id: '/Users/walancy/Documents/codes/devflow-desktop/src/components/OrchestrationCanvas.tsx',
+            name: 'OrchestrationCanvas.tsx',
+            path: '/Users/walancy/Documents/codes/devflow-desktop/src/components/OrchestrationCanvas.tsx',
+            content: '',
+            language: 'typescript',
+            isDirty: false,
+          },
+        ];
+      }
+    } catch {}
+    return [];
+  });
+  const [activeFileId, setActiveFileId] = useState<string | null>(() => {
+    try {
+      const savedWs = localStorage.getItem('ide_workspace_path');
+      const currentWs = (savedWs && !savedWs.toLowerCase().includes('ainaobra'))
+        ? savedWs
+        : '/Users/walancy/Documents/codes/devflow-desktop';
+      const saved = localStorage.getItem(`ide_active_file_${currentWs}`);
+      if (saved && saved.startsWith(currentWs)) return saved;
+      if (currentWs === '/Users/walancy/Documents/codes/devflow-desktop') {
+        return '/Users/walancy/Documents/codes/devflow-desktop/src/App.tsx';
+      }
+    } catch {}
+    return null;
+  });
+  const activeFile = openFiles.find((f) => f.id === activeFileId) || (openFiles.length > 0 ? openFiles[0] : null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Auto-dismiss toast notification after 3.5 seconds
@@ -226,19 +269,22 @@ export const App: React.FC = () => {
   // Workspace & Explorer State
   const [workspacePath, setWorkspacePath] = useState<string>(() => {
     const saved = localStorage.getItem('ide_workspace_path');
-    if (saved && saved !== '/Users/walancy/Documents/codes/ainaobra' && saved !== '/Users/walancy/Documents/codes/Ainaobra') {
+    if (saved && !saved.toLowerCase().includes('ainaobra')) {
       return saved;
     }
-    return '/Users/walancy/Documents/codes/Ainaobra/ainaobra';
+    return '/Users/walancy/Documents/codes/devflow-desktop';
   });
+
+  // Pré-carrega projetos e tarefas em segundo plano para abertura instantânea (0ms de espera)
+  useEffect(() => {
+    prefetchProjectsData(workspacePath);
+  }, [workspacePath]);
   const [fileTree, setFileTree] = useState<ExplorerNode[]>([]);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     new Set([
-      '/Users/walancy/Documents/codes/Ainaobra/ainaobra',
-      '/Users/walancy/Documents/codes/Ainaobra/ainaobra/apps',
-      '/Users/walancy/Documents/codes/Ainaobra/ainaobra/apps/wireframe',
-      '/Users/walancy/Documents/codes/Ainaobra/ainaobra/apps/wireframe/src',
-      '/Users/walancy/Documents/codes/Ainaobra/ainaobra/apps/wireframe/src/pages',
+      '/Users/walancy/Documents/codes/devflow-desktop',
+      '/Users/walancy/Documents/codes/devflow-desktop/src',
+      '/Users/walancy/Documents/codes/devflow-desktop/src/components',
     ])
   );
   const [explorerMenuOpen, setExplorerMenuOpen] = useState(false);
@@ -322,12 +368,36 @@ export const App: React.FC = () => {
 
   // Real Terminal Working Directory and Execution State
   const [terminalCwd, setTerminalCwd] = useState<string>(() => {
-    const saved = localStorage.getItem('ide_terminal_cwd');
-    if (saved && saved !== '/Users/walancy/Documents/codes/ainaobra' && saved !== '/Users/walancy/Documents/codes/Ainaobra') {
+    const saved = localStorage.getItem('ide_workspace_path') || localStorage.getItem('ide_terminal_cwd');
+    if (saved && !saved.toLowerCase().includes('ainaobra')) {
       return saved;
     }
-    return '/Users/walancy/Documents/codes/Ainaobra/ainaobra';
+    return '/Users/walancy/Documents/codes/devflow-desktop';
   });
+
+  // Always synchronize terminal working directory and running PTY shells with active project workspace
+  useEffect(() => {
+    if (workspacePath) {
+      setTerminalCwd(workspacePath);
+      localStorage.setItem('ide_workspace_path', workspacePath);
+      localStorage.setItem('ide_terminal_cwd', workspacePath);
+      window.electronAPI?.pty?.setAllCwd?.(workspacePath);
+    }
+  }, [workspacePath]);
+
+  // Persiste os arquivos abertos e aba ativa por workspace
+  useEffect(() => {
+    if (workspacePath) {
+      try {
+        const projectFiles = openFiles.filter((f) => f.path && f.path.startsWith(workspacePath));
+        localStorage.setItem(`ide_open_files_${workspacePath}`, JSON.stringify(projectFiles));
+        if (activeFileId && activeFileId.startsWith(workspacePath)) {
+          localStorage.setItem(`ide_active_file_${workspacePath}`, activeFileId);
+        }
+      } catch {}
+    }
+  }, [openFiles, activeFileId, workspacePath]);
+
   const [terminalCommandHistory, setTerminalCommandHistory] = useState<string[]>([]);
   const [historyPointer, setHistoryPointer] = useState<number>(-1);
   const terminalScrollRef = useRef<HTMLDivElement>(null);
@@ -1056,7 +1126,7 @@ export const App: React.FC = () => {
       const pName =
         s.projectName ||
         (s.workspacePath ? s.workspacePath.split('/').filter(Boolean).pop() : undefined) ||
-        (workspacePath ? workspacePath.split('/').filter(Boolean).pop() : 'devflow-desktop');
+        (workspacePath ? workspacePath.split('/').filter(Boolean).pop() : 'Projeto');
 
       map.set(s.id, {
         id: s.id,
@@ -1080,7 +1150,7 @@ export const App: React.FC = () => {
           title: d.title || 'Conversa',
           provider: d.provider || 'antigravity',
           updatedAt: d.updatedAt || Date.now(),
-          projectName: d.projectName || (d.workspacePath ? d.workspacePath.split('/').filter(Boolean).pop() : 'devflow-desktop'),
+          projectName: d.projectName || (d.workspacePath ? d.workspacePath.split('/').filter(Boolean).pop() : 'Projeto'),
           workspacePath: d.workspacePath,
           model: d.model,
           isCurrent: d.id === activeChatSessionId,
@@ -1420,7 +1490,7 @@ export const App: React.FC = () => {
     setIsSettingsModalOpen(false);
     if (themePopupPos.x === 0 && themePopupPos.y === 0) {
       setThemePopupPos({
-        x: Math.max(20, window.innerWidth - 350),
+        x: Math.max(20, window.innerWidth - 410),
         y: 65,
       });
     }
@@ -1445,8 +1515,8 @@ export const App: React.FC = () => {
       if (!themePopupDragRef.current) return;
       const dx = e.clientX - themePopupDragRef.current.mouseX;
       const dy = e.clientY - themePopupDragRef.current.mouseY;
-      const popupWidth = 320;
-      const popupHeight = 310;
+      const popupWidth = 380;
+      const popupHeight = 350;
       const newX = Math.max(8, Math.min(window.innerWidth - popupWidth - 8, themePopupDragRef.current.startX + dx));
       const newY = Math.max(8, Math.min(window.innerHeight - popupHeight - 8, themePopupDragRef.current.startY + dy));
       setThemePopupPos({ x: newX, y: newY });
@@ -1640,7 +1710,7 @@ export const App: React.FC = () => {
   const [terminalCommand, setTerminalCommand] = useState('');
   const [debugCommand, setDebugCommand] = useState('');
   const [debugHistory, setDebugHistory] = useState<string[]>([
-    'Debugger listening on ws://127.0.0.1:9229/ainaobra-api',
+    'Debugger listening on ws://127.0.0.1:9229/aura-dev-api',
     'Debugger attached to process 58135 (Node.js runtime)',
   ]);
   const [terminalHistory, setTerminalHistory] = useState<string[]>([
@@ -1693,7 +1763,7 @@ export const App: React.FC = () => {
         } else if (action === 'run-claude') {
           setShowAiPanel(true);
           setSelectedModel('Claude Sonnet 5');
-          setAskPrompt('Execute uma análise completa do projeto ainaobra.');
+          setAskPrompt('Execute uma análise completa do projeto Aura Dev.');
           setTimeout(() => inputRef.current?.focus(), 50);
         } else if (action === 'run-agy') {
           setShowAiPanel(true);
@@ -1888,7 +1958,7 @@ export const App: React.FC = () => {
     };
     monaco.editor.onDidChangeMarkers(updateMarkers);
     updateMarkers();
-    monaco.editor.defineTheme('figma-ainaobra', {
+    monaco.editor.defineTheme('aura-dev-dark', {
       base: 'vs-dark',
       inherit: true,
       rules: [
@@ -1911,7 +1981,7 @@ export const App: React.FC = () => {
         'editorGutter.background': '#101010',
       },
     });
-    monaco.editor.setTheme('figma-ainaobra');
+    monaco.editor.setTheme('aura-dev-dark');
   };
 
   const handleNewTerminalSession = (
@@ -1919,7 +1989,7 @@ export const App: React.FC = () => {
     name?: string,
     initialCommand?: string
   ) => {
-    const newId = String(Date.now());
+    const newId = `term_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const pid = Math.floor(60000 + Math.random() * 5000);
     const cmd =
       type === 'bash'
@@ -1986,7 +2056,7 @@ export const App: React.FC = () => {
 
   const handleSplitSession = (sessionId: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const newId = String(Date.now());
+    const newId = `term_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const pid = Math.floor(60000 + Math.random() * 5000);
     setTerminalSessions((prev) => {
       const parent = prev.find((s) => s.id === sessionId);
@@ -2045,13 +2115,13 @@ export const App: React.FC = () => {
           isDirectory: true,
           children: [
             {
-              name: 'ainaobra-api',
-              path: `${dirPath}/apps/ainaobra-api`,
+              name: 'aura-dev-api',
+              path: `${dirPath}/apps/aura-dev-api`,
               isDirectory: true,
               children: [
-                { name: 'app.service.ts', path: `${dirPath}/apps/ainaobra-api/src/app.service.ts`, isDirectory: false, extension: '.ts' },
-                { name: 'app.service.spec.ts', path: `${dirPath}/apps/ainaobra-api/src/app.service.spec.ts`, isDirectory: false, extension: '.ts' },
-                { name: 'main.ts', path: `${dirPath}/apps/ainaobra-api/src/main.ts`, isDirectory: false, extension: '.ts' },
+                { name: 'app.service.ts', path: `${dirPath}/apps/aura-dev-api/src/app.service.ts`, isDirectory: false, extension: '.ts' },
+                { name: 'app.service.spec.ts', path: `${dirPath}/apps/aura-dev-api/src/app.service.spec.ts`, isDirectory: false, extension: '.ts' },
+                { name: 'main.ts', path: `${dirPath}/apps/aura-dev-api/src/main.ts`, isDirectory: false, extension: '.ts' },
               ],
             },
           ],
@@ -2075,6 +2145,59 @@ export const App: React.FC = () => {
   useEffect(() => {
     loadWorkspaceTree(workspacePath);
   }, [workspacePath, loadWorkspaceTree]);
+
+  // Alterna o workspace e projeto ativo globalmente
+  const handleSelectWorkspace = useCallback(
+    async (newPath: string, repoName?: string) => {
+      // 1. Salva os arquivos abertos no workspace anterior antes de alternar
+      if (workspacePath && workspacePath !== newPath) {
+        try {
+          const currentProjectFiles = openFiles.filter((f) => f.path && f.path.startsWith(workspacePath));
+          localStorage.setItem(`ide_open_files_${workspacePath}`, JSON.stringify(currentProjectFiles));
+          if (activeFileId && activeFileId.startsWith(workspacePath)) {
+            localStorage.setItem(`ide_active_file_${workspacePath}`, activeFileId);
+          }
+        } catch {}
+      }
+
+      setWorkspacePath(newPath);
+      setTerminalCwd(newPath);
+      if (repoName) {
+        setGitRepoName(repoName);
+      }
+      localStorage.setItem('ide_workspace_path', newPath);
+      localStorage.setItem('ide_terminal_cwd', newPath);
+      await loadWorkspaceTree(newPath);
+
+      // 2. Carrega os arquivos abertos salvos para o novo workspace (ou limpa os arquivos do workspace antigo)
+      try {
+        const savedFilesJson = localStorage.getItem(`ide_open_files_${newPath}`);
+        const savedActiveId = localStorage.getItem(`ide_active_file_${newPath}`);
+        if (savedFilesJson) {
+          const parsed = JSON.parse(savedFilesJson);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const validFiles = parsed.filter((f: any) => f.path && f.path.startsWith(newPath));
+            setOpenFiles(validFiles);
+            setActiveFileId(savedActiveId && savedActiveId.startsWith(newPath) ? savedActiveId : (validFiles[0]?.id || null));
+          } else {
+            setOpenFiles([]);
+            setActiveFileId(null);
+          }
+        } else {
+          setOpenFiles([]);
+          setActiveFileId(null);
+        }
+      } catch {
+        setOpenFiles([]);
+        setActiveFileId(null);
+      }
+
+      const displayName = repoName || newPath.split('/').filter(Boolean).pop() || 'Projeto';
+      setToastMessage(`Projeto ativo: ${displayName}`);
+      setTimeout(() => setToastMessage(null), 3000);
+    },
+    [loadWorkspaceTree, workspacePath, openFiles, activeFileId]
+  );
 
   // Open File in Monaco Editor
   const handleOpenFile = async (filePath: string, fileName?: string, existingContent?: string) => {
@@ -2107,8 +2230,8 @@ export const App: React.FC = () => {
     setOpenFiles((prev) => [...prev, newFile]);
     setActiveFileId(newFile.id);
 
-    // If opening a file belonging to a git project, automatically synchronize workspacePath & terminalCwd
-    if (filePath && filePath.startsWith('/')) {
+    // If opening a file and no workspacePath is set yet, automatically synchronize workspacePath & terminalCwd
+    if (!workspacePath && filePath && filePath.startsWith('/')) {
       const parts = filePath.split('/');
       parts.pop();
       const fileDir = parts.join('/');
@@ -2116,7 +2239,7 @@ export const App: React.FC = () => {
         window.electronAPI.shell.exec('git rev-parse --show-toplevel', fileDir).then((res) => {
           if (res.exitCode === 0 && res.stdout.trim()) {
             const root = res.stdout.trim();
-            if (root && root !== workspacePath) {
+            if (root) {
               setWorkspacePath(root);
               setTerminalCwd(root);
               localStorage.setItem('ide_workspace_path', root);
@@ -2516,8 +2639,8 @@ export const App: React.FC = () => {
   }, []);
 
   const handleOpenIssueInBrowser = (issueNumber: number) => {
-    const repo = gitRepoName || 'appmoove/ainaobra';
-    const cleanRepo = repo.includes('/') ? repo : `appmoove/${repo}`;
+    const repo = gitRepoName || 'Walancy/aura-dev';
+    const cleanRepo = repo.includes('/') ? repo : `Walancy/${repo}`;
     const url = `https://github.com/${cleanRepo}/issues/${issueNumber}`;
     if (window.electronAPI?.shell?.openExternal) {
       window.electronAPI.shell.openExternal(url);
@@ -2552,7 +2675,8 @@ export const App: React.FC = () => {
 
     const storedSprint = (() => {
       try {
-        const raw = localStorage.getItem('devflow_issue_sprints');
+        const scopedKey = gitRepoName ? `devflow_issue_sprints_${gitRepoName}` : 'devflow_issue_sprints';
+        const raw = localStorage.getItem(scopedKey);
         const map = raw ? JSON.parse(raw) : {};
         return map[rawIssue.number];
       } catch {
@@ -2560,16 +2684,8 @@ export const App: React.FC = () => {
       }
     })();
 
-    const milestoneTitle =
-      storedSprint ||
-      rawIssue.milestone?.title ||
-      (rawIssue.number >= 101 && rawIssue.number <= 107
-        ? 'Sprint 01 - Aina Obra'
-        : 'Sprint2 - Cadastro e Perfis de Acesso');
-
-    const milestoneNumber =
-      rawIssue.milestone?.number ??
-      (milestoneTitle.includes('1') ? 1 : milestoneTitle.includes('2') ? 2 : undefined);
+    const milestoneTitle = storedSprint || rawIssue.milestone?.title || undefined;
+    const milestoneNumber = rawIssue.milestone?.number;
 
     const mapped: ProjectIssue = {
       id: `#${rawIssue.number}`,
@@ -3779,9 +3895,28 @@ export const App: React.FC = () => {
     localStorage.setItem('ide_auto_refresh_git_status', String(autoRefreshGitStatus));
   }, [autoRefreshGitStatus]);
 
+  const handleCancelAiExecutionRef = useRef<() => void>(() => {});
+
   // Global shortcuts (Antigravity & VS Code layout toggles & Quick Open & Settings)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Interrompe geração da IA se estiver em execução (Ctrl+C ou Escape)
+      if (isAiExecuting) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          handleCancelAiExecutionRef.current();
+          return;
+        }
+        if (e.ctrlKey && !e.metaKey && (e.key === 'c' || e.key === 'C')) {
+          const selection = window.getSelection()?.toString();
+          if (!selection) {
+            e.preventDefault();
+            handleCancelAiExecutionRef.current();
+            return;
+          }
+        }
+      }
+
       // Escape: Exit Zen mode, Close Theme Popup, Settings Modal, Settings Menu, Quick Open, or Customize Layout
       if (e.key === 'Escape') {
         if (chatHistoryModalOpen) {
@@ -3953,7 +4088,7 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleSaveActiveFile, isCustomizeLayoutOpen, isQuickOpenOpen, isSettingsMenuOpen, isSettingsModalOpen, isThemePopupOpen, isZenMode, chatHistoryModalOpen, handleOpenChatHistoryModal, handleToggleZenMode, handleToggleFullscreen, handleToggleThemeMode]);
+  }, [isAiExecuting, handleSaveActiveFile, isCustomizeLayoutOpen, isQuickOpenOpen, isSettingsMenuOpen, isSettingsModalOpen, isThemePopupOpen, isZenMode, chatHistoryModalOpen, handleOpenChatHistoryModal, handleToggleZenMode, handleToggleFullscreen, handleToggleThemeMode]);
 
   // Check installed CLIs on native machine: startup, window focus, PTY command exits, and low-frequency poll
   useEffect(() => {
@@ -4044,7 +4179,7 @@ export const App: React.FC = () => {
       const timer = setTimeout(() => {
         const projectName =
           activeSession?.projectName ||
-          (workspacePath ? workspacePath.split('/').filter(Boolean).pop() : 'devflow-desktop');
+          (workspacePath ? workspacePath.split('/').filter(Boolean).pop() : 'Projeto');
 
         window.electronAPI.ai.saveChatLocally({
           id: activeChatSessionId,
@@ -4750,11 +4885,36 @@ export const App: React.FC = () => {
 
 
 
+  const aiExecutionIdRef = useRef<number>(0);
+
+  // Interrompe a execução atual da IA (como um Ctrl+C)
+  const handleCancelAiExecution = async () => {
+    if (!isAiExecuting) return;
+    aiExecutionIdRef.current = 0;
+    setIsAiExecuting(false);
+    try {
+      if (window.electronAPI?.ai?.cancel) {
+        await window.electronAPI.ai.cancel();
+      }
+    } catch (err) {
+      console.warn('[handleCancelAiExecution] Erro ao cancelar execução da IA:', err);
+    }
+    pushAiMessage({
+      type: 'system',
+      text: 'Geração interrompida pelo usuário (Ctrl+C).',
+      timestamp: Date.now(),
+    });
+    setToastMessage('Geração interrompida');
+  };
+  handleCancelAiExecutionRef.current = handleCancelAiExecution;
+
   // Execute AI CLI command (e.g., claude, agy, gemini) or check if installed
   const handleAiSubmit = async (e?: React.FormEvent, promptOverride?: string) => {
     if (e) e.preventDefault();
     const prompt = (promptOverride !== undefined ? promptOverride : promptEditorRef.current ? promptEditorRef.current.getValue() : askPrompt).trim();
     if ((!prompt && attachedFiles.length === 0 && attachedImages.length === 0 && !attachedTask) || isAiExecuting) return;
+
+    const thisExecutionId = ++aiExecutionIdRef.current;
 
     // Snapshot attached files, images & task, then clear prompt and attachments
     const currentAttachedFiles = [...attachedFiles];
@@ -4766,17 +4926,50 @@ export const App: React.FC = () => {
     setAskPrompt('');
     promptEditorRef.current?.clear();
 
-    // Determine target provider: alternate if orchestrator active, or use selected
+    // Determine target provider:
+    // If orchestrator is active, follow orchestrator configuration (nodes, models, tools, memory from Orchestration screen)
+    // If orchestrator is NOT active, strictly use selected AI CLI
     let currentProvider = AI_PROVIDERS.find((p) => p.id === selectedAiProvider) || AI_PROVIDERS[0];
     let isDelegatedByOrchestrator = false;
+    let orchestrationConfig: any = null;
+    let orchestratorTargetModel: string | undefined = undefined;
 
     if (isOrchestratorActive) {
-      const activeOrchestrated = AI_PROVIDERS.filter((p) => orchestratedProviders[p.id]);
-      if (activeOrchestrated.length > 0) {
-        currentProvider = activeOrchestrated[orchestratorIndex % activeOrchestrated.length];
-        setOrchestratorIndex((prev) => prev + 1);
-        isDelegatedByOrchestrator = true;
+      try {
+        const savedNodes = localStorage.getItem('devflow_orchestration_nodes_v9');
+        const savedEdges = localStorage.getItem('devflow_orchestration_edges_v9');
+        if (savedNodes) {
+          const nodes = JSON.parse(savedNodes);
+          const edges = savedEdges ? JSON.parse(savedEdges) : [];
+          orchestrationConfig = { nodes, edges };
+
+          // Follow Model Node configured in the Orchestration Canvas
+          const modelNode = nodes.find((n: any) => n.type === 'model' && n.status !== 'disabled');
+          if (modelNode) {
+            if (modelNode.provider) {
+              const matchedProv = AI_PROVIDERS.find((p) => p.id === modelNode.provider);
+              if (matchedProv) {
+                currentProvider = matchedProv;
+              }
+            }
+            if (modelNode.config?.model) {
+              orchestratorTargetModel = modelNode.config.model;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to parse orchestration configuration:', e);
       }
+
+      // If no designated model node in canvas, alternate among active orchestrated providers
+      if (!orchestratorTargetModel) {
+        const activeOrchestrated = AI_PROVIDERS.filter((p) => orchestratedProviders[p.id]);
+        if (activeOrchestrated.length > 0) {
+          currentProvider = activeOrchestrated[orchestratorIndex % activeOrchestrated.length];
+          setOrchestratorIndex((prev) => prev + 1);
+        }
+      }
+      isDelegatedByOrchestrator = true;
     }
 
     const cliCmd = currentProvider.cliCommand;
@@ -4796,6 +4989,14 @@ export const App: React.FC = () => {
       changedFiles?: ChangedFileItem[];
       attachedFiles?: AttachedFileItem[];
       attachedImages?: AttachedImageItem[];
+      attachedTask?: {
+        number: number;
+        title: string;
+        body?: string;
+        state?: string;
+        labels?: Array<{ name: string; color?: string }>;
+        url?: string;
+      };
     }) => {
       if (msg.text?.toLowerCase().includes('executando')) return;
       const messageWithProvider: ChatMessageItem = {
@@ -4812,7 +5013,7 @@ export const App: React.FC = () => {
             updated[idx] = {
               ...curr,
               provider: currentProvider.id,
-              title: curr.title === 'Chat Inicial' || curr.title === 'Nova Conversa' ? (prompt || (currentAttachedFiles[0]?.name || 'Nova Conversa')).slice(0, 36) : curr.title,
+              title: curr.title === 'Chat Inicial' || curr.title === 'Nova Conversa' ? (prompt || (currentAttachedTask ? `#${currentAttachedTask.number} ${currentAttachedTask.title}` : (currentAttachedFiles[0]?.name || 'Nova Conversa'))).slice(0, 36) : curr.title,
               updatedAt: Date.now(),
               history: next,
             };
@@ -4820,7 +5021,7 @@ export const App: React.FC = () => {
           } else {
             const newSession: ChatSessionItem = {
               id: activeChatSessionId,
-              title: (prompt || (currentAttachedFiles[0]?.name || 'Nova Conversa')).slice(0, 36),
+              title: (prompt || (currentAttachedTask ? `#${currentAttachedTask.number} ${currentAttachedTask.title}` : (currentAttachedFiles[0]?.name || 'Nova Conversa'))).slice(0, 36),
               provider: currentProvider.id,
               updatedAt: Date.now(),
               history: next,
@@ -4833,13 +5034,14 @@ export const App: React.FC = () => {
     };
 
     // Add user message to AI history & session with attached items
-    const userDisplayPrompt = prompt || (currentAttachedTask ? `Resolver Tarefa #${currentAttachedTask.number}: ${currentAttachedTask.title}` : currentAttachedFiles.length > 0 ? `Analise o(s) arquivo(s): ${currentAttachedFiles.map((f) => f.name).join(', ')}` : 'Analise a imagem anexada.');
+    const userDisplayPrompt = prompt || (currentAttachedTask ? 'Resolver esta tarefa' : currentAttachedFiles.length > 0 ? `Analise o(s) arquivo(s): ${currentAttachedFiles.map((f) => f.name).join(', ')}` : 'Analise a imagem anexada.');
     pushAiMessage({
       type: 'user',
       text: userDisplayPrompt,
       command: `${cliCmd}`,
       attachedFiles: currentAttachedFiles.length > 0 ? currentAttachedFiles : undefined,
       attachedImages: currentAttachedImages.length > 0 ? currentAttachedImages : undefined,
+      attachedTask: currentAttachedTask ? { ...currentAttachedTask } : undefined,
     });
 
     // Check if provider has exhausted credits (0% daily or 0% weekly)
@@ -4867,9 +5069,10 @@ export const App: React.FC = () => {
     }
 
     if (isDelegatedByOrchestrator) {
+      const modelLabel = orchestratorTargetModel || selectedModel || currentProvider.name;
       pushAiMessage({
         type: 'system',
-        text: `[Orquestrador: Tarefa alternada para ${currentProvider.name}]`,
+        text: `[Orquestrador Ativo: Seguindo fluxo e nós configurados na tela de Orquestração (${currentProvider.name} • ${modelLabel})]`,
       });
     }
 
@@ -4927,39 +5130,35 @@ export const App: React.FC = () => {
         const currentModelData = activeModels[currentProvider.id];
         const activeModelId = currentModelData?.currentModelId;
 
-        // 1. Resolve real project directory dynamically (via git rev-parse or active file)
+        // 1. Resolve real project directory dynamically:
+        // The selected workspacePath is the PRIMARY source of truth.
         let effectiveCwd = workspacePath;
-        if (activeFile?.path && activeFile.path.startsWith('/')) {
-          const parts = activeFile.path.split('/');
-          parts.pop();
-          const fileDir = parts.join('/');
-          try {
-            const revRes = await window.electronAPI.shell.exec('git rev-parse --show-toplevel', fileDir);
-            if (revRes.exitCode === 0 && revRes.stdout.trim()) {
-              effectiveCwd = revRes.stdout.trim();
-            } else {
+        if (!effectiveCwd) {
+          if (activeFile?.path && activeFile.path.startsWith('/')) {
+            const parts = activeFile.path.split('/');
+            parts.pop();
+            const fileDir = parts.join('/');
+            try {
+              const revRes = await window.electronAPI.shell.exec('git rev-parse --show-toplevel', fileDir);
+              if (revRes.exitCode === 0 && revRes.stdout.trim()) {
+                effectiveCwd = revRes.stdout.trim();
+              } else {
+                effectiveCwd = fileDir;
+              }
+            } catch {
               effectiveCwd = fileDir;
             }
-          } catch {
-            effectiveCwd = fileDir || workspacePath;
           }
-        } else if (workspacePath) {
-          try {
-            const revRes = await window.electronAPI.shell.exec('git rev-parse --show-toplevel', workspacePath);
-            if (revRes.exitCode === 0 && revRes.stdout.trim()) {
-              effectiveCwd = revRes.stdout.trim();
-            }
-          } catch {}
         }
 
         // Correct outdated / non-git parent path
-        if (!effectiveCwd || effectiveCwd === '/Users/walancy/Documents/codes/ainaobra' || effectiveCwd === '/Users/walancy/Documents/codes/Ainaobra') {
-          effectiveCwd = '/Users/walancy/Documents/codes/Ainaobra/ainaobra';
+        if (!effectiveCwd || effectiveCwd.toLowerCase().includes('ainaobra')) {
+          effectiveCwd = '/Users/walancy/Documents/codes/devflow-desktop';
         }
 
-        // Detect subproject/app folder inside monorepo if applicable (e.g. apps/wireframe)
+        // Detect subproject/app folder inside monorepo if applicable (only within current project)
         let appSubDir = '';
-        if (activeFile?.path && activeFile.path.includes('/apps/')) {
+        if (activeFile?.path && activeFile.path.startsWith(effectiveCwd) && activeFile.path.includes('/apps/')) {
           const match = activeFile.path.match(/(^.*\/apps\/[^/]+)/);
           if (match) {
             appSubDir = match[1];
@@ -4968,7 +5167,7 @@ export const App: React.FC = () => {
 
         // Keep IDE terminal & workspace state synchronized
         setTerminalCwd(effectiveCwd);
-        if (workspacePath !== effectiveCwd) {
+        if (!workspacePath) {
           setWorkspacePath(effectiveCwd);
           localStorage.setItem('ide_workspace_path', effectiveCwd);
           localStorage.setItem('ide_terminal_cwd', effectiveCwd);
@@ -5070,25 +5269,51 @@ Por favor, considere as especificações desta tarefa e implemente a solução n
           attachedContextBlock += mentionsContextBlock;
         }
 
+        const projectName = effectiveCwd.split('/').filter(Boolean).pop() || 'Projeto';
+        const projectOpenFiles = openFiles.filter((f) => f.path && f.path.startsWith(effectiveCwd));
+        const projectActiveFile = (activeFile?.path && activeFile.path.startsWith(effectiveCwd)) ? activeFile : null;
+
         if (!prompt.startsWith('/')) {
           promptWithContext = `[Contexto do Projeto Aberto no DevFlow]:
 ${modeInstruction}
 
+- Projeto Ativo: ${projectName}
 - Diretório Raiz do Projeto: ${effectiveCwd}
 ${appSubDir ? `- Módulo/Subaplicação em Edição: ${appSubDir}` : ''}
-${activeFile?.path ? `- Arquivo Aberto no Editor: ${activeFile.path}` : ''}
-${openFiles.length > 0 ? `- Arquivos Abertos: ${openFiles.map((f) => f.path).filter(Boolean).join(', ')}` : ''}${attachedContextBlock}
+${projectActiveFile?.path ? `- Arquivo Aberto no Editor: ${projectActiveFile.path}` : ''}
+${projectOpenFiles.length > 0 ? `- Arquivos Abertos: ${projectOpenFiles.map((f) => f.path).filter(Boolean).join(', ')}` : ''}${attachedContextBlock}
 
 INSTRUÇÕES OBRIGATÓRIAS:
-1. Você está executando DIRETAMENTE no diretório do projeto: "${effectiveCwd}".
+1. Você está executando DIRETAMENTE no diretório do projeto: "${effectiveCwd}" (${projectName}).
 2. Crie, leia, modifique e organize TODOS os arquivos e pastas SEMPRE dentro deste projeto ("${effectiveCwd}"${appSubDir ? ` ou mais especificamente em "${appSubDir}"` : ''}).
-3. NUNCA crie arquivos na pasta pessoal do usuário (~ ou /Users/walancy) ou fora da raiz deste projeto.
+3. NUNCA assuma outro projeto nem crie arquivos na pasta pessoal do usuário (~ ou /Users/walancy) ou fora da raiz deste projeto.
 4. Ao criar novos componentes, páginas ou utilitários, coloque-os na estrutura de pastas correspondente do projeto atual.
 
 Instrução do Usuário:
 ${prompt || userDisplayPrompt}`;
         } else {
           promptWithContext += attachedContextBlock;
+        }
+
+        if (isOrchestratorActive && orchestrationConfig?.nodes) {
+          const agentNode = orchestrationConfig.nodes.find((n: any) => n.type === 'agent' && n.status !== 'disabled');
+          const toolNodes = orchestrationConfig.nodes.filter((n: any) => n.type === 'tool' && n.status !== 'disabled');
+          const memoryNode = orchestrationConfig.nodes.find((n: any) => n.type === 'memory' && n.status !== 'disabled');
+
+          let orchBlock = `\n[Configuração do Fluxo de Orquestração DevFlow]:\n`;
+          if (agentNode) {
+            orchBlock += `- Agente Coordenador: ${agentNode.title || 'Agente Coordenador'}${agentNode.subtitle ? ` (${agentNode.subtitle})` : ''}\n`;
+            if (agentNode.config?.instructions) {
+              orchBlock += `- Diretrizes do Agente: ${agentNode.config.instructions}\n`;
+            }
+          }
+          if (toolNodes.length > 0) {
+            orchBlock += `- Ferramentas Conectadas: ${toolNodes.map((t: any) => `${t.title}${t.config?.command ? ` (\`${t.config.command}\`)` : ''}`).join(', ')}\n`;
+          }
+          if (memoryNode) {
+            orchBlock += `- Contexto de Memória: ${memoryNode.title || 'Ativo'}\n`;
+          }
+          promptWithContext = `${orchBlock}\n${promptWithContext}`;
         }
 
         const mentionedDirFlags = mentionedFilesData
@@ -5143,16 +5368,30 @@ ${prompt || userDisplayPrompt}`;
               })
               .filter(Boolean),
           ];
+
+          const targetModel = isOrchestratorActive && orchestratorTargetModel
+            ? orchestratorTargetModel
+            : (activeModelId && !prompt.startsWith('/') ? activeModelId : undefined);
+
           execRes = await window.electronAPI.ai.runCli({
             cliCmd,
             prompt: promptWithContext,
-            model: activeModelId && !prompt.startsWith('/') ? activeModelId : undefined,
+            model: targetModel,
             cwd: effectiveCwd,
             additionalDirs: additionalDirsList,
+            useOrchestrator: isOrchestratorActive,
+            orchestratorConfig: orchestrationConfig,
           });
         } else {
           execRes = await window.electronAPI.shell.exec(fullCommand, effectiveCwd);
         }
+
+        if (aiExecutionIdRef.current !== thisExecutionId || (execRes as any)?.cancelled) {
+          // A geração foi cancelada pelo usuário! Não renderiza mensagem da IA.
+          setIsAiExecuting(false);
+          return;
+        }
+
         const durationMs = Date.now() - startTime;
         const durationSec = Math.max(1, Math.round(durationMs / 1000));
         const workedDuration = durationSec >= 60 ? `${Math.floor(durationSec / 60)}m ${durationSec % 60}s` : `${durationSec}s`;
@@ -5455,8 +5694,8 @@ ${prompt || userDisplayPrompt}`;
               { id: 'projetos', label: 'Projetos' },
               { id: 'orchestration', label: 'Orquestração' },
               { id: 'daily', label: 'Daily' },
-              { id: 'equipmentos', label: 'Equipmentos' },
               { id: 'ide', label: 'IDE' },
+              { id: 'cli', label: 'CLI' },
               { id: 'design', label: 'Design' },
             ].map((t) => {
               const isActive = activeTab === t.id;
@@ -5498,6 +5737,21 @@ ${prompt || userDisplayPrompt}`;
               );
             })}
           </div>
+
+          {/* Seletor de Projeto Ativo na Header */}
+          <HeaderProjectSelector
+            workspacePath={workspacePath}
+            onSelectWorkspace={handleSelectWorkspace}
+            themeTokens={themeTokens}
+            isEffectiveDark={isEffectiveDark}
+            accentColor={accentColor}
+            onToast={(msg) => {
+              setToastMessage(msg);
+              setTimeout(() => setToastMessage(null), 3000);
+            }}
+            onActiveProjectChange={setActiveHeaderProject}
+            onProjectsListChange={setHeaderProjectsList}
+          />
         </div>
 
         {/* Right: Layout Icons, Dividers, Profile */}
@@ -6676,18 +6930,18 @@ ${prompt || userDisplayPrompt}`;
       {/* ============================================================ */}
       {/* 2. MAIN CONTENT AREA (RESIZABLE COLUMNS & TERMINAL)         */}
       {/* ============================================================ */}
-      {activeTab === 'ide' ? (
-        <div
-          style={{
-            alignSelf: 'stretch',
-            flex: '1 1 0',
-            justifyContent: 'flex-start',
-            alignItems: 'center',
-            display: 'inline-flex',
-            minHeight: 0,
-            width: '100%',
-          }}
-        >
+      {/* 2.1 IDE Container (Mantido montado para preservar editores, terminais e chat) */}
+      <div
+        style={{
+          alignSelf: 'stretch',
+          flex: '1 1 0',
+          justifyContent: 'flex-start',
+          alignItems: 'center',
+          display: activeTab === 'ide' ? 'inline-flex' : 'none',
+          minHeight: 0,
+          width: '100%',
+        }}
+      >
           {/* ---------------------------------------------------- */}
           {/* Activity Bar (Vertical Left Strip)                   */}
           {/* ---------------------------------------------------- */}
@@ -7207,26 +7461,6 @@ ${prompt || userDisplayPrompt}`;
                   />
                 ) : (
                   <>
-                    <ProjectWorkspaceSelector
-                      workspacePath={workspacePath}
-                      onSelectWorkspace={async (newPath, repoName) => {
-                        setWorkspacePath(newPath);
-                        setTerminalCwd(newPath);
-                        localStorage.setItem('ide_workspace_path', newPath);
-                        localStorage.setItem('ide_terminal_cwd', newPath);
-                        await loadWorkspaceTree(newPath);
-                        setToastMessage(`Projeto ativo: ${repoName || newPath.split('/').pop()}`);
-                        setTimeout(() => setToastMessage(null), 3000);
-                      }}
-                      themeTokens={themeTokens}
-                      isEffectiveDark={isEffectiveDark}
-                      accentColor={accentColor}
-                      onToast={(msg) => {
-                        setToastMessage(msg);
-                        setTimeout(() => setToastMessage(null), 3000);
-                      }}
-                    />
-
                     {/* Top Explorer Card */}
                     <div
                   style={{
@@ -8505,7 +8739,7 @@ ${prompt || userDisplayPrompt}`;
                       original={activeReview.originalContent}
                       modified={activeReview.modifiedContent}
                       language={getFileLanguage(activeReview.files[activeReview.currentIndex]?.name || '')}
-                      theme={isEffectiveDark ? 'figma-ainaobra' : 'light'}
+                      theme={isEffectiveDark ? 'aura-dev-dark' : 'light'}
                       options={{
                         fontSize: editorFontSize,
                         fontFamily: 'JetBrains Mono, Menlo, monospace',
@@ -8532,7 +8766,7 @@ ${prompt || userDisplayPrompt}`;
                         height="100%"
                         language={activeFile.language}
                         value={activeFile.content}
-                        theme={isEffectiveDark ? 'figma-ainaobra' : 'light'}
+                        theme={isEffectiveDark ? 'aura-dev-dark' : 'light'}
                         onChange={handleEditorChange}
                         onMount={handleEditorMount}
                         options={{
@@ -8583,7 +8817,7 @@ ${prompt || userDisplayPrompt}`;
                               height="100%"
                               language={secFile.language}
                               value={secFile.content}
-                              theme={isEffectiveDark ? 'figma-ainaobra' : 'light'}
+                              theme={isEffectiveDark ? 'aura-dev-dark' : 'light'}
                               onChange={(val) => {
                                 if (val !== undefined) {
                                   setOpenFiles((prev) => prev.map((f) => (f.id === secFile.id ? { ...f, content: val, isDirty: true } : f)));
@@ -8616,7 +8850,7 @@ ${prompt || userDisplayPrompt}`;
                       height="100%"
                       language={activeFile.language}
                       value={activeFile.content}
-                      theme={isEffectiveDark ? 'figma-ainaobra' : 'light'}
+                      theme={isEffectiveDark ? 'aura-dev-dark' : 'light'}
                       onChange={handleEditorChange}
                       onMount={handleEditorMount}
                       options={{
@@ -8660,7 +8894,7 @@ ${prompt || userDisplayPrompt}`;
                   height="100%"
                   language={activeFile.language}
                   value={activeFile.content}
-                  theme={isEffectiveDark ? 'figma-ainaobra' : 'light'}
+                  theme={isEffectiveDark ? 'aura-dev-dark' : 'light'}
                   onChange={handleEditorChange}
                   onMount={handleEditorMount}
                   options={{
@@ -8777,14 +9011,23 @@ ${prompt || userDisplayPrompt}`;
                         transition: 'background 0.2s ease',
                       }}
                     >
-                      {[
-                        { id: 'problems', label: 'Problems' },
-                        { id: 'output', label: 'Output' },
-                        { id: 'debug', label: 'Debug console' },
-                        { id: 'terminal', label: 'Terminal' },
-                        { id: 'ports', label: 'Ports' },
-                        { id: 'tasks', label: 'Tarefas' },
-                      ].map((st) => {
+                      {(() => {
+                        const problemsCount = editorErrors + editorWarnings;
+                        const tasksCount = gitIssues.length > 0 
+                          ? gitIssues.length 
+                          : (workspaceGitInfo?.issuesCount !== undefined && workspaceGitInfo.issuesCount > 0 
+                              ? workspaceGitInfo.issuesCount 
+                              : (isLoadingIssues ? undefined : 0));
+
+                        return [
+                          { id: 'problems', label: 'Problems', count: problemsCount > 0 ? problemsCount : undefined },
+                          { id: 'output', label: 'Output' },
+                          { id: 'debug', label: 'Debug console' },
+                          { id: 'terminal', label: 'Terminal' },
+                          { id: 'ports', label: 'Ports' },
+                          { id: 'tasks', label: 'Tarefas', count: tasksCount },
+                        ];
+                      })().map((st) => {
                         const isActive = activeTermTab === st.id;
                         return (
                           <div
@@ -8803,6 +9046,7 @@ ${prompt || userDisplayPrompt}`;
                               justifyContent: 'center',
                               alignItems: 'center',
                               display: 'flex',
+                              gap: 6,
                               cursor: 'pointer',
                               whiteSpace: 'nowrap',
                               flexShrink: 0,
@@ -8821,6 +9065,29 @@ ${prompt || userDisplayPrompt}`;
                             >
                               {st.label}
                             </div>
+                            {st.count !== undefined && (
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, sans-serif',
+                                  fontWeight: '600',
+                                  padding: '0.5px 5.5px',
+                                  borderRadius: 10,
+                                  lineHeight: '13px',
+                                  height: 14,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  background: isActive
+                                    ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.18)' : 'rgba(0, 0, 0, 0.12)')
+                                    : (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'),
+                                  color: isActive ? themeTokens.textPrimary : themeTokens.textSecondary,
+                                  transition: 'all 0.15s ease',
+                                }}
+                              >
+                                {st.count}
+                              </span>
+                            )}
                           </div>
                         );
                       })}
@@ -9779,7 +10046,7 @@ ${prompt || userDisplayPrompt}`;
                       color: themeTokens.textSecondary,
                     }}
                   >
-                    <div style={{ color: accentColor }}>[Ainaobra Build Server] Compilando ambiente...</div>
+                    <div style={{ color: accentColor }}>[Aura Dev Build Server] Compilando ambiente...</div>
                     <div>[Nest] 58135 - 09/16/2026, 10:00:00 AM LOG [NestFactory] Starting Nest application...</div>
                     <div>[Nest] 58135 - 09/16/2026, 10:00:01 AM LOG [InstanceLoader] ConfigHostModule dependencies initialized</div>
                     <div>[Nest] 58135 - 09/16/2026, 10:00:01 AM LOG [InstanceLoader] ConfigModule dependencies initialized</div>
@@ -9854,7 +10121,7 @@ ${prompt || userDisplayPrompt}`;
                       Portas Encaminhadas e Serviços Ativos
                     </div>
                     {[
-                      { port: 3000, proc: 'ainaobra-api (NestJS)', status: 'Online', url: 'http://localhost:3000' },
+                      { port: 3000, proc: 'aura-dev-api (NestJS)', status: 'Online', url: 'http://localhost:3000' },
                       { port: 5173, proc: 'wireframe (Vite)', status: 'Online', url: 'http://localhost:5173' },
                       { port: 5432, proc: 'postgresql (Docker)', status: 'Online', url: 'localhost:5432' },
                     ].map((p) => (
@@ -9905,10 +10172,8 @@ ${prompt || userDisplayPrompt}`;
                     onDoWithAi={handleTaskDoWithAi}
                     onOpenIssueDetails={handleOpenIssueSidesheet}
                     currentUserLogin={githubUser?.login || 'walancy'}
-                    sprints={[
-                      { number: 2, title: 'Sprint2 - Cadastro e Perfis de Acesso' },
-                      { number: 1, title: 'Sprint 01 - Aina Obra' },
-                    ]}
+                    repoName={gitRepoName}
+                    sprints={projectMilestones}
                     themeTokens={themeTokens}
                     isEffectiveDark={isEffectiveDark}
                     accentColor={accentColor}
@@ -10792,6 +11057,52 @@ ${prompt || userDisplayPrompt}`;
                               gap: 6,
                             }}
                           >
+                            {/* Attached Task Tag/Chip on top of user message */}
+                            {item.attachedTask && (
+                              <div
+                                onClick={() => handleOpenIssueSidesheet(item.attachedTask!.number)}
+                                title={`Ver detalhes da Tarefa #${item.attachedTask.number}: ${item.attachedTask.title}`}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  alignSelf: 'flex-start',
+                                  gap: 6,
+                                  background: isEffectiveDark ? 'rgba(56, 189, 248, 0.16)' : 'rgba(14, 165, 233, 0.14)',
+                                  border: `1px solid ${isEffectiveDark ? 'rgba(56, 189, 248, 0.28)' : 'rgba(14, 165, 233, 0.25)'}`,
+                                  borderRadius: 6,
+                                  padding: '3px 8px',
+                                  fontSize: 11.5,
+                                  fontFamily: 'Poppins, sans-serif',
+                                  color: isEffectiveDark ? '#38bdf8' : '#0284c7',
+                                  userSelect: 'none',
+                                  width: 'fit-content',
+                                  maxWidth: '100%',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.15s ease',
+                                  marginBottom: 2,
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.background = isEffectiveDark ? 'rgba(56, 189, 248, 0.24)' : 'rgba(14, 165, 233, 0.22)';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.background = isEffectiveDark ? 'rgba(56, 189, 248, 0.16)' : 'rgba(14, 165, 233, 0.14)';
+                                }}
+                              >
+                                <span style={{ fontWeight: 700, fontSize: 11, flexShrink: 0 }}>#{item.attachedTask.number}</span>
+                                <span
+                                  style={{
+                                    maxWidth: 240,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    fontWeight: 500,
+                                  }}
+                                >
+                                  {item.attachedTask.title}
+                                </span>
+                              </div>
+                            )}
+
                             {/* Attached Images in User Message */}
                             {item.attachedImages && item.attachedImages.length > 0 && (
                               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 2 }}>
@@ -13123,14 +13434,61 @@ ${prompt || userDisplayPrompt}`;
                         );
                       })()}
 
-                      {/* Circular Send Button */}
+                      {/* Circular Send / Cancel Button */}
                       {(() => {
+                        if (isAiExecuting) {
+                          return (
+                            <button
+                              type="button"
+                              onClick={handleCancelAiExecution}
+                              title="Interromper geração (Ctrl+C / Esc)"
+                              style={{
+                                width: 24,
+                                height: 24,
+                                background: isEffectiveDark ? 'rgba(239, 68, 68, 0.22)' : 'rgba(239, 68, 68, 0.14)',
+                                borderRadius: 61,
+                                border: '1px solid rgba(239, 68, 68, 0.5)',
+                                outline: 'none',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: 'pointer',
+                                flexShrink: 0,
+                                transition: 'all 0.15s ease',
+                                boxShadow: '0 0 10px rgba(239, 68, 68, 0.25)',
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = '#ef4444';
+                                const inner = e.currentTarget.querySelector('.stop-square-indicator') as HTMLElement;
+                                if (inner) inner.style.background = '#ffffff';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = isEffectiveDark ? 'rgba(239, 68, 68, 0.22)' : 'rgba(239, 68, 68, 0.14)';
+                                const inner = e.currentTarget.querySelector('.stop-square-indicator') as HTMLElement;
+                                if (inner) inner.style.background = '#ef4444';
+                              }}
+                            >
+                              <div
+                                className="stop-square-indicator"
+                                style={{
+                                  width: 9,
+                                  height: 9,
+                                  borderRadius: 2,
+                                  background: '#ef4444',
+                                  transition: 'background 0.15s ease',
+                                }}
+                              />
+                            </button>
+                          );
+                        }
+
                         const canSubmit = (askPrompt.trim().length > 0 || attachedFiles.length > 0 || attachedImages.length > 0) && !isAiExecuting;
                         const isSendActive = canSubmit;
                         return (
                           <button
                             type="submit"
                             disabled={!canSubmit}
+                            title="Enviar mensagem"
                             style={{
                               width: 24,
                               height: 24,
@@ -13161,22 +13519,38 @@ ${prompt || userDisplayPrompt}`;
             </>
           )}
         </div>
-      ) : activeTab === 'projetos' ? (
-        <div style={{ alignSelf: 'stretch', width: '100%', minWidth: 0, minHeight: 0, flex: '1 1 0', display: 'flex', overflow: 'hidden' }}>
-          <ProjectsSchedulerView
-            accentColor={accentColor}
-            isEffectiveDark={isEffectiveDark}
-            themeTokens={themeTokens}
-            selectedAiProvider={selectedAiProvider}
-            selectedModel={selectedModel}
-            onSelectAiProvider={handleSwitchAiProvider}
-            onSelectModel={handleSelectModel}
-            installedClis={installedClis}
-            activeModels={activeModels}
-            onInstallAiCli={handleInstallCliInTerminal}
-          />
-        </div>
-      ) : activeTab === 'orchestration' ? (
+
+      {/* 2.2 Projetos Container (Pré-carregado e mantido vivo na memória para abertura instantânea) */}
+      <div
+        style={{
+          alignSelf: 'stretch',
+          width: '100%',
+          minWidth: 0,
+          minHeight: 0,
+          flex: '1 1 0',
+          display: activeTab === 'projetos' ? 'flex' : 'none',
+          overflow: 'hidden',
+        }}
+      >
+        <ProjectsSchedulerView
+          workspacePath={workspacePath}
+          repoName={gitRepoName}
+          onSelectWorkspace={handleSelectWorkspace}
+          accentColor={accentColor}
+          isEffectiveDark={isEffectiveDark}
+          themeTokens={themeTokens}
+          selectedAiProvider={selectedAiProvider}
+          selectedModel={selectedModel}
+          onSelectAiProvider={handleSwitchAiProvider}
+          onSelectModel={handleSelectModel}
+          installedClis={installedClis}
+          activeModels={activeModels}
+          onInstallAiCli={handleInstallCliInTerminal}
+        />
+      </div>
+
+      {/* 2.3 Orchestration Container */}
+      {activeTab === 'orchestration' && (
         <div style={{ alignSelf: 'stretch', width: '100%', minWidth: 0, minHeight: 0, flex: '1 1 0', display: 'flex', overflow: 'hidden' }}>
           <OrchestrationCanvas
             accentColor={accentColor}
@@ -13187,10 +13561,119 @@ ${prompt || userDisplayPrompt}`;
             selectedModel={selectedModel}
             installedClis={installedClis}
             activeModels={activeModels}
+            onSelectAiProvider={handleSwitchAiProvider}
+            onSelectModel={handleSelectModel}
+            onSelectWorkspace={handleSelectWorkspace}
+            onToast={(msg) => {
+              setToastMessage(msg);
+              setTimeout(() => setToastMessage(null), 3000);
+            }}
           />
         </div>
-      ) : (
-        /* Empty container for other tabs as requested */
+      )}
+
+      {/* 2.4 Daily Container */}
+      {activeTab === 'daily' && (
+        <div style={{ alignSelf: 'stretch', width: '100%', minWidth: 0, minHeight: 0, flex: '1 1 0', display: 'flex', overflow: 'hidden' }}>
+          <DailySchedulerView
+            workspacePath={workspacePath}
+            repoName={gitRepoName}
+            accentColor={accentColor}
+            isEffectiveDark={isEffectiveDark}
+            themeTokens={themeTokens}
+            selectedAiProvider={selectedAiProvider}
+            selectedModel={selectedModel}
+            onSelectWorkspace={handleSelectWorkspace}
+            installedClis={installedClis}
+            activeModels={activeModels}
+            onToast={(msg) => {
+              setToastMessage(msg);
+              setTimeout(() => setToastMessage(null), 3000);
+            }}
+          />
+        </div>
+      )}
+
+      {/* 2.5 Design Container (editor próprio + sala LAN) */}
+      {activeTab === 'design' && (
+        <DesignStudioView
+          workspacePath={workspacePath}
+          repoName={gitRepoName}
+          activeProject={activeHeaderProject}
+          availableProjects={headerProjectsList}
+          onSelectWorkspace={handleSelectWorkspace}
+          accentColor={accentColor}
+          isEffectiveDark={isEffectiveDark}
+          themeTokens={themeTokens}
+          selectedAiProvider={selectedAiProvider}
+          selectedModel={selectedModel}
+        />
+      )}
+
+      {/* 2.6 CLI Terminal Workspace (Navegação de arquivos + Terminal com abas) */}
+      {activeTab === 'cli' && (
+        <CliTerminalView
+          workspacePath={workspacePath}
+          fileTree={fileTree}
+          expandedFolders={expandedFolders}
+          onToggleFolder={(path) => {
+            setExpandedFolders((prev) => {
+              const next = new Set(prev);
+              if (next.has(path)) next.delete(path);
+              else next.add(path);
+              return next;
+            });
+          }}
+          activeFileId={activeFile?.path || activeFile?.id}
+          onOpenFile={(path, name) => {
+            handleOpenFile(path, name);
+          }}
+          onOpenFolderDialog={handleOpenFolderDialog}
+          onOpenFileDialog={handleOpenFileDialog}
+          onCreateNewFile={handleCreateNewFile}
+          onCreateNewFolder={handleCreateNewFolder}
+          onRefreshTree={() => loadWorkspaceTree(workspacePath)}
+          themeTokens={themeTokens}
+          isEffectiveDark={isEffectiveDark}
+          accentColor={accentColor}
+          terminalSessions={terminalSessions}
+          setTerminalSessions={setTerminalSessions}
+          activeSessionId={activeSessionId}
+          setActiveSessionId={setActiveSessionId}
+          onNewSession={handleNewTerminalSession}
+          onCloseSession={handleKillTerminalSession}
+          terminalFontSize={terminalFontSize}
+          onSetTerminalFontSize={setTerminalFontSize}
+          currentBranch={currentBranch}
+          gitRepoName={gitRepoName}
+          onToast={(msg) => {
+            setToastMessage(msg);
+            setTimeout(() => setToastMessage(null), 2500);
+          }}
+          onOpenBranchModal={() => {
+            refreshGitBranches();
+            setIsBranchModalOpen(true);
+          }}
+          onOpenIssuesModal={() => {
+            refreshGitHubIssues();
+            setIsIssuesModalOpen(true);
+          }}
+          gitIssues={gitIssues}
+          refreshGitHubIssues={refreshGitHubIssues}
+          onSyncGit={handleSyncGit}
+          isSyncingGit={isSyncingGit}
+          gitModifiedCount={gitModifiedCount}
+          onGenerateCommitMessage={handleGenerateCommitMessage}
+          onStartReview={(files, index) => {
+            if (files && files.length > 0) {
+              handleStartReview(files, index || 0);
+            }
+          }}
+        />
+      )}
+
+      {/* 2.7 Container vazio para outras abas */}
+      {activeTab !== 'ide' && activeTab !== 'projetos' && activeTab !== 'orchestration' && activeTab !== 'daily' && activeTab !== 'design' && activeTab !== 'cli' && (
         <div style={{ alignSelf: 'stretch', flex: '1 1 0', background: 'black', borderRadius: 10, border: 'none' }} />
       )}
 
@@ -13286,7 +13769,7 @@ ${prompt || userDisplayPrompt}`;
               >
                 <GitBranch size={13} color={themeTokens.textSecondary} />
                 <div style={{ color: themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {gitRepoName.split('/').pop() || 'ainaobra'}
+                  {gitRepoName.split('/').pop() || 'aura-dev'}
                 </div>
                 <div style={{ color: accentColor, fontSize: 12, fontFamily: 'Poppins', fontWeight: '500', whiteSpace: 'nowrap', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {currentBranch || 'main'}
@@ -13426,7 +13909,7 @@ ${prompt || userDisplayPrompt}`;
           </div>
         </div>
 
-        {/* Right Segment: Position Info + Accent "Ai na obra" Button */}
+        {/* Right Segment: Position Info + Accent "Aura Dev" Button */}
         <div
           style={{
             background: themeTokens.bgCard,
@@ -13580,7 +14063,7 @@ ${prompt || userDisplayPrompt}`;
             </div>
           </div>
 
-          {/* Solid Accent Block "Ai na obra" (Toggles AI Chat & Focuses Input) */}
+          {/* Solid Accent Block "Aura Dev" (Toggles AI Chat & Focuses Input) */}
           <div
             onClick={() => {
               if (activeTab !== 'ide') {
@@ -13597,7 +14080,7 @@ ${prompt || userDisplayPrompt}`;
                 return next;
               });
             }}
-            title="Abrir Assistente AI na Obra"
+            title="Abrir Assistente Aura Dev"
             style={{
               alignSelf: 'stretch',
               paddingLeft: 14,
@@ -13616,7 +14099,7 @@ ${prompt || userDisplayPrompt}`;
             onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.opacity = '0.9')}
             onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.opacity = '1')}
           >
-            <div style={{ color: accentTextColor, fontSize: 12, fontFamily: 'Poppins', fontWeight: '600', whiteSpace: 'nowrap' }}>Ai na obra</div>
+            <div style={{ color: accentTextColor, fontSize: 12, fontFamily: 'Poppins', fontWeight: '600', whiteSpace: 'nowrap' }}>Aura Dev</div>
             <TerminalIcon size={14} color={accentTextColor} />
           </div>
         </div>
@@ -13989,13 +14472,15 @@ ${prompt || userDisplayPrompt}`;
         <IssueDetailSidesheet
           isOpen={Boolean(sidesheetIssue)}
           issue={sidesheetIssue}
-          repoFullName={gitRepoName ? (gitRepoName.includes('/') ? gitRepoName : `appmoove/${gitRepoName}`) : 'appmoove/ainaobra'}
+          repoFullName={gitRepoName ? (gitRepoName.includes('/') ? gitRepoName : `Walancy/${gitRepoName}`) : 'Walancy/aura-dev'}
           isRepoPrivate={true}
-          availableSprints={[
-            { number: 2, title: 'Sprint2 - Cadastro e Perfis de Acesso', state: 'open', openIssues: 14, closedIssues: 0 },
-            { number: 1, title: 'Sprint 01 - Aina Obra', state: 'open', openIssues: 7, closedIssues: 0 },
-            { number: 3, title: 'Sprint3 - Catálogo de Lotes e Motor de Frete', state: 'open', openIssues: 0, closedIssues: 0 },
-          ]}
+          availableSprints={projectMilestones.map((m, idx) => ({
+            number: m.number || idx + 1,
+            title: m.title,
+            state: 'open' as const,
+            openIssues: gitIssues.filter((i) => i.milestone?.title?.toLowerCase() === m.title.toLowerCase() && (i.state === 'open' || !i.closed_at)).length,
+            closedIssues: gitIssues.filter((i) => i.milestone?.title?.toLowerCase() === m.title.toLowerCase() && (i.state === 'closed' || !!i.closed_at)).length,
+          }))}
           theme={themeTokens}
           isEffectiveDark={isEffectiveDark}
           accentColor={accentColor}
@@ -14007,33 +14492,29 @@ ${prompt || userDisplayPrompt}`;
             setSidesheetIssue((prev) => prev ? { ...prev, ...updatedFields } : null);
             if (sidesheetIssue.githubNumber) {
               try {
-                const raw = localStorage.getItem('devflow_issue_sprints');
+                const scopedKey = gitRepoName ? `devflow_issue_sprints_${gitRepoName}` : 'devflow_issue_sprints';
+                const raw = localStorage.getItem(scopedKey);
                 const map = raw ? JSON.parse(raw) : {};
                 const sprintTitle =
-                  updatedFields.milestoneTitle ||
-                  (updatedFields.milestoneNumber === 1
-                    ? 'Sprint 01 - Aina Obra'
-                    : updatedFields.milestoneNumber === 2
-                    ? 'Sprint2 - Cadastro e Perfis de Acesso'
-                    : updatedFields.milestoneNumber === 3
-                    ? 'Sprint3 - Catálogo de Lotes e Motor de Frete'
-                    : updatedFields.milestoneNumber === null
-                    ? ''
-                    : undefined);
+                  updatedFields.milestoneTitle !== undefined
+                    ? updatedFields.milestoneTitle
+                    : updatedFields.milestoneNumber !== undefined
+                    ? (projectMilestones.find((m) => m.number === updatedFields.milestoneNumber)?.title || (updatedFields.milestoneNumber === null ? '' : undefined))
+                    : undefined;
                 if (sprintTitle !== undefined) {
                   if (sprintTitle) {
                     map[sidesheetIssue.githubNumber] = sprintTitle;
                   } else {
                     delete map[sidesheetIssue.githubNumber];
                   }
-                  localStorage.setItem('devflow_issue_sprints', JSON.stringify(map));
+                  localStorage.setItem(scopedKey, JSON.stringify(map));
                   window.dispatchEvent(new Event('devflow_issue_sprints_updated'));
                 }
               } catch {}
             }
             if (window.electronAPI?.github?.updateIssue && sidesheetIssue.githubNumber) {
               try {
-                const fullRepo = gitRepoName ? (gitRepoName.includes('/') ? gitRepoName : `appmoove/${gitRepoName}`) : 'appmoove/ainaobra';
+                const fullRepo = gitRepoName ? (gitRepoName.includes('/') ? gitRepoName : `Walancy/${gitRepoName}`) : 'Walancy/aura-dev';
                 const [owner, repo] = fullRepo.split('/');
                 await window.electronAPI.github.updateIssue(owner, repo, sidesheetIssue.githubNumber, {
                   title: updatedFields.title,
