@@ -1,5 +1,5 @@
-import React from 'react';
-import { CircleDot, Plus, RefreshCw, X, Sparkles, ExternalLink } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { CircleDot, CheckCircle2, Plus, RefreshCw, X, Sparkles, ExternalLink } from 'lucide-react';
 import type { ThemeTokens, GitHubIssueItem } from '../../types/ide';
 
 export interface IssuesModalProps {
@@ -42,6 +42,34 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
   onLinkIssueToChat,
   onOpenIssueInBrowser,
 }) => {
+  const [stateFilter, setStateFilter] = useState<'all' | 'open' | 'closed'>('all');
+
+  const openCount = useMemo(
+    () => gitIssues.filter((i) => (i.state || 'open').toLowerCase() === 'open').length,
+    [gitIssues]
+  );
+  const closedCount = useMemo(
+    () => gitIssues.filter((i) => (i.state || 'open').toLowerCase() === 'closed').length,
+    [gitIssues]
+  );
+
+  const filteredIssues = useMemo(() => {
+    return gitIssues.filter((issue) => {
+      const isClosed = (issue.state || '').toLowerCase() === 'closed';
+      if (stateFilter === 'open' && isClosed) return false;
+      if (stateFilter === 'closed' && !isClosed) return false;
+      if (issuesSearchQuery.trim()) {
+        const q = issuesSearchQuery.toLowerCase();
+        const matchesTitle = issue.title.toLowerCase().includes(q);
+        const matchesNum = String(issue.number).includes(q);
+        const authorStr = typeof issue.author === 'string' ? issue.author : ((issue.author as any)?.login || '');
+        const matchesAuthor = authorStr.toLowerCase().includes(q);
+        return matchesTitle || matchesNum || matchesAuthor;
+      }
+      return true;
+    });
+  }, [gitIssues, stateFilter, issuesSearchQuery]);
+
   return (
     <div
       style={{
@@ -63,9 +91,9 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
     >
       <div
         style={{
-          width: 680,
+          width: 720,
           maxWidth: '92vw',
-          maxHeight: '82vh',
+          maxHeight: '84vh',
           background: isEffectiveDark ? '#141416' : '#ffffff',
           border: `1px solid ${themeTokens.border}`,
           borderRadius: 10,
@@ -118,11 +146,25 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
                     borderRadius: 999,
                   }}
                 >
-                  {gitIssues.length} abertas
+                  {openCount} abertas
                 </span>
+                {closedCount > 0 && (
+                  <span
+                    style={{
+                      background: isEffectiveDark ? 'rgba(130, 80, 223, 0.16)' : '#f3e8ff',
+                      color: '#8250df',
+                      fontSize: 10.5,
+                      fontWeight: 600,
+                      padding: '2px 7px',
+                      borderRadius: 999,
+                    }}
+                  >
+                    {closedCount} fechadas
+                  </span>
+                )}
               </div>
               <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>
-                {gitRepoName || 'Walancy/aura-dev'}
+                {gitRepoName || 'Nenhum repositório selecionado'}
               </div>
             </div>
           </div>
@@ -242,11 +284,11 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
           </div>
         )}
 
-        {/* Search issues */}
-        <div style={{ padding: '10px 18px 6px' }}>
+        {/* Search issues and Status Filters */}
+        <div style={{ padding: '10px 18px 8px', display: 'flex', flexDirection: 'column', gap: 8 }}>
           <input
             type="text"
-            placeholder="Pesquisar por título ou número da issue..."
+            placeholder="Pesquisar por título, número ou autor..."
             value={issuesSearchQuery}
             onChange={(e) => setIssuesSearchQuery(e.target.value)}
             style={{
@@ -260,6 +302,110 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
               outline: 'none',
             }}
           />
+
+          {/* Filter tabs: Todas, Abertas, Fechadas */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button
+              type="button"
+              onClick={() => setStateFilter('all')}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '4px 10px',
+                borderRadius: 6,
+                border: 'none',
+                background: stateFilter === 'all'
+                  ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)')
+                  : 'transparent',
+                color: stateFilter === 'all' ? themeTokens.textPrimary : themeTokens.textSecondary,
+                fontSize: 11.5,
+                fontWeight: stateFilter === 'all' ? 600 : 400,
+                cursor: 'pointer',
+                transition: 'all 0.12s ease',
+              }}
+            >
+              <span>Todas</span>
+              <span
+                style={{
+                  fontSize: 10,
+                  padding: '1px 5px',
+                  borderRadius: 8,
+                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.06)',
+                }}
+              >
+                {gitIssues.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStateFilter('open')}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '4px 10px',
+                borderRadius: 6,
+                border: 'none',
+                background: stateFilter === 'open'
+                  ? 'rgba(34, 197, 94, 0.15)'
+                  : 'transparent',
+                color: stateFilter === 'open' ? '#22c55e' : themeTokens.textSecondary,
+                fontSize: 11.5,
+                fontWeight: stateFilter === 'open' ? 600 : 400,
+                cursor: 'pointer',
+                transition: 'all 0.12s ease',
+              }}
+            >
+              <CircleDot size={12} color={stateFilter === 'open' ? '#22c55e' : themeTokens.textSecondary} />
+              <span>Abertas</span>
+              <span
+                style={{
+                  fontSize: 10,
+                  padding: '1px 5px',
+                  borderRadius: 8,
+                  background: stateFilter === 'open' ? 'rgba(34, 197, 94, 0.2)' : (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'),
+                }}
+              >
+                {openCount}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStateFilter('closed')}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '4px 10px',
+                borderRadius: 6,
+                border: 'none',
+                background: stateFilter === 'closed'
+                  ? 'rgba(130, 80, 223, 0.18)'
+                  : 'transparent',
+                color: stateFilter === 'closed' ? '#8250df' : themeTokens.textSecondary,
+                fontSize: 11.5,
+                fontWeight: stateFilter === 'closed' ? 600 : 400,
+                cursor: 'pointer',
+                transition: 'all 0.12s ease',
+              }}
+            >
+              <CheckCircle2 size={12} color={stateFilter === 'closed' ? '#8250df' : themeTokens.textSecondary} />
+              <span>Fechadas</span>
+              <span
+                style={{
+                  fontSize: 10,
+                  padding: '1px 5px',
+                  borderRadius: 8,
+                  background: stateFilter === 'closed' ? 'rgba(130, 80, 223, 0.24)' : (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'),
+                }}
+              >
+                {closedCount}
+              </span>
+            </button>
+          </div>
         </div>
 
         {/* Issues list */}
@@ -273,22 +419,19 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
             gap: 6,
           }}
         >
-          {gitIssues.length === 0 && !isLoadingIssues && (
-            <div style={{ padding: '30px 20px', textAlign: 'center', color: themeTokens.textSecondary, fontSize: 12 }}>
-              Nenhuma issue aberta encontrada neste repositório.
+          {filteredIssues.length === 0 && !isLoadingIssues && (
+            <div style={{ padding: '36px 20px', textAlign: 'center', color: themeTokens.textSecondary, fontSize: 12 }}>
+              {stateFilter === 'closed'
+                ? 'Nenhuma issue fechada encontrada.'
+                : stateFilter === 'open'
+                ? 'Nenhuma issue aberta encontrada.'
+                : 'Nenhuma issue encontrada neste repositório.'}
             </div>
           )}
 
-          {gitIssues
-            .filter((issue) => {
-              const q = issuesSearchQuery.toLowerCase();
-              return (
-                issue.title.toLowerCase().includes(q) ||
-                String(issue.number).includes(q) ||
-                (issue.author && (typeof issue.author === 'string' ? issue.author : ((issue.author as any)?.login || '')).toLowerCase().includes(q))
-              );
-            })
-            .map((issue) => (
+          {filteredIssues.map((issue) => {
+            const isClosed = (issue.state || '').toLowerCase() === 'closed';
+            return (
               <div
                 key={issue.number}
                 style={{
@@ -300,6 +443,7 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
                   background: isEffectiveDark ? 'rgba(255, 255, 255, 0.025)' : 'rgba(0, 0, 0, 0.025)',
                   border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)'}`,
                   transition: 'background 0.15s ease, border-color 0.15s ease',
+                  opacity: isClosed ? 0.85 : 1,
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
@@ -309,17 +453,37 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flex: 1 }}>
-                    <CircleDot size={15} color="#22c55e" style={{ marginTop: 2, flexShrink: 0 }} />
-                    <div>
-                      <span style={{ fontWeight: 600, color: themeTokens.textPrimary, fontSize: 13, marginRight: 6 }}>
-                        {issue.title}
-                      </span>
-                      <span style={{ color: themeTokens.textSecondary, fontSize: 11.5, fontWeight: 500 }}>
-                        #{issue.number}
-                      </span>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flex: 1, minWidth: 0 }}>
+                    {isClosed ? (
+                      <CheckCircle2 size={15} color="#8250df" style={{ marginTop: 2, flexShrink: 0 }} />
+                    ) : (
+                      <CircleDot size={15} color="#22c55e" style={{ marginTop: 2, flexShrink: 0 }} />
+                    )}
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <span style={{ fontWeight: 600, color: themeTokens.textPrimary, fontSize: 13 }}>
+                          {issue.title}
+                        </span>
+                        <span style={{ color: themeTokens.textSecondary, fontSize: 11.5, fontWeight: 500 }}>
+                          #{issue.number}
+                        </span>
+                        {isClosed && (
+                          <span
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 600,
+                              padding: '1px 6px',
+                              borderRadius: 8,
+                              background: isEffectiveDark ? 'rgba(130, 80, 223, 0.2)' : '#f3e8ff',
+                              color: '#8250df',
+                            }}
+                          >
+                            Fechada
+                          </span>
+                        )}
+                      </div>
                       <div style={{ fontSize: 11, color: themeTokens.textSecondary, marginTop: 2 }}>
-                        aberta por {typeof issue.author === 'string' ? issue.author : ((issue.author as any)?.login || (issue.author as any)?.name || 'walancy')}
+                        {isClosed ? 'fechada' : 'aberta'} por {typeof issue.author === 'string' ? issue.author : ((issue.author as any)?.login || (issue.author as any)?.name || 'walancy')}
                       </div>
                     </div>
                   </div>
@@ -397,7 +561,8 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
                   </div>
                 )}
               </div>
-            ))}
+            );
+          })}
         </div>
       </div>
     </div>

@@ -33,84 +33,23 @@ export interface AccessItem {
 export interface ManageAccessViewProps {
   projectName?: string;
   repoFullName?: string;
-  collaborators: RepoCollaborator[];
+  items: AccessItem[];
+  orgTeams?: Array<{ slug: string; name: string }>;
+  isOrg?: boolean;
+  canManage?: boolean;
   isLoading?: boolean;
   theme: any;
   accentColor: string;
   accentContrastText: string;
   isEffectiveDark: boolean;
-  onRefreshCollaborators?: () => void;
+  onChangeRole: (item: AccessItem, role: AccessItem['role']) => void;
+  onAddPerson: (login: string, role: AccessItem['role']) => void;
+  onAddTeam: (slug: string, role: AccessItem['role']) => void;
+  onCreateTeam: (name: string, description: string) => void;
   onRequestDeleteCollaborator: (item: AccessItem) => void;
   onRequestBulkDelete?: (items: AccessItem[]) => void;
   showToast: (message: string) => void;
 }
-
-const DEFAULT_ACCESS_ITEMS: AccessItem[] = [
-  {
-    id: 'team-agrobravo',
-    type: 'team',
-    name: 'Agrobravo',
-    login: 'agrobravo',
-    handle: '@appmoove/agrobravo • 6 members',
-    memberCount: 6,
-    role: 'write',
-    accessType: 'direct',
-  },
-  {
-    id: 'user-gus-fernandes',
-    type: 'user',
-    name: 'Gustavo Fernandes',
-    login: 'Gus-Fernandes',
-    avatarUrl: 'https://github.com/Gus-Fernandes.png',
-    role: 'admin',
-    accessType: 'direct',
-  },
-  {
-    id: 'user-juliaamartinez',
-    type: 'user',
-    name: 'juliaamartinez',
-    login: 'juliaamartinez',
-    avatarUrl: 'https://github.com/juliaamartinez.png',
-    role: 'admin',
-    accessType: 'direct',
-  },
-  {
-    id: 'user-lpbaiser',
-    type: 'user',
-    name: 'lpbaiser',
-    login: 'lpbaiser',
-    avatarUrl: 'https://github.com/lpbaiser.png',
-    role: 'admin',
-    accessType: 'direct',
-  },
-  {
-    id: 'user-luscas18',
-    type: 'user',
-    name: 'Lucas Dos Santos Vaz',
-    login: 'luscas18',
-    avatarUrl: 'https://github.com/luscas18.png',
-    role: 'admin',
-    accessType: 'direct',
-  },
-  {
-    id: 'user-nelsonappmoove',
-    type: 'user',
-    name: 'Nelson Jr',
-    login: 'nelsonappmoove',
-    avatarUrl: 'https://github.com/nelsonappmoove.png',
-    role: 'admin',
-    accessType: 'direct',
-  },
-  {
-    id: 'user-walancy',
-    type: 'user',
-    name: 'Walancy',
-    login: 'Walancy',
-    avatarUrl: 'https://github.com/Walancy.png',
-    role: 'admin',
-    accessType: 'direct',
-  },
-];
 
 const ROLE_DEFINITIONS: Record<
   string,
@@ -141,38 +80,24 @@ const ROLE_DEFINITIONS: Record<
 export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
   projectName,
   repoFullName,
-  collaborators,
+  items,
+  orgTeams = [],
+  isOrg,
+  canManage = true,
+  isLoading,
   theme,
   accentColor,
   accentContrastText,
   isEffectiveDark,
+  onChangeRole,
+  onAddPerson,
+  onAddTeam,
+  onCreateTeam,
   onRequestDeleteCollaborator,
   onRequestBulkDelete,
   showToast,
 }) => {
-  // Lista de acessos
-  const [accessList, setAccessList] = useState<AccessItem[]>(() => {
-    const list = [...DEFAULT_ACCESS_ITEMS];
-    if (collaborators && collaborators.length > 0) {
-      collaborators.forEach((c) => {
-        const exists = list.some(
-          (item) => item.login.toLowerCase() === c.login.toLowerCase()
-        );
-        if (!exists) {
-          list.push({
-            id: `user-${c.login}`,
-            type: c.type || 'user',
-            name: c.name || c.login,
-            login: c.login,
-            avatarUrl: c.avatarUrl,
-            role: c.role || 'admin',
-            accessType: 'direct',
-          });
-        }
-      });
-    }
-    return list;
-  });
+  const accessList = items;
 
   // Sidebar
   const [sidebarTab, setSidebarTab] = useState<'all' | 'direct' | 'organization' | 'team' | 'admin'>('all');
@@ -204,7 +129,6 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
   const [newPersonRole, setNewPersonRole] = useState<'admin' | 'write' | 'read' | 'triage' | 'maintain'>('write');
 
   const [newTeamName, setNewTeamName] = useState('');
-  const [newTeamHandle, setNewTeamHandle] = useState('');
   const [newTeamRole, setNewTeamRole] = useState<'admin' | 'write' | 'read' | 'triage' | 'maintain'>('write');
 
   const [createTeamName, setCreateTeamName] = useState('');
@@ -272,78 +196,42 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
     setSelectedIds(next);
   };
 
-  const handleChangeRole = (
-    id: string,
-    newRole: 'admin' | 'write' | 'read' | 'triage' | 'maintain'
-  ) => {
-    setAccessList((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, role: newRole } : item))
-    );
+  const handleChangeRole = (id: string, newRole: AccessItem['role']) => {
+    const item = accessList.find((i) => i.id === id);
     setActiveRolePickerId(null);
-    showToast(`Papel atualizado para "${newRole}".`);
+    if (!item || item.role === newRole) return;
+    onChangeRole(item, newRole);
   };
 
   const handleAddPersonSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPersonUsername.trim()) return;
-    const clean = newPersonUsername.trim().replace(/^@/, '');
-    const newItem: AccessItem = {
-      id: `user-${clean.toLowerCase()}-${Date.now()}`,
-      type: 'user',
-      name: clean,
-      login: clean,
-      avatarUrl: `https://github.com/${clean}.png`,
-      role: newPersonRole,
-      accessType: 'direct',
-    };
-    setAccessList((prev) => [newItem, ...prev]);
+    const logins = newPersonUsername
+      .split(/[\s,]+/)
+      .map((l) => l.trim().replace(/^@/, ''))
+      .filter(Boolean);
+    if (logins.length === 0) return;
+    logins.forEach((login) => onAddPerson(login, newPersonRole));
     setNewPersonUsername('');
     setIsAddPeopleOpen(false);
-    showToast(`Colaborador @${clean} adicionado.`);
   };
 
   const handleAddTeamSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTeamName.trim()) return;
-    const org = repoFullName?.split('/')[0] || 'appmoove';
-    const slug = newTeamName.toLowerCase().replace(/\s+/g, '-');
-    const newItem: AccessItem = {
-      id: `team-${slug}-${Date.now()}`,
-      type: 'team',
-      name: newTeamName.trim(),
-      login: slug,
-      handle: newTeamHandle.trim() || `@${org}/${slug} • 1 membro`,
-      memberCount: 1,
-      role: newTeamRole,
-      accessType: 'direct',
-    };
-    setAccessList((prev) => [newItem, ...prev]);
+    const typed = newTeamName.trim();
+    if (!typed) return;
+    const match = orgTeams.find((t) => t.slug === typed || t.name.toLowerCase() === typed.toLowerCase());
+    onAddTeam(match?.slug || typed.toLowerCase().replace(/\s+/g, '-'), newTeamRole);
     setNewTeamName('');
-    setNewTeamHandle('');
     setIsAddTeamsOpen(false);
-    showToast(`Time "${newTeamName}" adicionado.`);
   };
 
   const handleCreateTeamSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!createTeamName.trim()) return;
-    const org = repoFullName?.split('/')[0] || 'appmoove';
-    const slug = createTeamName.toLowerCase().replace(/\s+/g, '-');
-    const newItem: AccessItem = {
-      id: `team-${slug}-${Date.now()}`,
-      type: 'team',
-      name: createTeamName.trim(),
-      login: slug,
-      handle: `@${org}/${slug} • 1 membro`,
-      memberCount: 1,
-      role: 'write',
-      accessType: 'direct',
-    };
-    setAccessList((prev) => [newItem, ...prev]);
+    onCreateTeam(createTeamName.trim(), createTeamDesc.trim());
     setCreateTeamName('');
     setCreateTeamDesc('');
     setIsCreateTeamOpen(false);
-    showToast(`Time "${newItem.name}" criado na organização.`);
   };
 
   const handleRemoveBulk = () => {
@@ -378,92 +266,6 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
       }}
     >
       {/* ----------------------------------------------------------------- */}
-      {/* SIDEBAR ESQUERDA (IGUAL À DE ISSUES)                              */}
-      {/* ----------------------------------------------------------------- */}
-      <div
-        style={{
-          width: 'clamp(160px, 20%, 220px)',
-          minWidth: 160,
-          background: theme.viewCanvasBg,
-          borderRadius: 8,
-          padding: '8px 6px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 2,
-          boxSizing: 'border-box',
-          flexShrink: 0,
-        }}
-      >
-        {sidebarTabsConfig.map((tab) => {
-          const isActive = sidebarTab === tab.id;
-          const Icon = tab.icon;
-
-          return (
-            <div
-              key={tab.id}
-              onClick={() => {
-                setSidebarTab(tab.id as any);
-                setCurrentPage(1);
-              }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '7px 10px',
-                borderRadius: 6,
-                cursor: 'pointer',
-                background: isActive
-                  ? isEffectiveDark
-                    ? '#242424'
-                    : '#e2e8f0'
-                  : 'transparent',
-                color: isActive ? theme.textPrimary : theme.textSecondary,
-                fontWeight: isActive ? 500 : 400,
-                fontSize: 12.5,
-                transition: 'all 0.15s ease',
-              }}
-              onMouseEnter={(e) => {
-                if (!isActive) {
-                  e.currentTarget.style.background = isEffectiveDark
-                    ? 'rgba(255, 255, 255, 0.05)'
-                    : 'rgba(0, 0, 0, 0.04)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!isActive) {
-                  e.currentTarget.style.background = 'transparent';
-                }
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                <Icon size={14} color={isActive ? accentColor : theme.textSecondary} />
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {tab.label}
-                </span>
-              </div>
-              <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: 500,
-                  color: isActive ? accentColor : theme.textSecondary,
-                  padding: '1px 6px',
-                  borderRadius: 10,
-                  background: isActive
-                    ? isEffectiveDark
-                      ? 'rgba(255, 255, 255, 0.1)'
-                      : 'rgba(0, 0, 0, 0.06)'
-                    : 'transparent',
-                  flexShrink: 0,
-                }}
-              >
-                {tab.count}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* ----------------------------------------------------------------- */}
       {/* ÁREA PRINCIPAL: HEADER E TABELA DEVFLOW                            */}
       {/* ----------------------------------------------------------------- */}
       <div
@@ -493,16 +295,17 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
             <Users size={17} color={accentColor} />
             <div>
               <div style={{ fontSize: 14.5, fontWeight: 600, color: theme.textPrimary }}>
-                Manage access
+                Gerenciar acesso
               </div>
               <div style={{ fontSize: 11.5, color: theme.textSecondary }}>
-                Colaboradores e permissões de {projectName || repoFullName || 'repositório'}
+                {isLoading ? 'Sincronizando com o GitHub…' : `Colaboradores e permissões de ${projectName || repoFullName || 'repositório'}`}
               </div>
             </div>
           </div>
 
           {/* GRUPO DE BOTÕES SUPERIORES NO PADRÃO DEVFLOW (SEM BORDAS BRANCAS) */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {isOrg && canManage && (
             <button
               type="button"
               onClick={() => setIsCreateTeamOpen(true)}
@@ -524,9 +327,11 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
               onMouseEnter={(e) => (e.currentTarget.style.background = theme.controlHoverBg)}
               onMouseLeave={(e) => (e.currentTarget.style.background = theme.controlBg)}
             >
-              <span>Create team</span>
+              <span>Criar time</span>
             </button>
+            )}
 
+            {isOrg && canManage && (
             <button
               type="button"
               onClick={() => setIsAddTeamsOpen(true)}
@@ -549,9 +354,11 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
               onMouseLeave={(e) => (e.currentTarget.style.background = theme.controlBg)}
             >
               <Layers size={13} color={theme.textSecondary} />
-              <span>Add teams</span>
+              <span>Adicionar times</span>
             </button>
+            )}
 
+            {canManage && (
             <button
               type="button"
               onClick={() => setIsAddPeopleOpen(true)}
@@ -574,9 +381,52 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
               onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
             >
               <UserPlus size={13} color={accentContrastText} />
-              <span>Add people</span>
+              <span>Adicionar pessoas</span>
             </button>
+            )}
           </div>
+        </div>
+
+        {/* FILTROS RÁPIDOS (antes eram a sidebar) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+          {sidebarTabsConfig.map((tab) => {
+            const isActive = sidebarTab === tab.id;
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  setSidebarTab(tab.id as any);
+                  setCurrentPage(1);
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  height: 28,
+                  padding: '0 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  cursor: 'pointer',
+                  background: isActive ? (isEffectiveDark ? '#242424' : '#e2e8f0') : theme.viewCanvasBg,
+                  color: isActive ? theme.textPrimary : theme.textSecondary,
+                  fontSize: 12,
+                  fontWeight: isActive ? 500 : 400,
+                  fontFamily: 'inherit',
+                }}
+              >
+                <Icon size={13} color={isActive ? accentColor : theme.textSecondary} />
+                <span>{tab.label}</span>
+                <span style={{ fontSize: 11, color: isActive ? accentColor : theme.textMuted }}>{tab.count}</span>
+              </button>
+            );
+          })}
+          {!canManage && (
+            <span style={{ fontSize: 11.5, color: '#f59e0b', marginLeft: 6 }}>
+              Você não é admin deste repositório — alterações de acesso ficam desabilitadas.
+            </span>
+          )}
         </div>
 
         {/* TABELA DE ACESSOS */}
@@ -631,7 +481,7 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                   <Square size={15} color={theme.textSecondary} />
                 )}
                 <span style={{ fontSize: 12, fontWeight: 500, color: theme.textPrimary }}>
-                  Select all
+                  Selecionar todos
                 </span>
               </div>
 
@@ -871,7 +721,7 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                   setSearchQuery(e.target.value);
                   setCurrentPage(1);
                 }}
-                placeholder="Find people or a team..."
+                placeholder="Buscar pessoas ou times..."
                 style={{
                   border: 'none',
                   outline: 'none',
@@ -1042,7 +892,7 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                         <button
                           type="button"
                           onClick={() =>
-                            setActiveRolePickerId((prev) => (prev === item.id ? null : item.id))
+                            canManage && setActiveRolePickerId((prev) => (prev === item.id ? null : item.id))
                           }
                           style={{
                             background: theme.controlBg,
@@ -1159,6 +1009,7 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                       <button
                         type="button"
                         title="Remover acesso"
+                        disabled={!canManage}
                         onClick={() => onRequestDeleteCollaborator(item)}
                         style={{
                           background: theme.controlBg,
@@ -1314,7 +1165,7 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                   required
                   value={newPersonUsername}
                   onChange={(e) => setNewPersonUsername(e.target.value)}
-                  placeholder="ex: Gus-Fernandes, juliaamartinez"
+                  placeholder="logins do GitHub separados por vírgula"
                   style={{
                     width: '100%',
                     boxSizing: 'border-box',
@@ -1451,7 +1302,8 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                   required
                   value={newTeamName}
                   onChange={(e) => setNewTeamName(e.target.value)}
-                  placeholder="ex: Agrobravo, Frontend, Mobile"
+                  list="devflow-org-teams"
+                  placeholder={orgTeams.length ? 'Selecione ou digite o slug do time' : 'slug do time na organização'}
                   style={{
                     width: '100%',
                     boxSizing: 'border-box',
@@ -1467,28 +1319,13 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                 />
               </div>
 
-              <div>
-                <label style={{ fontSize: 11.5, color: theme.textSecondary, marginBottom: 4, display: 'block' }}>
-                  Identificador / Membros (opcional)
-                </label>
-                <input
-                  type="text"
-                  value={newTeamHandle}
-                  onChange={(e) => setNewTeamHandle(e.target.value)}
-                  placeholder="ex: @appmoove/agrobravo • 6 members"
-                  style={{
-                    width: '100%',
-                    boxSizing: 'border-box',
-                    background: theme.modalInputBg || theme.controlBg,
-                    border: 'none',
-                    borderRadius: 6,
-                    padding: '8px 10px',
-                    fontSize: 12.5,
-                    color: theme.textPrimary,
-                    outline: 'none',
-                  }}
-                />
-              </div>
+              <datalist id="devflow-org-teams">
+                {orgTeams.map((t) => (
+                  <option key={t.slug} value={t.slug}>
+                    {t.name}
+                  </option>
+                ))}
+              </datalist>
 
               <div>
                 <label style={{ fontSize: 11.5, color: theme.textSecondary, marginBottom: 4, display: 'block' }}>

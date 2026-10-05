@@ -59,10 +59,12 @@ export function renderMarkdownPreview(
     accentColor: string;
     isEffectiveDark: boolean;
     onToggleTask?: (lineIndex: number, completed: boolean) => void;
+    fontSize?: number;
+    regularFont?: boolean;
   }
 ): React.ReactNode {
   if (!md || !md.trim()) {
-    return <div style={{ color: opts.textMuted, fontSize: 13, fontStyle: 'italic', padding: 20 }}>Arquivo Markdown vazio.</div>;
+    return <div style={{ color: opts.textMuted, fontSize: opts.fontSize || 13, fontStyle: 'italic', padding: 20 }}>Arquivo Markdown vazio.</div>;
   }
 
   const lines = md.replace(/\r\n/g, '\n').split('\n');
@@ -93,7 +95,7 @@ export function renderMarkdownPreview(
             borderRadius: 8,
             padding: '10px 12px',
             overflowX: 'auto',
-            fontSize: 12.5,
+            fontSize: opts.fontSize ? Math.max(11, opts.fontSize - 1) : 12.5,
             fontFamily: 'JetBrains Mono, Menlo, monospace',
             color: opts.textPrimary,
           }}
@@ -118,19 +120,21 @@ export function renderMarkdownPreview(
     const headerMatch = trimmed.match(/^(#{1,4})\s+(.*)$/);
     if (headerMatch) {
       const level = headerMatch[1].length;
-      const sizes: Record<number, number> = { 1: 24, 2: 19, 3: 16, 4: 14 };
+      const baseSizes: Record<number, number> = opts.fontSize
+        ? { 1: Math.round(opts.fontSize * 1.35), 2: Math.round(opts.fontSize * 1.2), 3: Math.round(opts.fontSize * 1.1), 4: opts.fontSize }
+        : { 1: 24, 2: 19, 3: 16, 4: 14 };
       blocks.push(
         React.createElement(
           `h${level}`,
           {
             key: key++,
             style: {
-              fontSize: sizes[level],
-              fontWeight: 600,
+              fontSize: baseSizes[level],
+              fontWeight: opts.regularFont ? 500 : 600,
               color: opts.textPrimary,
-              margin: level <= 2 ? '20px 0 10px' : '14px 0 6px',
+              margin: level <= 2 ? '16px 0 8px' : '10px 0 4px',
               borderBottom: level <= 2 ? `1px solid ${opts.border}` : 'none',
-              paddingBottom: level <= 2 ? 6 : 0,
+              paddingBottom: level <= 2 ? 4 : 0,
             },
           },
           renderInlineMarkdown(headerMatch[2], `h${key}`, opts.accentColor, opts.isEffectiveDark)
@@ -252,7 +256,8 @@ export function renderMarkdownPreview(
                 <div
                   onClick={() => opts.onToggleTask?.(item.lineIndex, item.completed)}
                   style={{
-                    fontSize: 13.5,
+                    fontSize: opts.fontSize || 13.5,
+                    fontWeight: opts.regularFont ? 400 : undefined,
                     color: item.completed ? opts.textSecondary : opts.textPrimary,
                     textDecoration: item.completed ? 'line-through' : 'none',
                     lineHeight: 1.4,
@@ -294,9 +299,9 @@ export function renderMarkdownPreview(
         i++;
       }
       blocks.push(
-        <ul key={key++} style={{ margin: '4px 0', paddingLeft: 22, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <ul key={key++} style={{ margin: '4px 0', paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {items.map((it, ii) => (
-            <li key={ii} style={{ color: opts.textPrimary, fontSize: 13.5 }}>
+            <li key={ii} style={{ color: opts.textPrimary, fontSize: opts.fontSize || 13.5, fontWeight: opts.regularFont ? 400 : undefined, lineHeight: 1.55 }}>
               {renderInlineMarkdown(it, `ul${key}-${ii}`, opts.accentColor, opts.isEffectiveDark)}
             </li>
           ))}
@@ -313,9 +318,9 @@ export function renderMarkdownPreview(
         i++;
       }
       blocks.push(
-        <ol key={key++} style={{ margin: '4px 0', paddingLeft: 22, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <ol key={key++} style={{ margin: '4px 0', paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 4 }}>
           {items.map((it, ii) => (
-            <li key={ii} style={{ color: opts.textPrimary, fontSize: 13.5 }}>
+            <li key={ii} style={{ color: opts.textPrimary, fontSize: opts.fontSize || 13.5, fontWeight: opts.regularFont ? 400 : undefined, lineHeight: 1.55 }}>
               {renderInlineMarkdown(it, `ol${key}-${ii}`, opts.accentColor, opts.isEffectiveDark)}
             </li>
           ))}
@@ -346,7 +351,7 @@ export function renderMarkdownPreview(
       i++;
     }
     blocks.push(
-      <p key={key++} style={{ color: opts.textPrimary, margin: '4px 0', fontSize: 14, lineHeight: 1.6 }}>
+      <p key={key++} style={{ color: opts.textPrimary, margin: '4px 0', fontSize: opts.fontSize || 14, fontWeight: opts.regularFont ? 400 : undefined, lineHeight: 1.6 }}>
         {renderInlineMarkdown(paraLines.join(' '), `p${key}`, opts.accentColor, opts.isEffectiveDark)}
       </p>
     );

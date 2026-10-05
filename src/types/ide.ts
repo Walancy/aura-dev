@@ -64,7 +64,13 @@ export interface GitHubIssueItem {
   assignees?: Array<{ login: string; avatarUrl?: string }> | string[];
   assignee?: { login: string; avatarUrl?: string } | null;
   labels?: Array<{ id?: number; name: string; color?: string; description?: string }>;
-  milestone?: { title: string; dueOn?: string } | null;
+  milestone?: { title: string; number?: number; dueOn?: string } | null;
+  milestoneTitle?: string;
+  milestoneNumber?: number;
+  iterationId?: string;
+  iterationTitle?: string;
+  projectV2Status?: string;
+  projectV2ItemId?: string;
   body?: string;
   url?: string;
 }
@@ -85,12 +91,18 @@ export interface ChangedFileItem {
 }
 
 export interface ExecutionStepItem {
-  type: 'explore' | 'edit' | 'run' | 'search';
+  id?: string;
+  type: 'explore' | 'edit' | 'run' | 'search' | 'analyze' | 'thought';
   label: string;
   file?: string;
+  path?: string;
   additions?: number;
   deletions?: number;
   command?: string;
+  lineRange?: string;
+  duration?: string;
+  children?: ExecutionStepItem[];
+  isExpanded?: boolean;
 }
 
 export interface WalkthroughItem {
@@ -119,6 +131,20 @@ export interface ChatMessageItem {
     state?: string;
     labels?: Array<{ name: string; color?: string }>;
     url?: string;
+  };
+  terminalCommands?: Array<{
+    command: string;
+    cwd?: string;
+    duration?: string;
+    stdout?: string;
+    stderr?: string;
+    exitCode?: number;
+  }>;
+  thoughtSnippet?: string;
+  interactiveQuestion?: {
+    question: string;
+    options: string[];
+    isMultiSelect?: boolean;
   };
 }
 

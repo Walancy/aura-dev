@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Upload, Globe, Sparkles, RefreshCw, Check, Image as ImageIcon, Trash2 } from 'lucide-react';
 import { getLanguageSvgUrl } from '../FileIcon';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 export interface ProjectIconModalProps {
   isOpen: boolean;
@@ -39,6 +40,7 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
   const [previewIcon, setPreviewIcon] = useState<string | null>(null);
   const [isSearchingGithub, setIsSearchingGithub] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -259,38 +261,36 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
               style={{
                 width: 48,
                 height: 48,
-                borderRadius: '50%',
-                background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)',
+                background: 'transparent',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 flexShrink: 0,
-                overflow: 'hidden',
-                border: `2px solid ${accentColor}`,
-                boxShadow: `0 0 12px ${accentColor}33`,
+                border: 'none',
+                boxShadow: 'none',
               }}
             >
               {previewIcon ? (
                 <img
                   src={previewIcon}
                   alt={project.title}
-                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'transparent' }}
                   onError={() => setPreviewIcon(null)}
-                />
-              ) : langSvg ? (
-                <img
-                  src={langSvg}
-                  alt={project.language || ''}
-                  style={{ width: 28, height: 28, objectFit: 'contain' }}
                 />
               ) : project.ownerAvatarUrl ? (
                 <img
                   src={project.ownerAvatarUrl}
                   alt={project.owner || ''}
-                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'transparent' }}
+                />
+              ) : langSvg ? (
+                <img
+                  src={langSvg}
+                  alt={project.language || ''}
+                  style={{ width: 36, height: 36, objectFit: 'contain', background: 'transparent' }}
                 />
               ) : (
-                <span style={{ fontSize: 16, fontWeight: 300, color: textPrimary }}>
+                <span style={{ fontSize: 16, fontWeight: '400', color: textPrimary, background: 'transparent' }}>
                   {project.badge}
                 </span>
               )}
@@ -440,7 +440,7 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
                     <img
                       src={project.ownerAvatarUrl}
                       alt=""
-                      style={{ width: 18, height: 18, borderRadius: '50%' }}
+                      style={{ width: 18, height: 18, objectFit: 'contain' }}
                     />
                     <span>Usar Avatar da Organização (@{project.owner})</span>
                   </div>
@@ -475,7 +475,7 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
 
               {currentCustomIcon && (
                 <button
-                  onClick={handleRevertDefault}
+                  onClick={() => setIsConfirmDeleteOpen(true)}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -524,6 +524,23 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
           </button>
         </div>
       </div>
+
+      <ConfirmDeleteModal
+        isOpen={isConfirmDeleteOpen}
+        title="Remover Ícone Customizado"
+        message={`Deseja remover o ícone personalizado de "${project.title}"?`}
+        itemDescription="O projeto voltará a utilizar o ícone padrão da linguagem de programação ou avatar da organização."
+        confirmLabel="Remover Ícone"
+        cancelLabel="Cancelar"
+        iconType="trash"
+        themeTokens={themeTokens}
+        accentColor={accentColor}
+        onConfirm={() => {
+          handleRevertDefault();
+          setIsConfirmDeleteOpen(false);
+        }}
+        onClose={() => setIsConfirmDeleteOpen(false)}
+      />
     </div>
   );
 };

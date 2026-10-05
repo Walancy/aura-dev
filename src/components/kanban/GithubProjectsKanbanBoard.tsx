@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Plus,
   MoreHorizontal,
@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Clock,
   GitPullRequest,
+  Copy,
 } from 'lucide-react';
 import type { ProjectIssue } from '../ProjectsSchedulerView';
 
@@ -195,11 +196,23 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
   onOpenIssueDetail,
   onMoveIssue,
   onAddNewIssue,
+  showToast,
 }) => {
   const [searchFilter, setSearchFilter] = useState('');
   const [draggedIssueId, setDraggedIssueId] = useState<string | null>(null);
   const [dragOverColumnId, setDragOverColumnId] = useState<string | null>(null);
   const [columnMenuOpenId, setColumnMenuOpenId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!columnMenuOpenId) return;
+    const handleDocumentClick = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest('[data-column-menu]')) {
+        setColumnMenuOpenId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleDocumentClick);
+    return () => document.removeEventListener('mousedown', handleDocumentClick);
+  }, [columnMenuOpenId]);
 
   const activeColumns = useMemo(() => {
     return columns && columns.length > 0 ? columns : KANBAN_COLUMNS;
@@ -432,7 +445,7 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                   </div>
 
                   {/* Ações da Coluna (··· e +) */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <div data-column-menu style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 2 }}>
                     <button
                       type="button"
                       onClick={() => setColumnMenuOpenId((prev) => (prev === col.id ? null : col.id))}
@@ -453,6 +466,80 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                     >
                       <MoreHorizontal size={14} />
                     </button>
+
+                    {columnMenuOpenId === col.id && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: 24,
+                          right: 0,
+                          background: isEffectiveDark ? '#161b22' : '#ffffff',
+                          border: isEffectiveDark ? '1px solid #30363d' : '1px solid #d0d7de',
+                          borderRadius: 6,
+                          boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
+                          padding: 4,
+                          zIndex: 100,
+                          minWidth: 170,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 2,
+                        }}
+                      >
+                        {onAddNewIssue && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setColumnMenuOpenId(null);
+                              onAddNewIssue(col.id);
+                            }}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: theme.textPrimary,
+                              fontSize: 12,
+                              padding: '6px 8px',
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              borderRadius: 4,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 6,
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)')}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                          >
+                            <Plus size={13} />
+                            <span>Adicionar tarefa</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard?.writeText?.(col.title || col.id);
+                            showToast?.('Nome da coluna copiado!');
+                            setColumnMenuOpenId(null);
+                          }}
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: theme.textPrimary,
+                            fontSize: 12,
+                            padding: '6px 8px',
+                            textAlign: 'left',
+                            cursor: 'pointer',
+                            borderRadius: 4,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6,
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)')}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                        >
+                          <Copy size={13} />
+                          <span>Copiar nome da coluna</span>
+                        </button>
+                      </div>
+                    )}
 
                     {onAddNewIssue && (
                       <button

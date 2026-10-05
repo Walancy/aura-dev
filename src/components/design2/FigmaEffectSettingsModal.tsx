@@ -160,6 +160,7 @@ export const FigmaEffectSettingsModal: React.FC<FigmaEffectSettingsModalProps> =
   const textPrimary = themeTokens.textPrimary;
   const textSecondary = themeTokens.textSecondary;
   const divider = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
+  const inputBorder = 'transparent';
 
   const inputStyle: React.CSSProperties = {
     background: bgSecondary,

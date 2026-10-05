@@ -6,6 +6,15 @@ import { ClaudeIcon, AntigravityIcon, CodexIcon, GeminiIcon, OllamaIcon } from '
 import { MiniSwitch } from '../../ui/MiniSwitch';
 import type { ThemeTokens } from '../../../types/ide';
 
+const hexToRgba = (hex: string, alpha: number) => {
+  if (!hex || !hex.startsWith('#')) return `rgba(59, 130, 246, ${alpha})`;
+  const clean = hex.replace('#', '');
+  const r = parseInt(clean.substring(0, 2), 16) || 0;
+  const g = parseInt(clean.substring(2, 4), 16) || 0;
+  const b = parseInt(clean.substring(4, 6), 16) || 0;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
 export interface AiAgentsSettingsTabProps {
   themeTokens: ThemeTokens;
   isEffectiveDark: boolean;
@@ -18,6 +27,9 @@ export interface AiAgentsSettingsTabProps {
   setAiAutoApprove: (value: boolean) => void;
   aiConfirmBeforeDelete: boolean;
   setAiConfirmBeforeDelete: (value: boolean) => void;
+  onOpenAiGlobalRules?: () => void;
+  onOpenSkills?: () => void;
+  activeSkillsCount?: number;
 }
 
 export const AiAgentsSettingsTab: React.FC<AiAgentsSettingsTabProps> = ({
@@ -32,15 +44,89 @@ export const AiAgentsSettingsTab: React.FC<AiAgentsSettingsTabProps> = ({
   setAiAutoApprove,
   aiConfirmBeforeDelete,
   setAiConfirmBeforeDelete,
+  onOpenAiGlobalRules,
+  onOpenSkills,
+  activeSkillsCount = 0,
 }) => {
   return (
     <>
       <div>
         <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>IA & Agentes</div>
         <div style={{ fontSize: 12.5, color: themeTokens.textSecondary }}>
-          Provedor e modo padrão usados ao abrir o painel de IA, e regras de segurança para execução de agentes.
+          Provedor e modo padrão usados ao abrir o painel de IA, regras globais de comportamento e gerenciamento de skills.
         </div>
       </div>
+
+      {/* Regras Globais & Skills Quick Actions */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        {onOpenAiGlobalRules && (
+          <div
+            onClick={onOpenAiGlobalRules}
+            style={{
+              padding: 12,
+              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
+              borderRadius: 8,
+              cursor: 'pointer',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+              transition: 'background 0.15s ease',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)')}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ color: accentColor, display: 'flex' }}>
+                  <ListChecks size={16} />
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 500, color: themeTokens.textPrimary }}>Regras Globais</span>
+              </div>
+              <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: hexToRgba(accentColor, 0.15), color: accentColor, fontWeight: 400 }}>
+                CLAUDE / GEMINI / AGENTS
+              </span>
+            </div>
+            <div style={{ fontSize: 11.5, color: themeTokens.textSecondary, lineHeight: '16px' }}>
+              Defina as diretrizes, restrições e regras globais que os agentes devem seguir em todos os projetos.
+            </div>
+          </div>
+        )}
+
+        {onOpenSkills && (
+          <div
+            onClick={onOpenSkills}
+            style={{
+              padding: 12,
+              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
+              borderRadius: 8,
+              cursor: 'pointer',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+              transition: 'background 0.15s ease',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)')}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ color: accentColor, display: 'flex' }}>
+                  <Zap size={16} />
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 500, color: themeTokens.textPrimary }}>Skills da IA</span>
+              </div>
+              <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: activeSkillsCount > 0 ? hexToRgba(accentColor, 0.15) : 'rgba(255,255,255,0.06)', color: activeSkillsCount > 0 ? accentColor : themeTokens.textSecondary, fontWeight: 400 }}>
+                {activeSkillsCount} ativas
+              </span>
+            </div>
+            <div style={{ fontSize: 11.5, color: themeTokens.textSecondary, lineHeight: '16px' }}>
+              Gerencie, ative e adicione novas skills de desenvolvimento, design e automação ao ecossistema de agentes.
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)' }} />
 
       <div>
         <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Provedor de IA Padrão</div>

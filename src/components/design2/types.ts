@@ -16,7 +16,8 @@ export type ShapeType =
   | 'image'
   | 'comment'
   | 'annotation'
-  | 'measurement';
+  | 'measurement'
+  | 'path';
 
 export type ToolId =
   | 'select'
@@ -45,12 +46,40 @@ export interface Point {
   y: number;
 }
 
+export interface GradientStop {
+  position: number; // 0 a 1
+  color: string;
+  opacity: number; // 0 a 1
+}
+
+/** Estilo reutilizável do documento (cor ou texto). Mudar o estilo atualiza todos os shapes que o usam. */
+export type DesignStyle =
+  | { id: string; name: string; kind: 'color'; color: string; opacity: number }
+  | { id: string; name: string; kind: 'text'; fontFamily?: string; fontSize?: number; fontWeight?: number | string; letterSpacing?: number | string; lineHeight?: number | string };
+
+/** Modo de variáveis (ex.: Claro/Escuro). Variáveis de cor guardam um valor por modo. */
+export interface DesignMode {
+  id: string;
+  name: string;
+}
+
+export interface DesignVariable {
+  id: string;
+  name: string;
+  kind: 'color';
+  values: Record<string, string>;
+}
+
 export interface FillItem {
   id: string;
   color: string;
   opacity: number; // 0 to 1
   visible: boolean;
   type?: 'solid' | 'linear' | 'radial' | 'angular' | 'diamond' | 'image';
+  /** Gradiente linear/radial: paradas de cor (ordenadas por position) */
+  gradientStops?: GradientStop[];
+  /** Linear: ângulo estilo CSS (90 = da esquerda para a direita) */
+  gradientAngle?: number;
 }
 
 export interface StrokeItem {
@@ -141,6 +170,12 @@ export interface Shape {
   flipX?: boolean;
   flipY?: boolean;
   isMask?: boolean;
+  /** Nome do ícone Material quando o path veio do seletor de ícones */
+  iconName?: string;
+  /** Peça do aparelho (barra de status, ilha, botões…): não conta como conteúdo da tela */
+  deviceChrome?: boolean;
+  /** Frame interno que representa a tela do aparelho (recebe o conteúdo; sem rótulo próprio) */
+  deviceScreen?: boolean;
 
   // Layout & Dimensions
   constrainProportions?: boolean;
@@ -195,6 +230,38 @@ export interface Shape {
 
   // Effects
   effects?: EffectItem[];
+  /** Como o shape reage quando o frame pai é redimensionado */
+  constraintH?: 'start' | 'end' | 'center' | 'stretch' | 'scale';
+  constraintV?: 'start' | 'end' | 'center' | 'stretch' | 'scale';
+  /** Pen/pencil: desenha o traço como curva suave passando pelos nós */
+  smooth?: boolean;
+  /** Imagem: modo de ajuste e recorte (frações 0..1 da imagem original) */
+  imageFit?: 'fill' | 'fit' | 'stretch';
+  imageCrop?: { x: number; y: number; w: number; h: number };
+  /** Protótipo: ao clicar neste elemento no modo apresentação, vai para o frame de destino */
+  prototypeLink?: { targetId: string };
+  /** Issue do GitHub à qual este design (frame) está ligado */
+  linkedIssue?: number;
+  /** Variável de cor ligada ao preenchimento (muda com o modo ativo) */
+  fillVariableId?: string;
+  /** Estilos do documento aplicados ao shape */
+  fillStyleId?: string;
+  textStyleId?: string;
+  /** Componente: grupo de variantes (componentes com o mesmo grupo são variantes um do outro) e nome da variante */
+  variantGroup?: string;
+  variantName?: string;
+  /** Instância: id do componente principal (no shape raiz da instância) */
+  instanceOf?: string;
+  /** Filho de instância: id do shape correspondente no componente principal */
+  sourceId?: string;
+  /** Propriedades alteradas na instância (não são sobrescritas quando o componente muda) */
+  overrides?: string[];
+  /** Resultado de operação booleana / flatten: caminho SVG em coordenadas locais (origem 0,0) e seu tamanho original */
+  pathD?: string;
+  pathW?: number;
+  pathH?: number;
+  /** text-path: curvatura do arco (positivo sobe, negativo desce) */
+  pathCurve?: number;
 
   // Exports
   exports?: ExportItem[];

@@ -1,16 +1,22 @@
 import React from 'react';
-import { FileText } from 'lucide-react';
+import { FileText, Folder, FolderOpen } from 'lucide-react';
 
 // Eagerly import all file and folder SVG icons from assets
-const fileIconsMap = import.meta.glob<string>('../assets/file-icons/files/*.svg', {
-  eager: true,
-  import: 'default',
-});
+let fileIconsMap: Record<string, string> = {};
+let folderIconsMap: Record<string, string> = {};
 
-const folderIconsMap = import.meta.glob<string>('../assets/file-icons/folders/*.svg', {
-  eager: true,
-  import: 'default',
-});
+try {
+  fileIconsMap = import.meta.glob<string>('../assets/file-icons/files/*.svg', {
+    eager: true,
+    import: 'default',
+  });
+  folderIconsMap = import.meta.glob<string>('../assets/file-icons/folders/*.svg', {
+    eager: true,
+    import: 'default',
+  });
+} catch {
+  // Non-Vite test environment fallback
+}
 
 // Helper to look up an icon URL by icon base name
 function getFileSvgUrl(iconName: string): string {
@@ -296,9 +302,10 @@ export function getFileSvgUrlForName(fileName: string): string {
 }
 
 export const FileIcon: React.FC<FileIconProps> = ({ fileName, size = 15, className, style }) => {
+  const [hasError, setHasError] = React.useState(false);
   const iconUrl = getFileSvgUrlForName(fileName);
 
-  if (!iconUrl) {
+  if (!iconUrl || hasError) {
     return (
       <div
         style={{
@@ -322,6 +329,7 @@ export const FileIcon: React.FC<FileIconProps> = ({ fileName, size = 15, classNa
       src={iconUrl}
       alt={fileName}
       className={className}
+      onError={() => setHasError(true)}
       style={{
         width: size,
         height: size,
@@ -352,15 +360,35 @@ export const FolderIcon: React.FC<FolderIconProps> = ({
   className,
   style,
 }) => {
+  const [hasError, setHasError] = React.useState(false);
   const lowerName = folderName.toLowerCase();
   const matchedFolder = FOLDER_MAP[lowerName] || 'folder';
   const iconUrl = getFolderSvgUrl(matchedFolder, isOpen);
+
+  if (!iconUrl || hasError) {
+    return isOpen ? (
+      <FolderOpen
+        size={size}
+        color="#38bdf8"
+        className={className}
+        style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0, ...style }}
+      />
+    ) : (
+      <Folder
+        size={size}
+        color="#64748b"
+        className={className}
+        style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0, ...style }}
+      />
+    );
+  }
 
   return (
     <img
       src={iconUrl}
       alt={folderName}
       className={className}
+      onError={() => setHasError(true)}
       style={{
         width: size,
         height: size,

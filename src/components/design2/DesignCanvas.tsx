@@ -1,5 +1,11 @@
 import React, { useRef, useState, useEffect } from 'react';
 import type { Point, Shape, StrokeItem, ToolId } from './types';
+import { cssGradient, isGradientFill, isHtmlGradient, linearVector, pathFromPoints, sortStops } from './gradient';
+import { svgEffectFilter } from './effectsFilter';
+import { computeSnap, unionBox, type Guide } from './snap';
+import { guideBoxes, newGuideId, RULER_SIZE, rulerOrigin, rulerTicks, selectionRange, snapGuidePos, type RulerGuide } from './rulers';
+import { descendantIds, resizeDescendants } from './constraints';
+import { relayoutAll } from './autoLayout';
 
 export interface CanvasViewport {
   x: number;
@@ -20,12 +26,31 @@ interface DesignCanvasProps {
   onZoomChange?: (zoom: number) => void;
   onViewportChange?: (viewport: CanvasViewport) => void;
   targetCamera?: { x: number; y: number; zoom?: number; timestamp?: number } | null;
+  /** Telas geradas pela IA aguardando aceite/regeração (botões acima do frame) */
+  aiReview?: Array<{ id: string; busy?: boolean }>;
+  onAiAccept?: (frameId: string) => void;
+  onAiRegenerate?: (frameId: string) => void;
   onSelect: (id: string | null) => void;
   onSelectMultiple?: (ids: string[]) => void;
   onShapesChange: (shapes: Shape[], commit: boolean) => void;
   onToolUsed: () => void;
   onContextMenuShape?: (shape: Shape, clientX: number, clientY: number) => void;
   onContextMenuCanvas?: (clientX: number, clientY: number) => void;
+  /** Encaixe nas bordas/centros dos outros shapes (Cmd/Ctrl ao arrastar desativa). Padrão: ligado */
+  snapEnabled?: boolean;
+  showGrid?: boolean;
+  gridSize?: number;
+  showRulers?: boolean;
+  /** Guias do usuário (arrastadas das réguas), persistidas por página */
+  userGuides?: RulerGuide[];
+  onUserGuidesChange?: (guides: RulerGuide[]) => void;
+  showUserGuides?: boolean;
+  /** Réguas relativas ao frame da seleção (0 no canto do frame) */
+  rulerRelative?: boolean;
+  /** Posição do ponteiro em coordenadas do canvas (para colaboração) */
+  onPointerMove?: (x: number, y: number) => void;
+  /** Cursores de outros participantes da sala */
+  remoteCursors?: Array<{ id: string; name: string; color: string; x: number; y: number }>;
 }
 
 function bboxOfPoints(points: Point[]) {
@@ -49,6 +74,18 @@ function computeGroupBounds(shapes: Shape[]): Map<string, { x: number; y: number
     bounds.set(s.id, { x: minX, y: minY, width: maxX - minX, height: maxY - minY });
   }
   return bounds;
+}
+
+/** Contorno do shape como elemento SVG (para clipPath de máscara e de preenchimentos HTML). */
+function outlineGeometry(m: Shape): React.ReactNode {
+  if (m.type === 'ellipse') return <ellipse cx={m.x + m.width / 2} cy={m.y + m.height / 2} rx={m.width / 2} ry={m.height / 2} />;
+  if (m.type === 'polygon') return <polygon points={getPolygonPoints(m.x + m.width / 2, m.y + m.height / 2, Math.min(m.width, m.height) / 2, m.polygonSides ?? 3)} />;
+  if (m.type === 'star') {
+    const ro = Math.min(m.width, m.height) / 2;
+    return <polygon points={getStarPoints(m.x + m.width / 2, m.y + m.height / 2, ro, ro * (m.starInnerRatio ?? 0.5), m.starPoints ?? 5)} />;
+  }
+  if (m.type === 'path') return <path d={m.pathD} transform={`translate(${m.x}, ${m.y}) scale(${m.width / (m.pathW || 1)}, ${m.height / (m.pathH || 1)})`} />;
+  return <rect x={m.x} y={m.y} width={m.width} height={m.height} rx={m.cornerRadius || 0} />;
 }
 
 function getRoundedRectPath(
@@ -199,8 +236,12 @@ type DragMode =
       origX: number;
       origY: number;
       childOrigins: { id: string; x: number; y: number }[];
+      /** ids selecionados (os descendentes também se movem, mas não entram no encaixe) */
+      rootIds: string[];
     }
-  | { kind: 'resize'; shapeId: string; handle: string; orig: Shape }
+  | { kind: 'node'; shapeId: string; index: number }
+  | { kind: 'guide'; id: string; axis: 'x' | 'y' }
+  | { kind: 'resize'; shapeId: string; handle: string; orig: Shape; descendants: Shape[] }
   | { kind: 'radius'; shapeId: string; startX: number; startY: number; origRadius: number };
 
 export default function DesignCanvas({
@@ -215,16 +256,40 @@ export default function DesignCanvas({
   onZoomChange,
   onViewportChange,
   targetCamera,
+  aiReview,
+  onAiAccept,
+  onAiRegenerate,
   onSelect,
   onSelectMultiple,
   onShapesChange,
   onToolUsed,
   onContextMenuShape,
   onContextMenuCanvas,
+  snapEnabled = true,
+  showGrid = false,
+  gridSize = 10,
+  showRulers = false,
+  userGuides = [],
+  onUserGuidesChange,
+  showUserGuides = true,
+  rulerRelative = true,
+  onPointerMove,
+  remoteCursors,
 }: DesignCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 120, y: 80 });
   const [drag, setDrag] = useState<DragMode>({ kind: 'none' });
+  const [guides, setGuides] = useState<Guide[]>([]);
+  // Posição do ponteiro na tela (marcador nas réguas), atualizada no máximo 1x por frame
+  const [pointerScreen, setPointerScreen] = useState<{ x: number; y: number } | null>(null);
+  const pointerRaf = useRef<number | null>(null);
+  const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [draggingGuidePos, setDraggingGuidePos] = useState<number | null>(null);
+  // Edição de texto direto no canvas (duplo clique em um texto, ou logo após criá-lo)
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  // Renomear frame direto no rótulo (duplo clique no nome)
+  const [editingFrameNameId, setEditingFrameNameId] = useState<string | null>(null);
+  const editingIsNew = useRef(false);
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const hasAutoCentered = useRef(false);
   const isRightClickPanning = useRef(false);
@@ -238,8 +303,9 @@ export default function DesignCanvas({
   }, [selectedIds, selectedId]);
 
   const handleSelectIds = (ids: string[]) => {
-    onSelectMultiple?.(ids);
-    onSelect(ids.length > 0 ? ids[0] : null);
+    // onSelect redefiniria a seleção para um único item, então só é usado quando não há onSelectMultiple
+    if (onSelectMultiple) onSelectMultiple(ids);
+    else onSelect(ids.length > 0 ? ids[0] : null);
   };
 
   // Programmatically center camera when targetCamera changes
@@ -377,7 +443,7 @@ export default function DesignCanvas({
     setDrag(isPen ? { kind: 'pen', shapeId: shape.id } : { kind: 'create', shapeId: shape.id, startX: p.x, startY: p.y });
   };
 
-  const handleShapeDown = (e: React.MouseEvent, shape: Shape) => {
+  const handleShapeDown = (e: React.MouseEvent, shape: Shape, fromLabel = false) => {
     // Pan do canvas mesmo clicando sobre um shape se for botão do meio ou botão direito
     if (tool === 'hand' || isSpacePressed || e.button === 1 || e.button === 2) {
       handleBackgroundDown(e);
@@ -386,9 +452,15 @@ export default function DesignCanvas({
 
     if (e.button !== 0) return;
     if (readOnly) return;
-    e.stopPropagation();
     if (shape.locked) return;
     if (tool !== 'select' && tool !== 'scale') return;
+    // Como no Figma: arrastar sobre o corpo de um frame raiz não selecionado faz seleção por área (o frame é selecionado pelo título/camadas)
+    if (shape.type === 'frame' && !shape.parentId && !activeSelectedIds.includes(shape.id) && !e.altKey && !fromLabel) {
+      handleBackgroundDown(e);
+      e.stopPropagation();
+      return;
+    }
+    e.stopPropagation();
 
     const p = getCanvasPoint(e);
     let nextSelectedIds = [...activeSelectedIds];
@@ -408,7 +480,9 @@ export default function DesignCanvas({
     }
 
     // Se mover, move todos os shapes selecionados juntos (comportamento Figma)
-    const shapesToMove = shapes.filter((s) => nextSelectedIds.includes(s.id));
+    const moveIds = new Set<string>(nextSelectedIds);
+    nextSelectedIds.forEach((id) => descendantIds(shapes, id).forEach((d) => moveIds.add(d)));
+    const shapesToMove = shapes.filter((s) => moveIds.has(s.id));
     const childOrigins = shapesToMove.map((c) => ({ id: c.id, x: c.x, y: c.y }));
 
     setDrag({
@@ -419,13 +493,15 @@ export default function DesignCanvas({
       origX: shape.x,
       origY: shape.y,
       childOrigins,
+      rootIds: nextSelectedIds,
     });
   };
 
   const handleResizeDown = (e: React.MouseEvent, shape: Shape, handle: string) => {
     if (readOnly) return;
     e.stopPropagation();
-    setDrag({ kind: 'resize', shapeId: shape.id, handle, orig: { ...shape } });
+    const ids = new Set(descendantIds(shapes, shape.id));
+    setDrag({ kind: 'resize', shapeId: shape.id, handle, orig: { ...shape }, descendants: shapes.filter((x) => ids.has(x.id)).map((x) => ({ ...x })) });
   };
 
   const handleRadiusDown = (e: React.MouseEvent, shape: Shape) => {
@@ -442,7 +518,34 @@ export default function DesignCanvas({
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (onPointerMove && svgRef.current) {
+      const pt = getCanvasPoint(e);
+      onPointerMove(pt.x, pt.y);
+    }
+    if (svgRef.current) {
+      const box = svgRef.current.getBoundingClientRect();
+      lastPointerRef.current = { x: e.clientX - box.left, y: e.clientY - box.top };
+      if (showRulers && pointerRaf.current === null) {
+        pointerRaf.current = requestAnimationFrame(() => {
+          pointerRaf.current = null;
+          setPointerScreen({ ...lastPointerRef.current });
+        });
+      }
+    }
     if (drag.kind === 'none') return;
+
+    if (drag.kind === 'guide') {
+      const pt = getCanvasPoint(e);
+      let pos = drag.axis === 'x' ? pt.x : pt.y;
+      if (snapEnabled && !(e.metaKey || e.ctrlKey)) {
+        pos = snapGuidePos(pos, drag.axis, shapes.filter((x) => x.visible !== false).map((x) => ({ x: x.x, y: x.y, width: x.width, height: x.height })), 6 / zoom, showGrid ? gridSize : 0);
+      }
+      pos = Math.round(pos * 100) / 100;
+      setDraggingGuidePos(pos);
+      const exists = userGuides.some((g) => g.id === drag.id);
+      onUserGuidesChange?.(exists ? userGuides.map((g) => (g.id === drag.id ? { ...g, pos } : g)) : [...userGuides, { id: drag.id, axis: drag.axis, pos }]);
+      return;
+    }
 
     if (drag.kind === 'pan') {
       const dx = e.clientX - drag.startClientX;
@@ -466,16 +569,26 @@ export default function DesignCanvas({
       const selH = Math.abs(p.y - drag.startY);
 
       if (selW > 2 || selH > 2) {
-        const hitIds = shapes
-          .filter((s) => {
-            if (s.visible === false) return false;
-            const sx = s.x;
-            const sy = s.y;
-            const sw = Math.max(1, s.width);
-            const sh = Math.max(1, s.height);
-            return sx < selX + selW && sx + sw > selX && sy < selY + selH && sy + sh > selY;
-          })
-          .map((s) => s.id);
+        const hits = shapes.filter((s) => {
+          if (s.visible === false || s.locked) return false;
+          const sw = Math.max(1, s.width);
+          const sh = Math.max(1, s.height);
+          if (!(s.x < selX + selW && s.x + sw > selX && s.y < selY + selH && s.y + sh > selY)) return false;
+          // contêiner que engloba toda a área não é selecionado: o que está dentro dele é
+          const isContainer = s.type === 'frame' || s.type === 'group' || s.type === 'section';
+          return !(isContainer && s.x <= selX && s.y <= selY && s.x + sw >= selX + selW && s.y + sh >= selY + selH && shapes.some((c) => c.parentId === s.id));
+        });
+        const hitSet = new Set(hits.map((s) => s.id));
+        // só o mais externo: descendentes de algo já selecionado ficam de fora
+        const hasHitAncestor = (s: Shape) => {
+          let cur = s.parentId ? shapes.find((x) => x.id === s.parentId) : undefined;
+          while (cur) {
+            if (hitSet.has(cur.id)) return true;
+            cur = cur.parentId ? shapes.find((x) => x.id === cur!.parentId) : undefined;
+          }
+          return false;
+        };
+        const hitIds = hits.filter((s) => !hasHitAncestor(s)).map((s) => s.id);
 
         if (drag.isAdditive) {
           const combined = Array.from(new Set([...activeSelectedIds, ...hitIds]));
@@ -500,8 +613,31 @@ export default function DesignCanvas({
       const bbox = bboxOfPoints(points);
       updateShape(drag.shapeId, { points, ...bbox }, false);
     } else if (drag.kind === 'move') {
-      const dx = p.x - drag.startX;
-      const dy = p.y - drag.startY;
+      let dx = p.x - drag.startX;
+      let dy = p.y - drag.startY;
+      // Encaixe: bordas e centros do que está sendo movido contra os demais shapes (Cmd/Ctrl desativa)
+      if (snapEnabled && !(e.metaKey || e.ctrlKey)) {
+        const moved = new Set(drag.childOrigins.map((c) => c.id));
+        const roots = drag.rootIds
+          .map((id) => shapes.find((x) => x.id === id))
+          .filter((x): x is Shape => Boolean(x))
+          .map((x) => {
+            const o = drag.childOrigins.find((c) => c.id === x.id)!;
+            return { x: o.x + dx, y: o.y + dy, width: x.width, height: x.height };
+          });
+        if (roots.length > 0) {
+          const others = shapes
+            .filter((x) => !moved.has(x.id) && x.visible !== false && x.type !== 'comment' && x.type !== 'annotation' && x.type !== 'measurement')
+            .map((x) => ({ x: x.x, y: x.y, width: x.width, height: x.height }))
+            .concat(showUserGuides ? guideBoxes(userGuides) : []);
+          const snap = computeSnap(unionBox(roots), others, 6 / zoom, showGrid ? gridSize : 0);
+          dx += snap.dx;
+          dy += snap.dy;
+          setGuides(snap.guides);
+        }
+      } else if (guides.length) {
+        setGuides([]);
+      }
       const next = shapes.map((s) => {
         const origin = drag.childOrigins.find((c) => c.id === s.id);
         if (origin) {
@@ -521,6 +657,11 @@ export default function DesignCanvas({
         return s;
       });
       onShapesChange(next, false);
+    } else if (drag.kind === 'node') {
+      const shape = shapes.find((x) => x.id === drag.shapeId);
+      if (!shape?.points) return;
+      const points = shape.points.map((pt, i) => (i === drag.index ? { x: p.x, y: p.y } : pt));
+      updateShape(drag.shapeId, { points, ...bboxOfPoints(points) }, false);
     } else if (drag.kind === 'resize') {
       const { orig, handle } = drag;
       let { x, y, width, height } = orig;
@@ -539,7 +680,59 @@ export default function DesignCanvas({
         height = Math.max(4, width * ratio);
         if (handle.includes('n')) y = orig.y + orig.height - height;
       }
-      updateShape(drag.shapeId, { x, y, width, height }, false);
+      // Encaixe das bordas arrastadas nos outros shapes
+      if (snapEnabled && !(e.metaKey || e.ctrlKey) && !orig.constrainProportions) {
+        const skip = new Set([orig.id, ...drag.descendants.map((d) => d.id)]);
+        const others = shapes
+          .filter((x) => !skip.has(x.id) && x.visible !== false)
+          .map((x) => ({ x: x.x, y: x.y, width: x.width, height: x.height }))
+          .concat(showUserGuides ? guideBoxes(userGuides) : []);
+        const th = 6 / zoom;
+        const g: Guide[] = [];
+        if (handle.includes('e') || handle.includes('w')) {
+          const edge = handle.includes('e') ? x + width : x;
+          const sn = computeSnap({ x: edge, y, width: 0, height }, others, th, showGrid ? gridSize : 0);
+          if (sn.dx) {
+            if (handle.includes('e')) width = Math.max(4, width + sn.dx);
+            else {
+              x += sn.dx;
+              width = Math.max(4, width - sn.dx);
+            }
+          }
+          g.push(...sn.guides.filter((q) => q.axis === 'x'));
+        }
+        if (handle.includes('s') || handle.includes('n')) {
+          const edge = handle.includes('s') ? y + height : y;
+          const sn = computeSnap({ x, y: edge, width, height: 0 }, others, th, showGrid ? gridSize : 0);
+          if (sn.dy) {
+            if (handle.includes('s')) height = Math.max(4, height + sn.dy);
+            else {
+              y += sn.dy;
+              height = Math.max(4, height - sn.dy);
+            }
+          }
+          g.push(...sn.guides.filter((q) => q.axis === 'y'));
+        }
+        setGuides(g);
+      }
+      // Filhos acompanham: restrições (padrão) ou escala proporcional (ferramenta Escala)
+      const patches = resizeDescendants(
+        [orig, ...drag.descendants],
+        orig.id,
+        { x: orig.x, y: orig.y, width: orig.width, height: orig.height },
+        { x, y, width, height },
+        tool === 'scale' ? 'scale' : 'constraints'
+      );
+      // Redimensionar vira tamanho fixo naquele eixo (como no Figma) e o auto layout reflui ao vivo
+      const modePatch: Partial<Shape> = {};
+      if ((handle.includes('e') || handle.includes('w')) && orig.widthMode && orig.widthMode !== 'fixed') modePatch.widthMode = 'fixed';
+      if ((handle.includes('n') || handle.includes('s')) && orig.heightMode && orig.heightMode !== 'fixed') modePatch.heightMode = 'fixed';
+      const resized = shapes.map((sh) => {
+        if (sh.id === drag.shapeId) return { ...sh, x, y, width, height, ...modePatch };
+        const patch = patches.get(sh.id);
+        return patch ? { ...sh, ...patch } : sh;
+      });
+      onShapesChange(resized.some((sh) => sh.hasAutoLayout) ? relayoutAll(resized) : resized, false);
     } else if (drag.kind === 'radius') {
       const delta = Math.sqrt(Math.pow(p.x - drag.startX, 2) + Math.pow(p.y - drag.startY, 2));
       const newRadius = Math.max(0, Math.min(100, Math.round(drag.origRadius + delta / 2)));
@@ -548,6 +741,15 @@ export default function DesignCanvas({
   };
 
   const handleMouseUp = () => {
+    if (drag.kind === 'guide') {
+      // Soltar de volta sobre a régua remove a guia
+      const p = lastPointerRef.current;
+      const overRuler = drag.axis === 'y' ? p.y < RULER_SIZE : p.x < RULER_SIZE;
+      if (overRuler) onUserGuidesChange?.(userGuides.filter((g) => g.id !== drag.id));
+      setDraggingGuidePos(null);
+      setDrag({ kind: 'none' });
+      return;
+    }
     if (drag.kind !== 'none') {
       if (drag.kind === 'marquee') {
         const selW = Math.abs(drag.currentX - drag.startX);
@@ -557,10 +759,15 @@ export default function DesignCanvas({
         }
       } else if (drag.kind !== 'pan') {
         onShapesChange(shapes, true);
+        if (drag.kind === 'create' && tool === 'text') {
+          editingIsNew.current = true;
+          setEditingTextId(drag.shapeId);
+        }
         if (drag.kind === 'create' || drag.kind === 'pen') onToolUsed();
       }
     }
     setDrag({ kind: 'none' });
+    setGuides([]);
     isRightClickPanning.current = false;
   };
 
@@ -623,10 +830,9 @@ export default function DesignCanvas({
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (readOnly || activeSelectedIds.length === 0) return;
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      onShapesChange(
-        shapes.filter((s) => !activeSelectedIds.includes(s.id)),
-        true
-      );
+      const gone = new Set<string>(activeSelectedIds);
+      activeSelectedIds.forEach((id) => descendantIds(shapes, id).forEach((d) => gone.add(d)));
+      onShapesChange(shapes.filter((s) => !gone.has(s.id)), true);
       handleSelectIds([]);
     }
   };
@@ -640,6 +846,8 @@ export default function DesignCanvas({
 
   // Calcula bounds da multi-seleção
   const selectedShapes = shapes.filter((s) => activeSelectedIds.includes(s.id));
+  // Origem das réguas: canto do frame da seleção (se "relativo") ou 0,0
+  const rulerOriginPoint = rulerRelative ? rulerOrigin(selectedShapes, shapes) : { x: 0, y: 0 };
   const multiBounds =
     selectedShapes.length > 1
       ? {
@@ -706,11 +914,54 @@ export default function DesignCanvas({
       }}
     >
       <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
+        {showGrid && zoom >= 0.25 && (
+          <g pointerEvents="none">
+            <defs>
+              <pattern id="design-grid" width={gridSize} height={gridSize} patternUnits="userSpaceOnUse">
+                <path d={`M ${gridSize} 0 L 0 0 0 ${gridSize}`} fill="none" stroke="rgba(128,128,128,0.18)" strokeWidth={1 / zoom} />
+              </pattern>
+            </defs>
+            <rect
+              x={-pan.x / zoom}
+              y={-pan.y / zoom}
+              width={(svgRef.current?.clientWidth || 2400) / zoom}
+              height={(svgRef.current?.clientHeight || 1600) / zoom}
+              fill="url(#design-grid)"
+            />
+          </g>
+        )}
         {sorted.map((s) => {
           if (s.visible === false) return null;
           const isSelected = activeSelectedIds.includes(s.id);
           const common = {
             onMouseDown: (e: React.MouseEvent) => handleShapeDown(e, s),
+            onDoubleClick: (e: React.MouseEvent) => {
+              if (!readOnly && !s.locked && (s.type === 'pen' || s.type === 'pencil') && s.points && s.points.length >= 2) {
+                // Duplo clique no traço: adiciona um nó no segmento mais próximo
+                e.stopPropagation();
+                const pt = getCanvasPoint(e);
+                let best = 0;
+                let bestDist = Infinity;
+                for (let i = 0; i < s.points.length - 1; i++) {
+                  const a = s.points[i];
+                  const b = s.points[i + 1];
+                  const len2 = (b.x - a.x) ** 2 + (b.y - a.y) ** 2 || 1;
+                  const t = Math.max(0, Math.min(1, ((pt.x - a.x) * (b.x - a.x) + (pt.y - a.y) * (b.y - a.y)) / len2));
+                  const d = Math.hypot(pt.x - (a.x + t * (b.x - a.x)), pt.y - (a.y + t * (b.y - a.y)));
+                  if (d < bestDist) {
+                    bestDist = d;
+                    best = i;
+                  }
+                }
+                const points = [...s.points.slice(0, best + 1), pt, ...s.points.slice(best + 1)];
+                updateShape(s.id, { points, ...bboxOfPoints(points) }, true);
+                return;
+              }
+              if (readOnly || s.locked || (s.type !== 'text' && s.type !== 'text-path')) return;
+              e.stopPropagation();
+              editingIsNew.current = false;
+              setEditingTextId(s.id);
+            },
             onContextMenu: (e: React.MouseEvent) => {
               e.preventDefault();
               e.stopPropagation();
@@ -721,7 +972,7 @@ export default function DesignCanvas({
               handleSelectIds([s.id]);
               onContextMenuShape?.(s, e.clientX, e.clientY);
             },
-            opacity: s.opacity ?? 1,
+            opacity: s.id === editingTextId || (s.isMask && !isSelected) ? 0 : (s.opacity ?? 1),
             style: {
               transform: s.flipX || s.flipY
                 ? `scale(${s.flipX ? -1 : 1}, ${s.flipY ? -1 : 1})`
@@ -763,6 +1014,75 @@ export default function DesignCanvas({
               : [];
 
           const fillsToRender = [...visibleFills].reverse();
+          // Preenchimentos em gradiente: <defs> por shape e `paintOf` devolve url(#id) ou a cor sólida
+          const gradId = (fid: string) => `grad-${s.id}-${fid}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+          const paintOf = (f: (typeof visibleFills)[number]) => (isHtmlGradient(f as any) ? 'none' : isGradientFill(f as any) ? `url(#${gradId(f.id)})` : f.color);
+          // Angular e diamante: camada HTML (CSS) recortada pelo contorno do shape
+          const htmlGradientLayers = fillsToRender
+            .filter((f) => isHtmlGradient(f as any) && isGradientFill(f as any))
+            .map((f) => {
+              const cid = `clipg-${s.id}-${f.id}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+              return (
+                <g key={f.id}>
+                  <defs>
+                    <clipPath id={cid}>{outlineGeometry(s)}</clipPath>
+                  </defs>
+                  <g clipPath={`url(#${cid})`} opacity={f.opacity}>
+                    <foreignObject x={s.x} y={s.y} width={Math.max(1, s.width)} height={Math.max(1, s.height)}>
+                      <div {...({ xmlns: 'http://www.w3.org/1999/xhtml' } as any)} style={{ width: '100%', height: '100%', background: cssGradient(f as any) }} />
+                    </foreignObject>
+                  </g>
+                </g>
+              );
+            });
+          // Blur de fundo: camada com backdrop-filter recortada pelo contorno, abaixo dos preenchimentos.
+          // Só aparece no canvas (a exportação não tem "fundo" para desfocar).
+          const bgBlurLayers = (s.effects || [])
+            .filter((e) => e.visible && e.type === 'background-blur')
+            .map((e, i) => {
+              const cid = `clipb-${s.id}-${i}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+              const progressive = e.blurMode === 'progressive';
+              const mask = progressive
+                ? `linear-gradient(to bottom, transparent ${e.blurStart ?? 0}%, black ${e.blurEnd ?? 100}%)`
+                : undefined;
+              return (
+                <g key={cid}>
+                  <defs>
+                    <clipPath id={cid}>{outlineGeometry(s)}</clipPath>
+                  </defs>
+                  <g clipPath={`url(#${cid})`}>
+                    <foreignObject x={s.x} y={s.y} width={Math.max(1, s.width)} height={Math.max(1, s.height)}>
+                      <div
+                        {...({ xmlns: 'http://www.w3.org/1999/xhtml' } as any)}
+                        style={{ width: '100%', height: '100%', backdropFilter: `blur(${e.blur ?? 8}px)`, WebkitBackdropFilter: `blur(${e.blur ?? 8}px)`, ...(mask ? { WebkitMaskImage: mask, maskImage: mask } : {}) }}
+                      />
+                    </foreignObject>
+                  </g>
+                </g>
+              );
+            });
+          const gradientDefs = fillsToRender.some((f) => isGradientFill(f as any) && !isHtmlGradient(f as any)) ? (
+            <defs>
+              {fillsToRender.filter((f) => isGradientFill(f as any) && !isHtmlGradient(f as any)).map((f) => {
+                const stops = sortStops((f as any).gradientStops).map((st, k) => (
+                  <stop key={k} offset={st.position} stopColor={st.color} stopOpacity={st.opacity} />
+                ));
+                if ((f as any).type === 'radial') {
+                  return (
+                    <radialGradient key={f.id} id={gradId(f.id)} cx="0.5" cy="0.5" r="0.5">
+                      {stops}
+                    </radialGradient>
+                  );
+                }
+                const v = linearVector((f as any).gradientAngle ?? 90);
+                return (
+                  <linearGradient key={f.id} id={gradId(f.id)} x1={v.x1} y1={v.y1} x2={v.x2} y2={v.y2}>
+                    {stops}
+                  </linearGradient>
+                );
+              })}
+            </defs>
+          ) : null;
           const strokesToRender = [...visibleStrokes].reverse();
           const strokePosition = s.strokePosition || 'inside';
           const strokeDash = s.strokeStyle === 'dashed' ? `${s.strokeDash || 6},${s.strokeGap || 6}` : undefined;
@@ -863,6 +1183,10 @@ export default function DesignCanvas({
 
           // Compute CSS filter from active effects (Drop shadow, Layer blur)
           const filterParts: string[] = [];
+          // Sombra interna e ruído: <filter> SVG por shape, aplicado antes das funções CSS (sombra externa/blur)
+          const fxId = `fx-${s.id}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+          const fxFilterMarkup = svgEffectFilter(fxId, s.effects);
+          if (fxFilterMarkup) filterParts.push(`url(#${fxId})`);
           if (s.effects && s.effects.length > 0) {
             for (const eff of s.effects) {
               if (!eff.visible) continue;
@@ -904,11 +1228,17 @@ export default function DesignCanvas({
 
             el = (
               <g {...common}>
-                {isFrame && (
+                {isFrame && !s.deviceScreen && !s.parentId && editingFrameNameId !== s.id && (
                   <text
                     x={s.x}
                     y={s.y - 6 / zoom}
-                    fill="#8f8f8f"
+                    onMouseDown={(e) => handleShapeDown(e, s, true)}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      if (!readOnly && !s.locked) setEditingFrameNameId(s.id);
+                    }}
+                    style={{ cursor: 'default', userSelect: 'none' }}
+                    fill={activeSelectedIds.includes(s.id) ? accentColor : '#8f8f8f'}
                     fontSize={11 / zoom}
                     fontWeight={500}
                     fontFamily="'Poppins', sans-serif"
@@ -920,7 +1250,7 @@ export default function DesignCanvas({
                 {fillsToRender.map((f, i) =>
                   renderOutline({
                     key: f.id || i,
-                    fill: isSlice ? 'none' : isSection ? accentColor + '0d' : f.color,
+                    fill: isSlice ? 'none' : isSection ? accentColor + '0d' : paintOf(f),
                     opacity: f.opacity,
                     stroke: 'none',
                   })
@@ -965,7 +1295,7 @@ export default function DesignCanvas({
                 {fillsToRender.map((f, i) =>
                   renderOutline({
                     key: f.id || i,
-                    fill: f.color,
+                    fill: paintOf(f),
                     opacity: f.opacity,
                     stroke: 'none',
                   })
@@ -1028,7 +1358,7 @@ export default function DesignCanvas({
                 {fillsToRender.map((f, i) =>
                   renderOutline({
                     key: f.id || i,
-                    fill: f.color,
+                    fill: paintOf(f),
                     opacity: f.opacity,
                     stroke: 'none',
                   })
@@ -1052,7 +1382,7 @@ export default function DesignCanvas({
                 {fillsToRender.map((f, i) =>
                   renderOutline({
                     key: f.id || i,
-                    fill: f.color,
+                    fill: paintOf(f),
                     opacity: f.opacity,
                     stroke: 'none',
                   })
@@ -1063,11 +1393,70 @@ export default function DesignCanvas({
           } else if (s.type === 'image') {
             el = (
               <g {...common}>
-                {s.imageUrl ? (
-                  <image href={s.imageUrl} x={s.x} y={s.y} width={s.width} height={s.height} preserveAspectRatio="xMidYMid slice" />
+                {s.imageUrl && s.imageCrop ? (
+                  (() => {
+                    // Recorte: a imagem é ampliada para que a região recortada preencha o shape
+                    const c = s.imageCrop;
+                    const cw = Math.max(0.01, c.w);
+                    const ch = Math.max(0.01, c.h);
+                    const cid = `clipi-${s.id}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+                    return (
+                      <>
+                        <defs>
+                          <clipPath id={cid}>
+                            <rect x={s.x} y={s.y} width={s.width} height={s.height} rx={s.cornerRadius || 0} />
+                          </clipPath>
+                        </defs>
+                        <g clipPath={`url(#${cid})`}>
+                          <image
+                            href={s.imageUrl}
+                            x={s.x - (c.x / cw) * s.width}
+                            y={s.y - (c.y / ch) * s.height}
+                            width={s.width / cw}
+                            height={s.height / ch}
+                            preserveAspectRatio="none"
+                          />
+                        </g>
+                      </>
+                    );
+                  })()
+                ) : s.imageUrl ? (
+                  <image
+                    href={s.imageUrl}
+                    x={s.x}
+                    y={s.y}
+                    width={s.width}
+                    height={s.height}
+                    preserveAspectRatio={s.imageFit === 'stretch' ? 'none' : s.imageFit === 'fit' ? 'xMidYMid meet' : 'xMidYMid slice'}
+                  />
                 ) : (
                   <rect x={s.x} y={s.y} width={s.width} height={s.height} fill={s.fill || '#333333'} rx={s.cornerRadius || 0} />
                 )}
+              </g>
+            );
+          } else if (s.type === 'path') {
+            const sx = s.width / (s.pathW || 1);
+            const sy = s.height / (s.pathH || 1);
+            el = (
+              <g {...common}>
+                <g transform={`translate(${s.x}, ${s.y}) scale(${sx}, ${sy})`}>
+                  {fillsToRender.map((f, i) => (
+                    <path key={f.id || i} d={s.pathD} fillRule="evenodd" fill={paintOf(f)} opacity={f.opacity} stroke="none" />
+                  ))}
+                  {strokesToRender.map((st, i) => (
+                    <path
+                      key={st.id || i}
+                      d={s.pathD}
+                      fill="none"
+                      stroke={st.color}
+                      strokeWidth={st.width ?? s.strokeWidth ?? 1}
+                      opacity={st.opacity}
+                      vectorEffect="non-scaling-stroke"
+                      strokeLinejoin={strokeJoin}
+                      strokeDasharray={strokeDash}
+                    />
+                  ))}
+                </g>
               </g>
             );
           } else if (s.type === 'group') {
@@ -1132,6 +1521,33 @@ export default function DesignCanvas({
             const lines = displayText.split('\n');
             const lineH = s.fontSize ? s.fontSize * 1.25 : 22;
 
+            if (s.type === 'text-path') {
+              // Texto sobre uma curva: arco quadrático da esquerda para a direita; pathCurve > 0 sobe, < 0 desce
+              const curve = s.pathCurve ?? 60;
+              const baseY = s.y + Math.max(s.height, (s.fontSize || 18) * 1.5);
+              const pid = `tp-${s.id}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+              const w = Math.max(s.width, 120);
+              el = (
+                <g {...common}>
+                  <defs>
+                    <path id={pid} d={`M ${s.x} ${baseY} Q ${s.x + w / 2} ${baseY - curve * 2} ${s.x + w} ${baseY}`} />
+                  </defs>
+                  <text
+                    fontSize={s.fontSize || 18}
+                    fill={s.fill}
+                    fontFamily={fontFamily}
+                    fontWeight={fontWeight}
+                    fontStyle={fontStyle}
+                    letterSpacing={letterSpacing}
+                    textDecoration={textDecoration}
+                  >
+                    <textPath href={`#${pid}`} startOffset={textAnchor === 'middle' ? '50%' : textAnchor === 'end' ? '100%' : '0%'} textAnchor={textAnchor}>
+                      {lines.join(' ')}
+                    </textPath>
+                  </text>
+                </g>
+              );
+            } else
             el = (
               <text
                 {...common}
@@ -1162,9 +1578,9 @@ export default function DesignCanvas({
             const penColor = visibleStrokes[0]?.color || s.stroke || accentColor;
             const penWidth = visibleStrokes[0]?.width !== undefined ? visibleStrokes[0].width : (s.strokeWidth ?? 2);
             el = (
-              <polyline
+              <path
                 {...common}
-                points={(s.points || []).map((p) => `${p.x},${p.y}`).join(' ')}
+                d={pathFromPoints(s.points || [], s.smooth)}
                 fill="none"
                 stroke={penColor}
                 strokeWidth={penWidth}
@@ -1184,7 +1600,44 @@ export default function DesignCanvas({
               transform={s.rotation ? `rotate(${s.rotation} ${s.x + s.width / 2} ${s.y + s.height / 2})` : undefined}
               style={{ filter: canvasFilter }}
             >
-              {el}
+              {gradientDefs}
+              {bgBlurLayers}
+              {htmlGradientLayers}
+              {fxFilterMarkup && <defs dangerouslySetInnerHTML={{ __html: fxFilterMarkup }} />}
+              {(() => {
+                // Frame com "recortar conteúdo": filhos não passam da borda do pai
+                const parent = s.parentId ? displayShapes.find((x) => x.id === s.parentId) : undefined;
+                const idPart = s.id.replace(/[^a-zA-Z0-9_-]/g, '_');
+                // Máscara: o shape de máscara mais próximo abaixo (mesmo pai) recorta este shape
+                const maskShape = s.isMask
+                  ? undefined
+                  : displayShapes
+                      .filter((m) => m.isMask && m.id !== s.id && (m.parentId || '') === (s.parentId || '') && m.zIndex < s.zIndex)
+                      .sort((a, b) => b.zIndex - a.zIndex)[0];
+                const maskKinds = ['rect', 'frame', 'section', 'image', 'ellipse', 'polygon', 'star', 'path'];
+                const maskGeometry: React.ReactNode = maskShape && maskKinds.includes(maskShape.type) ? outlineGeometry(maskShape) : null;
+                if (!parent?.clipContent && !maskGeometry) return el;
+                let out: React.ReactNode = el;
+                const defs: React.ReactNode[] = [];
+                if (maskGeometry) {
+                  defs.push(<clipPath key="m" id={`clipm-${idPart}`}>{maskGeometry}</clipPath>);
+                  out = <g clipPath={`url(#clipm-${idPart})`}>{out}</g>;
+                }
+                if (parent?.clipContent) {
+                  defs.push(
+                    <clipPath key="c" id={`clipc-${idPart}`}>
+                      <rect x={parent.x} y={parent.y} width={parent.width} height={parent.height} rx={parent.cornerRadius || 0} />
+                    </clipPath>
+                  );
+                  out = <g clipPath={`url(#clipc-${idPart})`}>{out}</g>;
+                }
+                return (
+                  <>
+                    <defs>{defs}</defs>
+                    {out}
+                  </>
+                );
+              })()}
               {/* Borda de seleção quando selecionado */}
               {isSelected && (
                 pathD ? (
@@ -1209,6 +1662,34 @@ export default function DesignCanvas({
                     pointerEvents="none"
                   />
                 )
+              )}
+
+              {/* Nós editáveis do traço (pen/pencil): arraste para mover, Alt+clique remove */}
+              {isSelected && activeSelectedIds.length === 1 && !readOnly && !s.locked && (s.type === 'pen' || s.type === 'pencil') && s.points && (
+                <g pointerEvents="all">
+                  {s.points.map((pt, i) => (
+                    <circle
+                      key={`node-${i}`}
+                      cx={pt.x}
+                      cy={pt.y}
+                      r={3.5 / zoom}
+                      fill="#ffffff"
+                      stroke={accentColor}
+                      strokeWidth={1.2 / zoom}
+                      style={{ cursor: 'move' }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation();
+                        if (e.altKey) {
+                          if ((s.points?.length || 0) <= 2) return;
+                          const points = s.points!.filter((_, k) => k !== i);
+                          updateShape(s.id, { points, ...bboxOfPoints(points) }, true);
+                          return;
+                        }
+                        setDrag({ kind: 'node', shapeId: s.id, index: i });
+                      }}
+                    />
+                  ))}
+                </g>
               )}
 
               {/* CONTROLES DO ELEMENTO SELECIONADO (dentro da mesma rotação do shape) */}
@@ -1293,6 +1774,27 @@ export default function DesignCanvas({
           />
         )}
 
+        {/* Aceitar / regerar telas geradas pela IA: botões acima do frame, em tamanho fixo na tela */}
+        {(aiReview || []).map((r) => {
+          const f = shapes.find((x) => x.id === r.id);
+          if (!f || f.visible === false) return null;
+          const W = 214;
+          const H = 32;
+          const btn: React.CSSProperties = { height: H, border: 'none', borderRadius: 8, padding: '0 12px', fontSize: 12, fontWeight: 600, cursor: r.busy ? 'default' : 'pointer', fontFamily: "'Poppins', sans-serif", display: 'flex', alignItems: 'center', gap: 6 };
+          return (
+            <foreignObject key={`air-${r.id}`} x={f.x} y={f.y - (H + 14) / zoom} width={W / zoom} height={H / zoom} style={{ overflow: 'visible' }}>
+              <div
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+                style={{ width: W, height: H, transform: `scale(${1 / zoom})`, transformOrigin: 'top left', display: 'flex', gap: 6 }}
+              >
+                <button type="button" disabled={r.busy} onClick={() => onAiAccept?.(r.id)} style={{ ...btn, background: accentColor, color: '#fff', opacity: r.busy ? 0.5 : 1 }}>✓ Aceitar</button>
+                <button type="button" disabled={r.busy} onClick={() => onAiRegenerate?.(r.id)} style={{ ...btn, background: 'rgba(24,24,27,0.92)', color: '#fff', border: '1px solid rgba(255,255,255,0.18)', opacity: r.busy ? 0.5 : 1 }}>{r.busy ? 'Gerando…' : '↻ Regerar'}</button>
+              </div>
+            </foreignObject>
+          );
+        })}
+
         {/* Bounding Box Multi-Seleção (Estilo Figma) */}
         {multiBounds && (
           <g pointerEvents="none">
@@ -1323,7 +1825,232 @@ export default function DesignCanvas({
             </g>
           </g>
         )}
+        {/* Editor de texto sobre o canvas */}
+        {editingFrameNameId && (() => {
+          const f = shapes.find((x) => x.id === editingFrameNameId);
+          if (!f) return null;
+          const finish = (value: string, cancel = false) => {
+            const id = editingFrameNameId;
+            setEditingFrameNameId(null);
+            const name = value.trim();
+            if (cancel || !name || name === f.name) return;
+            onShapesChange(shapes.map((x) => (x.id === id ? { ...x, name } : x)), true);
+          };
+          const W = Math.max(160, Math.min(f.width * zoom, 420));
+          return (
+            <foreignObject x={f.x} y={f.y - 26 / zoom} width={W / zoom} height={22 / zoom} style={{ overflow: 'visible' }}>
+              <input
+                autoFocus
+                defaultValue={f.name}
+                onFocus={(e) => e.currentTarget.select()}
+                onBlur={(e) => finish(e.currentTarget.value)}
+                onMouseDown={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === 'Enter') e.currentTarget.blur();
+                  else if (e.key === 'Escape') finish(e.currentTarget.value, true);
+                }}
+                style={{ width: W, height: 22, transform: `scale(${1 / zoom})`, transformOrigin: 'top left', boxSizing: 'border-box', background: '#1a1a1c', color: '#fff', border: `1px solid ${accentColor}`, borderRadius: 4, outline: 'none', fontSize: 11, fontWeight: 500, fontFamily: "'Poppins', sans-serif", padding: '0 6px' }}
+              />
+            </foreignObject>
+          );
+        })()}
+
+        {editingTextId && (() => {
+          const t = shapes.find((x) => x.id === editingTextId);
+          if (!t) return null;
+          const fontSize = t.fontSize || 18;
+          const finish = (value: string, cancel = false) => {
+            const id = editingTextId;
+            setEditingTextId(null);
+            if (cancel || (editingIsNew.current && value.trim() === '')) {
+              // texto novo e vazio não fica no canvas
+              if (editingIsNew.current && value.trim() === '') onShapesChange(shapes.filter((x) => x.id !== id), true);
+              return;
+            }
+            const lines = value.split('\n');
+            const longest = Math.max(...lines.map((l) => l.length));
+            onShapesChange(
+              shapes.map((x) =>
+                x.id === id
+                  ? { ...x, text: value, width: Math.max(x.width, Math.round(longest * fontSize * 0.55)), height: Math.max(x.height, Math.round(lines.length * fontSize * 1.25)) }
+                  : x
+              ),
+              true
+            );
+          };
+          return (
+            <foreignObject x={t.x} y={t.y} width={Math.max(t.width, 220)} height={Math.max(t.height, fontSize * 2)}>
+              <textarea
+                autoFocus
+                defaultValue={editingIsNew.current && t.text === 'Texto' ? '' : t.text || ''}
+                onFocus={(e) => e.currentTarget.select()}
+                onBlur={(e) => finish(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === 'Escape') finish(e.currentTarget.value, !editingIsNew.current);
+                  else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) e.currentTarget.blur();
+                }}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  boxSizing: 'border-box',
+                  background: 'transparent',
+                  color: t.fill,
+                  border: `1px solid ${accentColor}`,
+                  outline: 'none',
+                  resize: 'none',
+                  padding: 0,
+                  margin: 0,
+                  overflow: 'hidden',
+                  fontSize,
+                  lineHeight: 1.25,
+                  fontFamily: t.fontFamily ? `'${t.fontFamily}', sans-serif` : "'Inter', sans-serif",
+                  fontWeight: (t.fontWeight as any) || 400,
+                  textAlign: (t.textAlign as any) || 'left',
+                }}
+              />
+            </foreignObject>
+          );
+        })()}
+
+        {/* Guias do usuário (arrastadas das réguas) */}
+        {showUserGuides &&
+          userGuides.map((g) => {
+            const vertical = g.axis === 'x';
+            const common = { x1: vertical ? g.pos : -100000, x2: vertical ? g.pos : 100000, y1: vertical ? -100000 : g.pos, y2: vertical ? 100000 : g.pos };
+            return (
+              <g key={g.id}>
+                <line {...common} stroke="#00b8ff" strokeWidth={1 / zoom} pointerEvents="none" />
+                {!readOnly && (
+                  <line
+                    {...common}
+                    stroke="transparent"
+                    strokeWidth={8 / zoom}
+                    style={{ cursor: vertical ? 'col-resize' : 'row-resize' }}
+                    onMouseDown={(e) => {
+                      if (e.button !== 0) return;
+                      e.stopPropagation();
+                      setDrag({ kind: 'guide', id: g.id, axis: g.axis });
+                    }}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      onUserGuidesChange?.(userGuides.filter((x) => x.id !== g.id));
+                    }}
+                  />
+                )}
+              </g>
+            );
+          })}
+        {drag.kind === 'guide' && draggingGuidePos !== null && (
+          <g transform={`translate(${drag.axis === 'x' ? draggingGuidePos : (-pan.x + 30) / zoom}, ${drag.axis === 'y' ? draggingGuidePos : (-pan.y + 30) / zoom}) scale(${1 / zoom})`} pointerEvents="none">
+            <rect x={6} y={-9} width={46} height={16} rx={4} fill="#00b8ff" />
+            <text x={29} y={3} fontSize={10} fill="#001018" textAnchor="middle" fontFamily="'Poppins', sans-serif" fontWeight={600}>
+              {Math.round((draggingGuidePos - (drag.axis === 'x' ? rulerOriginPoint.x : rulerOriginPoint.y)) * 100) / 100}
+            </text>
+          </g>
+        )}
+
+        {/* Cursores dos outros participantes */}
+        {(remoteCursors || []).map((c) => (
+          <g key={`cursor-${c.id}`} transform={`translate(${c.x}, ${c.y}) scale(${1 / zoom})`} pointerEvents="none">
+            <path d="M0 0 L0 16 L4.5 12 L7.5 19 L10 18 L7 11 L13 11 Z" fill={c.color} stroke="#fff" strokeWidth={1} />
+            <rect x={14} y={14} width={Math.max(24, c.name.length * 6.5 + 10)} height={16} rx={8} fill={c.color} />
+            <text x={19} y={25.5} fontSize={10} fill="#fff" fontFamily="'Poppins', sans-serif" fontWeight={600}>{c.name}</text>
+          </g>
+        ))}
+
+        {/* Guias de encaixe (magenta, como no Figma) */}
+        {guides.map((g, i) => (
+          <line
+            key={`guide-${i}`}
+            x1={g.axis === 'x' ? g.pos : g.from}
+            x2={g.axis === 'x' ? g.pos : g.to}
+            y1={g.axis === 'x' ? g.from : g.pos}
+            y2={g.axis === 'x' ? g.to : g.pos}
+            stroke="#f24822"
+            strokeWidth={1 / zoom}
+            pointerEvents="none"
+          />
+        ))}
       </g>
+
+      {/* Réguas: marcas principais/secundárias, faixa da seleção, marcador do cursor e origem no frame */}
+      {showRulers && (() => {
+        const w = svgRef.current?.clientWidth || 2000;
+        const h = svgRef.current?.clientHeight || 1200;
+        const origin = rulerOriginPoint;
+        const ticksX = rulerTicks(-pan.x / zoom, (w - pan.x) / zoom, zoom, origin.x);
+        const ticksY = rulerTicks(-pan.y / zoom, (h - pan.y) / zoom, zoom, origin.y);
+        const selBoxes = selectedShapes.map((x) => ({ x: x.x, y: x.y, width: x.width, height: x.height }));
+        const rangeX = selectionRange(selBoxes, 'x', origin.x);
+        const rangeY = selectionRange(selBoxes, 'y', origin.y);
+        const bg = 'rgba(24,24,24,0.96)';
+        const startGuide = (axis: 'x' | 'y') => (e: React.MouseEvent) => {
+          if (e.button !== 0 || readOnly) return;
+          e.stopPropagation();
+          e.preventDefault();
+          setDrag({ kind: 'guide', id: newGuideId(), axis });
+        };
+        return (
+          <g fontFamily="'Poppins', sans-serif" fontSize={9} fill="#9a9a9a">
+            <rect x={RULER_SIZE} y={0} width="100%" height={RULER_SIZE} fill={bg} style={{ cursor: 'row-resize' }} onMouseDown={startGuide('y')} />
+            <rect x={0} y={RULER_SIZE} width={RULER_SIZE} height="100%" fill={bg} style={{ cursor: 'col-resize' }} onMouseDown={startGuide('x')} />
+            <rect x={0} y={0} width={RULER_SIZE} height={RULER_SIZE} fill={bg} pointerEvents="none" />
+            <g pointerEvents="none">
+              {rangeX && (
+                <g>
+                  <rect x={pan.x + rangeX.start * zoom} y={0} width={Math.max(1, (rangeX.end - rangeX.start) * zoom)} height={RULER_SIZE} fill={accentColor} opacity={0.28} />
+                  <text x={pan.x + rangeX.start * zoom - 2} y={RULER_SIZE - 5} textAnchor="end" fill={accentColor} fontWeight={600}>{rangeX.startLabel}</text>
+                  <text x={pan.x + rangeX.end * zoom + 2} y={RULER_SIZE - 5} fill={accentColor} fontWeight={600}>{rangeX.endLabel}</text>
+                </g>
+              )}
+              {rangeY && (
+                <g>
+                  <rect x={0} y={pan.y + rangeY.start * zoom} width={RULER_SIZE} height={Math.max(1, (rangeY.end - rangeY.start) * zoom)} fill={accentColor} opacity={0.28} />
+                  <text transform={`translate(${RULER_SIZE - 5}, ${pan.y + rangeY.start * zoom - 2}) rotate(-90)`} textAnchor="start" fill={accentColor} fontWeight={600}>{rangeY.startLabel}</text>
+                  <text transform={`translate(${RULER_SIZE - 5}, ${pan.y + rangeY.end * zoom + 2}) rotate(-90)`} textAnchor="end" fill={accentColor} fontWeight={600}>{rangeY.endLabel}</text>
+                </g>
+              )}
+              {ticksX.map((t) => {
+                const x = pan.x + t.value * zoom;
+                if (x < RULER_SIZE) return null;
+                return (
+                  <g key={`rx-${t.value}`}>
+                    <line x1={x} x2={x} y1={t.major ? 7 : 12} y2={RULER_SIZE} stroke="#6a6a6a" />
+                    {t.label !== undefined && <text x={x + 3} y={9}>{t.label}</text>}
+                  </g>
+                );
+              })}
+              {ticksY.map((t) => {
+                const y = pan.y + t.value * zoom;
+                if (y < RULER_SIZE) return null;
+                return (
+                  <g key={`ry-${t.value}`}>
+                    <line y1={y} y2={y} x1={t.major ? 7 : 12} x2={RULER_SIZE} stroke="#6a6a6a" />
+                    {t.label !== undefined && <text transform={`translate(9, ${y - 3}) rotate(-90)`}>{t.label}</text>}
+                  </g>
+                );
+              })}
+              {pointerScreen && (
+                <g>
+                  <line x1={pointerScreen.x} x2={pointerScreen.x} y1={0} y2={RULER_SIZE} stroke="#f24822" />
+                  <line y1={pointerScreen.y} y2={pointerScreen.y} x1={0} x2={RULER_SIZE} stroke="#f24822" />
+                </g>
+              )}
+              {/* guias também aparecem como marcas coloridas nas réguas */}
+              {showUserGuides &&
+                userGuides.map((g) =>
+                  g.axis === 'x' ? (
+                    <rect key={`gm-${g.id}`} x={pan.x + g.pos * zoom - 1} y={0} width={2} height={RULER_SIZE} fill="#00b8ff" />
+                  ) : (
+                    <rect key={`gm-${g.id}`} x={0} y={pan.y + g.pos * zoom - 1} width={RULER_SIZE} height={2} fill="#00b8ff" />
+                  )
+                )}
+            </g>
+          </g>
+        );
+      })()}
     </svg>
   );
 }

@@ -42,6 +42,8 @@ export class DesignRoomService {
   private roomName = '';
   private hostPort = 0;
   private lastShapes: unknown[] = [];
+  private canEdit = true;
+  private hostName = os.userInfo().username;
 
   // discovery state
   private discoverySocket: dgram.Socket | null = null;
@@ -50,6 +52,8 @@ export class DesignRoomService {
 
   // viewer (client) state
   private clientWs: WebSocket | null = null;
+  private clientCanEdit = false;
+  private clientId = '';
 
   setWindow(window: BrowserWindow) {
     this.mainWindow = window;
@@ -61,17 +65,35 @@ export class DesignRoomService {
     }
   }
 
-  async hostRoom(roomName: string): Promise<DesignRoomInfo> {
+  async hostRoom(roomName: string, canEdit = true): Promise<DesignRoomInfo> {
     this.stopHosting();
     this.roomId = crypto.randomUUID();
     this.roomName = roomName;
+    this.canEdit = canEdit;
 
     this.httpServer = http.createServer();
     this.wss = new WebSocketServer({ server: this.httpServer });
     this.wss.on('connection', (ws) => {
       this.viewers.add(ws);
+      const clientId = crypto.randomUUID().slice(0, 8);
       this.send('design-room:viewers-changed', this.viewers.size);
+      ws.send(JSON.stringify({ type: 'room-info', clientId, canEdit: this.canEdit, hostName: this.hostName }));
       ws.send(JSON.stringify({ type: 'full-state', shapes: this.lastShapes }));
+      // Mensagens do participante: edição (se permitida) e cursor, repassadas ao anfitrião e aos demais
+      ws.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg?.type === 'state' && this.canEdit && Array.isArray(msg.shapes)) {
+            this.lastShapes = msg.shapes;
+            this.send('design-room:state-update', msg.shapes);
+            this.fanOut({ type: 'state-update', shapes: msg.shapes }, ws);
+          } else if (msg?.type === 'cursor') {
+            const cursor = { ...msg.cursor, id: clientId };
+            this.send('design-room:cursor', cursor);
+            this.fanOut({ type: 'cursor', cursor }, ws);
+          }
+        } catch {}
+      });
       ws.on('close', () => {
         this.viewers.delete(ws);
         this.send('design-room:viewers-changed', this.viewers.size);
@@ -121,13 +143,31 @@ export class DesignRoomService {
     };
   }
 
+  private fanOut(message: unknown, except?: WebSocket) {
+    const payload = JSON.stringify(message);
+    for (const ws of this.viewers) {
+      if (ws !== except && ws.readyState === ws.OPEN) ws.send(payload);
+    }
+  }
+
+  /** Anfitrião: envia o estado a todos. Participante com permissão: envia a edição ao anfitrião. */
   broadcastState(shapes: unknown[]) {
+    if (this.clientWs) {
+      if (this.clientCanEdit && this.clientWs.readyState === this.clientWs.OPEN) this.clientWs.send(JSON.stringify({ type: 'state', shapes }));
+      return;
+    }
     this.lastShapes = shapes;
     if (!this.viewers.size) return;
-    const payload = JSON.stringify({ type: 'state-update', shapes });
-    for (const ws of this.viewers) {
-      if (ws.readyState === ws.OPEN) ws.send(payload);
+    this.fanOut({ type: 'state-update', shapes });
+  }
+
+  /** Posição do ponteiro (coordenadas do canvas) para os outros verem. */
+  sendCursor(cursor: { x: number; y: number; name: string; color: string }) {
+    if (this.clientWs) {
+      if (this.clientWs.readyState === this.clientWs.OPEN) this.clientWs.send(JSON.stringify({ type: 'cursor', cursor }));
+      return;
     }
+    if (this.viewers.size) this.fanOut({ type: 'cursor', cursor: { ...cursor, id: 'host' } });
   }
 
   stopHosting() {
@@ -209,8 +249,14 @@ export class DesignRoomService {
     this.clientWs.on('message', (data) => {
       try {
         const msg = JSON.parse(data.toString());
-        if (msg?.type === 'full-state' || msg?.type === 'state-update') {
+        if (msg?.type === 'room-info') {
+          this.clientCanEdit = Boolean(msg.canEdit);
+          this.clientId = msg.clientId || '';
+          this.send('design-room:permissions', { canEdit: this.clientCanEdit, hostName: msg.hostName || '' });
+        } else if (msg?.type === 'full-state' || msg?.type === 'state-update') {
           this.send('design-room:state-update', msg.shapes);
+        } else if (msg?.type === 'cursor') {
+          this.send('design-room:cursor', msg.cursor);
         }
       } catch {}
     });
@@ -226,6 +272,7 @@ export class DesignRoomService {
       } catch {}
     }
     this.clientWs = null;
+    this.clientCanEdit = false;
   }
 
   dispose() {

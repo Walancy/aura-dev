@@ -12,7 +12,11 @@ import {
 } from 'lucide-react';
 import DesignCanvas from './DesignCanvas';
 import type { CanvasViewport } from './DesignCanvas';
-import type { Shape, Page, ToolId } from './types';
+import type { Shape, Page, ToolId, ExportItem, FillItem, DesignStyle, DesignVariable, DesignMode } from './types';
+import { applyVariables, createColorVariable, DEFAULT_MODES } from './variables';
+
+type VariablesList = DesignVariable[];
+import { applyStyles, colorStyleFromShape, textStyleFromShape } from './styles';
 import LayersPanel from './LayersPanel';
 import PropertiesPanel, { type ActiveColorPickerInfo } from './PropertiesPanel';
 import FigmaColorPicker from './FigmaColorPicker';
@@ -24,10 +28,40 @@ import DesignToolbar from './DesignToolbar';
 import { useDesignRoom } from './useDesignRoom';
 import { usePersistedDesign } from './usePersistedDesign';
 import FigmaContextMenu from './FigmaContextMenu';
+import FigmaImportModal from './FigmaImportModal';
+import IconPickerModal from './IconPickerModal';
+import { descendantIds } from './constraints';
+import { iconShape, loadIcons } from './icons';
+import { applyAiEdits, buildAiEditPrompt, editScope } from './aiEdit';
+import { AiJsonStream, type AiStreamEvent } from './aiJsonStream';
+import { buildProjectDigest } from './projectDigest';
+import { fetchStockImage } from './stockImage';
+import { findFreeSpot } from './freeSpot';
+import FramesPopup from './FramesPopup';
+import ProposalPopup from './ProposalPopup';
+import { buildProposalHtml, buildProposalPrompt, collectFrameContext, parseProposal } from './proposal';
+import UnsplashKeyPopup from './UnsplashKeyPopup';
+import { buildDevicePreset } from './devices';
 import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
-import { generateAiPrototypeScreen } from './aiScreenGenerator';
+import { getActiveBrainContextSync, generateBrainAiContext } from '../../utils/brainService';
+import { buildAiScreenPrompt, parseAiScreenResponse, requestAiScreenRaw, ScreenBuilder } from './aiScreenFromLlm';
+import { downloadBlob, exportShape } from './exportDesign';
+import { alignDeltas, applyDeltas, distributeDeltas, type AlignMode } from './align';
+import { unionBox } from './snap';
+import { addAutoLayout, relayoutAll } from './autoLayout';
+import { createInstance, detachInstance, switchVariant, syncInstances, variantsOf } from './components';
+import { duplicateShapes } from './duplicate';
+import { generateCode, componentName, type CodeTarget } from './codegen';
+import PrototypePlayer from './PrototypePlayer';
+import type { RulerGuide } from './rulers';
+import { deleteVersion, listVersions, loadVersion, saveVersion, type VersionEntry } from './versions';
+import { booleanShapes, flattenShape, type BooleanOp } from './booleanOps';
 
 interface DesignStudioViewProps {
+  /** false quando a aba de Design está escondida (continua montada para a IA terminar de gerar) */
+  isActive?: boolean;
+  /** A IA terminou (ou falhou): o App avisa se o usuário estiver em outra tela */
+  onAiTaskDone?: (r: { ok: boolean; message: string }) => void;
   workspacePath: string;
   repoName?: string;
   selectedAiProvider?: string;
@@ -37,6 +71,9 @@ interface DesignStudioViewProps {
   installedClis?: Record<string, boolean>;
   activeModels?: Record<string, { currentModel?: string; currentModelId?: string; models?: Array<{ id: string; label: string }> }>;
   onInstallAiCli?: (provider: any) => void;
+  onToast?: (message: string) => void;
+  /** Manda um texto para o chat de IA do projeto (abre a IDE com o prompt preenchido) */
+  onSendToChat?: (text: string) => void;
   activeProject?: {
     name: string;
     fullName?: string;
@@ -508,6 +545,10 @@ export default function DesignStudioView({
   installedClis,
   activeModels,
   onInstallAiCli,
+  onToast,
+  isActive = true,
+  onAiTaskDone,
+  onSendToChat,
 }: DesignStudioViewProps) {
   const tokens = themeTokens || {
     bgApp: isEffectiveDark ? '#000000' : '#eaedf1',
@@ -552,8 +593,8 @@ export default function DesignStudioView({
   const [shapes, setShapesRaw] = useState<Shape[]>(() =>
     DEFAULT_FIGMA_SHAPES.map((s) => ({ ...s, pageId: s.pageId || 'page-1' }))
   );
-  const [selectedId, setSelectedId] = useState<string | null>('rect-148');
-  const [selectedIds, setSelectedIds] = useState<string[]>(['rect-148']);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const handleSelectMultiple = useCallback((ids: string[]) => {
     setSelectedIds(ids);
@@ -579,6 +620,48 @@ export default function DesignStudioView({
   const [docSubtitle, setDocSubtitle] = useState<string>(activeHeaderProjectSubtitle);
   const [isEditingTitle, setIsEditingTitle] = useState<boolean>(false);
   const [isDocMenuOpen, setIsDocMenuOpen] = useState<boolean>(false);
+  // Modo apresentação do protótipo
+  const [presentFrameId, setPresentFrameId] = useState<string | null>(null);
+  // Código do design (React / HTML / Flutter)
+  const [codeShape, setCodeShape] = useState<Shape | null>(null);
+  const [codeTarget, setCodeTarget] = useState<CodeTarget>('react');
+  // Histórico de versões do design (arquivos em .devflow/design2/versions)
+  const [isVersionsOpen, setIsVersionsOpen] = useState(false);
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
+  const [isFigmaImportOpen, setIsFigmaImportOpen] = useState(false);
+  const [isIconPickerOpen, setIsIconPickerOpen] = useState(false);
+  const [isFramesOpen, setIsFramesOpen] = useState(false);
+  const [isUnsplashOpen, setIsUnsplashOpen] = useState(false);
+  const [isProposalOpen, setIsProposalOpen] = useState(false);
+  const [versions, setVersions] = useState<VersionEntry[]>([]);
+  // Variáveis de cor com modos (Claro/Escuro), salvas junto com o design
+  const [variables, setVariables] = useState<DesignVariable[]>([]);
+  const [modes, setModes] = useState<DesignMode[]>(DEFAULT_MODES);
+  const [activeModeId, setActiveModeId] = useState<string>('light');
+  const variablesRef = useRef({ list: variables, modeId: activeModeId });
+  variablesRef.current = { list: variables, modeId: activeModeId };
+  // Estilos do documento (cor e texto), salvos junto com o design
+  const [styles, setStyles] = useState<DesignStyle[]>([]);
+  const stylesRef = useRef<DesignStyle[]>(styles);
+  stylesRef.current = styles;
+  // Colaboração: nome exibido no cursor e limitador de envio
+  const lastCursorSendRef = useRef(0);
+  const myCursorName = useMemo(() => (workspacePath ? workspacePath.split('/').filter(Boolean).pop() || 'Você' : 'Você').slice(0, 14), [workspacePath]);
+  // Visualização: grade, réguas e encaixe inteligente (preferências salvas)
+  const [viewPrefs, setViewPrefs] = useState<{ grid: boolean; rulers: boolean; snap: boolean; guides: boolean; rulerRelative: boolean }>(() => {
+    const base = { grid: false, rulers: false, snap: true, guides: true, rulerRelative: true };
+    try { return { ...base, ...JSON.parse(localStorage.getItem('design_view_prefs') || '{}') }; } catch { return base; }
+  });
+  // Guias arrastadas das réguas, por página (salvas no documento)
+  const [guidesByPage, setGuidesByPage] = useState<Record<string, RulerGuide[]>>({});
+  const toggleViewPref = useCallback((key: 'grid' | 'rulers' | 'snap' | 'guides' | 'rulerRelative') => {
+    setViewPrefs((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      try { localStorage.setItem('design_view_prefs', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
 
   // Mantém o título e subtítulo sincronizados com o projeto ativo selecionado na header
   useEffect(() => {
@@ -676,15 +759,39 @@ export default function DesignStudioView({
   });
 
   const room = useDesignRoom(setShapesRaw);
-  const readOnly = room.role === 'viewing';
+  // Participante só fica somente-leitura se o anfitrião não permitiu edição
+  const readOnly = room.role === 'viewing' && !room.canEdit;
 
   const {
     loadedShapes,
     loadedPages,
     loadedSelectedPageId,
     loadedPageViewports,
+    loadedStyles,
+    loadedVariables,
+    loadedGuides,
     isLoading,
-  } = usePersistedDesign(workspacePath, shapes, pages, selectedPageId, pageViewports, readOnly);
+  } = usePersistedDesign(workspacePath, shapes, pages, selectedPageId, pageViewports, readOnly, styles, { list: variables, modes, activeModeId }, guidesByPage);
+
+  useEffect(() => {
+    if (loadedGuides) setGuidesByPage(loadedGuides);
+  }, [loadedGuides]);
+
+  useEffect(() => {
+    if (loadedVariables) {
+      variablesRef.current = { list: loadedVariables.list, modeId: loadedVariables.activeModeId };
+      setVariables(loadedVariables.list);
+      if (loadedVariables.modes?.length) setModes(loadedVariables.modes);
+      setActiveModeId(loadedVariables.activeModeId || 'light');
+    }
+  }, [loadedVariables]);
+
+  useEffect(() => {
+    if (loadedStyles) {
+      stylesRef.current = loadedStyles;
+      setStyles(loadedStyles);
+    }
+  }, [loadedStyles]);
 
   useEffect(() => {
     if (loadedShapes && loadedShapes.length > 0) {
@@ -718,7 +825,8 @@ export default function DesignStudioView({
       );
       setShapesRaw((prev) => {
         const otherPageShapes = prev.filter((s) => (s.pageId || 'page-1') !== selectedPageId);
-        const combined = [...otherPageShapes, ...tagged];
+        // Ao confirmar a mudança, frames com auto layout reorganizam os filhos (e fazem hug)
+        const combined = [...otherPageShapes, ...(commit ? relayoutAll(syncInstances(applyVariables(applyStyles(tagged, stylesRef.current), variablesRef.current.list, variablesRef.current.modeId))) : tagged)];
         room.broadcast(combined);
         if (commit) {
           const h = historyRef.current;
@@ -733,7 +841,8 @@ export default function DesignStudioView({
   );
 
   const applyShapes = useCallback(
-    (next: Shape[], commit: boolean) => {
+    (rawNext: Shape[], commit: boolean) => {
+      const next = commit ? relayoutAll(syncInstances(applyVariables(applyStyles(rawNext, stylesRef.current), variablesRef.current.list, variablesRef.current.modeId))) : rawNext;
       setShapesRaw(next);
       room.broadcast(next);
       if (commit) {
@@ -765,7 +874,7 @@ export default function DesignStudioView({
   const [isDevMode, setIsDevMode] = useState(false);
 
   const handleInsertImage = useCallback(
-    (file: File) => {
+    (file: File, at?: { x: number; y: number }) => {
       const reader = new FileReader();
       reader.onload = (e) => {
         const dataUrl = e.target?.result as string;
@@ -780,8 +889,8 @@ export default function DesignStudioView({
             id: crypto.randomUUID(),
             name: file.name.replace(/\.[^/.]+$/, ''),
             type: 'image',
-            x: Math.round(viewport.x + viewport.width / 2 - w / 2),
-            y: Math.round(viewport.y + viewport.height / 2 - h / 2),
+            x: Math.round((at ? at.x : viewport.x + viewport.width / 2) - w / 2),
+            y: Math.round((at ? at.y : viewport.y + viewport.height / 2) - h / 2),
             width: w,
             height: h,
             rotation: 0,
@@ -825,7 +934,23 @@ export default function DesignStudioView({
     } catch (_) { }
   }, []);
 
-  const handlePaste = useCallback((coords?: { x: number; y: number }) => {
+  // Última versão do inserir-imagem (soltar vários arquivos precisa enxergar o estado já atualizado)
+  const insertImageRef = useRef(handleInsertImage);
+  insertImageRef.current = handleInsertImage;
+
+  const handlePaste = useCallback(async (coords?: { x: number; y: number }) => {
+    // Imagem na área de transferência (print ou imagem copiada) vira um shape de imagem
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const type = item.types.find((t) => t.startsWith('image/'));
+        if (type) {
+          const blob = await item.getType(type);
+          handleInsertImage(new File([blob], 'Imagem colada', { type }));
+          return;
+        }
+      }
+    } catch {}
     if (!clipboardShape) return;
     const newId = crypto.randomUUID();
     const maxZ = shapes.length ? Math.max(...shapes.map((s) => s.zIndex)) + 1 : 1;
@@ -842,7 +967,7 @@ export default function DesignStudioView({
     };
     applyActivePageShapes([...activePageShapes, cloned], true);
     setSelectedId(cloned.id);
-  }, [clipboardShape, shapes, activePageShapes, selectedPageId, zoom, applyActivePageShapes]);
+  }, [clipboardShape, shapes, activePageShapes, selectedPageId, zoom, applyActivePageShapes, handleInsertImage]);
 
   const handlePasteToReplace = useCallback((target: Shape) => {
     if (!clipboardShape) return;
@@ -971,6 +1096,23 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
     );
   }, [shapes, applyShapes]);
 
+  // Exporta o shape (e descendentes) em cada formato/escala configurado no painel; sem configuração, PNG 1x
+  const handleExportShape = useCallback(
+    async (shape: Shape, items: ExportItem[]) => {
+      const list: ExportItem[] = items.length > 0 ? items : [{ id: 'default', format: 'PNG', scale: '1x' }];
+      try {
+        for (const item of list) {
+          const { blob, filename } = await exportShape(activePageShapes, shape, item);
+          downloadBlob(blob, filename);
+        }
+        onToast?.(list.length === 1 ? 'Arquivo exportado' : `${list.length} arquivos exportados`);
+      } catch (err: any) {
+        onToast?.(`Erro ao exportar: ${err?.message || 'falha inesperada'}`);
+      }
+    },
+    [activePageShapes, onToast]
+  );
+
   const handleToggleMask = useCallback((shape: Shape) => {
     applyShapes(
       shapes.map((s) => (s.id === shape.id ? { ...s, isMask: !s.isMask } : s)),
@@ -979,22 +1121,12 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
   }, [shapes, applyShapes]);
 
   const handleAddAutoLayout = useCallback((shape: Shape) => {
-    applyShapes(
-      shapes.map((s) =>
-        s.id === shape.id
-          ? {
-            ...s,
-            hasAutoLayout: !s.hasAutoLayout,
-            layoutFlow: 'horizontal',
-            layoutGap: 8,
-            paddingHorizontal: 12,
-            paddingVertical: 12,
-          }
-          : s
-      ),
-      true
-    );
-  }, [shapes, applyShapes]);
+    const ids = selectedIds.includes(shape.id) && selectedIds.length > 0 ? selectedIds : [shape.id];
+    const res = addAutoLayout(shapes, ids, () => `frame-${crypto.randomUUID().slice(0, 6)}`);
+    if (!res) return;
+    applyShapes(res.shapes, true);
+    handleSelectSingle(res.selectId);
+  }, [shapes, selectedIds, applyShapes, handleSelectSingle]);
 
   const handleCreateComponent = useCallback((shape: Shape) => {
     applyShapes(
@@ -1018,8 +1150,34 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
   }, [shapes, applyShapes]);
 
   const handleSelectAll = useCallback(() => {
-    if (activePageShapes.length > 0) setSelectedId(activePageShapes[activePageShapes.length - 1].id);
+    const visible = activePageShapes.filter((s) => s.visible !== false && !s.locked);
+    if (visible.length === 0) return;
+    setSelectedIds(visible.map((s) => s.id));
+    setSelectedId(visible[visible.length - 1].id);
   }, [activePageShapes]);
+
+  // Duplicar seleção (Cmd/Ctrl+D): copia com filhos, desloca 20px e seleciona as cópias
+  const handleDuplicate = useCallback(() => {
+    const ids = selectedIds.length > 0 ? selectedIds : selectedShape ? [selectedShape.id] : [];
+    if (ids.length === 0) return;
+    const { shapes: copies, newRootIds } = duplicateShapes(shapes, ids);
+    if (copies.length === 0) return;
+    applyShapes([...shapes, ...copies], true);
+    setSelectedIds(newRootIds);
+    setSelectedId(newRootIds[0]);
+  }, [selectedIds, selectedShape, shapes, applyShapes]);
+
+  // Enquadrar a câmera numa área (Shift+1 tudo, Shift+2 seleção)
+  const fitCameraTo = useCallback(
+    (box: { x: number; y: number; width: number; height: number }) => {
+      const pxW = Math.max(1, viewport.width * zoom);
+      const pxH = Math.max(1, viewport.height * zoom);
+      const next = Math.min(3, Math.max(0.02, Math.min(pxW / Math.max(1, box.width), pxH / Math.max(1, box.height)) * 0.85));
+      setZoom(Number(next.toFixed(3)));
+      setTargetCamera({ x: box.x + box.width / 2, y: box.y + box.height / 2, zoom: Number(next.toFixed(3)), timestamp: Date.now() });
+    },
+    [viewport, zoom]
+  );
 
   const handleRequestDelete = useCallback((shape: Shape) => {
     setDeleteTarget(shape);
@@ -1048,7 +1206,7 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (readOnly) return;
+      if (readOnly || !isActiveRef.current) return;
       const target = e.target as HTMLElement | null;
       const isInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
       if (isInput) return;
@@ -1061,6 +1219,48 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
       } else if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) {
         e.preventDefault();
         redo();
+        return;
+      }
+
+      // Booleanas (Alt+Shift+U/S/I/E) e Flatten (Alt+Shift+F)
+      if (e.altKey && e.shiftKey && !mod) {
+        const boolMap: Record<string, BooleanOp | 'flatten'> = { KeyU: 'union', KeyS: 'subtract', KeyI: 'intersect', KeyE: 'exclude', KeyF: 'flatten' };
+        if (boolMap[e.code]) {
+          e.preventDefault();
+          keyActionsRef.current.handleBoolean(boolMap[e.code]);
+          return;
+        }
+      }
+
+      // Alinhar (Alt + A/D/W/S/V/H) e distribuir (Alt+Shift+H/V), como no Figma
+      if (e.altKey && !mod) {
+        const key = e.code;
+        const map: Record<string, AlignMode> = { KeyA: 'left', KeyD: 'right', KeyW: 'top', KeyS: 'bottom', KeyH: 'center-x', KeyV: 'center-y' };
+        if (e.shiftKey && (key === 'KeyH' || key === 'KeyV')) {
+          e.preventDefault();
+          keyActionsRef.current.handleDistribute(key === 'KeyH' ? 'x' : 'y');
+          return;
+        }
+        if (!e.shiftKey && map[key]) {
+          e.preventDefault();
+          keyActionsRef.current.handleAlign(map[key]);
+          return;
+        }
+      }
+
+      // Visualização: Cmd/Ctrl+' grade, Cmd/Ctrl+; guias, Shift+R réguas
+      if (mod && e.key === ';' && !e.shiftKey) {
+        e.preventDefault();
+        toggleViewPref('guides');
+        return;
+      }
+      if (mod && e.key === "'") {
+        e.preventDefault();
+        toggleViewPref('grid');
+        return;
+      } else if (!mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'r') {
+        e.preventDefault();
+        toggleViewPref('rulers');
         return;
       }
 
@@ -1161,6 +1361,49 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
         }
       }
 
+      // Duplicar, selecionar tudo, nudge com setas, Esc e zoom (Shift+0/1/2)
+      if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        handleDuplicate();
+        return;
+      }
+      if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        handleSelectAll();
+        return;
+      }
+      if (e.key === 'Escape') {
+        setTool('select');
+        setSelectedIds([]);
+        setSelectedId(null);
+        return;
+      }
+      if (!mod && e.key.startsWith('Arrow') && selectedIds.length > 0) {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        const d = { dx: e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0, dy: e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0 };
+        applyShapes(applyDeltas(shapes, new Map(selectedIds.map((id) => [id, d] as const))), true);
+        return;
+      }
+      if (!mod && e.shiftKey && e.code === 'Digit0') {
+        e.preventDefault();
+        setZoom(1);
+        return;
+      }
+      if (!mod && e.shiftKey && e.code === 'Digit1' && activePageShapes.length > 0) {
+        e.preventDefault();
+        fitCameraTo(unionBox(activePageShapes.map((s) => ({ x: s.x, y: s.y, width: s.width, height: s.height }))));
+        return;
+      }
+      if (!mod && e.shiftKey && e.code === 'Digit2') {
+        const sel = activePageShapes.filter((s) => selectedIds.includes(s.id));
+        if (sel.length > 0) {
+          e.preventDefault();
+          fitCameraTo(unionBox(sel.map((s) => ({ x: s.x, y: s.y, width: s.width, height: s.height }))));
+          return;
+        }
+      }
+
       if (!mod && !e.altKey) {
         const key = e.key.toLowerCase();
         if (key === 'v') setTool('select');
@@ -1204,38 +1447,317 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
     handleFlipHorizontal,
     handleFlipVertical,
     handleRequestDelete,
+    handleDuplicate,
+    handleSelectAll,
+    fitCameraTo,
+    toggleViewPref,
+    selectedIds,
+    shapes,
+    applyShapes,
+    activePageShapes,
   ]);
 
+  // Alinha a seleção: com 2+ shapes, à própria seleção; com 1, ao pai (ou à área visível). Filhos acompanham.
   const handleAlign = useCallback(
-    (alignment: 'left' | 'center-x' | 'right' | 'top' | 'center-y' | 'bottom') => {
-      if (!selectedShape) return;
-      // Alinha em relação ao frame/grupo pai (quando existe) ou à área visível do canvas.
-      const parent = selectedShape.parentId ? shapes.find((s) => s.id === selectedShape.parentId) : null;
-      const bounds = parent
-        ? { x: parent.x, y: parent.y, width: parent.width, height: parent.height }
-        : viewport;
-      const margin = 20;
-      let patch: Partial<Shape> = {};
-      if (alignment === 'center-x') {
-        patch = { x: Math.round(bounds.x + bounds.width / 2 - selectedShape.width / 2) };
-      } else if (alignment === 'left') {
-        patch = { x: Math.round(bounds.x + margin) };
-      } else if (alignment === 'right') {
-        patch = { x: Math.round(bounds.x + bounds.width - selectedShape.width - margin) };
-      } else if (alignment === 'center-y') {
-        patch = { y: Math.round(bounds.y + bounds.height / 2 - selectedShape.height / 2) };
-      } else if (alignment === 'top') {
-        patch = { y: Math.round(bounds.y + margin) };
-      } else if (alignment === 'bottom') {
-        patch = { y: Math.round(bounds.y + bounds.height - selectedShape.height - margin) };
+    (alignment: AlignMode) => {
+      const ids = selectedIds.length > 0 ? selectedIds : selectedShape ? [selectedShape.id] : [];
+      const targets = activePageShapes.filter((s) => ids.includes(s.id));
+      if (targets.length === 0) return;
+      let ref: { x: number; y: number; width: number; height: number };
+      let margin = 0;
+      if (targets.length > 1) {
+        ref = unionBox(targets.map((t) => ({ x: t.x, y: t.y, width: t.width, height: t.height })));
+      } else {
+        const parent = targets[0].parentId ? shapes.find((s) => s.id === targets[0].parentId) : null;
+        ref = parent ? { x: parent.x, y: parent.y, width: parent.width, height: parent.height } : viewport;
+        margin = 20;
       }
+      applyShapes(applyDeltas(shapes, alignDeltas(shapes, ids, alignment, ref, margin)), true);
+    },
+    [selectedIds, selectedShape, activePageShapes, shapes, applyShapes, viewport]
+  );
+
+  // Operações booleanas entre 2+ formas fechadas (o resultado é um caminho; os originais saem do canvas) e Flatten
+  const handleBoolean = useCallback(
+    (op: BooleanOp | 'flatten') => {
+      const targets = shapes.filter((s) => selectedIds.includes(s.id)).sort((a, b) => a.zIndex - b.zIndex);
+      if (op === 'flatten') {
+        if (targets.length === 0) return;
+        const flats = targets.map((t) => flattenShape(t, crypto.randomUUID()));
+        if (flats.some((f) => !f)) {
+          onToast?.('Só formas fechadas (retângulo, elipse, polígono, estrela) podem ser achatadas');
+          return;
+        }
+        const ids = new Set(targets.map((t) => t.id));
+        applyShapes([...shapes.filter((s) => !ids.has(s.id)), ...(flats as Shape[])], true);
+        setSelectedId((flats[0] as Shape).id);
+        return;
+      }
+      if (targets.length < 2) {
+        onToast?.('Selecione 2 ou mais elementos para a operação booleana');
+        return;
+      }
+      const result = booleanShapes(targets, op, crypto.randomUUID());
+      if (!result) {
+        onToast?.('Resultado vazio ou formas não suportadas (use formas fechadas que se sobreponham)');
+        return;
+      }
+      const ids = new Set(targets.map((t) => t.id));
+      applyShapes([...shapes.filter((s) => !ids.has(s.id)), result], true);
+      setSelectedIds([result.id]);
+      setSelectedId(result.id);
+    },
+    [shapes, selectedIds, applyShapes, onToast]
+  );
+
+  // "Ajustar seleção": o frame/seção passa a caber exatamente nos filhos
+  const handleFitSelection = useCallback(() => {
+    if (!selectedShape || (selectedShape.type !== 'frame' && selectedShape.type !== 'section')) {
+      onToast?.('Selecione um frame ou seção para ajustar ao conteúdo');
+      return;
+    }
+    const kids = shapes.filter((s) => s.parentId === selectedShape.id && s.visible !== false);
+    if (kids.length === 0) return;
+    const box = unionBox(kids.map((k) => ({ x: k.x, y: k.y, width: k.width, height: k.height })));
+    applyShapes(
+      shapes.map((s) => (s.id === selectedShape.id ? { ...s, x: box.x, y: box.y, width: box.width, height: box.height } : s)),
+      true
+    );
+  }, [selectedShape, shapes, applyShapes, onToast]);
+
+  // Variáveis: criar a partir do preenchimento, ligar, editar por modo, trocar o modo ativo
+  const commitVariables = useCallback((list: VariablesList, modeId: string) => {
+    variablesRef.current = { list, modeId }; // antes de aplicar, para o pipeline já usar os valores novos
+    setVariables(list);
+    setActiveModeId(modeId);
+  }, []);
+
+  const handleCreateVariable = useCallback(() => {
+    if (!selectedShape) return;
+    const first = selectedShape.fills && selectedShape.fills.length > 0 ? selectedShape.fills[0] : null;
+    const id = crypto.randomUUID();
+    const v = createColorVariable(id, `Variável ${variables.length + 1}`, first?.color || selectedShape.fill || '#D9D9D9', modes);
+    commitVariables([...variables, v], activeModeId);
+    applyShapes(shapes.map((s) => (s.id === selectedShape.id ? { ...s, fillVariableId: id } : s)), true);
+  }, [selectedShape, variables, modes, activeModeId, shapes, applyShapes, commitVariables]);
+
+  const handleBindVariable = useCallback(
+    (variableId: string | undefined) => {
+      const ids = selectedIds.length > 0 ? selectedIds : selectedShape ? [selectedShape.id] : [];
+      applyShapes(shapes.map((s) => (ids.includes(s.id) ? { ...s, fillVariableId: variableId } : s)), true);
+    },
+    [selectedIds, selectedShape, shapes, applyShapes]
+  );
+
+  const handleUpdateVariable = useCallback(
+    (variableId: string, patch: { name?: string; modeId?: string; value?: string }) => {
+      const next = variables.map((v) =>
+        v.id !== variableId ? v : { ...v, name: patch.name ?? v.name, values: patch.modeId && patch.value ? { ...v.values, [patch.modeId]: patch.value } : v.values }
+      );
+      commitVariables(next, activeModeId);
+      applyShapes(shapes, true); // propaga o valor novo
+    },
+    [variables, activeModeId, shapes, applyShapes, commitVariables]
+  );
+
+  const handleDeleteVariable = useCallback(
+    (variableId: string) => {
+      commitVariables(variables.filter((v) => v.id !== variableId), activeModeId);
+      applyShapes(shapes.map((s) => (s.fillVariableId === variableId ? { ...s, fillVariableId: undefined } : s)), true);
+    },
+    [variables, activeModeId, shapes, applyShapes, commitVariables]
+  );
+
+  const handleSetMode = useCallback(
+    (modeId: string) => {
+      commitVariables(variables, modeId);
+      applyShapes(shapes, true); // recolore tudo com os valores do modo
+    },
+    [variables, shapes, applyShapes, commitVariables]
+  );
+
+  // Estilos: criar a partir da seleção, aplicar, atualizar, renomear e excluir
+  const commitStyles = useCallback((next: DesignStyle[]) => {
+    stylesRef.current = next; // antes de aplicar, para o pipeline já usar os valores novos
+    setStyles(next);
+  }, []);
+
+  const handleCreateStyle = useCallback(
+    (kind: 'color' | 'text') => {
+      if (!selectedShape) return;
+      const id = crypto.randomUUID();
+      const count = styles.filter((s) => s.kind === kind).length + 1;
+      const style = kind === 'color' ? colorStyleFromShape(selectedShape, id, `Cor ${count}`) : textStyleFromShape(selectedShape, id, `Texto ${count}`);
+      commitStyles([...styles, style]);
+      applyShapes(shapes.map((s) => (s.id === selectedShape.id ? { ...s, ...(kind === 'color' ? { fillStyleId: id } : { textStyleId: id }) } : s)), true);
+    },
+    [selectedShape, styles, shapes, applyShapes, commitStyles]
+  );
+
+  const handleApplyStyle = useCallback(
+    (style: DesignStyle) => {
+      const ids = selectedIds.length > 0 ? selectedIds : selectedShape ? [selectedShape.id] : [];
       applyShapes(
-        shapes.map((s) => (s.id === selectedShape.id ? { ...s, ...patch } : s)),
+        shapes.map((s) => (ids.includes(s.id) ? { ...s, ...(style.kind === 'color' ? { fillStyleId: style.id } : { textStyleId: style.id }) } : s)),
         true
       );
     },
-    [selectedShape, shapes, applyShapes, viewport]
+    [selectedIds, selectedShape, shapes, applyShapes]
   );
+
+  const handleUpdateStyle = useCallback(
+    (styleId: string) => {
+      if (!selectedShape) return;
+      const old = styles.find((s) => s.id === styleId);
+      if (!old) return;
+      const fresh = old.kind === 'color' ? colorStyleFromShape(selectedShape, styleId, old.name) : textStyleFromShape(selectedShape, styleId, old.name);
+      commitStyles(styles.map((s) => (s.id === styleId ? fresh : s)));
+      applyShapes(shapes, true); // propaga o valor novo para todos os shapes ligados
+    },
+    [selectedShape, styles, shapes, applyShapes, commitStyles]
+  );
+
+  const handleRenameStyle = useCallback((styleId: string, name: string) => commitStyles(styles.map((s) => (s.id === styleId ? { ...s, name } : s))), [styles, commitStyles]);
+
+  const handleDeleteStyle = useCallback(
+    (styleId: string) => {
+      commitStyles(styles.filter((s) => s.id !== styleId));
+      applyShapes(shapes.map((s) => (s.fillStyleId === styleId || s.textStyleId === styleId ? { ...s, fillStyleId: s.fillStyleId === styleId ? undefined : s.fillStyleId, textStyleId: s.textStyleId === styleId ? undefined : s.textStyleId } : s)), true);
+    },
+    [styles, shapes, applyShapes, commitStyles]
+  );
+
+  const snapshotNow = useCallback(
+    () => ({ shapes, pages, selectedPageId, pageViewports, styles: stylesRef.current }),
+    [shapes, pages, selectedPageId, pageViewports]
+  );
+
+  const handleSaveVersion = useCallback(async () => {
+    if (!workspacePath) return;
+    try {
+      const entry = await saveVersion(workspacePath, snapshotNow());
+      setVersions(await listVersions(workspacePath));
+      onToast?.(`Versão salva: ${entry.label}`);
+    } catch {
+      onToast?.('Não foi possível salvar a versão');
+    }
+  }, [workspacePath, snapshotNow, onToast]);
+
+  const handleOpenVersions = useCallback(async () => {
+    setIsDocMenuOpen(false);
+    setIsVersionsOpen(true);
+    if (workspacePath) setVersions(await listVersions(workspacePath));
+  }, [workspacePath]);
+
+  const handleRestoreVersion = useCallback(
+    async (v: VersionEntry) => {
+      if (!workspacePath) return;
+      const snap = await loadVersion(workspacePath, v.id);
+      if (!snap) {
+        onToast?.('Versão não encontrada');
+        return;
+      }
+      // Guarda o estado atual antes de voltar, para poder desfazer o restaurar
+      await saveVersion(workspacePath, snapshotNow(), `Antes de restaurar "${v.label}"`).catch(() => {});
+      stylesRef.current = snap.styles || [];
+      setStyles(snap.styles || []);
+      setPages(snap.pages?.length ? snap.pages : DEFAULT_PAGES);
+      setSelectedPageId(snap.selectedPageId || 'page-1');
+      setShapesRaw(snap.shapes);
+      historyRef.current = { stack: [snap.shapes], index: 0 };
+      room.broadcast(snap.shapes);
+      setVersions(await listVersions(workspacePath));
+      setIsVersionsOpen(false);
+      onToast?.(`Restaurada: ${v.label}`);
+    },
+    [workspacePath, snapshotNow, room, onToast]
+  );
+
+  const handleDeleteVersion = useCallback(
+    async (v: VersionEntry) => {
+      if (workspacePath) setVersions(await deleteVersion(workspacePath, v.id));
+    },
+    [workspacePath]
+  );
+
+  const codeText = useMemo(() => (codeShape ? generateCode(codeTarget, activePageShapes, codeShape) : ''), [codeShape, codeTarget, activePageShapes]);
+
+  const handleSaveCodeToProject = useCallback(async () => {
+    if (!codeShape || !workspacePath) return;
+    const ext = codeTarget === 'react' ? 'tsx' : codeTarget === 'html' ? 'html' : 'dart';
+    const name = componentName(codeShape.name || 'Tela');
+    const file = `${workspacePath}/src/design-export/${name}.${ext}`;
+    try {
+      await (window as any).electronAPI?.fs?.writeFile?.(file, codeText);
+      onToast?.(`Salvo em src/design-export/${name}.${ext}`);
+    } catch {
+      onToast?.('Não foi possível salvar o arquivo');
+    }
+  }, [codeShape, codeTarget, codeText, workspacePath, onToast]);
+
+  const handleAskAiToImplement = useCallback(() => {
+    if (!codeShape || !onSendToChat) return;
+    const label = codeTarget === 'react' ? 'React (TSX)' : codeTarget === 'html' ? 'HTML' : 'Flutter';
+    const issue = codeShape.linkedIssue ? ` Este design está ligado à issue #${codeShape.linkedIssue}.` : '';
+    onSendToChat(
+      `Implemente no projeto a tela "${codeShape.name || 'Tela'}" do Design (${label}), seguindo a stack e os componentes que o projeto já usa e reaproveitando o que existir.${issue}
+
+Código de referência gerado do design:
+
+\`\`\`
+${codeText}
+\`\`\``
+    );
+    setCodeShape(null);
+  }, [codeShape, codeTarget, codeText, onSendToChat]);
+
+  // Variantes: trocar a instância para outra variante do mesmo componente
+  const handleSwitchVariant = useCallback(
+    (instance: Shape, componentId: string) => {
+      const res = switchVariant(shapes, instance.id, componentId);
+      if (!res) return;
+      applyShapes(res.shapes, true);
+      setSelectedIds([res.newRootId]);
+      setSelectedId(res.newRootId);
+    },
+    [shapes, applyShapes]
+  );
+
+  // Componentes: criar instância ligada e desanexar
+  const handleCreateInstance = useCallback(
+    (shape: Shape) => {
+      const inst = createInstance(shapes, shape.id, { x: shape.width + 40, y: 0 }).map((s) => ({ ...s, pageId: selectedPageId }));
+      if (inst.length === 0) return;
+      applyShapes([...shapes, ...inst], true);
+      setSelectedIds([inst[0].id]);
+      setSelectedId(inst[0].id);
+    },
+    [shapes, applyShapes, selectedPageId]
+  );
+
+  const handleDetachInstance = useCallback(
+    (shape: Shape) => {
+      applyShapes(detachInstance(shapes, shape.id), true);
+    },
+    [shapes, applyShapes]
+  );
+
+  // Distribui com espaços iguais (3 ou mais selecionados)
+  const handleDistribute = useCallback(
+    (axis: 'x' | 'y') => {
+      if (selectedIds.length < 3) {
+        onToast?.('Selecione 3 ou mais elementos para distribuir');
+        return;
+      }
+      applyShapes(applyDeltas(shapes, distributeDeltas(shapes, selectedIds, axis)), true);
+    },
+    [selectedIds, shapes, applyShapes, onToast]
+  );
+
+  // Os atalhos (efeito acima) chamam estas ações pela ref para sempre usar a versão mais recente
+  const keyActionsRef = useRef({ handleAlign, handleDistribute, handleBoolean });
+  keyActionsRef.current = { handleAlign, handleDistribute, handleBoolean };
+
 
   const handleFocusSelection = useCallback(() => {
     if (!selectedShape) return;
@@ -1388,95 +1910,436 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [targetCamera, setTargetCamera] = useState<{ x: number; y: number; zoom?: number; timestamp?: number } | null>(null);
 
+  // Telas geradas pela IA aguardando aceite / regeração
+  const [aiReview, setAiReview] = useState<Array<{ id: string; prompt: string; busy?: boolean; w?: number; h?: number; refs?: string[] }>>([]);
+
+  /** Brain do projeto + resumo dos arquivos (README, package.json, estrutura, cores) do projeto da header */
+  const getProjectContext = useCallback(async () => {
+    const digest = await buildProjectDigest(workspacePath).catch(() => '');
+    let brainText = '';
+    try {
+      const brain = workspacePath ? getActiveBrainContextSync(workspacePath) : null;
+      brainText = brain ? generateBrainAiContext(brain).replace(/\s+/g, ' ').slice(0, 1500) : '';
+    } catch {}
+    return [repoName ? `Projeto: ${repoName}.` : '', brainText, digest].filter(Boolean).join('\n').slice(0, 5500) || undefined;
+  }, [workspacePath, repoName]);
+
+  /** Gera telas em tempo real: cada elemento aparece no canvas assim que a IA o descreve. */
+  const runScreenGeneration = useCallback(
+    async (o: { signal?: { cancelled: boolean }; prompt: string; basePrompt: string; referenceImages?: string[]; startX: number; startY: number; onProgress?: (m: string) => void; replaceFrameId?: string; maxScreens?: number }) => {
+      const icons = await loadIcons().catch(() => undefined);
+      const projectContext = await getProjectContext();
+      const aiReq = { prompt: o.prompt, pageId: selectedPageId, startX: o.startX, startY: o.startY, accentColor, isDark: isEffectiveDark, icons, projectContext, canReadProject: !!workspacePath, maxScreens: o.maxScreens, referenceImages: o.referenceImages };
+
+      let base = activePageShapes;
+      if (o.replaceFrameId) {
+        const gone = new Set([o.replaceFrameId, ...descendantIds(activePageShapes, o.replaceFrameId)]);
+        base = activePageShapes.filter((s) => !gone.has(s.id));
+      }
+      let live: Shape[] = [];
+      const apply = (commit = false) => applyActivePageShapes([...base, ...live], commit);
+
+      const builder = new ScreenBuilder(aiReq);
+      const stream = new AiJsonStream();
+      const queue: AiStreamEvent[] = [];
+      let streamDone = false;
+      let screenCount = 0;
+      const imageJobs: Promise<void>[] = [];
+      let imgStarted = 0;
+      const startImages = () => {
+        while (imgStarted < builder.pending.length) {
+          const job = builder.pending[imgStarted++];
+          imageJobs.push(
+            fetchStockImage(job.query, job.width, job.height)
+              .then((r) => {
+                if (!r || o.signal?.cancelled) return;
+                const cur = builder.all.find((s) => s.id === job.id);
+                builder.patch(job.id, { imageUrl: r.dataUrl, name: r.credit ? `${cur?.name || 'Foto'} · Foto: ${r.credit} (Unsplash)` : cur?.name });
+                live = builder.all;
+                apply(false);
+              })
+              .catch(() => {})
+          );
+        }
+      };
+      const handle = (ev: AiStreamEvent) => {
+        if (ev.kind === 'screen') {
+          const shapes = builder.startScreen(ev.header);
+          if (!shapes.length) return;
+          live = builder.all;
+          apply(false);
+          screenCount++;
+          o.onProgress?.(`Criando a tela "${shapes[0].name}"…`);
+          if (screenCount === 1) {
+            const f = shapes[0];
+            const z = f.width > 1000 ? 0.48 : 0.65;
+            setZoom(z);
+            setTargetCamera({ x: f.x + f.width / 2, y: f.y + f.height / 2, zoom: z, timestamp: Date.now() });
+          }
+        } else {
+          const shape = builder.addItem(ev.item);
+          if (!shape) return;
+          builder.settle(); // auto layout: hug/fill/posições
+          live = builder.all;
+          apply(false);
+          startImages();
+          o.onProgress?.(`Criando ${shape.name || shape.type}… (${builder.itemCount} elementos)`);
+        }
+      };
+      const consumer = (async () => {
+        while ((!streamDone || queue.length) && !o.signal?.cancelled) {
+          const ev = queue.shift();
+          if (!ev) { await new Promise((r) => setTimeout(r, 30)); continue; }
+          handle(ev);
+          await new Promise((r) => setTimeout(r, queue.length > 10 ? 12 : ev.kind === 'item' ? 45 : 150));
+        }
+      })();
+
+      o.onProgress?.(`Pedindo o layout para ${selectedAiProvider || 'a IA'}${workspacePath ? ' (analisando o projeto)' : ''}...`);
+      let final = '';
+      let failure: any = null;
+      // enquanto a IA pensa (ainda sem nada para desenhar), mostra que está viva
+      const startedAt = Date.now();
+      const waitTimer = setInterval(() => {
+        if (builder.itemCount === 0 && screenCount === 0) o.onProgress?.(`${selectedAiProvider || 'A IA'} está pensando no layout… ${Math.round((Date.now() - startedAt) / 1000)}s`);
+      }, 1000);
+      try {
+        final = await requestAiScreenRaw(buildAiScreenPrompt(aiReq), selectedAiProvider, selectedModel, workspacePath || undefined, 480000, (chunk) => queue.push(...stream.push(chunk)), (o.referenceImages || []).map((p) => p.slice(0, p.lastIndexOf('/'))));
+        // CLIs que só devolvem no fim: o que não chegou em tempo real entra agora (aparece em sequência)
+        if (stream.consumed === 0 && final) queue.push(...stream.push(final));
+      } catch (err) {
+        failure = err;
+      }
+      clearInterval(waitTimer);
+      streamDone = true;
+      await consumer;
+      if (o.signal?.cancelled) {
+        // cancelado: descarta o que foi criado até aqui
+        applyActivePageShapes(activePageShapes, false); // volta ao estado anterior (inclusive a tela que seria substituída)
+        return 0;
+      }
+
+      if (builder.itemCount === 0 && final) {
+        // o parser incremental não achou nada: tenta a resposta inteira
+        const whole = parseAiScreenResponse(final, aiReq);
+        if (whole) {
+          builder.all = whole.shapes;
+          live = builder.all;
+          builder.pending.push(...whole.pending);
+          startImages();
+          builder.frameIds.push(whole.mainFrameId);
+          apply(false);
+        }
+      }
+      await Promise.all(imageJobs);
+
+      let frameIds = builder.frameIds.length ? builder.frameIds : live.filter((s) => s.type === 'frame' && !s.parentId).map((s) => s.id);
+      if (live.length === 0) {
+        // sem layout da IA não inventamos um modelo fixo: avisa o usuário
+        setAiReview((prev) => prev.map((r) => (r.id === o.replaceFrameId ? { ...r, busy: false } : r)));
+        throw new Error(failure?.message || 'A IA não devolveu um layout válido. Tente descrever a tela com mais detalhes ou escolha outro modelo.');
+      } else if (failure) {
+        onToast?.(`${failure?.message || 'A IA parou antes do fim'}; mantive o que já foi criado`);
+      }
+      apply(true);
+      handleSelectSingle(frameIds[0] || null);
+      setAiReview((prev) => [...prev.filter((r) => r.id !== o.replaceFrameId), ...frameIds.map((id) => { const sc = builder.screens_.find((x) => x.rootId === id); return { id, prompt: o.basePrompt, w: sc?.width, h: sc?.height, refs: o.referenceImages }; })]);
+      if (!o.replaceFrameId && frameIds.length > 1) {
+        const frames = live.filter((s) => frameIds.includes(s.id));
+        const minX = Math.min(...frames.map((f) => f.x));
+        const maxX = Math.max(...frames.map((f) => f.x + f.width));
+        const z = Math.max(0.1, Math.min(0.65, (viewport.width * zoom * 0.9) / (maxX - minX)));
+        setZoom(z);
+        setTargetCamera({ x: (minX + maxX) / 2, y: frames[0].y + frames[0].height / 2, zoom: z, timestamp: Date.now() });
+      }
+      return frameIds.length;
+    },
+    [selectedPageId, accentColor, isEffectiveDark, selectedAiProvider, selectedModel, workspacePath, getProjectContext, applyActivePageShapes, activePageShapes, handleSelectSingle, onToast, viewport, zoom]
+  );
+
   const handlePrototypeWithAi = useCallback(
-    async (prompt: string, onProgress?: (msg: string) => void) => {
+    async (prompt: string, onProgress?: (msg: string) => void, images?: string[], selection?: string[], signal?: { cancelled: boolean }) => {
       const clean = prompt.trim();
       if (!clean) return { success: false, error: 'O prompt não pode estar vazio.' };
 
       setIsGeneratingAi(true);
       try {
-        onProgress?.(
-          selectedFrame
-            ? `Analisando frame "${selectedFrame.name}" e arquitetura do prompt...`
-            : 'Analisando prompt e definindo estrutura de layout...'
-        );
+        // imagens de referência: viram arquivos temporários que a CLI de IA abre pelo caminho
+        const refs: string[] = [];
+        for (const dataUrl of images || []) {
+          const save = (window as any).electronAPI?.fs?.saveTempImage;
+          if (!save) break;
+          const r = await save(dataUrl.split(',')[1], 'jpg').catch(() => null);
+          if (r?.path) refs.push(r.path);
+        }
+        const refDirs = [...new Set(refs.map((p) => p.slice(0, p.lastIndexOf('/'))))];
+        if (refs.length) onProgress?.(`${refs.length} imagem(ns) de referência anexada(s)`);
+        // só conta o que realmente existe e está visível nesta página (ids antigos/de outra página não são seleção)
+        const sel = selection ?? selectedIds; // seleção do momento em que o pedido foi enviado
+        const liveIds = sel.filter((id) => activePageShapes.some((s) => s.id === id && s.visible !== false));
+        const firstSel = activePageShapes.find((s) => s.id === liveIds[0]);
+        const selFrame = firstSel ? (firstSel.type === 'frame' ? firstSel : activePageShapes.find((s) => s.id === firstSel.parentId && s.type === 'frame') || null) : null;
+        // aparelho selecionado: o alvo é a tela dentro dele
+        const genTarget = selFrame ? activePageShapes.find((s) => s.parentId === selFrame.id && s.deviceScreen) || selFrame : null;
+        const hasContent = !!genTarget && activePageShapes.some((s) => s.parentId === genTarget.id && !s.deviceChrome);
 
-        // Breve pausa para dar feedback visual fluido e claro ao usuário
-        await new Promise((resolve) => setTimeout(resolve, 350));
-
-        onProgress?.(
-          selectedFrame
-            ? `Gerando alterações e componentes para "${selectedFrame.name}"...`
-            : 'Criando componentes, paleta de cores e hierarquia visual...'
-        );
-
-        await new Promise((resolve) => setTimeout(resolve, 400));
-
-        // Posiciona a tela no centro visível da viewport atual do usuário
-        let placeX = Math.round(viewport.x + (viewport.width - 1440) / 2);
-        let placeY = Math.round(viewport.y + (viewport.height - 900) / 2);
-        if (!placeX || isNaN(placeX)) placeX = 100;
-        if (!placeY || isNaN(placeY)) placeY = 100;
-
-        onProgress?.('Renderizando elementos no canvas...');
-
-        const { shapes: newShapes, mainFrameId, width, height } = generateAiPrototypeScreen({
-          prompt: clean,
-          pageId: selectedPageId,
-          startX: placeX,
-          startY: placeY,
-          accentColor,
-          isDark: isEffectiveDark,
-          providerName: selectedAiProvider,
-          targetFrame: selectedFrame,
-        });
-
-        if (selectedFrame) {
-          // A IA modifica o frame selecionado: preserva outros shapes e substitui os filhos desse frame
-          const otherShapes = activePageShapes.filter(
-            (s) => s.id !== selectedFrame.id && s.parentId !== selectedFrame.id
+        // Seleção existente (que não seja um frame vazio): a IA EDITA o que está selecionado
+        if (liveIds.length > 0 && (!selFrame || liveIds.length > 1 || hasContent)) {
+          const icons = await loadIcons().catch(() => undefined);
+          const scope = editScope(activePageShapes, liveIds);
+          onProgress?.(`Pedindo para ${selectedAiProvider || 'a IA'} editar ${liveIds.length} elemento(s) selecionado(s)...`);
+          const raw = await requestAiScreenRaw(
+            buildAiEditPrompt({ prompt: clean, accentColor, isDark: isEffectiveDark, referenceImages: refs }, scope, liveIds),
+            selectedAiProvider, selectedModel, workspacePath || undefined, 240000, undefined, refDirs
           );
-          applyActivePageShapes([...otherShapes, ...newShapes], true);
-          handleSelectSingle(selectedFrame.id);
-
-          // Anima e centraliza a câmera no frame selecionado
-          const newZoom = selectedFrame.width > 1000 ? 0.48 : 0.65;
-          setZoom(newZoom);
-          setTargetCamera({
-            x: selectedFrame.x + selectedFrame.width / 2,
-            y: selectedFrame.y + selectedFrame.height / 2,
-            zoom: newZoom,
-            timestamp: Date.now(),
-          });
-        } else {
-          // Adiciona ao canvas na página ativa
-          applyActivePageShapes([...activePageShapes, ...newShapes], true);
-          handleSelectSingle(mainFrameId);
-
-          // Anima e centraliza a câmera na tela prototipada
-          const newZoom = width > 1000 ? 0.48 : 0.65;
-          setZoom(newZoom);
-          setTargetCamera({
-            x: placeX + width / 2,
-            y: placeY + height / 2,
-            zoom: newZoom,
-            timestamp: Date.now(),
-          });
+          if (signal?.cancelled) return { success: false, error: 'cancelado' };
+          const edited = applyAiEdits(raw, activePageShapes, scope, liveIds, { pageId: selectedPageId, isDark: isEffectiveDark, accentColor, icons });
+          if (!edited) { onAiTaskDone?.({ ok: false, message: 'A IA não devolveu alterações válidas. Tente descrever a mudança de outra forma.' }); return { success: false, error: 'A IA não devolveu alterações válidas. Tente descrever a mudança de outra forma.' }; }
+          let editedShapes = edited.shapes;
+          if (edited.pending.length) {
+            const imgs = await Promise.all(edited.pending.map((j) => fetchStockImage(j.query, j.width, j.height).then((r) => [j.id, r] as const).catch(() => [j.id, null] as const)));
+            editedShapes = editedShapes.map((s) => { const hit = imgs.find(([id]) => id === s.id)?.[1]; return hit ? { ...s, imageUrl: hit.dataUrl } : s; });
+          }
+          applyActivePageShapes(editedShapes, true);
+          onToast?.(`IA: ${edited.changed} alterado(s), ${edited.added} adicionado(s), ${edited.removed} removido(s)`);
+          onAiTaskDone?.({ ok: true, message: 'Alterações aplicadas à seleção' });
+          return { success: true };
         }
 
+        // Frame vazio selecionado: gera o conteúdo dentro dele (sem tempo real)
+        if (genTarget) {
+          const icons = await loadIcons().catch(() => undefined);
+          const aiReq = { prompt: clean, pageId: selectedPageId, startX: genTarget.x, startY: genTarget.y, accentColor, isDark: isEffectiveDark, targetFrame: genTarget, icons, canReadProject: !!workspacePath, referenceImages: refs };
+          let generated: ReturnType<typeof parseAiScreenResponse> = null;
+          onProgress?.(`Pedindo o layout para ${selectedAiProvider || 'a IA'}...`);
+          generated = parseAiScreenResponse(await requestAiScreenRaw(buildAiScreenPrompt(aiReq), selectedAiProvider, selectedModel, workspacePath || undefined, 240000, undefined, refDirs), aiReq);
+          if (signal?.cancelled) return { success: false, error: 'cancelado' };
+          if (!generated) { onAiTaskDone?.({ ok: false, message: 'A IA não devolveu um layout válido. Tente descrever a tela com mais detalhes ou escolha outro modelo.' }); return { success: false, error: 'A IA não devolveu um layout válido. Tente descrever a tela com mais detalhes ou escolha outro modelo.' }; }
+          const result = generated;
+          // troca o conteúdo da tela (e tudo dentro dele), mantendo as peças do aparelho
+          const inside = new Set(descendantIds(activePageShapes, genTarget.id));
+          const others = activePageShapes.filter((s) => s.id !== genTarget.id && (!inside.has(s.id) || s.deviceChrome));
+          const content = result.shapes.filter((s) => s.id !== genTarget.id);
+          let next = [...others, genTarget, ...content];
+          if (generated?.pending.length) {
+            const imgs = await Promise.all(generated.pending.map((j) => fetchStockImage(j.query, j.width, j.height).then((r) => [j.id, r] as const).catch(() => [j.id, null] as const)));
+            next = next.map((s) => { const hit = imgs.find(([id]) => id === s.id)?.[1]; return hit ? { ...s, imageUrl: hit.dataUrl } : s; });
+          }
+          applyActivePageShapes(next, true);
+          handleSelectSingle(genTarget.id);
+          onAiTaskDone?.({ ok: true, message: 'Conteúdo da tela gerado' });
+          return { success: true };
+        }
+
+        // Nada selecionado: cria telas novas, em tempo real
+        const spot = findFreeSpot(activePageShapes, Math.round(viewport.x + viewport.width * 0.1) || 100, Math.round(viewport.y + 60) || 100, 460, 920);
+        const count = await runScreenGeneration({ prompt: clean, basePrompt: clean, referenceImages: refs, startX: spot.x, startY: spot.y, onProgress, signal });
+        if (signal?.cancelled) return { success: false, error: 'cancelado' };
+        onAiTaskDone?.({ ok: true, message: count === 1 ? 'Tela gerada e pronta para revisar' : `${count} telas geradas e prontas para revisar` });
         return { success: true };
       } catch (err: any) {
+        if (signal?.cancelled) return { success: false, error: 'cancelado' };
         console.error('Erro ao prototipar com IA:', err);
-        return {
-          success: false,
-          error: err?.message || 'Falha ao processar protótipo com IA. Tente novamente.',
-        };
+        onAiTaskDone?.({ ok: false, message: err?.message || 'Falha ao gerar a tela' });
+        return { success: false, error: err?.message || 'Falha ao processar protótipo com IA. Tente novamente.' };
       } finally {
         setIsGeneratingAi(false);
       }
     },
-    [viewport, selectedPageId, accentColor, isEffectiveDark, selectedAiProvider, applyActivePageShapes, activePageShapes, selectedFrame, handleSelectSingle]
+    [viewport, selectedPageId, accentColor, isEffectiveDark, selectedAiProvider, selectedModel, workspacePath, applyActivePageShapes, activePageShapes, selectedIds, handleSelectSingle, onToast, onAiTaskDone, runScreenGeneration]
   );
+
+  /** Telas (frames raiz) das seleções, na ordem de leitura (esquerda→direita, cima→baixo) */
+  const proposalFrames = useMemo(() => {
+    const byId = new Map(activePageShapes.map((s) => [s.id, s]));
+    const roots = new Map<string, Shape>();
+    for (const id of selectedIds) {
+      let cur = byId.get(id);
+      while (cur?.parentId && byId.get(cur.parentId)) cur = byId.get(cur.parentId);
+      if (cur && cur.type === 'frame') roots.set(cur.id, cur);
+    }
+    return [...roots.values()].sort((a, b) => a.x - b.x || a.y - b.y).slice(0, 12);
+  }, [selectedIds, activePageShapes]);
+
+  const handleGenerateProposal = useCallback(
+    async (o: { client: string; company: string; notes: string }, status: (m: string) => void) => {
+      try {
+        const api = (window as any).electronAPI?.fs;
+        if (!api?.exportPdf) return { ok: false, message: 'Disponível apenas no app desktop' };
+        status('Renderizando as telas…');
+        const images: Record<string, string> = {};
+        for (const f of proposalFrames) {
+          const { blob } = await exportShape(shapes, f, { id: 'proposal', format: 'JPG', scale: '1.5x' });
+          images[f.id] = await new Promise<string>((res, rej) => {
+            const r = new FileReader();
+            r.onload = () => res(String(r.result));
+            r.onerror = () => rej(r.error);
+            r.readAsDataURL(blob);
+          });
+        }
+        const frames = proposalFrames.map((f) => collectFrameContext(shapes, f));
+        status(`${selectedAiProvider || 'A IA'} está analisando as telas${workspacePath ? ' e o projeto' : ''}…`);
+        const raw = await requestAiScreenRaw(
+          buildProposalPrompt({ ...o, projectContext: await getProjectContext(), frames }),
+          selectedAiProvider, selectedModel, workspacePath || undefined, 240000
+        );
+        const proposal = parseProposal(raw, frames);
+        if (!proposal) return { ok: false, message: 'A IA não devolveu uma proposta válida. Tente novamente.' };
+        status('Gerando o PDF…');
+        const html = buildProposalHtml(proposal, images, frames, { accent: accentColor, client: o.client || undefined, company: o.company || undefined });
+        const res = await api.exportPdf(html, proposal.title);
+        if (res.error) return { ok: false, message: res.error };
+        if (res.canceled) return { ok: true, message: 'Salvamento cancelado' };
+        return { ok: true, message: `Proposta salva em ${res.path}` };
+      } catch (err: any) {
+        return { ok: false, message: err?.message || 'Falha ao gerar a proposta' };
+      }
+    },
+    [proposalFrames, shapes, selectedAiProvider, selectedModel, workspacePath, getProjectContext, accentColor]
+  );
+
+  const handleAiAccept = useCallback((id: string) => {
+    setAiReview((prev) => prev.filter((r) => r.id !== id));
+    onToast?.('Tela aceita');
+  }, [onToast]);
+
+  // ---------------- Fila de gerações da IA (uma por vez, em ordem) ----------------
+  interface AiJob {
+    id: string;
+    kind: 'prompt' | 'regen';
+    prompt: string;
+    label: string;
+    images: string[];
+    selection: string[];
+    frameId?: string;
+    status: 'queued' | 'running' | 'error';
+    progress?: string;
+    signal: { cancelled: boolean };
+  }
+  const [aiQueue, setAiQueue] = useState<AiJob[]>([]);
+  const runningJobRef = useRef<string | null>(null);
+
+  const patchJob = useCallback((id: string, patch: Partial<AiJob>) => setAiQueue((q) => q.map((j) => (j.id === id ? { ...j, ...patch } : j))), []);
+
+  const handleEnqueueAi = useCallback(
+    (prompt: string, images: string[]) => {
+      const job: AiJob = { id: crypto.randomUUID(), kind: 'prompt', prompt, label: prompt, images, selection: selectedIds, status: 'queued', signal: { cancelled: false } };
+      setAiQueue((q) => [...q, job]);
+    },
+    [selectedIds]
+  );
+
+  const handleCancelAiJob = useCallback(
+    (id: string) => {
+      const job = aiQueue.find((j) => j.id === id);
+      if (!job) return;
+      job.signal.cancelled = true;
+      if (job.kind === 'regen' && job.frameId) setAiReview((prev) => prev.map((r) => (r.id === job.frameId ? { ...r, busy: false } : r)));
+      if (job.status !== 'running') {
+        setAiQueue((q) => q.filter((j) => j.id !== id));
+      } else {
+        patchJob(id, { progress: 'Cancelando…' });
+        (window as any).electronAPI?.ai?.cancel?.(undefined, workspacePath || undefined); // encerra a CLI em execução
+      }
+    },
+    [aiQueue, patchJob, workspacePath]
+  );
+
+  /** Sobe um pedido na fila, nunca acima do que já está sendo gerado */
+  const handleMoveAiJobUp = useCallback((id: string) => {
+    setAiQueue((q) => {
+      const i = q.findIndex((j) => j.id === id);
+      const firstQueued = q.findIndex((j) => j.status === 'queued');
+      if (i <= 0 || i <= firstQueued || q[i].status !== 'queued') return q;
+      const next = q.slice();
+      [next[i - 1], next[i]] = [next[i], next[i - 1]];
+      return next;
+    });
+  }, []);
+
+  const handleAiRegenerate = useCallback(
+    (id: string) => {
+      const entry = aiReview.find((r) => r.id === id);
+      const frame = activePageShapes.find((s) => s.id === id);
+      if (!entry || !frame || entry.busy) return;
+      setAiReview((prev) => prev.map((r) => (r.id === id ? { ...r, busy: true } : r)));
+      setAiQueue((q) => [...q, { id: crypto.randomUUID(), kind: 'regen', prompt: entry.prompt, label: `Regerar a tela "${frame.name}"`, images: [], selection: [], frameId: id, status: 'queued', signal: { cancelled: false } }]);
+    },
+    [aiReview, activePageShapes]
+  );
+
+  const runRegenJob = useCallback(
+    async (job: AiJob): Promise<string | null> => {
+      const entry = aiReview.find((r) => r.id === job.frameId);
+      const frame = activePageShapes.find((s) => s.id === job.frameId);
+      if (!entry || !frame) return 'A tela original não existe mais';
+      try {
+        await runScreenGeneration({
+          prompt: `${entry.prompt}\n\nGere APENAS a tela "${frame.name}" (${Math.round(entry.w ?? frame.width)}x${Math.round(entry.h ?? frame.height)} px, escreva exatamente esse width/height): UMA única tela, com um layout NOVO e diferente da versão anterior (outra composição), mantendo o mesmo estilo e fluxo.`,
+          basePrompt: entry.prompt,
+          referenceImages: entry.refs,
+          startX: frame.x,
+          startY: frame.y,
+          replaceFrameId: job.frameId,
+          maxScreens: 1,
+          signal: job.signal,
+          onProgress: (m) => patchJob(job.id, { progress: m }),
+        });
+        if (!job.signal.cancelled) onAiTaskDone?.({ ok: true, message: `Nova versão da tela "${frame.name}" gerada` });
+        return null;
+      } catch (err: any) {
+        if (!job.signal.cancelled) {
+          onAiTaskDone?.({ ok: false, message: err?.message || 'Falha ao regerar a tela' });
+          return err?.message || 'Falha ao regerar a tela';
+        }
+        return null;
+      } finally {
+        setAiReview((prev) => prev.map((r) => (r.id === job.frameId ? { ...r, busy: false } : r)));
+      }
+    },
+    [aiReview, activePageShapes, runScreenGeneration, patchJob, onToast, onAiTaskDone]
+  );
+
+  // Processa a fila: um pedido por vez, na ordem; ao terminar (ou cancelar) segue para o próximo
+  // devolve a mensagem de erro (ou null): o card fica na fila com o erro até o usuário dispensar ou tentar de novo
+  const runJobRef = useRef<(job: AiJob) => Promise<string | null>>(async () => null);
+  runJobRef.current = async (job) => {
+    setIsGeneratingAi(true);
+    try {
+      if (job.kind === 'regen') return await runRegenJob(job);
+      const res = await handlePrototypeWithAi(job.prompt, (m) => patchJob(job.id, { progress: m }), job.images, job.selection, job.signal);
+      if (res && res.success === false && !job.signal.cancelled) return res.error || 'Erro ao gerar com IA';
+      return null;
+    } catch (err: any) {
+      return job.signal.cancelled ? null : err?.message || 'Erro ao gerar com IA';
+    } finally {
+      setIsGeneratingAi(false);
+    }
+  };
+  useEffect(() => {
+    if (runningJobRef.current) return;
+    const next = aiQueue.find((j) => j.status === 'queued');
+    if (!next) return;
+    runningJobRef.current = next.id;
+    setAiQueue((q) => q.map((j) => (j.id === next.id ? { ...j, status: 'running' } : j)));
+    runJobRef.current(next).then((error) => {
+      runningJobRef.current = null;
+      if (error) {
+        onToast?.(error);
+        setAiQueue((q) => q.map((j) => (j.id === next.id ? { ...j, status: 'error', progress: error } : j)));
+      } else setAiQueue((q) => q.filter((j) => j.id !== next.id));
+    });
+  }, [aiQueue]);
+
+  /** Tenta de novo um pedido que falhou: volta para o fim da fila */
+  const handleRetryAiJob = useCallback((id: string) => {
+    setAiQueue((q) => {
+      const job = q.find((j) => j.id === id);
+      if (!job) return q;
+      return [...q.filter((j) => j.id !== id), { ...job, status: 'queued', progress: undefined, signal: { cancelled: false } }];
+    });
+  }, []);
+
 
   return (
     <div
@@ -1827,6 +2690,64 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
                       <Download size={13} color={tokens.textSecondary} />
                       <span>Exportar JSON</span>
                     </div>
+                    {([
+                      ['save', 'Salvar versão'],
+                      ['history', 'Histórico de versões…'],
+                      ['figma', 'Importar do Figma…'],
+                      ['proposal', 'Gerar proposta com IA (telas selecionadas)…'],
+                      ['unsplash', 'Chave do Unsplash (imagens da IA)…'],
+                      ['clearGuides', 'Limpar guias da página'],
+                    ] as const).map(([key, label]) => (
+                      <div
+                        key={key}
+                        onClick={() => {
+                          if (key === 'save') {
+                            setIsDocMenuOpen(false);
+                            handleSaveVersion();
+                          } else if (key === 'history') {
+                            handleOpenVersions();
+                          } else if (key === 'figma') {
+                            setIsDocMenuOpen(false);
+                            setIsFigmaImportOpen(true);
+                          } else if (key === 'proposal') {
+                            setIsDocMenuOpen(false);
+                            if (proposalFrames.length === 0) onToast?.('Selecione uma ou mais telas (frames) para gerar a proposta');
+                            else setIsProposalOpen(true);
+                          } else if (key === 'unsplash') {
+                            setIsDocMenuOpen(false);
+                            setIsUnsplashOpen(true);
+                          } else {
+                            setGuidesByPage((prev) => ({ ...prev, [selectedPageId]: [] }));
+                            setIsDocMenuOpen(false);
+                            onToast?.('Guias da página removidas');
+                          }
+                        }}
+                        style={{ padding: '7px 12px', fontSize: 11, fontFamily: "'Poppins', sans-serif", color: tokens.textPrimary, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = tokens.hoverBg)}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        <span style={{ width: 13 }} />
+                        <span>{label}</span>
+                      </div>
+                    ))}
+                    {([
+                      ['grid', "Mostrar grade  (Ctrl+')"],
+                      ['rulers', 'Mostrar réguas  (Shift+R)'],
+                      ['rulerRelative', 'Réguas relativas ao frame'],
+                      ['guides', 'Mostrar guias  (Ctrl+;)'],
+                      ['snap', 'Encaixe inteligente'],
+                    ] as const).map(([key, label]) => (
+                      <div
+                        key={key}
+                        onClick={() => toggleViewPref(key)}
+                        style={{ padding: '7px 12px', fontSize: 11, fontFamily: "'Poppins', sans-serif", color: tokens.textPrimary, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = tokens.hoverBg)}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        <span style={{ width: 13, textAlign: 'center', color: accentColor }}>{viewPrefs[key] ? '✓' : ''}</span>
+                        <span>{label}</span>
+                      </div>
+                    ))}
                     <div
                       onClick={() => setIsDocMenuOpen(false)}
                       style={{
@@ -1967,6 +2888,30 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
           </div>
         )}
 
+        <div
+          style={{ display: 'contents' }}
+          onDragOver={(e) => {
+            if (Array.from(e.dataTransfer?.items || []).some((i) => i.kind === 'file')) e.preventDefault();
+          }}
+          onDrop={(e) => {
+            const files = Array.from(e.dataTransfer?.files || []).filter((f) => f.type.startsWith('image/'));
+            if (files.length === 0 || readOnly) return;
+            e.preventDefault();
+            // Ponto do soltar em coordenadas do canvas
+            const svg = (e.target as Element).closest('svg');
+            const rect = svg?.getBoundingClientRect();
+            files.forEach((file, i) =>
+              setTimeout(
+                () =>
+                  insertImageRef.current(
+                    file,
+                    rect ? { x: viewport.x + (e.clientX - rect.left) / zoom + i * 24, y: viewport.y + (e.clientY - rect.top) / zoom + i * 24 } : undefined
+                  ),
+                i * 250
+              )
+            );
+          }}
+        >
         <DesignCanvas
           shapes={activePageShapes}
           selectedId={selectedId}
@@ -1979,6 +2924,9 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
           onZoomChange={setZoom}
           onViewportChange={setViewport}
           targetCamera={targetCamera}
+          aiReview={aiReview}
+          onAiAccept={handleAiAccept}
+          onAiRegenerate={handleAiRegenerate}
           onSelect={handleSelectSingle}
           onSelectMultiple={handleSelectMultiple}
           onShapesChange={applyActivePageShapes}
@@ -1990,7 +2938,23 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
           onContextMenuCanvas={(cx, cy) => {
             setContextMenu({ isOpen: true, x: cx, y: cy, shape: null });
           }}
+          onPointerMove={(x, y) => {
+            // ~12 envios/s no máximo
+            const now = Date.now();
+            if (room.role === 'idle' || now - lastCursorSendRef.current < 80) return;
+            lastCursorSendRef.current = now;
+            room.sendCursor({ x, y, name: myCursorName, color: accentColor });
+          }}
+          remoteCursors={Object.values(room.remoteCursors)}
+          snapEnabled={viewPrefs.snap}
+          showGrid={viewPrefs.grid}
+          showRulers={viewPrefs.rulers}
+          rulerRelative={viewPrefs.rulerRelative}
+          showUserGuides={viewPrefs.guides}
+          userGuides={guidesByPage[selectedPageId] || []}
+          onUserGuidesChange={(list) => setGuidesByPage((prev) => ({ ...prev, [selectedPageId]: list }))}
         />
+        </div>
 
         {/* Toolbar Flutuante Inferior com Dropdowns e Div de IA */}
         <DesignToolbar
@@ -2000,6 +2964,8 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
           isEffectiveDark={isEffectiveDark}
           themeTokens={tokens}
           onInsertImage={handleInsertImage}
+          onOpenIcons={() => setIsIconPickerOpen(true)}
+          onOpenFrames={() => setIsFramesOpen(true)}
           selectedAiProvider={selectedAiProvider}
           selectedModel={selectedModel}
           onSelectAiProvider={onSelectAiProvider}
@@ -2008,6 +2974,11 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
           activeModels={activeModels}
           onInstallAiCli={onInstallAiCli}
           onPrototypeWithAi={handlePrototypeWithAi}
+          aiQueue={aiQueue.map((j) => ({ id: j.id, label: j.label, status: j.status, progress: j.progress }))}
+          onEnqueueAi={handleEnqueueAi}
+          onCancelAiJob={handleCancelAiJob}
+          onMoveAiJobUp={handleMoveAiJobUp}
+          onRetryAiJob={handleRetryAiJob}
           isGeneratingAi={isGeneratingAi}
           selectedFrame={selectedFrame}
         />
@@ -2016,7 +2987,7 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
         {/* FIGMA COLOR PICKER FLUTUANTE E ARRASTÁVEL DENTRO DA DIV DO CENTRO */}
         {/* ================================================================= */}
         {activeColorPicker && selectedShape && (() => {
-          const fills = (selectedShape.fills && selectedShape.fills.length > 0)
+          const fills: FillItem[] = (selectedShape.fills && selectedShape.fills.length > 0)
             ? selectedShape.fills
             : [{ id: 'default-fill', color: selectedShape.fill || '#D9D9D9', opacity: selectedShape.opacity ?? 1, visible: true, type: 'solid' }];
           const strokes = (selectedShape.strokes && selectedShape.strokes.length > 0)
@@ -2046,6 +3017,25 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
               opacity={currentOpacity}
               themeTokens={tokens}
               accentColor={accentColor}
+              fillType={activeFillItem?.type}
+              gradientStops={activeFillItem?.gradientStops}
+              gradientAngle={activeFillItem?.gradientAngle}
+              onGradientChange={
+                activeColorPicker.target === 'fill'
+                  ? (patch) => {
+                      const targetId = activeFillItem?.id;
+                      const updatedFills = fills.map((f) =>
+                        isAllFills || f.id === targetId
+                          ? { ...f, ...patch, color: patch.gradientStops?.[0]?.color ?? f.color }
+                          : f
+                      );
+                      applyShapes(
+                        shapes.map((s) => (s.id === selectedShape.id ? { ...s, fills: updatedFills } : s)),
+                        false
+                      );
+                    }
+                  : undefined
+              }
               onChange={(newColor, newOpacity) => {
                 if (activeColorPicker.target === 'fill') {
                   const updatedFills = isAllFills
@@ -2058,7 +3048,7 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
                   applyShapes(
                     shapes.map((s) =>
                       s.id === selectedShape.id
-                        ? { ...s, fill: newColor, opacity: newOpacity, fills: updatedFills }
+                        ? { ...s, fill: newColor, opacity: newOpacity, fills: updatedFills, fillStyleId: undefined }
                         : s
                     ),
                     false
@@ -2085,6 +3075,153 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
             />
           );
         })()}
+
+        {/* ================================================================= */}
+        {/* MODO APRESENTAÇÃO                                                 */}
+        {/* ================================================================= */}
+        {presentFrameId && (
+          <PrototypePlayer shapes={activePageShapes} startFrameId={presentFrameId} accentColor={accentColor} onClose={() => setPresentFrameId(null)} />
+        )}
+
+        {/* ================================================================= */}
+        {/* CÓDIGO DO DESIGN                                                  */}
+        {/* ================================================================= */}
+        {codeShape && (
+          <div onClick={() => setCodeShape(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{ width: 720, maxWidth: '92vw', height: '75vh', background: tokens.bgCard, border: `1px solid ${tokens.border}`, borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 10, color: tokens.textPrimary, fontFamily: "'Poppins', sans-serif" }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 14, fontWeight: 600, flex: 1 }}>Código de “{codeShape.name || 'Tela'}”</span>
+                {(['react', 'html', 'flutter'] as CodeTarget[]).map((t) => (
+                  <button key={t} type="button" onClick={() => setCodeTarget(t)} style={{ background: codeTarget === t ? `${accentColor}33` : 'transparent', border: `1px solid ${codeTarget === t ? accentColor : tokens.border}`, borderRadius: 6, color: tokens.textPrimary, fontSize: 11, padding: '4px 10px', cursor: 'pointer' }}>
+                    {t === 'react' ? 'React' : t === 'html' ? 'HTML' : 'Flutter'}
+                  </button>
+                ))}
+                <button type="button" onClick={() => setCodeShape(null)} style={{ background: 'transparent', border: 'none', color: tokens.textSecondary, cursor: 'pointer', fontSize: 16 }}>×</button>
+              </div>
+              <pre style={{ flex: 1, margin: 0, overflow: 'auto', background: tokens.bgCardSecondary, borderRadius: 8, padding: 12, fontSize: 11, lineHeight: 1.5, fontFamily: "'JetBrains Mono', Menlo, monospace", userSelect: 'text', whiteSpace: 'pre' }}>{codeText}</pre>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button type="button" onClick={() => { navigator.clipboard?.writeText(codeText); onToast?.('Código copiado'); }} style={{ background: 'transparent', border: `1px solid ${tokens.border}`, borderRadius: 6, color: tokens.textPrimary, fontSize: 11, padding: '6px 12px', cursor: 'pointer' }}>Copiar</button>
+                <button type="button" onClick={handleSaveCodeToProject} style={{ background: 'transparent', border: `1px solid ${tokens.border}`, borderRadius: 6, color: tokens.textPrimary, fontSize: 11, padding: '6px 12px', cursor: 'pointer' }}>Salvar no projeto</button>
+                {onSendToChat && (
+                  <button type="button" onClick={handleAskAiToImplement} style={{ background: accentColor, border: 'none', borderRadius: 6, color: '#fff', fontSize: 11, padding: '6px 12px', cursor: 'pointer' }}>Pedir à IA para implementar</button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* HISTÓRICO DE VERSÕES                                              */}
+        {/* ================================================================= */}
+        {isFramesOpen && (
+          <FramesPopup
+            tokens={tokens}
+            accentColor={accentColor}
+            onClose={() => setIsFramesOpen(false)}
+            onPick={async (preset) => {
+              const icons = await loadIcons().catch(() => undefined);
+              const z = shapes.length ? Math.max(...shapes.map((s) => s.zIndex)) + 2 : 2;
+              const dev = buildDevicePreset(preset, {
+                idGen: () => crypto.randomUUID(),
+                pageId: selectedPageId,
+                x: Math.round(viewport.x + viewport.width / 2 - preset.width / 2),
+                y: Math.round(viewport.y + viewport.height / 2 - preset.height / 2),
+                z,
+                isDark: false,
+                icons,
+              });
+              applyShapes([...shapes, ...dev.shapes], true);
+              handleSelectSingle(dev.rootId);
+            }}
+          />
+        )}
+
+        {isProposalOpen && (
+          <ProposalPopup tokens={tokens} accentColor={accentColor} frameNames={proposalFrames.map((f) => f.name)} onClose={() => setIsProposalOpen(false)} onGenerate={handleGenerateProposal} />
+        )}
+
+        {isUnsplashOpen && (
+          <UnsplashKeyPopup tokens={tokens} accentColor={accentColor} onClose={() => setIsUnsplashOpen(false)} onSaved={(has) => onToast?.(has ? 'Chave do Unsplash salva' : 'Chave removida: a IA usará fotos do picsum.photos')} />
+        )}
+
+        {isIconPickerOpen && (
+          <IconPickerModal
+            tokens={tokens}
+            accentColor={accentColor}
+            onClose={() => setIsIconPickerOpen(false)}
+            onPick={(name, d) => {
+              const size = 24;
+              const parent = selectedFrame && selectedFrame.type === 'frame' ? selectedFrame : undefined;
+              const cx = parent ? parent.x + parent.width / 2 : viewport.x + viewport.width / 2;
+              const cy = parent ? parent.y + parent.height / 2 : viewport.y + viewport.height / 2;
+              const shape = iconShape({ [name]: d }, name, {
+                id: crypto.randomUUID(),
+                pageId: selectedPageId,
+                parentId: parent?.id,
+                x: Math.round(cx - size / 2),
+                y: Math.round(cy - size / 2),
+                size,
+                fill: isEffectiveDark ? '#FFFFFF' : '#111111',
+                zIndex: shapes.length ? Math.max(...shapes.map((s) => s.zIndex)) + 1 : 1,
+              });
+              applyShapes([...shapes, shape], true);
+              handleSelectSingle(shape.id);
+            }}
+          />
+        )}
+
+        {isFigmaImportOpen && (
+          <FigmaImportModal
+            tokens={tokens}
+            accentColor={accentColor}
+            onClose={() => setIsFigmaImportOpen(false)}
+            onImport={(newPages, newShapes, note) => {
+              if (newPages.length) {
+                setPages((prev) => [...prev, ...newPages]);
+                setSelectedPageId(newPages[0].id);
+              }
+              // sem páginas novas (nó solto): vai para a página atual
+              const target = selectedPageId;
+              const placed = newPages.length ? newShapes : newShapes.map((s) => ({ ...s, pageId: target }));
+              applyShapes([...shapes, ...placed], true);
+              onToast?.(note);
+            }}
+          />
+        )}
+
+        {isVersionsOpen && (
+          <div
+            onClick={() => setIsVersionsOpen(false)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{ width: 440, maxHeight: '70vh', background: tokens.bgCard, border: `1px solid ${tokens.border}`, borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 10, color: tokens.textPrimary, fontFamily: "'Poppins', sans-serif" }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 14, fontWeight: 600, flex: 1 }}>Histórico de versões</span>
+                <button type="button" onClick={handleSaveVersion} style={{ background: accentColor, border: 'none', borderRadius: 6, color: '#fff', fontSize: 11, padding: '5px 10px', cursor: 'pointer' }}>Salvar versão agora</button>
+                <button type="button" onClick={() => setIsVersionsOpen(false)} style={{ background: 'transparent', border: 'none', color: tokens.textSecondary, cursor: 'pointer', fontSize: 16 }}>×</button>
+              </div>
+              <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {versions.length === 0 && <span style={{ fontSize: 12, color: tokens.textSecondary, padding: 8 }}>Nenhuma versão salva ainda.</span>}
+                {versions.map((v) => (
+                  <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, background: tokens.bgCardSecondary }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v.label}</div>
+                      <div style={{ fontSize: 10, color: tokens.textSecondary }}>{new Date(v.createdAt).toLocaleString('pt-BR')} • {v.shapeCount} elementos</div>
+                    </div>
+                    <button type="button" onClick={() => handleRestoreVersion(v)} style={{ background: 'transparent', border: `1px solid ${tokens.border}`, borderRadius: 6, color: tokens.textPrimary, fontSize: 11, padding: '4px 8px', cursor: 'pointer' }}>Restaurar</button>
+                    <button type="button" onClick={() => handleDeleteVersion(v)} title="Excluir versão" style={{ background: 'transparent', border: 'none', color: tokens.textSecondary, cursor: 'pointer' }}>×</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ================================================================= */}
         {/* FIGMA STROKE SETTINGS FLUTUANTE                                   */}
@@ -2474,14 +3611,52 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
             themeTokens={tokens}
             accentColor={accentColor}
             isEffectiveDark={isEffectiveDark}
-            onChange={(patch) =>
-              selectedShape &&
-              applyShapes(
-                shapes.map((s) => (s.id === selectedShape.id ? { ...s, ...patch } : s)),
-                true
-              )
-            }
+            onChange={(patch: Partial<Shape>) => {
+              if (!selectedShape) return;
+              // Editar a cor/tipografia à mão desliga o estilo do documento naquele elemento
+              if (selectedShape.fillStyleId && ('fills' in patch || 'fill' in patch) && !('fillStyleId' in patch)) patch = { ...patch, fillStyleId: undefined };
+              if (selectedShape.textStyleId && ['fontSize', 'fontFamily', 'fontWeight', 'letterSpacing', 'lineHeight'].some((k) => k in patch) && !('textStyleId' in patch)) patch = { ...patch, textStyleId: undefined };
+              // Alterar uma instância registra o que foi sobrescrito (o componente não reverte essas propriedades)
+              if (selectedShape.sourceId) {
+                const keys = Object.keys(patch).filter((k) => k !== 'x' && k !== 'y' && k !== 'overrides');
+                if (keys.length > 0) patch = { ...patch, overrides: Array.from(new Set([...(selectedShape.overrides || []), ...keys])) };
+              }
+              let next = shapes.map((s) => (s.id === selectedShape.id ? { ...s, ...patch } : s));
+              // Editar X/Y de um frame/grupo leva os filhos junto
+              const dx = typeof patch.x === 'number' ? patch.x - selectedShape.x : 0;
+              const dy = typeof patch.y === 'number' ? patch.y - selectedShape.y : 0;
+              if (dx !== 0 || dy !== 0) {
+                const children = shapes.filter((c) => c.parentId === selectedShape.id).map((c) => [c.id, { dx, dy }] as const);
+                if (children.length > 0) next = applyDeltas(next, new Map(children));
+              }
+              applyShapes(next, true);
+            }}
             onAlign={handleAlign}
+            onDistribute={handleDistribute}
+            selectionCount={selectedIds.length}
+            onBoolean={handleBoolean}
+            onFitSelection={handleFitSelection}
+            onCreateInstance={handleCreateInstance}
+            variantOptions={selectedShape?.instanceOf ? variantsOf(activePageShapes, selectedShape.instanceOf).map((c) => ({ id: c.id, name: c.variantName || c.name || 'Variante' })) : []}
+            onSwitchVariant={handleSwitchVariant}
+            onShowCode={(sh) => setCodeShape(sh)}
+            prototypeFrames={activePageShapes.filter((s) => s.type === 'frame').map((s) => ({ id: s.id, name: s.name || 'Frame' }))}
+            onPresent={(id) => setPresentFrameId(id)}
+            variables={variables}
+            modes={modes}
+            activeModeId={activeModeId}
+            onCreateVariable={handleCreateVariable}
+            onBindVariable={handleBindVariable}
+            onUpdateVariable={handleUpdateVariable}
+            onDeleteVariable={handleDeleteVariable}
+            onSetMode={handleSetMode}
+            styles={styles}
+            onCreateStyle={handleCreateStyle}
+            onApplyStyle={handleApplyStyle}
+            onUpdateStyle={handleUpdateStyle}
+            onRenameStyle={handleRenameStyle}
+            onDeleteStyle={handleDeleteStyle}
+            onDetachInstance={handleDetachInstance}
             onFocusSelection={handleFocusSelection}
             activeColorPicker={activeColorPicker}
             onActiveColorPickerChange={setActiveColorPicker}
@@ -2491,6 +3666,7 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
             onActiveEffectIdChange={setActiveEffectId}
             isTypeSettingsOpen={isTypeSettingsOpen}
             onTypeSettingsOpenChange={setIsTypeSettingsOpen}
+            onExport={handleExportShape}
           />
         </div>
       </div>
@@ -2562,7 +3738,7 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
                 isBrowsing={room.isBrowsing}
                 accentColor={accentColor}
                 themeTokens={tokens}
-                onHost={(name) => room.hostRoom(name, shapes)}
+                onHost={(name, allowEdit) => room.hostRoom(name, shapes, allowEdit)}
                 onStopHosting={room.stopHosting}
                 onStartBrowsing={room.startBrowsing}
                 onStopBrowsing={room.stopBrowsing}
@@ -2620,10 +3796,12 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
       <ConfirmDeleteModal
         isOpen={isDeleteModalOpen}
         title="Excluir Elemento"
-        message={`Tem certeza que deseja excluir "${deleteTarget?.name || 'este elemento'}" do projeto? Esta ação não pode ser desfeita.`}
+        message={deleteTarget && selectedIds.length > 1 && selectedIds.includes(deleteTarget.id) ? `Tem certeza que deseja excluir os ${selectedIds.length} elementos selecionados (e o que há dentro deles)? Esta ação não pode ser desfeita.` : `Tem certeza que deseja excluir "${deleteTarget?.name || 'este elemento'}" e tudo o que há dentro dele? Esta ação não pode ser desfeita.`}
         itemDescription={
           deleteTarget
-            ? `${deleteTarget.type.toUpperCase()} • ${Math.round(deleteTarget.width)} × ${Math.round(deleteTarget.height)}px`
+            ? selectedIds.length > 1 && selectedIds.includes(deleteTarget.id)
+              ? `${selectedIds.length} elementos selecionados`
+              : `${deleteTarget.type.toUpperCase()} • ${Math.round(deleteTarget.width)} × ${Math.round(deleteTarget.height)}px`
             : undefined
         }
         confirmLabel="Excluir"
@@ -2632,8 +3810,13 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
         accentColor={accentColor}
         onConfirm={() => {
           if (deleteTarget) {
-            applyShapes(shapes.filter((s) => s.id !== deleteTarget.id), true);
-            if (selectedId === deleteTarget.id) setSelectedId(null);
+            // com várias camadas selecionadas, exclui todas; sempre junto com os descendentes
+            const roots = selectedIds.includes(deleteTarget.id) ? selectedIds : [deleteTarget.id];
+            const gone = new Set<string>(roots);
+            roots.forEach((id) => descendantIds(shapes, id).forEach((d) => gone.add(d)));
+            applyShapes(shapes.filter((s) => !gone.has(s.id)), true);
+            setAiReview((prev) => prev.filter((r) => !gone.has(r.id)));
+            handleSelectMultiple([]);
           }
           setIsDeleteModalOpen(false);
           setDeleteTarget(null);

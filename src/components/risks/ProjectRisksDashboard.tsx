@@ -140,7 +140,8 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
 
     const formatTitle = (issue: ProjectIssue) => {
       const clean = (issue.title || '').replace(/^#+\s*/, '').trim();
-      return `#${issue.id} ${clean}`;
+      const num = issue.githubNumber || (issue as any).number || (issue.id.startsWith('issue-') ? issue.id.slice(6, 12) : issue.id);
+      return `#${num} ${clean}`;
     };
 
     // 1. Prazos

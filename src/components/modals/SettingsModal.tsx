@@ -82,6 +82,9 @@ export interface SettingsModalProps {
   setAiAutoApprove: (value: boolean) => void;
   aiConfirmBeforeDelete: boolean;
   setAiConfirmBeforeDelete: (value: boolean) => void;
+  onOpenAiGlobalRules?: () => void;
+  onOpenSkills?: () => void;
+  activeSkillsCount?: number;
 
   // Extensions tab
   installedClis: Record<string, boolean>;
@@ -390,6 +393,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
                 setAiAutoApprove={props.setAiAutoApprove}
                 aiConfirmBeforeDelete={props.aiConfirmBeforeDelete}
                 setAiConfirmBeforeDelete={props.setAiConfirmBeforeDelete}
+                onOpenAiGlobalRules={props.onOpenAiGlobalRules}
+                onOpenSkills={props.onOpenSkills}
+                activeSkillsCount={props.activeSkillsCount}
               />
             )}
 

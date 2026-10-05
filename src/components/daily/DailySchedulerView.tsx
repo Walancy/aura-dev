@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
+  Flag,
   Calendar,
   Clock,
   CheckCircle2,
@@ -36,9 +37,13 @@ import {
   Palette,
   ChevronDown,
   GripVertical,
+  Loader2,
 } from 'lucide-react';
 import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
+import { DailyAiChatPanel } from './DailyAiChatPanel';
+import { getProjectSettings } from '../settings/projectSettingsStore';
 import { GLOBAL_PROJECTS_CACHE } from '../ProjectsSchedulerView';
+import type { HeaderActiveProjectInfo, HeaderProjectItem } from '../HeaderProjectSelector';
 
 export type CardPalette = 'peach' | 'cyan' | 'lavender' | 'charcoal' | 'emerald' | 'rose';
 
@@ -90,6 +95,8 @@ interface DailySchedulerViewProps {
   installedClis?: Record<string, boolean>;
   activeModels?: Record<string, any>;
   onToast?: (msg: string) => void;
+  activeProject?: HeaderActiveProjectInfo | null;
+  availableProjects?: HeaderProjectItem[];
 }
 
 export type OrganizationMode = 'default' | 'by_project' | 'by_priority';
@@ -233,7 +240,11 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
   repoName = 'aura-dev',
   accentColor = '#007acc',
   isEffectiveDark = true,
+  selectedAiProvider = 'claude',
+  selectedModel = 'sonnet',
   onToast = (msg: string) => console.log(msg),
+  activeProject,
+  availableProjects: propsAvailableProjects,
 }) => {
   const [activeTab, setActiveTab] = useState<'daily' | 'weekly'>('daily');
   const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
@@ -248,6 +259,15 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
   // Sincronização e lista de projetos disponíveis a partir do cache global de projetos
   const availableProjects = useMemo(() => {
     const map = new Map<string, { id: string; name: string; fullName: string; color: string }>();
+
+    if (activeProject?.name) {
+      map.set(activeProject.name.toLowerCase(), {
+        id: activeProject.name,
+        name: activeProject.name,
+        fullName: activeProject.fullName || activeProject.name,
+        color: accentColor,
+      });
+    }
 
     if (repoName) {
       const clean = repoName.includes('/') ? repoName.split('/').pop()! : repoName;
@@ -289,7 +309,25 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
   const [items, setItems] = useState<DailyItem[]>(() => {
     try {
       const saved = localStorage.getItem(storageKey);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed: DailyItem[] = JSON.parse(saved);
+        // Corrige itens existentes que foram vinculados incorretamente ao repositório do cabeçalho
+        const sanitized = parsed.map((item) => {
+          const text = `${item.title} ${item.description || ''}`.toLowerCase();
+          if (
+            (item.projectName?.includes('clickfan') || item.projectName?.includes('appmoove')) &&
+            (text.includes('inss') || text.includes('maed') || text.includes('vau') || text.includes('autojump') || text.includes('ainaobra') || text.includes('cors') || text.includes('payment') || text.includes('concreto'))
+          ) {
+            return {
+              ...item,
+              projectId: 'ainaobra',
+              projectName: 'ainaobra',
+            };
+          }
+          return item;
+        });
+        return sanitized;
+      }
     } catch {}
 
     const todayIso = toIsoDate(new Date());
@@ -426,6 +464,27 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
     } catch {}
   }, [items]);
 
+  useEffect(() => {
+    const handleDailyUpdate = () => {
+      try {
+        const saved = localStorage.getItem(storageKey);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) {
+            setItems(parsed);
+          }
+        }
+      } catch {}
+    };
+
+    window.addEventListener('devflow_daily_updated', handleDailyUpdate);
+    window.addEventListener('storage', handleDailyUpdate);
+    return () => {
+      window.removeEventListener('devflow_daily_updated', handleDailyUpdate);
+      window.removeEventListener('storage', handleDailyUpdate);
+    };
+  }, [storageKey]);
+
   // Metas da Weekly
   const weeklyStorageKey = `devflow_weekly_goals_${repoName || 'general'}`;
   const [weeklyGoals, setWeeklyGoals] = useState<WeeklyGoal[]>(() => {
@@ -453,6 +512,16 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
   const [itemToDelete, setItemToDelete] = useState<DailyItem | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Modal de Exclusão de Coluna Inteira (Regra obrigatória do AGENTS.md)
+  const [columnToClear, setColumnToClear] = useState<'yesterday' | 'blocker' | 'today' | null>(null);
+  const [isClearingColumn, setIsClearingColumn] = useState<boolean>(false);
+  const [aiHint, setAiHint] = useState<string>(() => {
+    try { return localStorage.getItem('daily_ai_hint') || ''; } catch { return ''; }
+  });
+  // Cards gerados pela IA aguardando aceite/recusa, por coluna (só os do momento; anteriores não são afetados)
+  const [pendingAiIds, setPendingAiIds] = useState<Record<string, string[]>>({});
+  const [generatingAiColumn, setGeneratingAiColumn] = useState<'yesterday' | 'blocker' | 'today' | null>(null);
+
   // Estados para criação e edição inline diretamente nas colunas da daily
   const [creatingInColumn, setCreatingInColumn] = useState<'yesterday' | 'blocker' | 'today' | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -472,6 +541,7 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
   const [dragOverItemId, setDragOverItemId] = useState<string | null>(null);
 
   const selectedDateIso = toIsoDate(selectedDate);
+  const currentWeekStartIso = useMemo(() => toIsoDate(getMondayOfCurrentWeek(new Date())), []);
   const previousWorkday = useMemo(() => getPreviousWorkday(selectedDate), [selectedDate]);
   const isSelectedMonday = selectedDate.getDay() === 1;
 
@@ -857,6 +927,585 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
     }, 200);
   };
 
+  // Limpeza de toda a coluna com confirmação
+  const handleConfirmClearColumn = async () => {
+    if (!columnToClear) return;
+    setIsClearingColumn(true);
+    try {
+      const col = columnToClear;
+      if (col === 'yesterday') {
+        const prevDays = getPreviousDaysIso(selectedDate);
+        setItems((prev) =>
+          prev.filter((it) => !(it.category === 'yesterday' && (it.dateIso === selectedDateIso || prevDays.includes(it.dateIso))))
+        );
+      } else if (col === 'blocker') {
+        setItems((prev) => prev.filter((it) => !(it.category === 'blocker' && it.dateIso === selectedDateIso)));
+      } else if (col === 'today') {
+        setItems((prev) => prev.filter((it) => !(it.category === 'today' && it.dateIso === selectedDateIso)));
+      }
+      const colTitle =
+        col === 'yesterday'
+          ? isSelectedMonday ? 'Sexta-feira' : 'Dia Anterior'
+          : col === 'blocker'
+          ? 'Impedimentos'
+          : 'Planejado Hoje';
+      onToast?.(`Coluna "${colTitle}" limpa com sucesso.`);
+      setColumnToClear(null);
+    } finally {
+      setIsClearingColumn(false);
+    }
+  };
+
+  // Geração de tarefas com IA baseada no histórico de commits do Git com Anti-Duplicação rigorosa
+  const handleGenerateColumnTasksWithAi = async (colCategory: 'yesterday' | 'blocker' | 'today') => {
+    if (generatingAiColumn) return;
+    setGeneratingAiColumn(colCategory);
+
+    const isMon = selectedDate.getDay() === 1;
+    const targetDatesIso = getPreviousDaysIso(selectedDate);
+    const refDayName = isMon ? 'sexta-feira' : 'ontem';
+    const prevWorkday = getPreviousWorkday(selectedDate);
+
+    const colLabel =
+      colCategory === 'yesterday'
+        ? isMon ? 'Sexta-feira' : 'Dia Anterior'
+        : colCategory === 'blocker'
+        ? 'Impedimentos'
+        : 'Planejado Hoje';
+
+    try {
+      // 1. Obtém usuário autenticado no GitHub / Git
+      let ghUser = '';
+      let gitName = '';
+      try {
+        const uRes = await window.electronAPI?.github?.getUser();
+        if (uRes?.success && uRes.user?.login) {
+          ghUser = uRes.user.login;
+        } else if (window.electronAPI?.shell?.exec) {
+          const userExec = await window.electronAPI.shell.exec(
+            'export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; git config user.name || gh api user --jq .login'
+          );
+          if (userExec?.stdout?.trim()) {
+            ghUser = userExec.stdout.trim().split('\n')[0];
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao consultar usuário do Git/GitHub:', err);
+      }
+
+      try {
+        const nameRes = await window.electronAPI?.shell?.exec('git config user.name');
+        gitName = (nameRes?.stdout || '').trim();
+      } catch {}
+      const authorNames = [ghUser, gitName].map((n) => n.toLowerCase()).filter(Boolean);
+      const isMine = (author?: string) => {
+        const a = (author || '').toLowerCase();
+        return authorNames.some((n) => a.includes(n) || n.includes(a));
+      };
+      if (!ghUser) ghUser = gitName || 'usuario';
+
+      // 2. Determina diretórios candidatos para busca de commits
+      const targetFilteredProj = selectedProjectFilter !== 'all'
+        ? availableProjects?.find((p) => p.name?.toLowerCase() === selectedProjectFilter.toLowerCase() || p.fullName?.toLowerCase() === selectedProjectFilter.toLowerCase())
+        : null;
+
+      const specificRepoPath = targetFilteredProj
+        ? (targetFilteredProj.localDir || targetFilteredProj.path)
+        : undefined;
+
+      const fallbackCwd =
+        specificRepoPath ||
+        activeProject?.localDir ||
+        activeProject?.path ||
+        workspacePath;
+
+      // 3. Coleta os commits do Git do período de referência (ontem ou sexta-feira)
+      let commitList: Array<{
+        hash: string;
+        message: string;
+        body?: string;
+        author: string;
+        date: string;
+        relativeDate?: string;
+        projectName: string;
+      }> = [];
+
+      try {
+        if (window.electronAPI?.git?.getRecentCommitsSummary) {
+          // Busca primeiro no diretório do projeto alvo (ou em todos os repositórios locais se 'all')
+          const summaries = await window.electronAPI.git.getRecentCommitsSummary({
+            targetDates: targetDatesIso,
+            repoPath: specificRepoPath,
+          });
+
+          if (Array.isArray(summaries) && summaries.length > 0) {
+            for (const s of summaries) {
+              for (const c of s.commits || []) {
+                commitList.push({
+                  ...c,
+                  projectName: s.projectName,
+                });
+              }
+            }
+          }
+
+          // Se não encontrou no projeto específico, faz varredura ampla em todos os repositórios locais
+          if (commitList.length === 0 && specificRepoPath) {
+            const allSummaries = await window.electronAPI.git.getRecentCommitsSummary({
+              targetDates: targetDatesIso,
+            });
+            if (Array.isArray(allSummaries)) {
+              for (const s of allSummaries) {
+                for (const c of s.commits || []) {
+                  commitList.push({
+                    ...c,
+                    projectName: s.projectName,
+                  });
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao consultar getRecentCommitsSummary:', err);
+      }
+
+      // Fallback via shell exec se o IPC não retornou nada
+      if (commitList.length === 0 && window.electronAPI?.shell?.exec) {
+        try {
+          const candidateDirs = [
+            specificRepoPath,
+            fallbackCwd,
+            '/Users/walancy/Documents/codes/Ainaobra/ainaobra',
+            '/Users/walancy/Documents/codes/Ainaobra/ainaobra-api-esocial',
+            '/Users/walancy/Documents/codes/devflow-desktop',
+            '/Users/walancy/Documents/codes/estancia bahia/estancia-bahia-painel-interno',
+            '/Users/walancy/Documents/codes/estancia bahia/estancia-bahia-api',
+          ].filter((d): d is string => Boolean(d));
+
+          const sortedDates = [...targetDatesIso].sort();
+          const sinceArg = `${sortedDates[0]} 00:00:00`;
+          const untilArg = `${sortedDates[sortedDates.length - 1]} 23:59:59`;
+
+          for (const d of candidateDirs) {
+            const cmd = `git -C "${d}" log --since="${sinceArg}" --until="${untilArg}" --format="COMMIT_START%x1f%h%x1f%s%x1f%b%x1f%an%x1f%aiCOMMIT_END" -n 35 2>/dev/null`;
+            const res = await window.electronAPI.shell.exec(cmd);
+            if (res?.stdout?.includes('COMMIT_START')) {
+              const chunks = res.stdout.split('COMMIT_END').filter((c: string) => c.includes('COMMIT_START'));
+              const pName = d.split('/').pop() || 'Projeto';
+              for (const chunk of chunks) {
+                const clean = chunk.replace(/[\s\S]*COMMIT_START\x1f/, '');
+                const [hash, message, body, author, date] = clean.split('\x1f');
+                if (hash && message) {
+                  commitList.push({
+                    hash: hash.trim(),
+                    message: message.trim(),
+                    body: body?.trim(),
+                    author: author?.trim() || ghUser,
+                    date: date?.trim() || '',
+                    projectName: pName,
+                  });
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Falha no fallback de git log via shell:', e);
+        }
+      }
+
+      // Filtra prioritariamente commits feitos pelo usuário desenvolvedor
+      const userCommits = commitList.filter((c) => isMine(c.author));
+      const effectiveCommits = userCommits.length > 0 ? userCommits : commitList;
+
+      // Se nenhum commit foi encontrado para a data exata, busca os mais recentes (últimos 7 dias)
+      let finalCommitsToAnalyze = effectiveCommits;
+
+      if (finalCommitsToAnalyze.length === 0 && window.electronAPI?.git?.getRecentCommitsSummary) {
+        try {
+          const recentSummaries = await window.electronAPI.git.getRecentCommitsSummary({
+            days: 7,
+            repoPath: specificRepoPath,
+          });
+          if (Array.isArray(recentSummaries)) {
+            const recentFound: typeof commitList = [];
+            for (const s of recentSummaries) {
+              for (const c of s.commits || []) {
+                recentFound.push({ ...c, projectName: s.projectName });
+              }
+            }
+            if (recentFound.length > 0) {
+              const recentUser = recentFound.filter((c) => isMine(c.author));
+              finalCommitsToAnalyze = recentUser.length > 0 ? recentUser : recentFound;
+            }
+          }
+        } catch {}
+      }
+
+      // 4. Coleta itens que JÁ EXISTEM nesta coluna (e na Daily) para análise rigorosa de anti-duplicação
+      const existingInThisCol =
+        colCategory === 'yesterday'
+          ? yesterdayItems
+          : colCategory === 'blocker'
+          ? blockerItems
+          : todayItems;
+
+      const existingFormatted =
+        existingInThisCol.length > 0
+          ? existingInThisCol
+              .map(
+                (it, idx) =>
+                  `${idx + 1}. [Projeto: ${it.projectName || 'Geral'}] "${it.title}" - ${it.description || 'Sem descrição'} (Tag: ${it.tag || 'Geral'})`
+              )
+              .join('\n')
+          : '(Nenhum card registrado nesta coluna até o momento)';
+
+      const primaryProject =
+        finalCommitsToAnalyze[0]?.projectName ||
+        targetFilteredProj?.name ||
+        activeProject?.name ||
+        repoName ||
+        'Geral';
+
+      const hasCommits = finalCommitsToAnalyze.length > 0;
+
+      // Arquivos tocados por commit (contexto extra para a IA descrever o que mudou de fato)
+      const analyzed = finalCommitsToAnalyze.slice(0, 30);
+      const filesByHash = new Map<string, string>();
+      const fileCountByHash = new Map<string, number>();
+      const filePathsByHash = new Map<string, string[]>();
+      if (window.electronAPI?.shell?.exec) {
+        await Promise.all(
+          analyzed.map(async (c) => {
+            const proj: any = availableProjects?.find((p) => p.name?.toLowerCase() === c.projectName?.toLowerCase());
+            const dir = proj?.localDir || proj?.path || fallbackCwd;
+            if (!dir) return;
+            try {
+              const res = await window.electronAPI.shell.exec(`git -C "${dir}" show --numstat --format= ${c.hash}`);
+              const rows = (res?.stdout || '').trim().split('\n').filter(Boolean).map((l: string) => l.split('\t'));
+              if (rows.length) {
+                fileCountByHash.set(c.hash, rows.length);
+                filePathsByHash.set(c.hash, rows.map((r: string[]) => r[2]));
+                filesByHash.set(
+                  c.hash,
+                  rows.slice(0, 25).map((r: string[]) => `${r[2]} (+${r[0]} -${r[1]})`).join(', ') + (rows.length > 25 ? ` … e mais ${rows.length - 25} arquivos` : '')
+                );
+              }
+            } catch {}
+          })
+        );
+      }
+
+      // Trabalho ainda não commitado entra como material da coluna "Planejado Hoje" (o que está em andamento)
+      let workingTree = '';
+      if (colCategory === 'today' && fallbackCwd && window.electronAPI?.shell?.exec) {
+        try {
+          const wt = await window.electronAPI.shell.exec('git status --short | head -30', fallbackCwd);
+          workingTree = (wt?.stdout || '').trim();
+        } catch {}
+      }
+
+      // Limite proporcional ao volume real: commits e arquivos tocados (sem teto fixo de 4)
+      const totalFiles = Array.from(fileCountByHash.values()).reduce((a, b) => a + b, 0);
+      const maxCards = Math.min(10, Math.max(3, Math.ceil(finalCommitsToAnalyze.length / 2), Math.ceil(totalFiles / 4)));
+      const minCards = Math.min(maxCards, hasCommits ? Math.max(2, Math.min(5, Math.ceil(totalFiles / 6) || 2)) : 1);
+
+      const commitsFormatted = hasCommits
+        ? analyzed
+            .map((c) => {
+              const body = c.body ? `\n    Contexto: ${c.body.slice(0, 600).replace(/\r?\n/g, ' ')}` : '';
+              const files = filesByHash.get(c.hash) ? `\n    Arquivos (${fileCountByHash.get(c.hash)}): ${filesByHash.get(c.hash)}` : '';
+              return `- [${c.projectName}] ${c.hash.slice(0, 7)} "${c.message}"${body}${files}`;
+            })
+            .join('\n')
+        : `Nenhum commit encontrado no período. Sugira atividades plausíveis e específicas para "${colLabel}" no projeto "${primaryProject}".`;
+
+      const colGuidelines =
+        colCategory === 'yesterday'
+          ? `O que foi ENTREGUE ${refDayName}. Passado, foco no resultado para o usuário/produto. Ex.: "Ajustei o fluxo de cadastro para validar o CPF antes de enviar".`
+          : colCategory === 'blocker'
+          ? `O que está BLOQUEANDO o andamento e o que falta para destravar. Ex.: "Aguardando retorno da API de pagamentos para finalizar a conciliação".`
+          : `O PRÓXIMO PASSO concreto de hoje, em continuidade ao que já foi feito. Futuro, objetivo. Ex.: "Finalizar a tela de relatórios e validar com dados reais".`;
+
+      const hintBlock = aiHint.trim() ? `\nINSTRUÇÃO EXTRA DO USUÁRIO (siga com prioridade): ${aiHint.trim()}\n` : '';
+
+      const prompt = `Você escreve os cards da Daily Scrum de @${ghUser}, como se o próprio desenvolvedor estivesse contando ao time.
+
+COLUNA: "${colLabel}" (Daily de ${selectedDateIso})
+${colGuidelines}
+${hintBlock}
+MATERIAL (commits reais, use só para entender o que foi feito):
+${commitsFormatted}
+
+${workingTree ? `TRABALHO EM ANDAMENTO (alterações ainda não commitadas):\n${workingTree}\n\n` : ''}CARDS JÁ EXISTENTES NESTA COLUNA (não repita):
+${existingFormatted}
+
+COMO ESCREVER:
+1. Analise TODO o material e quebre o trabalho em entregas distintas: gere ENTRE ${minCards} E ${maxCards} cards. Um único commit grande quase sempre contém várias entregas (telas, endpoints, correções, ajustes de layout, integrações): use o corpo do commit e as pastas/arquivos tocados para separá-las em cards diferentes. NUNCA resuma tudo em um card só. Só agrupe commits que sejam realmente a mesma entrega.
+2. Título: curto (até ~60 caracteres), em português natural, começando por verbo ou pelo assunto. Ex. bom: "Fluxo de login com 2 etapas". Ex. ruim: "feat(auth): add login".
+3. Descrição: 1 ou 2 frases, primeira pessoa, dizendo o que mudou e para quê (resultado), não como foi implementado.
+4. PROIBIDO no título e na descrição: hash de commit, número de issue/PR (#123), as palavras "commit", "issue", "PR", prefixos feat/fix/chore, nomes de arquivos e frases genéricas como "Gerado via IA" ou "Continuidade".
+5. Tag: "Feature" | "Fix" | "Design" | "Refactor" | "Impedimento" | "Planejado".
+6. "projectName" deve ser exatamente o projeto entre colchetes dos commits do card; "commitHashes" com os hashes (7 chars) que ele resume.
+
+RETORNE SOMENTE JSON VÁLIDO (sem markdown):
+{"tasks":[{"title":"...","description":"...","tag":"Feature","priority":"Alta","projectName":"${primaryProject}","commitHashes":[]}]}`;
+
+      // 5. Executa a IA conectada
+      const cliCmd = (() => {
+        const p = (selectedAiProvider || '').toLowerCase();
+        if (p.includes('codex')) return 'codex';
+        if (p.includes('antigravity') || p.includes('agy')) return 'agy';
+        if (p.includes('gemini')) return 'gemini';
+        return 'claude';
+      })();
+
+      onToast?.(`⚡ Gerando cards para "${colLabel}" via IA (${selectedAiProvider || 'IA'})...`);
+
+      let aiRawOutput = '';
+
+      // Tenta primeiro via ai.runCli (execução limpa e rápida do CLI)
+      if (window.electronAPI?.ai?.runCli) {
+        try {
+          // Timeout para o spinner nunca ficar preso se a CLI travar
+          const cliResult = await Promise.race([
+            window.electronAPI.ai.runCli({ cliCmd, prompt, model: selectedModel, cwd: fallbackCwd || undefined }),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 150000)),
+          ]);
+          if (!cliResult) {
+            window.electronAPI.ai.cancel?.();
+            onToast?.('A IA demorou demais para responder. Usando resumo dos commits.');
+          }
+          if (cliResult?.stdout && cliResult.exitCode === 0) {
+            aiRawOutput = cliResult.stdout.trim();
+          }
+        } catch (cliErr) {
+          console.warn('[handleGenerateColumnTasksWithAi] Falha ao rodar CLI:', cliErr);
+        }
+      }
+
+      // Fallback para ai.prompt
+      if (!aiRawOutput && window.electronAPI?.ai?.prompt) {
+        try {
+          const promptRes = await window.electronAPI.ai.prompt(
+            prompt,
+            selectedModel || 'claude-headless',
+            fallbackCwd || undefined,
+            cliCmd,
+            60000
+          );
+          if (promptRes?.response) aiRawOutput = promptRes.response.trim();
+        } catch (promptErr) {
+          console.warn('[handleGenerateColumnTasksWithAi] Falha no ai.prompt:', promptErr);
+        }
+      }
+
+      // 6. Faz o parse do JSON da IA com resiliência total a markdown e formatações
+      let parsedTasks: any[] = [];
+      if (aiRawOutput) {
+        try {
+          let cleaned = aiRawOutput.trim();
+          // Remove código markdown (```json ... ``` ou ``` ... ```)
+          const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+          if (codeBlockMatch) {
+            cleaned = codeBlockMatch[1].trim();
+          }
+
+          // Tenta parse direto
+          try {
+            const parsed = JSON.parse(cleaned);
+            if (Array.isArray(parsed)) parsedTasks = parsed;
+            else if (Array.isArray(parsed.tasks)) parsedTasks = parsed.tasks;
+            else if (Array.isArray(parsed.items)) parsedTasks = parsed.items;
+          } catch {
+            // Extrai objeto { "tasks": [...] }
+            const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const parsed = JSON.parse(jsonMatch[0]);
+              if (Array.isArray(parsed.tasks)) parsedTasks = parsed.tasks;
+              else if (Array.isArray(parsed.items)) parsedTasks = parsed.items;
+              else if (Array.isArray(parsed)) parsedTasks = parsed;
+            } else {
+              const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+              if (arrayMatch) {
+                parsedTasks = JSON.parse(arrayMatch[0]);
+              }
+            }
+          }
+        } catch (parseError) {
+          console.warn('Erro ao processar JSON retornado pela IA:', parseError, aiRawOutput);
+        }
+      }
+
+      const defaultTag = colCategory === 'yesterday' ? 'Feature' : colCategory === 'blocker' ? 'Impedimento' : 'Planejado';
+      const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+      const cleanSubject = (m: string) =>
+        cap(m.replace(/^(feat|fix|chore|docs|refactor|test|style|perf)(\([^)]*\))?!?:\s*/i, '').trim());
+
+      // Fallback sem IA: um card por projeto + escopo; se sobrar poucos, quebra por área dos arquivos tocados
+      if (parsedTasks.length === 0 && hasCommits) {
+        const groups = new Map<string, typeof finalCommitsToAnalyze>();
+        for (const c of finalCommitsToAnalyze) {
+          const scope = c.message.match(/^\w+\(([^)]+)\)/)?.[1] || '';
+          const key = `${c.projectName}|${scope}`;
+          groups.set(key, [...(groups.get(key) || []), c]);
+        }
+        parsedTasks = Array.from(groups.values()).slice(0, maxCards).map((g) => {
+          const subjects = g.map((c) => cleanSubject(c.message));
+          return {
+            title: subjects[0],
+            description: subjects.slice(1, 3).length ? `${subjects[0]}; ${subjects.slice(1, 3).join('; ').toLowerCase()}.` : `${subjects[0]}.`,
+            tag: g.some((c) => /^fix/i.test(c.message)) ? 'Fix' : defaultTag,
+            priority: 'Alta',
+            projectName: g[0].projectName,
+            commitHashes: g.map((c) => c.hash.slice(0, 7)),
+          };
+        });
+
+        if (parsedTasks.length < minCards) {
+          const areas = new Map<string, { project: string; hash: string; subject: string; count: number }>();
+          for (const c of finalCommitsToAnalyze) {
+            for (const f of filePathsByHash.get(c.hash) || []) {
+              const dir = f.split('/').slice(0, -1).slice(-2).join('/') || f;
+              const key = `${c.projectName}|${dir}`;
+              const cur = areas.get(key);
+              areas.set(key, { project: c.projectName, hash: c.hash.slice(0, 7), subject: cleanSubject(c.message), count: (cur?.count || 0) + 1 });
+            }
+          }
+          const byArea = Array.from(areas.entries())
+            .sort((x, y) => y[1].count - x[1].count)
+            .slice(0, maxCards)
+            .map(([key, v]) => ({
+              title: `Ajustes em ${key.split('|')[1]}`,
+              description: `${v.subject} — ${v.count} ${v.count === 1 ? 'arquivo alterado' : 'arquivos alterados'} nesta área.`,
+              tag: defaultTag,
+              priority: 'Alta',
+              projectName: v.project,
+              commitHashes: [v.hash],
+            }));
+          if (byArea.length > parsedTasks.length) parsedTasks = byArea;
+        }
+      }
+
+      // 7. Filtro anti-duplicação refinado (sem falso-positivo de substring em títulos curtos)
+      const finalTasks = parsedTasks.filter((task: any) => {
+        if (!task || !task.title) return false;
+        const normTitle = task.title.toLowerCase().trim();
+        const isDuplicate = existingInThisCol.some((ex) => {
+          const normEx = ex.title.toLowerCase().trim();
+          if (normEx === normTitle) return true;
+          if (normEx.length > 25 && normTitle.length > 25 && (normEx.includes(normTitle) || normTitle.includes(normEx))) {
+            return true;
+          }
+          if (Array.isArray(task.commitHashes) && task.commitHashes.length > 0) {
+            for (const h of task.commitHashes) {
+              if (h && (normEx.includes(h.toLowerCase()) || (ex.description && ex.description.toLowerCase().includes(h.toLowerCase())))) {
+                return true;
+              }
+            }
+          }
+          return false;
+        });
+        return !isDuplicate;
+      });
+
+      if (finalTasks.length === 0) {
+        onToast?.(`Nada novo para "${colLabel}": os cards existentes já cobrem o período.`);
+        return;
+      }
+      const tasksToCreate = finalTasks.slice(0, maxCards);
+
+      // Remove vazamentos de commit/issue que o modelo possa ter deixado no texto
+      const sanitize = (t: string) =>
+        (t || '')
+          .replace(/\b[0-9a-f]{7,40}\b/g, '')
+          .replace(/\(?#\d+\)?/g, '')
+          .replace(/^(feat|fix|chore|docs|refactor|test)(\([^)]*\))?:\s*/i, '')
+          .replace(/\s{2,}/g, ' ')
+          .trim();
+
+      // 8. Cria os novos itens da Daily associados à data atual da Daily (selectedDateIso)
+      const defaultCardTheme: CardPalette =
+        colCategory === 'yesterday' ? 'cyan' : colCategory === 'blocker' ? 'charcoal' : 'peach';
+
+      const newItems: DailyItem[] = tasksToCreate.map((t: any) => {
+        // Projeto do card = projeto dos commits que ele resume (evita atribuir ao projeto do 1º commit)
+        const hashProj = Array.isArray(t.commitHashes)
+          ? finalCommitsToAnalyze.find((c) => t.commitHashes.some((h: string) => h && c.hash.startsWith(String(h).slice(0, 7))))?.projectName
+          : undefined;
+        const projName = hashProj || t.projectName || primaryProject;
+        const matchedProj = availableProjects?.find(
+          (p) => p.name?.toLowerCase() === projName.toLowerCase() || p.fullName?.toLowerCase() === projName.toLowerCase() || p.id === projName
+        );
+
+        return {
+          id: `daily-ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          dateIso: selectedDateIso, // SEMPRE a data ativa da Daily para renderizar imediatamente na coluna!
+          category: colCategory,
+          title: sanitize(t.title),
+          description: sanitize(t.description),
+          projectName: matchedProj?.name || projName,
+          projectId: matchedProj?.id || projName,
+          projectColor: matchedProj?.color,
+          tag: t.tag || defaultTag,
+          priority: (t.priority as any) || 'Alta',
+          completed: colCategory === 'yesterday',
+          cardTheme: defaultCardTheme,
+          customColor: CARD_THEMES[defaultCardTheme]?.accent || '#f97316',
+          assignee: { name: ghUser, initials: ghUser.slice(0, 2).toUpperCase(), avatarUrl: `https://github.com/${ghUser}.png` },
+          createdAt: new Date().toISOString(),
+        };
+      });
+
+      setItems((prev) => [...newItems, ...prev]);
+      setPendingAiIds((prev) => ({ ...prev, [colCategory]: [...(prev[colCategory] || []), ...newItems.map((i) => i.id)] }));
+      onToast?.(`✨ ${newItems.length} ${newItems.length === 1 ? 'tarefa criada' : 'tarefas criadas'} na coluna "${colLabel}"!`);
+    } catch (globalErr: any) {
+      console.error('Erro ao gerar tarefas via IA para a coluna:', globalErr);
+      onToast?.(`Erro ao gerar tarefas: ${globalErr?.message || 'Falha inesperada'}`);
+    } finally {
+      setGeneratingAiColumn(null);
+    }
+  };
+
+  const renderAiReview = (col: 'yesterday' | 'blocker' | 'today') => {
+    const ids = pendingAiIds[col] || [];
+    if (ids.length === 0) return null;
+    const clear = () => setPendingAiIds((prev) => ({ ...prev, [col]: [] }));
+    const btn = (color: string, hover: string): React.CSSProperties => ({
+      width: 24, height: 24, borderRadius: 6, border: 'none', background: 'transparent', color,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.15s ease',
+    });
+    return (
+      <>
+        <button
+          type="button"
+          title={`Aceitar ${ids.length} ${ids.length === 1 ? 'card gerado' : 'cards gerados'} pela IA`}
+          onClick={() => { clear(); onToast?.('Cards da IA mantidos'); }}
+          style={btn('#22c55e', 'rgba(34, 197, 94, 0.15)')}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(34, 197, 94, 0.15)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <Check size={14} strokeWidth={2.5} />
+        </button>
+        <button
+          type="button"
+          title={`Recusar e excluir ${ids.length === 1 ? 'o card gerado' : `os ${ids.length} cards gerados`} pela IA`}
+          onClick={() => {
+            setItems((prev) => prev.filter((i) => !ids.includes(i.id)));
+            clear();
+            onToast?.('Cards da IA descartados');
+          }}
+          style={btn('#ef4444', 'rgba(239, 68, 68, 0.15)')}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <X size={14} strokeWidth={2.5} />
+        </button>
+      </>
+    );
+  };
+
   const handleToggleCompleted = (item: DailyItem) => {
     setItems((prev) =>
       prev.map((it) => (it.id === item.id ? { ...it, completed: !it.completed } : it))
@@ -909,6 +1558,17 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
     navigator.clipboard.writeText(text);
     onToast('Daily copiada em Markdown para a área de transferência!');
   };
+
+  // Preferência por projeto (Configurações → Geral → Sugestões de IA na Daily)
+  const dailyAiEnabled = useMemo(() => {
+    let full = repoName && repoName.includes('/') ? repoName : null;
+    if (!full) {
+      try {
+        full = localStorage.getItem('header_active_project_fullname');
+      } catch {}
+    }
+    return getProjectSettings(full).prefs.dailyAi;
+  }, [repoName]);
 
   // Sugerir Daily com IA
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
@@ -1006,6 +1666,7 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
         <div
           style={{
             width: 330,
+            height: '100%',
             background: 'transparent',
             borderRadius: 0,
             border: 'none',
@@ -1016,7 +1677,7 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
             padding: 0,
             boxSizing: 'border-box',
             flexShrink: 0,
-            overflowY: 'auto',
+            overflow: 'hidden',
             minHeight: 0,
           }}
         >
@@ -1322,298 +1983,66 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
             </div>
 
             {/* ------------------------------------------------------------------- */}
-            {/* 1. HERO CARD: SAÚDE DA DAILY (ESTILO AMPLO COMO O CARD DE PROJETO)  */}
+            {/* CHAT IA PARA DAILY & WEEKLY (PREENCHE TODO O ESPAÇO VERTICAL)      */}
             {/* ------------------------------------------------------------------- */}
-            <div
-              style={{
-                width: '100%',
-                background: accentColor,
-                borderRadius: 10,
-                border: 'none',
-                padding: '12px 14px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
-                color: '#ffffff',
-                boxSizing: 'border-box',
-                boxShadow: '0 4px 14px rgba(0,0,0,0.18)',
-                flexShrink: 0,
+            {dailyAiEnabled ? (
+            <DailyAiChatPanel
+              selectedDate={selectedDate}
+              selectedDateIso={selectedDateIso}
+              workspacePath={workspacePath}
+              repoName={repoName}
+              themeTokens={theme}
+              isEffectiveDark={isEffectiveDark}
+              accentColor={accentColor}
+              currentDailyItems={items}
+              weeklyGoals={weeklyGoals}
+              onAddDailyItem={(itemDraft) => {
+                const newItem: DailyItem = {
+                  id: `daily-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  category: (itemDraft.category as any) || 'today',
+                  title: itemDraft.title || 'Nova tarefa sugerida',
+                  description: itemDraft.description || '',
+                  dateIso: itemDraft.dateIso || selectedDateIso,
+                  tag: itemDraft.tag || 'Daily IA',
+                  priority: itemDraft.priority || 'Média',
+                  completed: itemDraft.category === 'yesterday',
+                  blockerSeverity: itemDraft.category === 'blocker' ? 'Alto' : undefined,
+                  blockerStatus: itemDraft.category === 'blocker' ? 'Bloqueando' : undefined,
+                  projectId: itemDraft.projectName || repoName,
+                  projectName: itemDraft.projectName || repoName,
+                  cardTheme:
+                    itemDraft.category === 'yesterday'
+                      ? 'emerald'
+                      : itemDraft.category === 'blocker'
+                      ? 'rose'
+                      : 'peach',
+                  assignee: { name: 'Walancy', initials: 'WA', avatarUrl: 'https://github.com/Walancy.png' },
+                  createdAt: new Date().toISOString(),
+                };
+                setItems((prev) => [newItem, ...prev]);
+                onToast?.(`Item adicionado: ${newItem.title}`);
               }}
-            >
-              {/* Topo do Hero: Título + Badge de Status */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 400,
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.5,
-                    color: 'rgba(255, 255, 255, 0.9)',
-                  }}
-                >
-                  Saúde da Daily
-                </span>
-                <span
-                  style={{
-                    fontSize: 9.5,
-                    fontWeight: 400,
-                    padding: '2px 8px',
-                    borderRadius: 10,
-                    background: 'rgba(0, 0, 0, 0.22)',
-                    color: '#ffffff',
-                  }}
-                >
-                  {dailyHealthMetrics.label}
-                </span>
-              </div>
-
-              {/* Linha Central: Score à esquerda + Grid 2x2 à direita */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ fontSize: 34, fontWeight: 400, lineHeight: 1, letterSpacing: -0.8 }}>
-                    {dailyHealthMetrics.score}%
-                  </div>
-                  <div style={{ fontSize: 10.5, fontWeight: 400, color: 'rgba(255, 255, 255, 0.85)', marginTop: 4 }}>
-                    {dailyHealthMetrics.totalDayItems} tarefas no dia
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(2, 1fr)',
-                    gap: '4px 10px',
-                    background: 'rgba(0, 0, 0, 0.16)',
-                    padding: '6px 10px',
-                    borderRadius: 6,
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, fontSize: 10 }}>
-                    <span style={{ color: 'rgba(255, 255, 255, 0.75)', fontWeight: 400 }}>Entregas</span>
-                    <span style={{ fontWeight: 400, color: '#ffffff' }}>{dailyHealthMetrics.completedItems}</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, fontSize: 10 }}>
-                    <span style={{ color: 'rgba(255, 255, 255, 0.75)', fontWeight: 400 }}>Bloqueios</span>
-                    <span style={{ fontWeight: 400, color: dailyHealthMetrics.activeBlockers > 0 ? '#fca5a5' : '#ffffff' }}>
-                      {dailyHealthMetrics.activeBlockers}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, fontSize: 10 }}>
-                    <span style={{ color: 'rgba(255, 255, 255, 0.75)', fontWeight: 400 }}>Planejadas</span>
-                    <span style={{ fontWeight: 400, color: '#ffffff' }}>{dailyHealthMetrics.plannedToday}</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, fontSize: 10 }}>
-                    <span style={{ color: 'rgba(255, 255, 255, 0.75)', fontWeight: 400 }}>Resolvidos</span>
-                    <span style={{ fontWeight: 400, color: '#ffffff' }}>{dailyHealthMetrics.resolvedBlockers}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Status footer */}
-              <div
-                style={{
-                  fontSize: 10,
-                  fontWeight: 400,
-                  color: 'rgba(255, 255, 255, 0.85)',
-                  paddingTop: 5,
-                  borderTop: '1px solid rgba(255, 255, 255, 0.18)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 5,
-                }}
-              >
-                <CheckCircle2 size={12} color="#ffffff" />
-                <span style={{ fontWeight: 400 }}>
-                  {dailyHealthMetrics.activeBlockers === 0
-                    ? 'Fluxo operacional sem bloqueios ativos.'
-                    : `${dailyHealthMetrics.activeBlockers} bloqueio(s) requerem atenção.`}
-                </span>
-              </div>
-            </div>
-
-            {/* ------------------------------------------------------------------- */}
-            {/* 2. CARD DE DEMANDAS / METAS DO DIA                                  */}
-            {/* ------------------------------------------------------------------- */}
-            <div
-              style={{
-                width: '100%',
-                background: isEffectiveDark ? '#141414' : '#ffffff',
-                borderRadius: 10,
-                border: 'none',
-                boxShadow: isEffectiveDark ? '0 2px 8px rgba(0,0,0,0.2)' : '0 1px 3px rgba(0,0,0,0.06)',
-                padding: '10px 12px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 7,
-                boxSizing: 'border-box',
-                flexShrink: 0,
+              onAddWeeklyGoal={(goalDraft) => {
+                const newGoal: WeeklyGoal = {
+                  id: `goal-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  title: goalDraft.title || 'Nova meta semanal',
+                  weekStartIso: currentWeekStartIso,
+                  completed: false,
+                  priority: goalDraft.priority || 'Alta',
+                  owner: 'Walancy',
+                };
+                setWeeklyGoals((prev) => [...prev, newGoal]);
+                onToast?.(`Demanda adicionada à Weekly: ${newGoal.title}`);
               }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                  <span style={{ fontSize: 12, fontWeight: 400, color: theme.textPrimary }}>Demandas</span>
-                  <span
-                    style={{
-                      fontSize: 9.5,
-                      fontWeight: 400,
-                      color: theme.textSecondary,
-                      background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
-                      padding: '2px 6px',
-                      borderRadius: 4,
-                    }}
-                  >
-                    Hoje
-                  </span>
-                </div>
-                <Target size={13} color={accentColor} />
+              selectedAiProvider={selectedAiProvider}
+              selectedModel={selectedModel}
+              onToast={onToast}
+            />
+            ) : (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 24, fontSize: 12, color: theme?.textSecondary || '#888', borderRadius: 10, background: isEffectiveDark ? '#141414' : '#f8fafc' }}>
+                Sugestões de IA desativadas para este projeto em Projetos → Configurações → Geral.
               </div>
-
-              {/* Métrica principal + Sub-métricas + Medidor Circular */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
-                  borderRadius: 6,
-                  padding: '7px 10px',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div>
-                    <div style={{ fontSize: 20, fontWeight: 400, lineHeight: 1, color: theme.textPrimary }}>
-                      {dailyHealthMetrics.plannedToday}
-                    </div>
-                    <div style={{ fontSize: 9.5, fontWeight: 400, color: theme.textMuted, marginTop: 2 }}>Planejadas</div>
-                  </div>
-
-                  <div style={{ height: 20, width: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)' }} />
-
-                  <div style={{ display: 'flex', gap: 8, fontSize: 10.5 }}>
-                    <div>
-                      <span style={{ fontWeight: 400, color: '#22c55e' }}>{dailyHealthMetrics.todayCompleted}</span>
-                      <span style={{ fontSize: 9.5, fontWeight: 400, color: theme.textMuted, marginLeft: 3 }}>feitas</span>
-                    </div>
-                    <div>
-                      <span style={{ fontWeight: 400, color: accentColor }}>
-                        {dailyHealthMetrics.plannedToday - dailyHealthMetrics.todayCompleted}
-                      </span>
-                      <span style={{ fontSize: 9.5, fontWeight: 400, color: theme.textMuted, marginLeft: 3 }}>abertas</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Gauge circular */}
-                <div style={{ position: 'relative', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <svg width="26" height="26" viewBox="0 0 28 28">
-                    <circle
-                      cx="14"
-                      cy="14"
-                      r="11"
-                      fill="none"
-                      stroke={isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}
-                      strokeWidth="2.5"
-                    />
-                    <circle
-                      cx="14"
-                      cy="14"
-                      r="11"
-                      fill="none"
-                      stroke={accentColor}
-                      strokeWidth="2.5"
-                      strokeDasharray={69.1}
-                      strokeDashoffset={69.1 - (69.1 * Math.min(100, Math.max(0, dailyHealthMetrics.completionRate))) / 100}
-                      strokeLinecap="round"
-                      transform="rotate(-90 14 14)"
-                    />
-                  </svg>
-                  <span style={{ position: 'absolute', fontSize: 7.5, fontWeight: 400, color: theme.textPrimary }}>
-                    {dailyHealthMetrics.completionRate}%
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* ------------------------------------------------------------------- */}
-            {/* 3. CARD DE PROJETOS VINCULADOS NA DAILY                             */}
-            {/* ------------------------------------------------------------------- */}
-            <div
-              style={{
-                width: '100%',
-                background: isEffectiveDark ? '#141414' : '#ffffff',
-                borderRadius: 10,
-                border: 'none',
-                boxShadow: isEffectiveDark ? '0 2px 8px rgba(0,0,0,0.2)' : '0 1px 3px rgba(0,0,0,0.06)',
-                padding: '10px 12px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 7,
-                boxSizing: 'border-box',
-                flexShrink: 0,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 12, fontWeight: 400, color: theme.textPrimary }}>Projetos Ativos</span>
-                <span
-                  style={{
-                    fontSize: 9.5,
-                    color: accentColor,
-                    background: `${accentColor}15`,
-                    padding: '2px 6px',
-                    borderRadius: 4,
-                    fontWeight: 400,
-                  }}
-                >
-                  {Object.keys(dailyHealthMetrics.projectsMap).length} vinculados
-                </span>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {Object.entries(dailyHealthMetrics.projectsMap).map(([projName, count]) => {
-                  const isFiltered = selectedProjectFilter.toLowerCase() === projName.toLowerCase();
-                  return (
-                    <div
-                      key={projName}
-                      onClick={() => setSelectedProjectFilter(isFiltered ? 'all' : projName)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '4px 7px',
-                        borderRadius: 4,
-                        background: isFiltered
-                          ? `${accentColor}20`
-                          : isEffectiveDark
-                          ? 'rgba(255, 255, 255, 0.03)'
-                          : 'rgba(0, 0, 0, 0.02)',
-                        cursor: 'pointer',
-                        fontSize: 10,
-                      }}
-                      title="Clique para filtrar por este projeto"
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0, flex: 1 }}>
-                        <div style={{ width: 5, height: 5, borderRadius: '50%', background: accentColor }} />
-                        <span style={{ color: theme.textPrimary, fontWeight: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {projName}
-                        </span>
-                      </div>
-                      <span
-                        style={{
-                          fontSize: 9.5,
-                          fontWeight: 400,
-                          padding: '1px 6px',
-                          borderRadius: 10,
-                          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
-                          color: theme.textSecondary,
-                        }}
-                      >
-                        {count} {count === 1 ? 'item' : 'itens'}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            )}
           </div>
 
           {/* ===================================================================== */}
@@ -1632,6 +2061,27 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
               minHeight: 0,
             }}
           >
+            <input
+              value={aiHint}
+              onChange={(e) => {
+                setAiHint(e.target.value);
+                try { localStorage.setItem('daily_ai_hint', e.target.value); } catch {}
+              }}
+              placeholder="Instrução opcional para a IA ao gerar cards (ex.: mais curto, tom para cliente, foco em backend)"
+              style={{
+                height: 28,
+                padding: '0 10px',
+                borderRadius: 8,
+                border: theme.shelfBorder,
+                background: theme.bgShelf,
+                color: theme?.textPrimary,
+                fontSize: 12,
+                outline: 'none',
+                boxSizing: 'border-box',
+                flexShrink: 0,
+              }}
+            />
+
             {/* AS 3 COLUNAS COM CARDS */}
             <div
               style={{
@@ -1693,45 +2143,117 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
                     </span>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => handleStartCreate('yesterday')}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      padding: '3px 8px',
-                      borderRadius: 6,
-                      border: 'none',
-                      background: accentColor,
-                      color: '#ffffff',
-                      fontSize: 11,
-                      fontWeight: 400,
-                      cursor: 'pointer',
-                      transition: 'opacity 0.15s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.opacity = '0.9';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.opacity = '1';
-                    }}
-                    title="Adicionar registro"
-                  >
-                    <Plus size={12} />
-                    <span>Adicionar registro</span>
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    {renderAiReview('yesterday')}
+                    {/* 1. Lixeira para limpar toda a coluna */}
+                    <button
+                      type="button"
+                      onClick={() => setColumnToClear('yesterday')}
+                      disabled={yesterdayItems.length === 0}
+                      title={`Limpar todos os registros da coluna "${isSelectedMonday ? 'Sexta-feira' : 'Dia Anterior'}"`}
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: 6,
+                        border: 'none',
+                        background: 'transparent',
+                        color: yesterdayItems.length === 0 ? (isEffectiveDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)') : '#ef4444',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: yesterdayItems.length === 0 ? 'not-allowed' : 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (yesterdayItems.length > 0) e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'transparent';
+                      }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+
+                    {/* 2. Gerar tarefas com IA via histórico de commits */}
+                    <button
+                      type="button"
+                      onClick={() => handleGenerateColumnTasksWithAi('yesterday')}
+                      disabled={generatingAiColumn === 'yesterday'}
+                      title={`Gerar tarefas com IA (${selectedAiProvider || 'IA'}) a partir dos seus commits de ${isSelectedMonday ? 'sexta-feira' : 'ontem'}`}
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: 6,
+                        border: 'none',
+                        background: 'transparent',
+                        color: accentColor,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: generatingAiColumn === 'yesterday' ? 'wait' : 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (generatingAiColumn !== 'yesterday') {
+                          e.currentTarget.style.transform = 'scale(1.1)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = 'none';
+                      }}
+                    >
+                      {generatingAiColumn === 'yesterday' ? (
+                        <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+                      ) : (
+                        <Sparkles size={13} />
+                      )}
+                    </button>
+
+                    {/* 3. Adicionar registro manualmente */}
+                    <button
+                      type="button"
+                      onClick={() => handleStartCreate('yesterday')}
+                      title="Adicionar registro"
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: 6,
+                        border: 'none',
+                        background: accentColor,
+                        color: '#ffffff',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.opacity = '0.9';
+                        e.currentTarget.style.transform = 'scale(1.05)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.opacity = '1';
+                        e.currentTarget.style.transform = 'none';
+                      }}
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Lista de Cards da Coluna 1 */}
                 <div
                   style={{
                     flex: 1,
+                    minHeight: 0,
                     overflowY: 'auto',
+                    overflowX: 'hidden',
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 6,
-                    padding: 2,
+                    padding: '2px 4px 6px 2px',
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
                   }}
                 >
                   {/* Card sendo criado inline */}
@@ -1825,6 +2347,7 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
                         <DailyCardItem
                           key={item.id}
                           item={item}
+                          isPendingAi={Object.values(pendingAiIds).some((ids) => ids.includes(item.id))}
                           isEffectiveDark={isEffectiveDark}
                           accentColor={accentColor}
                           onEdit={handleStartEdit}
@@ -1893,45 +2416,117 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
                     </span>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => handleStartCreate('blocker')}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      padding: '3px 8px',
-                      borderRadius: 6,
-                      border: 'none',
-                      background: accentColor,
-                      color: '#ffffff',
-                      fontSize: 11,
-                      fontWeight: 400,
-                      cursor: 'pointer',
-                      transition: 'opacity 0.15s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.opacity = '0.9';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.opacity = '1';
-                    }}
-                    title="Adicionar registro"
-                  >
-                    <Plus size={12} />
-                    <span>Adicionar registro</span>
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    {renderAiReview('blocker')}
+                    {/* 1. Lixeira para limpar toda a coluna */}
+                    <button
+                      type="button"
+                      onClick={() => setColumnToClear('blocker')}
+                      disabled={blockerItems.length === 0}
+                      title="Limpar todos os registros da coluna 'Impedimentos'"
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: 6,
+                        border: 'none',
+                        background: 'transparent',
+                        color: blockerItems.length === 0 ? (isEffectiveDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)') : '#ef4444',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: blockerItems.length === 0 ? 'not-allowed' : 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (blockerItems.length > 0) e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'transparent';
+                      }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+
+                    {/* 2. Identificar impedimentos com IA via commits recentes */}
+                    <button
+                      type="button"
+                      onClick={() => handleGenerateColumnTasksWithAi('blocker')}
+                      disabled={generatingAiColumn === 'blocker'}
+                      title={`Identificar impedimentos com IA (${selectedAiProvider || 'IA'}) com base nos seus commits de ${isSelectedMonday ? 'sexta-feira' : 'ontem'}`}
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: 6,
+                        border: 'none',
+                        background: 'transparent',
+                        color: accentColor,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: generatingAiColumn === 'blocker' ? 'wait' : 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (generatingAiColumn !== 'blocker') {
+                          e.currentTarget.style.transform = 'scale(1.1)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = 'none';
+                      }}
+                    >
+                      {generatingAiColumn === 'blocker' ? (
+                        <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+                      ) : (
+                        <Sparkles size={13} />
+                      )}
+                    </button>
+
+                    {/* 3. Adicionar registro manualmente */}
+                    <button
+                      type="button"
+                      onClick={() => handleStartCreate('blocker')}
+                      title="Adicionar registro"
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: 6,
+                        border: 'none',
+                        background: accentColor,
+                        color: '#ffffff',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.opacity = '0.9';
+                        e.currentTarget.style.transform = 'scale(1.05)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.opacity = '1';
+                        e.currentTarget.style.transform = 'none';
+                      }}
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Lista de Cards da Coluna 2 */}
                 <div
                   style={{
                     flex: 1,
+                    minHeight: 0,
                     overflowY: 'auto',
+                    overflowX: 'hidden',
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 6,
-                    padding: 2,
+                    padding: '2px 4px 6px 2px',
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
                   }}
                 >
                   {/* Card sendo criado inline */}
@@ -2027,6 +2622,7 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
                         <DailyCardItem
                           key={item.id}
                           item={item}
+                          isPendingAi={Object.values(pendingAiIds).some((ids) => ids.includes(item.id))}
                           isEffectiveDark={isEffectiveDark}
                           accentColor={accentColor}
                           onEdit={handleStartEdit}
@@ -2095,45 +2691,117 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
                     </span>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => handleStartCreate('today')}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      padding: '3px 8px',
-                      borderRadius: 6,
-                      border: 'none',
-                      background: accentColor,
-                      color: '#ffffff',
-                      fontSize: 11,
-                      fontWeight: 400,
-                      cursor: 'pointer',
-                      transition: 'opacity 0.15s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.opacity = '0.9';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.opacity = '1';
-                    }}
-                    title="Adicionar registro"
-                  >
-                    <Plus size={12} />
-                    <span>Adicionar registro</span>
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    {renderAiReview('today')}
+                    {/* 1. Lixeira para limpar toda a coluna */}
+                    <button
+                      type="button"
+                      onClick={() => setColumnToClear('today')}
+                      disabled={todayItems.length === 0}
+                      title="Limpar todos os registros da coluna 'Planejado Hoje'"
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: 6,
+                        border: 'none',
+                        background: 'transparent',
+                        color: todayItems.length === 0 ? (isEffectiveDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)') : '#ef4444',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: todayItems.length === 0 ? 'not-allowed' : 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (todayItems.length > 0) e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'transparent';
+                      }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+
+                    {/* 2. Planejar tarefas de hoje com IA via commits */}
+                    <button
+                      type="button"
+                      onClick={() => handleGenerateColumnTasksWithAi('today')}
+                      disabled={generatingAiColumn === 'today'}
+                      title={`Planejar tarefas de hoje com IA (${selectedAiProvider || 'IA'}) com base nos seus commits de ${isSelectedMonday ? 'sexta-feira' : 'ontem'}`}
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: 6,
+                        border: 'none',
+                        background: 'transparent',
+                        color: accentColor,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: generatingAiColumn === 'today' ? 'wait' : 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (generatingAiColumn !== 'today') {
+                          e.currentTarget.style.transform = 'scale(1.1)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = 'none';
+                      }}
+                    >
+                      {generatingAiColumn === 'today' ? (
+                        <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+                      ) : (
+                        <Sparkles size={13} />
+                      )}
+                    </button>
+
+                    {/* 3. Adicionar registro manualmente */}
+                    <button
+                      type="button"
+                      onClick={() => handleStartCreate('today')}
+                      title="Adicionar registro"
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: 6,
+                        border: 'none',
+                        background: accentColor,
+                        color: '#ffffff',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.opacity = '0.9';
+                        e.currentTarget.style.transform = 'scale(1.05)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.opacity = '1';
+                        e.currentTarget.style.transform = 'none';
+                      }}
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Lista de Cards da Coluna 3 */}
                 <div
                   style={{
                     flex: 1,
+                    minHeight: 0,
                     overflowY: 'auto',
+                    overflowX: 'hidden',
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 6,
-                    padding: 2,
+                    padding: '2px 4px 6px 2px',
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
                   }}
                 >
                   {/* Card sendo criado inline */}
@@ -2227,6 +2895,7 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
                         <DailyCardItem
                           key={item.id}
                           item={item}
+                          isPendingAi={Object.values(pendingAiIds).some((ids) => ids.includes(item.id))}
                           isEffectiveDark={isEffectiveDark}
                           accentColor={accentColor}
                           onEdit={handleStartEdit}
@@ -2281,8 +2950,9 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
 
 
       {/* ========================================================================= */}
-      {/* 5. MODAL DE CONFIRMAÇÃO DE EXCLUSÃO (REGRA OBRIGATÓRIA DO AGENTS.MD)      */}
+      {/* 5. MODAIS DE CONFIRMAÇÃO DE EXCLUSÃO (REGRA OBRIGATÓRIA DO AGENTS.MD)     */}
       {/* ========================================================================= */}
+      {/* Modal para excluir um item específico */}
       <ConfirmDeleteModal
         isOpen={Boolean(itemToDelete)}
         title="Excluir Registro da Daily"
@@ -2292,7 +2962,34 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
         cancelLabel="Cancelar"
         isDeleting={isDeleting}
         onConfirm={handleConfirmDeleteItem}
-        onCancel={() => setItemToDelete(null)}
+        onClose={() => setItemToDelete(null)}
+      />
+
+      {/* Modal para limpar todos os registros de uma coluna */}
+      <ConfirmDeleteModal
+        isOpen={Boolean(columnToClear)}
+        title={
+          columnToClear === 'yesterday'
+            ? `Limpar Coluna "${isSelectedMonday ? 'Sexta-feira' : 'Dia Anterior'}"`
+            : columnToClear === 'blocker'
+            ? 'Limpar Coluna "Impedimentos"'
+            : 'Limpar Coluna "Planejado Hoje"'
+        }
+        message={
+          columnToClear === 'yesterday'
+            ? `Tem certeza que deseja excluir todos os ${yesterdayItems.length} registros da coluna "${isSelectedMonday ? 'Sexta-feira' : 'Dia Anterior'}"?`
+            : columnToClear === 'blocker'
+            ? `Tem certeza que deseja excluir todos os ${blockerItems.length} registros da coluna "Impedimentos"?`
+            : `Tem certeza que deseja excluir todos os ${todayItems.length} registros da coluna "Planejado Hoje"?`
+        }
+        itemDescription="Esta ação não poderá ser desfeita. Todos os cards desta coluna nesta data serão removidos permanentemente."
+        confirmLabel="Limpar Coluna"
+        cancelLabel="Cancelar"
+        isDeleting={isClearingColumn}
+        onConfirm={handleConfirmClearColumn}
+        onClose={() => {
+          if (!isClearingColumn) setColumnToClear(null);
+        }}
       />
     </div>
   );
@@ -2404,6 +3101,7 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
     <div
       style={{
         width: '100%',
+        flexShrink: 0,
         borderRadius: 12,
         background: cardBg,
         border: 'none',
@@ -2864,6 +3562,7 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
 // =============================================================================
 interface DailyCardItemProps {
   item: DailyItem;
+  isPendingAi?: boolean;
   isEffectiveDark: boolean;
   accentColor: string;
   onEdit: (item: DailyItem) => void;
@@ -2881,6 +3580,7 @@ interface DailyCardItemProps {
 
 const DailyCardItem: React.FC<DailyCardItemProps> = ({
   item,
+  isPendingAi,
   isEffectiveDark,
   accentColor,
   onEdit,
@@ -2931,6 +3631,7 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
       onDragEnd={onDragEnd}
       style={{
         width: '100%',
+        flexShrink: 0,
         borderRadius: 12,
         background: cardBg,
         border: isDragOver
@@ -2948,8 +3649,11 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
         transition: 'border 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, transform 0.15s ease',
         opacity: isDragging ? 0.35 : isResolved ? 0.65 : 1,
         transform: isDragOver ? 'scale(1.01)' : 'none',
+        // Cards gerados pela IA aguardando aceite/recusa: mais claros no dark e mais escuros no light
+        filter: isPendingAi ? `brightness(${isEffectiveDark ? 1.3 : 0.82})` : undefined,
         position: 'relative',
-        overflow: 'hidden',
+        overflow: isMenuOpen ? 'visible' : 'hidden',
+        zIndex: isMenuOpen ? 100 : 1,
       }}
     >
       {/* DIV COM PONTINHOS NA ESQUERDA (DRAG HANDLE PARA ARRASTAR DE CIMA PRA BAIXO) */}
@@ -2957,6 +3661,8 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
         title="Arraste para organizar de cima para baixo"
         style={{
           width: 24,
+          borderTopLeftRadius: 12,
+          borderBottomLeftRadius: 12,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -3104,15 +3810,15 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
                 top: 28,
                 right: 0,
                 background: isEffectiveDark ? '#222225' : '#ffffff',
-                border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.12)' : '1px solid rgba(0, 0, 0, 0.1)',
+                border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(0, 0, 0, 0.12)',
                 borderRadius: 8,
-                boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+                boxShadow: isEffectiveDark ? '0 12px 32px rgba(0,0,0,0.65)' : '0 8px 24px rgba(0,0,0,0.18)',
                 padding: 4,
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 2,
-                minWidth: 145,
-                zIndex: 100,
+                minWidth: 155,
+                zIndex: 9999,
               }}
             >
               <button
@@ -3245,25 +3951,28 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
         }}
       >
         {/* LADO ESQUERDO: NOME DO PROJETO E TAG */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'nowrap', flex: '1 1 auto' }}>
           {item.projectName && (
             <div
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 4,
-                padding: '2px 8px',
+                padding: '0 8px',
+                height: 20,
+                boxSizing: 'border-box',
                 borderRadius: 6,
                 background: 'rgba(0, 0, 0, 0.22)',
                 color: '#ffffff',
                 fontSize: 10.5,
                 fontWeight: 400,
                 whiteSpace: 'nowrap',
+                minWidth: 0,
               }}
-              title={`Projeto: ${item.projectName}`}
+              title={`Projeto: ${item.projectName}\nRepositório ao qual este card pertence`}
             >
-              <Folder size={11} color="rgba(255, 255, 255, 0.9)" />
-              <span>{item.projectName}</span>
+              <Folder size={11} color="rgba(255, 255, 255, 0.9)" style={{ flexShrink: 0 }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.projectName}</span>
             </div>
           )}
 
@@ -3273,18 +3982,20 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 4,
-                padding: '2px 8px',
+                padding: '0 8px',
+                height: 20,
+                boxSizing: 'border-box',
                 borderRadius: 6,
                 background: 'rgba(0, 0, 0, 0.22)',
                 color: '#ffffff',
                 fontSize: 10.5,
                 fontWeight: 400,
                 whiteSpace: 'nowrap',
+                flexShrink: 0,
               }}
-              title={`Tag: ${item.tag}`}
+              title={`Categoria: ${item.tag}\nTipo de trabalho (Feature, Fix, Design, Refactor, Impedimento ou Planejado)`}
             >
               <Tag size={10} color="rgba(255, 255, 255, 0.9)" />
-              <span>{item.tag}</span>
             </div>
           )}
         </div>
@@ -3298,17 +4009,18 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 3,
-                padding: '2px 7px',
+                padding: '0 7px',
+                height: 20,
+                boxSizing: 'border-box',
                 borderRadius: 6,
                 background: 'rgba(0, 0, 0, 0.28)',
                 color: '#86efac',
                 fontSize: 10,
                 fontWeight: 400,
               }}
-              title={item.isFromPreviousDayPlanned ? 'Tarefa planejada concluída no dia anterior' : 'Concluído'}
+              title={item.isFromPreviousDayPlanned ? 'Concluído\nTarefa planejada que foi finalizada no dia anterior' : 'Concluído\nEsta atividade já foi finalizada'}
             >
               <Check size={10} strokeWidth={2.5} />
-              <span>Concluído</span>
             </div>
           )}
 
@@ -3319,16 +4031,18 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 3,
-                padding: '2px 7px',
+                padding: '0 7px',
+                height: 20,
+                boxSizing: 'border-box',
                 borderRadius: 6,
                 background: isResolved ? 'rgba(0, 0, 0, 0.28)' : 'rgba(239, 68, 68, 0.45)',
                 color: isResolved ? '#86efac' : '#ffffff',
                 fontSize: 10,
                 fontWeight: 400,
               }}
+              title={isResolved ? 'Resolvido\nO impedimento foi destravado' : `Bloqueio${item.blockerSeverity ? ` (${item.blockerSeverity})` : ''}\nImpedimento que está travando o andamento`}
             >
               <AlertCircle size={10} />
-              <span>{isResolved ? 'Resolvido' : (item.blockerSeverity || 'Bloqueio')}</span>
             </div>
           )}
 
@@ -3336,15 +4050,21 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
           {item.priority && (
             <div
               style={{
-                padding: '2px 7px',
+                display: 'flex',
+                alignItems: 'center',
+                padding: '0 7px',
+                height: 20,
+                boxSizing: 'border-box',
                 borderRadius: 6,
                 background: 'rgba(0, 0, 0, 0.22)',
-                color: '#ffffff',
-                fontSize: 10,
-                fontWeight: 400,
               }}
+              title={`Prioridade: ${item.priority}\nUrgência desta atividade (vermelho = Alta, amarelo = Média, azul = Baixa)`}
             >
-              {item.priority}
+              <Flag
+                size={10}
+                color={item.priority === 'Alta' ? '#fca5a5' : item.priority === 'Média' ? '#fde68a' : '#bfdbfe'}
+                fill={item.priority === 'Alta' ? '#fca5a5' : item.priority === 'Média' ? '#fde68a' : '#bfdbfe'}
+              />
             </div>
           )}
 
@@ -3499,12 +4219,15 @@ const WeeklyViewContainer: React.FC<WeeklyViewContainerProps> = ({
           <div
             style={{
               flex: 1,
+              minHeight: 0,
               overflowY: 'auto',
+              overflowX: 'hidden',
               display: 'flex',
               flexDirection: 'column',
               gap: 6,
-              minHeight: 0,
-              padding: 2,
+              padding: '2px 4px 6px 2px',
+              scrollbarWidth: 'thin',
+              scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
             }}
           >
             {wd.items.length === 0 ? (
@@ -3528,6 +4251,7 @@ const WeeklyViewContainer: React.FC<WeeklyViewContainerProps> = ({
                 <div
                   key={it.id}
                   style={{
+                    flexShrink: 0,
                     background: isEffectiveDark ? '#1a1a1c' : '#ffffff',
                     borderRadius: 8,
                     border: 'none',

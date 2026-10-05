@@ -261,7 +261,7 @@ export class ModelService {
       try {
         const out = await runCommandAsync(`${bin} models`, {
           shell: '/bin/zsh',
-          timeout: 6000,
+          timeout: 15000,
         });
 
         const cleanedOut = out

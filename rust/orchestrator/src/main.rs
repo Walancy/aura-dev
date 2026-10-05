@@ -1,4 +1,4 @@
-use devflow_orchestrator::{discover, run_with_events, RunRequest, ScheduledTask, Scheduler};
+use devflow_orchestrator::{discover, run_with_events, RunRequest};
 use serde_json::json;
 use std::io::{self, BufRead, Write};
 
@@ -38,25 +38,6 @@ fn main() {
                     emit(json!({"ok":false,"error":format!("invalid run request: {error}")}))
                 }
             },
-            "plan" => {
-                let tasks = value
-                    .get("tasks")
-                    .cloned()
-                    .and_then(|tasks| serde_json::from_value::<Vec<ScheduledTask>>(tasks).ok());
-                let concurrency = value
-                    .get("max_concurrency")
-                    .and_then(|value| value.as_u64())
-                    .unwrap_or(1) as usize;
-                match tasks.and_then(|tasks| Scheduler::new(tasks, concurrency).ok()) {
-                    Some(mut scheduler) => {
-                        scheduler.queue_all_draft();
-                        emit(
-                            json!({"ok":true,"ready":scheduler.start_ready(),"tasks":scheduler.tasks().collect::<Vec<_>>() }),
-                        );
-                    }
-                    None => emit(json!({"ok":false,"error":"invalid task DAG"})),
-                }
-            }
             other => emit(json!({"ok":false,"error":format!("unknown operation: {other}")})),
         }
     }

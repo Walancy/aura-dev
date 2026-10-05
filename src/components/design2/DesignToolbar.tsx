@@ -13,6 +13,7 @@ import {
   Hand,
   Hash,
   ChevronDown,
+  ArrowUp,
   ChevronRight,
   Check,
   Maximize2,
@@ -22,12 +23,31 @@ import {
   SquareTerminal,
   AlertCircle,
   CheckCircle2,
+  Shapes,
+  MonitorSmartphone,
+  Paperclip,
+  RotateCcw,
 } from 'lucide-react';
 import type { ToolId, Shape } from './types';
 import { renderAiIcon } from '../icons/AiProviderIcons';
 import { AI_PROVIDERS, DEFAULT_AI_QUOTAS } from '../../constants/ai';
 
+/** Item da fila de gerações da IA (o processamento fica no Design Studio) */
+export interface AiQueueItem {
+  id: string;
+  label: string;
+  status: 'queued' | 'running' | 'error';
+  progress?: string;
+}
+
 export interface DesignToolbarProps {
+  aiQueue?: AiQueueItem[];
+  onEnqueueAi?: (prompt: string, images: string[]) => void;
+  onCancelAiJob?: (id: string) => void;
+  /** Sobe o item uma posição na fila (nunca acima do que já está sendo gerado) */
+  onMoveAiJobUp?: (id: string) => void;
+  /** Tenta de novo um pedido que falhou */
+  onRetryAiJob?: (id: string) => void;
   tool: ToolId;
   onSelectTool: (tool: ToolId) => void;
   accentColor: string;
@@ -45,6 +65,8 @@ export interface DesignToolbarProps {
     hoverBg: string;
   };
   onInsertImage?: (file: File) => void;
+  onOpenIcons?: () => void;
+  onOpenFrames?: () => void;
   isDevMode?: boolean;
   onToggleDevMode?: () => void;
   selectedAiProvider?: string;
@@ -53,9 +75,13 @@ export interface DesignToolbarProps {
   onSelectModel?: (modelItem: { id: string; label: string }, providerId?: string) => void;
   installedClis?: Record<string, boolean>;
   activeModels?: Record<string, { currentModel?: string; currentModelId?: string; models?: Array<{ id: string; label: string }> }>;
+  /** Instala a CLI de IA que ainda não está instalada (abre o terminal com o guia de instalação) */
+  onInstallAiCli?: (provider: any) => void;
   onPrototypeWithAi?: (
     prompt: string,
-    onProgress?: (msg: string) => void
+    onProgress?: (msg: string) => void,
+    /** imagens de referência anexadas (data URLs JPEG) */
+    images?: string[]
   ) => Promise<{ success: boolean; error?: string } | void> | void;
   isGeneratingAi?: boolean;
   selectedFrame?: Shape | null;
@@ -188,6 +214,13 @@ export default function DesignToolbar({
   activeModels,
   onInstallAiCli,
   onPrototypeWithAi,
+  aiQueue = [],
+  onEnqueueAi,
+  onCancelAiJob,
+  onMoveAiJobUp,
+  onRetryAiJob,
+  onOpenIcons,
+  onOpenFrames,
   isGeneratingAi = false,
   selectedFrame,
 }: DesignToolbarProps) {
@@ -202,6 +235,30 @@ export default function DesignToolbar({
   // AI Prompt Bar State
   const [isAiPromptOpen, setIsAiPromptOpen] = useState(false);
   const [aiPromptText, setAiPromptText] = useState('');
+  const [aiImages, setAiImages] = useState<string[]>([]);
+  const aiFileRef = useRef<HTMLInputElement>(null);
+  /** Anexa imagens de referência, reduzidas a no máximo 1600px (JPEG) para a IA ler rápido */
+  const addAiImages = (files: File[]) => {
+    files.filter((f) => f.type.startsWith('image/')).slice(0, 6).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+          const c = document.createElement('canvas');
+          c.width = Math.round(img.width * k);
+          c.height = Math.round(img.height * k);
+          const ctx = c.getContext('2d')!;
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, c.width, c.height);
+          ctx.drawImage(img, 0, 0, c.width, c.height);
+          setAiImages((prev) => (prev.length >= 6 ? prev : [...prev, c.toDataURL('image/jpeg', 0.85)]));
+        };
+        img.src = String(reader.result);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
   const [hoveredProviderId, setHoveredProviderId] = useState<string>(selectedAiProvider || 'claude');
   const aiTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -224,39 +281,18 @@ export default function DesignToolbar({
   const [aiStatusMessage, setAiStatusMessage] = useState<string | null>(null);
   const [aiStatusType, setAiStatusType] = useState<'info' | 'success' | 'error' | null>(null);
 
-  const handleSendAi = async () => {
-    if (!aiPromptText.trim() || isGeneratingAi) return;
-    const p = aiPromptText;
-    setAiStatusType('info');
-    setAiStatusMessage(
-      selectedFrame
-        ? `Modificando frame "${selectedFrame.name}" com ${currentProviderObj.name}...`
-        : `Conectando ao modelo ${activeModelDisplay} e gerando protótipo...`
-    );
-
-    try {
-      const res = await onPrototypeWithAi?.(p, (progressMsg: string) => {
-        setAiStatusMessage(progressMsg);
-      });
-
-      if (res && res.success === false) {
-        setAiStatusType('error');
-        setAiStatusMessage(res.error || 'Erro ao gerar protótipo com IA.');
-      } else {
-        setAiStatusType('success');
-        setAiStatusMessage(
-          selectedFrame
-            ? `Frame "${selectedFrame.name}" modificado com sucesso!`
-            : 'Tela prototipada com sucesso! ✨'
-        );
-        setAiPromptText('');
-      }
-    } catch (err: any) {
-      setAiStatusType('error');
-      setAiStatusMessage(
-        err?.message || 'Falha ao processar protótipo com IA. Tente novamente.'
-      );
-    }
+  // "Enviado": feedback rápido no botão; o trabalho segue na fila
+  const [justSent, setJustSent] = useState(false);
+  const [expandedJobs, setExpandedJobs] = useState<Record<string, boolean>>({});
+  const sentTimer = useRef<any>(null);
+  const handleSendAi = () => {
+    if (!aiPromptText.trim()) return;
+    onEnqueueAi?.(aiPromptText.trim(), aiImages);
+    setAiPromptText('');
+    setAiImages([]);
+    setJustSent(true);
+    clearTimeout(sentTimer.current);
+    sentTimer.current = setTimeout(() => setJustSent(false), 1400);
   };
 
   const getActiveModelName = (provId: string) => {
@@ -640,6 +676,54 @@ export default function DesignToolbar({
             backdropFilter: 'blur(16px)',
           }}
         >
+          {/* Fila de gerações: cards fora da barra, 5px acima dela; o que foi enviado fica aqui com loading e os próximos esperam */}
+          {aiQueue.length > 0 && (
+            <div style={{ position: 'absolute', left: 0, right: 0, bottom: 'calc(100% + 5px)', display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 'min(320px, 50vh)', overflowY: 'auto', zIndex: 110 }}>
+              {aiQueue.map((job, idx) => {
+                const running = job.status === 'running';
+                const failed = job.status === 'error';
+                const canMoveUp = job.status === 'queued' && idx > 1; // nunca acima do que já está sendo gerado
+                const expanded = !!expandedJobs[job.id];
+                const iconBtn: React.CSSProperties = { width: 24, height: 24, borderRadius: 6, border: 'none', background: 'transparent', color: themeTokens.textSecondary, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 };
+                return (
+                  <div key={job.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: themeTokens.bgCard, backdropFilter: 'blur(16px)', borderRadius: 10, borderLeft: `3px solid ${failed ? '#ef4444' : running ? accentColor : themeTokens.border}` }}>
+                    <button
+                      type="button"
+                      title={expanded ? 'Recolher' : 'Expandir o prompt'}
+                      onClick={() => setExpandedJobs((m) => ({ ...m, [job.id]: !m[job.id] }))}
+                      style={{ ...iconBtn, alignSelf: expanded ? 'flex-start' : 'center' }}
+                    >
+                      <ChevronDown size={14} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
+                    </button>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        title={expanded ? undefined : job.label}
+                        style={{ fontSize: 12, color: themeTokens.textPrimary, lineHeight: 1.4, ...(expanded ? { whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 160, overflowY: 'auto' } : { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }) }}
+                      >{job.label}</div>
+                      <div style={{ fontSize: 10.5, color: themeTokens.textMuted, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {failed ? <span style={{ color: '#f87171' }} title={job.progress}>Falhou: {job.progress}</span> : running ? job.progress || 'Iniciando…' : `Na fila · ${idx}º`}
+                      </div>
+                    </div>
+                    {failed && (
+                      <button type="button" title="Tentar de novo" onClick={() => onRetryAiJob?.(job.id)} style={iconBtn}>
+                        <RotateCcw size={14} />
+                      </button>
+                    )}
+                    {job.status === 'queued' && (
+                      <button type="button" title="Subir na fila" disabled={!canMoveUp} onClick={() => onMoveAiJobUp?.(job.id)} style={{ ...iconBtn, opacity: canMoveUp ? 1 : 0.3, cursor: canMoveUp ? 'pointer' : 'default' }}>
+                        <ArrowUp size={14} />
+                      </button>
+                    )}
+                    <button type="button" title={running ? 'Cancelar geração' : failed ? 'Dispensar' : 'Remover da fila'} onClick={() => onCancelAiJob?.(job.id)} style={iconBtn}>
+                      <X size={14} />
+                    </button>
+                    {running && <Loader2 size={15} className="animate-spin" style={{ flexShrink: 0, color: accentColor }} />}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {/* Modal / Popover de Seleção de IA e Modelo (ancorado acima da div de prompt) */}
           {isModelPickerOpen && (
             <div
@@ -1021,6 +1105,14 @@ export default function DesignToolbar({
 
           {/* Campo de Digitação de Prompt com Altura Vertical Expandida */}
           <div
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              const files = Array.from(e.dataTransfer.files || []);
+              if (files.some((f) => f.type.startsWith('image/'))) {
+                e.preventDefault();
+                addAiImages(files);
+              }
+            }}
             style={{
               display: 'flex',
               flexDirection: 'column',
@@ -1031,6 +1123,21 @@ export default function DesignToolbar({
               gap: 8,
             }}
           >
+            {aiImages.length > 0 && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {aiImages.map((src, i) => (
+                  <div key={i} style={{ position: 'relative', width: 56, height: 56, borderRadius: 8, overflow: 'hidden', border: `1px solid ${themeTokens.border}` }}>
+                    <img src={src} alt={`Referência ${i + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    <button
+                      type="button"
+                      title="Remover imagem"
+                      onClick={() => setAiImages((prev) => prev.filter((_, j) => j !== i))}
+                      style={{ position: 'absolute', top: 2, right: 2, width: 16, height: 16, borderRadius: 8, border: 'none', background: 'rgba(0,0,0,0.7)', color: '#fff', cursor: 'pointer', fontSize: 11, lineHeight: '16px', padding: 0 }}
+                    >×</button>
+                  </div>
+                ))}
+              </div>
+            )}
             <textarea
               id="design-ai-prompt-input"
               ref={aiTextareaRef}
@@ -1038,9 +1145,12 @@ export default function DesignToolbar({
               value={aiPromptText}
               onChange={(e) => {
                 setAiPromptText(e.target.value);
-                if (aiStatusType === 'error' || aiStatusType === 'success') {
-                  setAiStatusType(null);
-                  setAiStatusMessage(null);
+              }}
+              onPaste={(e) => {
+                const files = Array.from(e.clipboardData?.files || []).filter((f) => f.type.startsWith('image/'));
+                if (files.length) {
+                  e.preventDefault();
+                  addAiImages(files);
                 }
               }}
               onKeyDown={(e) => {
@@ -1087,74 +1197,24 @@ export default function DesignToolbar({
               }}
             />
 
-            {/* Feedback / Status da IA */}
-            {aiStatusMessage && (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '7px 10px',
-                  borderRadius: 6,
-                  background:
-                    aiStatusType === 'error'
-                      ? 'rgba(239, 68, 68, 0.12)'
-                      : aiStatusType === 'success'
-                      ? 'rgba(34, 197, 94, 0.12)'
-                      : 'rgba(59, 130, 246, 0.12)',
-                  border:
-                    aiStatusType === 'error'
-                      ? '1px solid rgba(239, 68, 68, 0.25)'
-                      : aiStatusType === 'success'
-                      ? '1px solid rgba(34, 197, 94, 0.25)'
-                      : '1px solid rgba(59, 130, 246, 0.25)',
-                  fontSize: 11.5,
-                  fontWeight: 500,
-                  color:
-                    aiStatusType === 'error'
-                      ? '#ef4444'
-                      : aiStatusType === 'success'
-                      ? '#22c55e'
-                      : '#60a5fa',
-                  boxSizing: 'border-box',
-                }}
-              >
-                {aiStatusType === 'error' && <AlertCircle size={14} style={{ flexShrink: 0 }} />}
-                {aiStatusType === 'success' && <CheckCircle2 size={14} style={{ flexShrink: 0 }} />}
-                {aiStatusType === 'info' && <Loader2 size={14} className="animate-spin" style={{ flexShrink: 0 }} />}
-                <span style={{ flex: 1, wordBreak: 'break-word', lineHeight: 1.4 }}>{aiStatusMessage}</span>
-                {aiStatusType !== 'info' && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAiStatusMessage(null);
-                      setAiStatusType(null);
-                    }}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: 'inherit',
-                      opacity: 0.7,
-                      cursor: 'pointer',
-                      padding: 0,
-                      display: 'flex',
-                    }}
-                  >
-                    <X size={12} />
-                  </button>
-                )}
-              </div>
-            )}
-
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 2 }}>
-              <span style={{ fontSize: 11, color: themeTokens.textMuted, userSelect: 'none' }}>
+              <input ref={aiFileRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { addAiImages(Array.from(e.target.files || [])); e.target.value = ''; }} />
+              <button
+                type="button"
+                title="Anexar imagens de referência (ou cole / arraste aqui)"
+                onClick={() => aiFileRef.current?.click()}
+                style={{ background: 'transparent', border: 'none', color: aiImages.length ? accentColor : themeTokens.textMuted, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '4px 6px', marginRight: 6, flexShrink: 0 }}
+              >
+                <Paperclip size={14} />{aiImages.length > 0 && aiImages.length}
+              </button>
+              <span style={{ fontSize: 11, color: themeTokens.textMuted, userSelect: 'none', flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', }}>
                 Pressione <strong style={{ color: themeTokens.textSecondary }}>Enter</strong> para {selectedFrame ? 'modificar' : 'prototipar'} ou <strong style={{ color: themeTokens.textSecondary }}>Shift+Enter</strong> para pular linha
               </span>
 
               <button
                 id="design-ai-prompt-submit"
                 type="button"
-                disabled={!aiPromptText.trim() || isGeneratingAi}
+                disabled={!aiPromptText.trim()}
                 onClick={handleSendAi}
                 style={{
                   display: 'flex',
@@ -1171,20 +1231,20 @@ export default function DesignToolbar({
                   padding: '6px 14px',
                   fontSize: 12,
                   fontWeight: 600,
-                  cursor: aiPromptText.trim() && !isGeneratingAi ? 'pointer' : 'not-allowed',
+                  cursor: aiPromptText.trim() ? 'pointer' : 'not-allowed',
                   transition: 'all 0.15s ease',
                   flexShrink: 0,
                 }}
               >
-                {isGeneratingAi ? (
+                {justSent ? (
                   <>
-                    <Loader2 size={13} className="animate-spin" />
-                    <span>{selectedFrame ? 'Modificando...' : 'Gerando...'}</span>
+                    <CheckCircle2 size={13} />
+                    <span>Enviado</span>
                   </>
                 ) : (
                   <>
                     <Sparkles size={13} />
-                    <span>{selectedFrame ? 'Modificar' : 'Prototipar'}</span>
+                    <span>{selectedFrame ? 'Modificar' : 'Gerar'}</span>
                   </>
                 )}
               </button>
@@ -1363,6 +1423,29 @@ export default function DesignToolbar({
             })}
           </div>
 
+          {onOpenFrames && (
+            <div
+              role="button"
+              tabIndex={0}
+              title="Frames de dispositivos (celular, tablet, desktop)"
+              onClick={onOpenFrames}
+              style={{ width: 44, height: 44, boxSizing: 'border-box', borderRadius: 12, background: themeTokens.bgCard, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: themeTokens.textPrimary }}
+            >
+              <MonitorSmartphone size={18} />
+            </div>
+          )}
+          {onOpenIcons && (
+            <div
+              role="button"
+              tabIndex={0}
+              title="Ícones (Material)"
+              onClick={onOpenIcons}
+              style={{ width: 44, height: 44, boxSizing: 'border-box', borderRadius: 12, background: themeTokens.bgCard, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: themeTokens.textPrimary }}
+            >
+              <Shapes size={18} />
+            </div>
+          )}
+
           {/* DIV À DIREITA COM ÍCONE DE IA SELECIONADA NA HEADER */}
           <div
             id="design-ai-trigger-btn"
@@ -1400,8 +1483,11 @@ export default function DesignToolbar({
               e.currentTarget.style.transform = 'translateY(0)';
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
               {renderAiIcon(selectedAiProvider || 'claude', 22)}
+              {aiQueue.length > 0 && (
+                <span style={{ position: 'absolute', top: -8, right: -10, minWidth: 16, height: 16, borderRadius: 8, background: accentColor, color: '#fff', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px' }}>{aiQueue.length}</span>
+              )}
             </div>
           </div>
         </div>

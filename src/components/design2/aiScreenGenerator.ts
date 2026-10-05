@@ -67,7 +67,21 @@ function detectScreenCategory(prompt: string): 'login' | 'dashboard' | 'ecommerc
 /**
  * Gera protótipo de tela completo e estilizado de acordo com o pedido do usuário
  */
+// Os modelos descrevem só o que importa; os campos básicos faltantes são preenchidos na saída
+type ShapeDraft = Partial<Shape> & Pick<Shape, 'id' | 'type' | 'x' | 'y' | 'width' | 'height' | 'zIndex'>;
+
+/**
+ * Gera protótipo de tela completo e estilizado de acordo com o pedido do usuário
+ */
 export function generateAiPrototypeScreen(options: PrototypeScreenOptions): { shapes: Shape[]; mainFrameId: string; width: number; height: number } {
+  const draft = buildPrototypeDraft(options);
+  return {
+    ...draft,
+    shapes: draft.shapes.map((s) => ({ rotation: 0, stroke: 'none', strokeWidth: 0, opacity: 1, fill: 'transparent', ...s }) as Shape),
+  };
+}
+
+function buildPrototypeDraft(options: PrototypeScreenOptions): { shapes: ShapeDraft[]; mainFrameId: string; width: number; height: number } {
   const { prompt, pageId, accentColor, isDark = true, targetFrame } = options;
   const startX = targetFrame ? targetFrame.x : options.startX;
   const startY = targetFrame ? targetFrame.y : options.startY;
@@ -86,7 +100,7 @@ export function generateAiPrototypeScreen(options: PrototypeScreenOptions): { sh
   const successColor = '#10B981';
   const warningColor = '#F59E0B';
 
-  const shapes: Shape[] = [];
+  const shapes: ShapeDraft[] = [];
   let z = targetFrame ? targetFrame.zIndex + 1 : 100;
 
   const getOrCreateFrame = (defaultFrameId: string, defaultName: string, defaultW: number, defaultH: number, defaultRadius: number) => {
@@ -540,11 +554,28 @@ export function generateAiPrototypeScreen(options: PrototypeScreenOptions): { sh
         width: sidebarW - 24,
         height: 36,
         fill: isActive ? (isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)') : 'transparent',
-        borderLeft: isActive ? `3px solid ${accentColor}` : undefined,
         cornerRadius: 8,
         zIndex: z++,
         visible: true,
       });
+      // Marca do item ativo (o modelo de shape não tem borda lateral)
+      if (isActive) {
+        shapes.push({
+          id: uid('nav-active'),
+          parentId: frameId,
+          name: `Nav Active ${item}`,
+          type: 'rect',
+          pageId,
+          x: startX + 12,
+          y: itemY + 8,
+          width: 3,
+          height: 20,
+          fill: accentColor,
+          cornerRadius: 2,
+          zIndex: z++,
+          visible: true,
+        });
+      }
 
       shapes.push({
         id: uid(`nav-txt-${idx}`),

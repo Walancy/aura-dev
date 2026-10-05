@@ -198,18 +198,44 @@ export class GitService {
       if (fs.existsSync(gitPath)) {
         let remoteUrl = '';
         let repoFullName = '';
+        const folderName = path.basename(dirPath).toLowerCase();
         try {
           // Otimização de performance: lê .git/config diretamente sem spawn de processo
           const gitConfigPath = path.join(gitPath, 'config');
           if (fs.existsSync(gitConfigPath)) {
             const configText = fs.readFileSync(gitConfigPath, 'utf8');
-            const originMatch = configText.match(/\[remote\s+"origin"\][^\[]*?url\s*=\s*(.+)/);
-            if (originMatch && originMatch[1]) {
-              remoteUrl = originMatch[1].trim();
+            const remoteRegex = /\[remote\s+"([^"]+)"\][^\[]*?url\s*=\s*(.+)/g;
+            const remotes: Array<{ name: string; url: string; repoFullName?: string }> = [];
+            let rMatch: RegExpExecArray | null;
+            while ((rMatch = remoteRegex.exec(configText)) !== null) {
+              const rName = rMatch[1];
+              const rUrl = rMatch[2].trim();
+              const m = rUrl.match(/[:/]([^/:]+\/[^/:]+?)(?:\.git)?$/);
+              remotes.push({ name: rName, url: rUrl, repoFullName: m ? m[1] : undefined });
+            }
+
+            // 1. Se algum remote possui o mesmo nome de repositório que a pasta local, prioriza ele
+            const exactFolderMatch = remotes.find((r) => {
+              if (r.repoFullName) {
+                const repoOnly = r.repoFullName.split('/').pop()?.toLowerCase();
+                if (repoOnly === folderName) return true;
+              }
+              return r.name.toLowerCase() === folderName;
+            });
+
+            if (exactFolderMatch) {
+              remoteUrl = exactFolderMatch.url;
+              repoFullName = exactFolderMatch.repoFullName || '';
             } else {
-              const anyUrlMatch = configText.match(/url\s*=\s*(.+)/);
-              if (anyUrlMatch && anyUrlMatch[1]) {
-                remoteUrl = anyUrlMatch[1].trim();
+              // 2. Se não houver match direto com o nome da pasta, usa origin
+              const originRemote = remotes.find((r) => r.name === 'origin');
+              if (originRemote) {
+                remoteUrl = originRemote.url;
+                repoFullName = originRemote.repoFullName || '';
+              } else if (remotes.length > 0) {
+                // 3. Fallback para o primeiro remote encontrado
+                remoteUrl = remotes[0].url;
+                repoFullName = remotes[0].repoFullName || '';
               }
             }
           }
@@ -223,7 +249,7 @@ export class GitService {
             }).trim();
           }
 
-          if (remoteUrl) {
+          if (remoteUrl && !repoFullName) {
             const match = remoteUrl.match(/[:/]([^/:]+\/[^/:]+?)(?:\.git)?$/);
             if (match) repoFullName = match[1];
           }
@@ -439,7 +465,7 @@ export class GitService {
       if (issuesCount === 0 && (!sprintTitle || sprintTitle === 'Sprint')) {
         try {
           const ghIssuesRaw = execSync(
-            'gh issue list --json number,title,labels,milestone --limit 50',
+            'gh issue list --state all --json number,title,labels,milestone --limit 100',
             {
               cwd: gitDir,
               encoding: 'utf8',
@@ -532,11 +558,19 @@ export class GitService {
     }
 
     try {
-      const res = await fetch(`https://api.github.com/repos/${repoFullName}/issues?state=open&per_page=100`, { headers });
-      if (res.ok) {
+      const allIssues: any[] = [];
+      for (let page = 1; page <= 3; page++) {
+        const res = await fetch(
+          `https://api.github.com/repos/${repoFullName}/issues?state=all&per_page=100&page=${page}&sort=updated&direction=desc`,
+          { headers }
+        );
+        if (!res.ok) break;
         const data = await res.json();
-        if (Array.isArray(data)) {
-          return data.map((item: any) => ({
+        if (!Array.isArray(data) || data.length === 0) break;
+
+        const mapped = data
+          .filter((item: any) => !item.pull_request)
+          .map((item: any) => ({
             number: item.number,
             title: item.title,
             author: item.user?.login || item.user?.name || 'walancy',
@@ -546,6 +580,8 @@ export class GitService {
             body: item.body || '',
             updatedAt: item.updated_at,
             createdAt: item.created_at,
+            closedAt: item.closed_at,
+            closed_at: item.closed_at,
             labels: (item.labels || []).map((l: any) => ({
               id: l.id,
               name: l.name,
@@ -554,15 +590,20 @@ export class GitService {
             })),
             milestone: item.milestone
               ? {
+                  number: item.milestone.number,
                   title: item.milestone.title,
                   dueOn: item.milestone.due_on,
+                  state: item.milestone.state,
                 }
               : null,
             state: item.state,
             url: item.html_url,
           }));
-        }
+
+        allIssues.push(...mapped);
+        if (data.length < 100) break;
       }
+      return allIssues;
     } catch (err) {
       console.warn('[GitService] GitHub API issues fetch error:', err);
     }
@@ -635,13 +676,248 @@ export class GitService {
     }
 
     return new Promise((resolve) => {
-      exec(`git clone "${cleanUrl}"`, { cwd: targetParentDir, timeout: 180000 }, (error, _stdout, stderr) => {
+      exec(
+        `git clone "${cleanUrl}"`,
+        {
+          cwd: targetParentDir,
+          timeout: 180000,
+          env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        },
+        (error, _stdout, stderr) => {
+          if (error) {
+            resolve({ success: false, error: stderr || error.message });
+          } else {
+            resolve({ success: true, repoPath });
+          }
+        }
+      );
+    });
+  }
+
+  public getRecentCommitsSummary(
+    options:
+      | {
+          days?: number;
+          since?: string;
+          until?: string;
+          targetDates?: string[];
+          repoPath?: string;
+          author?: string;
+        }
+      | number = 4
+  ): Array<{
+    projectName: string;
+    repoPath: string;
+    commits: Array<{
+      hash: string;
+      message: string;
+      body?: string;
+      author: string;
+      date: string;
+      relativeDate: string;
+      isToday: boolean;
+      isYesterday: boolean;
+      isFriday?: boolean;
+    }>;
+  }> {
+    const opts = typeof options === 'number' ? { days: options } : options || {};
+    const days = opts.days || 4;
+
+    let targetProjects: Array<{ name: string; dir: string }> = [];
+
+    if (opts.repoPath && fs.existsSync(opts.repoPath)) {
+      if (fs.existsSync(path.join(opts.repoPath, '.git'))) {
+        targetProjects.push({ name: path.basename(opts.repoPath), dir: opts.repoPath });
+      }
+      // Check immediate subdirectories for git repos (e.g. monorepo or project folder)
+      try {
+        const subEntries = fs.readdirSync(opts.repoPath, { withFileTypes: true });
+        for (const se of subEntries) {
+          if (se.isDirectory() && se.name !== 'node_modules' && !se.name.startsWith('.')) {
+            const subDir = path.join(opts.repoPath, se.name);
+            if (fs.existsSync(path.join(subDir, '.git'))) {
+              targetProjects.push({ name: se.name, dir: subDir });
+            }
+          }
+        }
+      } catch {}
+    }
+
+    if (targetProjects.length === 0) {
+      targetProjects = this.scanLocalProjects();
+    }
+
+    const result: Array<{
+      projectName: string;
+      repoPath: string;
+      commits: Array<{
+        hash: string;
+        message: string;
+        body?: string;
+        author: string;
+        date: string;
+        relativeDate: string;
+        isToday: boolean;
+        isYesterday: boolean;
+        isFriday?: boolean;
+      }>;
+    }> = [];
+
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+    const yesterdayDate = new Date(now);
+    yesterdayDate.setDate(now.getDate() - 1);
+    const yesterdayStr = yesterdayDate.toISOString().slice(0, 10);
+
+    // Compute Friday date
+    const fridayDate = new Date(now);
+    const currentDay = now.getDay();
+    const diffToFriday = currentDay === 1 ? 3 : (currentDay + 2) % 7;
+    fridayDate.setDate(now.getDate() - diffToFriday);
+    const fridayStr = fridayDate.toISOString().slice(0, 10);
+
+    const targetDatesSet = opts.targetDates && opts.targetDates.length > 0 ? new Set(opts.targetDates) : null;
+
+    for (const proj of targetProjects) {
+      if (!proj.dir || !fs.existsSync(proj.dir)) continue;
+      try {
+        let filterArgs = '';
+        if (opts.since && opts.until) {
+          filterArgs = `--since="${opts.since}" --until="${opts.until}"`;
+        } else if (opts.since) {
+          filterArgs = `--since="${opts.since}"`;
+        } else if (opts.targetDates && opts.targetDates.length > 0) {
+          const sortedDates = [...opts.targetDates].sort();
+          filterArgs = `--since="${sortedDates[0]} 00:00:00" --until="${sortedDates[sortedDates.length - 1]} 23:59:59"`;
+        } else {
+          filterArgs = `--since="${days} days ago"`;
+        }
+
+        const cmd = `git log --all ${filterArgs} --format="COMMIT_START%x1f%h%x1f%s%x1f%b%x1f%an%x1f%ai%x1f%crCOMMIT_END" -n 40`;
+        const output = execSync(cmd, { cwd: proj.dir, encoding: 'utf8', timeout: 3000 }).trim();
+        if (!output) continue;
+
+        const chunks = output.split('COMMIT_END').filter((c) => c.includes('COMMIT_START'));
+        const commits = chunks
+          .map((chunk) => {
+            const clean = chunk.replace(/[\s\S]*COMMIT_START\x1f/, '');
+            const [hash, message, body, author, date, relativeDate] = clean.split('\x1f');
+            const commitIso = (date || '').slice(0, 10);
+            return {
+              hash: (hash || '').trim(),
+              message: (message || '').trim(),
+              body: (body || '').trim() || undefined,
+              author: (author || '').trim(),
+              date: (date || '').trim(),
+              relativeDate: (relativeDate || '').trim(),
+              isToday: commitIso === todayStr,
+              isYesterday: commitIso === yesterdayStr,
+              isFriday: commitIso === fridayStr,
+            };
+          })
+          .filter((c) => {
+            if (!c.hash || !c.message) return false;
+            if (targetDatesSet) {
+              const cIso = c.date.slice(0, 10);
+              return targetDatesSet.has(cIso);
+            }
+            return true;
+          });
+
+        if (commits.length > 0) {
+          result.push({
+            projectName: proj.name,
+            repoPath: proj.dir,
+            commits,
+          });
+        }
+      } catch {}
+    }
+
+    return result;
+  }
+
+  public listWorktrees(repoPath: string): Array<{ path: string; branch: string; isMain: boolean }> {
+    try {
+      const gitDir = this.resolveGitDir(repoPath);
+      if (!gitDir) return [];
+      const output = execSync('git worktree list --porcelain', { cwd: gitDir, encoding: 'utf8' });
+      const entries: Array<{ path: string; branch: string; isMain: boolean }> = [];
+      let current: { path?: string; branch?: string } = {};
+      for (const line of output.split('\n')) {
+        if (line.startsWith('worktree ')) {
+          if (current.path) entries.push({ path: current.path, branch: current.branch || '', isMain: entries.length === 0 });
+          current = { path: line.slice('worktree '.length) };
+        } else if (line.startsWith('branch ')) {
+          current.branch = line.slice('branch '.length).replace('refs/heads/', '');
+        }
+      }
+      if (current.path) entries.push({ path: current.path, branch: current.branch || '', isMain: entries.length === 0 });
+      return entries;
+    } catch {
+      return [];
+    }
+  }
+
+  public async createWorktree(
+    repoPath: string,
+    branchName: string,
+    targetDir: string
+  ): Promise<{ success: boolean; worktreePath?: string; error?: string }> {
+    const gitDir = this.resolveGitDir(repoPath);
+    if (!gitDir) return { success: false, error: 'Não é um repositório git' };
+    if (fs.existsSync(targetDir)) {
+      return { success: false, error: 'O diretório de destino já existe' };
+    }
+    const safeBranch = branchName.trim().replace(/[^a-zA-Z0-9._/-]/g, '-');
+    if (!safeBranch) return { success: false, error: 'Nome de branch inválido' };
+
+    return new Promise((resolve) => {
+      exec(`git worktree add "${targetDir}" -b "${safeBranch}"`, { cwd: gitDir, timeout: 60000 }, (error, _stdout, stderr) => {
         if (error) {
           resolve({ success: false, error: stderr || error.message });
         } else {
-          resolve({ success: true, repoPath });
+          resolve({ success: true, worktreePath: targetDir });
         }
       });
+    });
+  }
+
+  public async removeWorktree(repoPath: string, worktreePath: string): Promise<{ success: boolean; error?: string }> {
+    const gitDir = this.resolveGitDir(repoPath);
+    if (!gitDir) return { success: false, error: 'Não é um repositório git' };
+    return new Promise((resolve) => {
+      exec(`git worktree remove "${worktreePath}" --force`, { cwd: gitDir, timeout: 30000 }, (error, _stdout, stderr) => {
+        if (error) {
+          resolve({ success: false, error: stderr || error.message });
+        } else {
+          resolve({ success: true });
+        }
+      });
+    });
+  }
+
+  public async landWorktree(
+    repoPath: string,
+    branchName: string,
+    baseBranch: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const gitDir = this.resolveGitDir(repoPath);
+    if (!gitDir) return { success: false, error: 'Não é um repositório git' };
+    const safeBranch = branchName.trim().replace(/[^a-zA-Z0-9._/-]/g, '-');
+    const safeBase = baseBranch.trim().replace(/[^a-zA-Z0-9._/-]/g, '-');
+    return new Promise((resolve) => {
+      exec(
+        `git checkout "${safeBase}" && git merge --no-edit "${safeBranch}"`,
+        { cwd: gitDir, timeout: 60000 },
+        (error, _stdout, stderr) => {
+          if (error) {
+            resolve({ success: false, error: stderr || error.message });
+          } else {
+            resolve({ success: true });
+          }
+        }
+      );
     });
   }
 }

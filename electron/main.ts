@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, nativeImage, desktopCapturer, session } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import { NativePtyService } from './pty-service';
 import { NativeFileSystemService } from './fs-service';
 import { NativeProjectsService } from './projects-service';
@@ -14,11 +15,23 @@ import { gitService } from './git-service';
 import { extensionsService } from './extensions-service';
 import { chatHistoryService } from './chat-history-service';
 import { githubAuthService } from './github-auth-service';
+import { skillsService } from './skills-service';
 import { orchestratorService } from './orchestrator-service';
 import { autonomousService } from './autonomous-service';
+import { rolesService } from './roles-service';
+import { flutterService } from './flutter-service';
+import { getCleanEnv, resolveBinaryPath, normalizeClaudeModel } from './env-utils';
 
 // Set macOS application name
 app.name = 'Aura Dev';
+
+// Desativa restrições de Private Network Access (PNA), web security estrita para iframes locais e permite localhost
+app.commandLine.appendSwitch('disable-web-security');
+app.commandLine.appendSwitch('allow-insecure-localhost');
+app.commandLine.appendSwitch(
+  'disable-features',
+  'BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessRespectPreflightResults,PrivateNetworkAccessSendPreflights'
+);
 
 const getAppIcon = () => {
   const iconLocations = [
@@ -70,8 +83,16 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
+      webSecurity: false,
       webviewTag: true,
     },
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) {
+      shell.openExternal(url);
+    }
+    return { action: 'deny' };
   });
 
   mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, params) => {
@@ -79,7 +100,12 @@ function createWindow() {
     delete (webPreferences as any).preloadURL;
     webPreferences.nodeIntegration = false;
     webPreferences.contextIsolation = true;
-    if (!/^https:\/\/([a-z0-9-]+\.)*penpot\.app(\/|$)/i.test(params.src) && !/^http:\/\/localhost:9001(\/|$)/i.test(params.src)) {
+    const isAllowed =
+      /^https:\/\/([a-z0-9-]+\.)*penpot\.app(\/|$)/i.test(params.src) ||
+      /^http:\/\/localhost:9001(\/|$)/i.test(params.src) ||
+      // Previews locais (ex: Flutter web-server) rodando em localhost/127.0.0.1
+      /^http:\/\/(localhost|127\.0\.0\.1):\d+(\/|$)/i.test(params.src);
+    if (!isAllowed) {
       params.src = 'about:blank';
     }
   });
@@ -154,7 +180,7 @@ function createWindow() {
   req.on('error', () => {
     mainWindow?.loadFile(indexPath);
   });
-  req.setTimeout(500, () => {
+  req.setTimeout(3000, () => {
     req.destroy();
     mainWindow?.loadFile(indexPath);
   });
@@ -173,9 +199,9 @@ ipcMain.handle('window:isFullscreen', () => {
 });
 
 // PTY
-ipcMain.handle('pty:create', (_event, { id, type, cwd, cols, rows, accentColor }) => {
+ipcMain.handle('pty:create', (_event, { id, type, cwd, cols, rows, accentColor, extraOptions }) => {
   try {
-    const session = ptyService.createSession(id, type, cwd, cols, rows, accentColor);
+    const session = ptyService.createSession(id, type, cwd, cols, rows, accentColor, extraOptions);
     return {
       success: true,
       id: session.id,
@@ -183,10 +209,28 @@ ipcMain.handle('pty:create', (_event, { id, type, cwd, cols, rows, accentColor }
       type: session.type,
       cwd: session.cwd,
       pid: session.term?.pid,
+      reused: !!session.reused,
     };
   } catch (err: any) {
     console.error('[Native PTY] Create failed:', err);
     return { success: false, error: err?.message || String(err) };
+  }
+});
+
+ipcMain.handle('pty:writePrompt', async (_event, { id, prompt }) => {
+  try {
+    const ok = await ptyService.writePrompt(id, prompt);
+    return { success: ok };
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
+  }
+});
+
+ipcMain.handle('pty:runPromptInCli', async (_event, { id, prompt, timeoutMs }) => {
+  try {
+    return await ptyService.runPromptInCli(id, prompt, timeoutMs);
+  } catch (err: any) {
+    return { response: '', error: err?.message || String(err) };
   }
 });
 
@@ -224,13 +268,139 @@ ipcMain.handle('pty:setAllCwd', (_event, { cwd }) => {
   return { success: true };
 });
 
+ipcMain.handle('pty:getRunningSessions', () => {
+  return ptyService.getRunningSessions();
+});
+
 // File System
+ipcMain.handle('fs:getHomeDir', () => {
+  return os.homedir();
+});
+
 ipcMain.handle('fs:getTree', (_event, { dirPath, depth }) => {
   return fsService.getTree(dirPath, depth);
 });
 
+// Imagens para o Design: Unsplash (com chave de acesso gratuita) ou picsum.photos (sem chave); devolve data URL
+ipcMain.handle('unsplash:image', async (_e, { query, width, height, key, index }: { query: string; width: number; height: number; key?: string; index?: number }) => {
+  const w = Math.max(32, Math.min(1200, Math.round(width * 2)));
+  const h = Math.max(32, Math.min(1200, Math.round(height * 2)));
+  const i = index || 0;
+  let url = '';
+  let credit = '';
+  try {
+    if (key) {
+      const orientation = width > height * 1.15 ? 'landscape' : height > width * 1.15 ? 'portrait' : 'squarish';
+      const headers = { Authorization: `Client-ID ${key}` };
+      const r = await fetch(`https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=10&orientation=${orientation}&content_filter=high`, { headers });
+      if (r.ok) {
+        const j: any = await r.json();
+        const p = j.results?.[i % (j.results?.length || 1)];
+        if (p?.urls?.raw) {
+          url = `${p.urls.raw}&w=${w}&h=${h}&fit=crop&q=75&auto=format`;
+          credit = p.user?.name || '';
+          if (p.links?.download_location) fetch(p.links.download_location, { headers }).catch(() => {}); // exigido pelas diretrizes da API
+        }
+      }
+    }
+    const source = url ? 'unsplash' : 'picsum';
+    if (!url) url = `https://picsum.photos/seed/${encodeURIComponent(`${query}-${i}`)}/${w}/${h}`;
+    const res = await fetch(url, { redirect: 'follow' });
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    const type = res.headers.get('content-type') || 'image/jpeg';
+    return { dataUrl: `data:${type};base64,${Buffer.from(await res.arrayBuffer()).toString('base64')}`, credit, source };
+  } catch (err: any) {
+    return { error: err?.message || 'Falha de rede' };
+  }
+});
+
+// PDF a partir de HTML (proposta do Design): renderiza numa janela oculta e salva onde o usuário escolher
+ipcMain.handle('design:exportPdf', async (_e, { html, defaultName }: { html: string; defaultName: string }) => {
+  const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true, javascript: false } });
+  try {
+    await win.loadURL(`data:text/html;charset=utf-8;base64,${Buffer.from(html, 'utf8').toString('base64')}`);
+    const pdf = await win.webContents.printToPDF({ printBackground: true, pageSize: 'A4', preferCSSPageSize: true });
+    const safe = (defaultName || 'proposta').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80);
+    const target = await dialog.showSaveDialog(mainWindow!, { defaultPath: `${safe}.pdf`, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+    if (target.canceled || !target.filePath) return { canceled: true };
+    require('node:fs').writeFileSync(target.filePath, pdf);
+    shell.showItemInFolder(target.filePath);
+    return { path: target.filePath };
+  } catch (err: any) {
+    return { error: err?.message || 'Falha ao gerar o PDF' };
+  } finally {
+    win.destroy();
+  }
+});
+
+// Figma: a API não aceita CORS no renderer, então as chamadas passam pelo main
+ipcMain.handle('figma:fetch', async (_e, { token, apiPath }: { token: string; apiPath: string }) => {
+  if (!/^\/v1\/(files|images)\//.test(apiPath)) return { error: 'Caminho inválido' };
+  try {
+    const res = await fetch(`https://api.figma.com${apiPath}`, { headers: { 'X-Figma-Token': token } });
+    const text = await res.text();
+    if (!res.ok) return { error: res.status === 403 ? 'Token inválido ou sem acesso ao arquivo' : res.status === 404 ? 'Arquivo ou nó não encontrado' : `Figma respondeu ${res.status}`, status: res.status };
+    return { data: JSON.parse(text) };
+  } catch (err: any) {
+    return { error: err?.message || 'Falha de rede' };
+  }
+});
+
+// Baixa imagens (URLs temporárias do S3 do Figma) e devolve como data URL
+ipcMain.handle('figma:downloadImages', async (_e, { urls }: { urls: Record<string, string> }) => {
+  const out: Record<string, string> = {};
+  await Promise.all(
+    Object.entries(urls).map(async ([ref, url]) => {
+      try {
+        if (!/^https:\/\//.test(url)) return;
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const type = res.headers.get('content-type') || 'image/png';
+        out[ref] = `data:${type};base64,${Buffer.from(await res.arrayBuffer()).toString('base64')}`;
+      } catch {}
+    }),
+  );
+  return out;
+});
+
+// Imagem colada no terminal (Cmd+V): grava num temporário e devolve o caminho para a CLI de IA ler
+ipcMain.handle('fs:saveTempImage', (_event, { base64, ext }: { base64: string; ext?: string }) => {
+  const os = require('node:os');
+  const dir = path.join(os.tmpdir(), 'devflow-pasted-images');
+  fs.mkdirSync(dir, { recursive: true });
+  // limpa imagens coladas há mais de 1 dia
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      const fp = path.join(dir, f);
+      if (Date.now() - fs.statSync(fp).mtimeMs > 86400000) fs.unlinkSync(fp);
+    }
+  } catch {}
+  const safeExt = (ext || 'png').replace(/[^a-z0-9]/gi, '').slice(0, 5) || 'png';
+  const filePath = path.join(dir, `pasted-${Date.now()}.${safeExt}`);
+  fs.writeFileSync(filePath, Buffer.from(base64, 'base64'));
+  return { path: filePath };
+});
+
 ipcMain.handle('fs:readFile', (_event, { filePath }) => {
-  return fsService.readFile(filePath);
+  try {
+    return fsService.readFile(filePath);
+  } catch (err: any) {
+    return { error: err?.message || 'File not found', content: null, size: 0 };
+  }
+});
+
+// Auditoria permanente: <userData>/transcripts/<sessionId>.jsonl (um passo por linha)
+ipcMain.handle('ai:saveTranscript', (_event, { sessionId, history }: { sessionId: string; history: any[] }) => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const dir = path.join(app.getPath('userData'), 'transcripts');
+  fs.mkdirSync(dir, { recursive: true });
+  const safeId = String(sessionId).replace(/[^\w.-]/g, '_');
+  const lines = history.map((m, step_index) =>
+    JSON.stringify({ step_index, type: m.type, content: m.text, tool_calls: m.executionSteps ?? [], changed_files: m.changedFiles ?? [], timestamp: m.timestamp ?? null })
+  );
+  fs.writeFileSync(path.join(dir, `${safeId}.jsonl`), lines.join('\n') + '\n', 'utf8');
+  return { success: true, path: path.join(dir, `${safeId}.jsonl`) };
 });
 
 ipcMain.handle('fs:writeFile', (_event, { filePath, content }) => {
@@ -330,9 +500,27 @@ ipcMain.handle('ports:scan', async () => {
   return { ports };
 });
 
+ipcMain.handle('ports:kill', async (_, pid: string | number) => {
+  return await portsService.kill(pid);
+});
+
+// Orchestration agent roles
+ipcMain.handle('roles:list', () => {
+  return rolesService.list();
+});
+ipcMain.handle('roles:create', (_event, role: { name: string; color: string; instructions: string }) => {
+  return rolesService.create(role);
+});
+ipcMain.handle('roles:update', (_event, { id, patch }: { id: string; patch: Partial<{ name: string; color: string; instructions: string }> }) => {
+  return rolesService.update(id, patch);
+});
+ipcMain.handle('roles:delete', (_event, id: string) => {
+  return rolesService.delete(id);
+});
+
 // Design Room (LAN collaboration)
-ipcMain.handle('design-room:host', async (_event, { roomName }: { roomName: string }) => {
-  return designRoomService.hostRoom(roomName);
+ipcMain.handle('design-room:host', async (_event, { roomName, canEdit }: { roomName: string; canEdit?: boolean }) => {
+  return designRoomService.hostRoom(roomName, canEdit !== false);
 });
 ipcMain.handle('design-room:stop-hosting', () => {
   designRoomService.stopHosting();
@@ -348,6 +536,9 @@ ipcMain.handle('design-room:join', (_event, { ip, port }: { ip: string; port: nu
 });
 ipcMain.handle('design-room:leave', () => {
   designRoomService.leaveRoom();
+});
+ipcMain.on('design-room:send-cursor', (_event, { cursor }: { cursor: { x: number; y: number; name: string; color: string } }) => {
+  designRoomService.sendCursor(cursor);
 });
 ipcMain.on('design-room:broadcast-state', (_event, { shapes }: { shapes: unknown[] }) => {
   designRoomService.broadcastState(shapes);
@@ -378,28 +569,317 @@ ipcMain.handle('extensions:getInstalled', async () => {
   return extensionsService.getInstalled();
 });
 
-// AI Agent
-ipcMain.handle('ai:prompt', async (_event, { prompt, model, cwd }) => {
-  const activeProj = projectsService.getActiveProject();
-  const targetCwd = cwd || activeProj.path;
-  
-  if (model === 'claude-headless') {
-    const { execSync } = require('child_process');
-    try {
-      const output = execSync(`claude -p "${prompt.replace(/"/g, '\\"')}"`, {
-        cwd: targetCwd,
-        encoding: 'utf8',
-        timeout: 25000,
-      });
-      return { response: output };
-    } catch (err: any) {
-      return { response: `[Claude Code CLI Output]: ${err.stdout || err.message}` };
+// Execuções diretas de CLI em andamento, por diretório de projeto (vários projetos podem gerar ao mesmo tempo)
+const activeDirectCliRuns = new Map<string, { child: any; cancel: () => void }>();
+let directRunSeq = 0;
+
+interface ActivePromptEntry {
+  child: any;
+  timer: NodeJS.Timeout;
+  isCancelled: boolean;
+  resolve: (val: any) => void;
+  runId?: string;
+  sessionIds?: string[];
+}
+
+const activePromptProcesses = new Set<ActivePromptEntry>();
+
+function killProcessTree(child: any): void {
+  if (!child || !child.pid) return;
+  const pid = child.pid;
+  try {
+    if (process.platform === 'win32') {
+      const { execSync } = require('node:child_process');
+      execSync(`taskkill /pid ${pid} /T /F 2>nul`);
+    } else {
+      try { process.kill(-pid, 'SIGKILL'); } catch {}
+      try { process.kill(pid, 'SIGKILL'); } catch {}
+      try {
+        const { execSync } = require('node:child_process');
+        execSync(`pkill -9 -P ${pid} 2>/dev/null || true`);
+      } catch {}
     }
+  } catch {}
+  try { child.kill('SIGKILL'); } catch {}
+}
+
+// Portless (Vercel): só orienta o uso quando o projeto JÁ o utiliza. Nunca manda instalar dependência.
+function injectPortlessDirective(prompt: string, targetCwd?: string): string {
+  if (!prompt || prompt.startsWith('/') || prompt.includes('PORTLESS')) {
+    return prompt;
+  }
+  let hasPortless = false;
+  if (targetCwd) {
+    try {
+      const pkgPath = path.join(targetCwd, 'package.json');
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+        hasPortless =
+          Boolean(deps['portless'] || deps['@vercel/portless'] || deps['vercel-labs/portless']) ||
+          Object.values(pkg.scripts || {}).some((s) => typeof s === 'string' && s.includes('portless'));
+      }
+    } catch {}
+  }
+  if (!hasPortless) return prompt;
+
+  return (
+    `\n[PORTLESS]: este projeto já usa o portless da Vercel. Ao rodar o servidor de desenvolvimento, prefira o script que o utiliza e informe a URL .localhost gerada. ` +
+    `Nunca derrube processos/portas em uso.\n\n` +
+    prompt
+  );
+}
+
+// AI Agent
+ipcMain.handle('ai:prompt', async (_event, { prompt, model, cwd, provider, timeoutMs, runId, sessionIds }: { prompt: string; model?: string; cwd?: string; provider?: string; timeoutMs?: number; runId?: string; sessionIds?: string[] }) => {
+  const activeProj = projectsService.getActiveProject();
+  const targetCwd = cwd || activeProj?.path || process.env.HOME || process.cwd();
+
+  let cliCmd = 'claude';
+  const lowerProvider = (provider || '').toLowerCase();
+  const lowerModel = (model || '').toLowerCase();
+
+  if (
+    lowerProvider === 'antigravity' ||
+    lowerModel.startsWith('agy') ||
+    lowerModel.startsWith('antigravity') ||
+    (lowerModel.startsWith('gemini') && lowerProvider !== 'gemini')
+  ) {
+    cliCmd = 'agy';
+  } else if (lowerProvider === 'gemini') {
+    cliCmd = 'gemini';
+  } else if (lowerProvider === 'codex' || lowerProvider === 'openai' || lowerModel.startsWith('codex') || lowerModel.startsWith('gpt')) {
+    cliCmd = 'codex';
+  } else if (lowerProvider === 'ollama' || lowerModel.startsWith('ollama')) {
+    cliCmd = 'ollama';
+  } else {
+    cliCmd = 'claude';
   }
 
-  return {
-    response: `### ✦ Google Antigravity Agent (AGY v2.4)\n\n**Projeto Ativo:** \`${activeProj.name}\` (\`${targetCwd}\`)\n\nAnalisando requisição: **"${prompt}"**\n\n- **Modo Agente:** Autônomo com verificação nativa IPC.\n- **Execução:** O binário Claude Code e AGY estão prontos para rodar no terminal nativo abaixo.\n\n> Clique em **"+ Claude Code"** no terminal para aprovar comandos e interagir diretamente.`,
-  };
+  const binaryPath = resolveBinaryPath(cliCmd);
+  const args: string[] = [];
+
+  let promptToSend = injectPortlessDirective(prompt, targetCwd);
+  if (cliCmd === 'claude') {
+    const resolvedModel = normalizeClaudeModel(model === 'claude-headless' ? '' : model);
+    if (resolvedModel) {
+      args.push('--model', resolvedModel);
+    }
+    args.push('--dangerously-skip-permissions');
+    const skillArgs = skillsService.cliArgs('claude');
+    if (skillArgs.length) {
+      args.push(...skillArgs);
+    }
+    const preamble = skillsService.promptPreamble('claude');
+    if (preamble) {
+      promptToSend = preamble + promptToSend;
+    }
+    args.push('-p', promptToSend);
+  } else if (cliCmd === 'agy') {
+    let resolvedModel = model;
+    if (model) {
+      const lm = model.toLowerCase();
+      if (lm.includes('3.8') && lm.includes('high')) resolvedModel = 'gemini-3.8-flash-high';
+      else if (lm.includes('3.8') && lm.includes('medium')) resolvedModel = 'gemini-3.8-flash-medium';
+      else if (lm.includes('3.8') && lm.includes('low')) resolvedModel = 'gemini-3.8-flash-low';
+      else if (lm.includes('3.7') && lm.includes('high')) resolvedModel = 'gemini-3.7-flash-high';
+      else if (lm.includes('3.7') && lm.includes('medium')) resolvedModel = 'gemini-3.7-flash-medium';
+      else if (lm.includes('3.7') && lm.includes('low')) resolvedModel = 'gemini-3.7-flash-low';
+      else if (lm.includes('3.6')) resolvedModel = 'gemini-3.6-flash-high';
+      else if (lm.includes('3.1') && lm.includes('high')) resolvedModel = 'gemini-3.1-pro-high';
+      else if (lm.includes('sonnet')) resolvedModel = 'claude-sonnet-4-6';
+    }
+    if (resolvedModel && !prompt.startsWith('/')) {
+      args.push('--model', resolvedModel);
+    }
+    args.push('--dangerously-skip-permissions');
+    args.push('--add-dir', targetCwd);
+    args.push('-p', promptToSend);
+  } else if (cliCmd === 'codex') {
+    args.push('exec');
+    if (model && !prompt.startsWith('/')) {
+      args.push('-m', model);
+    }
+    args.push('--dangerously-bypass-approvals-and-sandbox');
+    args.push('--cd', targetCwd);
+    args.push(promptToSend);
+  } else if (cliCmd === 'gemini') {
+    if (model && !prompt.startsWith('/')) {
+      args.push('--model', model);
+    }
+    args.push('-p', promptToSend);
+  } else if (cliCmd === 'ollama') {
+    args.push('run', model || 'llama3', promptToSend);
+  } else {
+    args.push(promptToSend);
+  }
+
+  const env = getCleanEnv();
+
+  return new Promise((resolve) => {
+    const { spawn } = require('node:child_process');
+    let stdout = '';
+    let stderr = '';
+    let resolved = false;
+
+    const timeoutDuration = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 300000;
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        try {
+          if (child.pid && process.platform !== 'win32') {
+            process.kill(-child.pid, 'SIGTERM');
+          } else {
+            child.kill('SIGTERM');
+          }
+        } catch {}
+        resolve({
+          response: stdout.trim(),
+          error: 'Tempo limite esgotado ao aguardar resposta do CLI',
+        });
+      }
+    }, timeoutDuration);
+
+    const child = spawn(binaryPath, args, {
+      cwd: targetCwd,
+      env,
+      detached: process.platform !== 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const entry: ActivePromptEntry = {
+      child,
+      timer,
+      isCancelled: false,
+      resolve,
+      runId,
+      sessionIds,
+    };
+    activePromptProcesses.add(entry);
+
+    const pName = cliCmd.toUpperCase();
+    const mName = model ? ` (${model})` : '';
+    const promptSnippet = prompt.length > 200 ? prompt.slice(0, 200) + '...' : prompt;
+    const startBanner = `\r\n\x1b[1;38;2;255;106;0m╭─ [DevFlow IA CLI: ${pName}${mName}]\x1b[0m\r\n\x1b[90m│ Prompt: ${promptSnippet.replace(/\r?\n/g, ' ')}\x1b[0m\r\n\x1b[1;38;2;255;106;0m╰──────────────────────────────────────────────────\x1b[0m\r\n`;
+
+    if (sessionIds && sessionIds.length > 0) {
+      for (const sId of sessionIds) {
+        ptyService.sendOutput(sId, startBanner);
+        ptyService.setRunning(sId, true);
+      }
+    }
+
+    // Indicador dinâmico de progresso em tempo real enquanto a IA raciocina
+    let stdoutReceived = false;
+    let elapsedSec = 0;
+    const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    const progressTimer = setInterval(() => {
+      if (entry.isCancelled || resolved || stdoutReceived) {
+        clearInterval(progressTimer);
+        return;
+      }
+      elapsedSec++;
+      if (sessionIds && sessionIds.length > 0) {
+        const frame = spinnerFrames[elapsedSec % spinnerFrames.length];
+        const statusLine = `\r\x1b[2K\x1b[38;2;16;185;129m${frame}\x1b[0m \x1b[90m[Aguardando resposta do modelo ${pName}... ${elapsedSec}s]\x1b[0m`;
+        for (const sId of sessionIds) {
+          ptyService.sendOutput(sId, statusLine);
+        }
+      }
+    }, 1000);
+
+    child.stdout?.on('data', (data: Buffer) => {
+      if (entry.isCancelled) return;
+      if (!stdoutReceived) {
+        stdoutReceived = true;
+        clearInterval(progressTimer);
+        if (sessionIds && sessionIds.length > 0) {
+          for (const sId of sessionIds) {
+            ptyService.sendOutput(sId, '\r\x1b[2K\r\n');
+          }
+        }
+      }
+      const text = data.toString();
+      stdout += text;
+      if (sessionIds && sessionIds.length > 0) {
+        const formatted = text.replace(/\r?\n/g, '\r\n');
+        for (const sId of sessionIds) {
+          ptyService.sendOutput(sId, formatted);
+        }
+      }
+    });
+
+    child.stderr?.on('data', (data: Buffer) => {
+      if (entry.isCancelled) return;
+      const text = data.toString();
+      stderr += text;
+      if (sessionIds && sessionIds.length > 0) {
+        const formatted = text.replace(/\r?\n/g, '\r\n');
+        for (const sId of sessionIds) {
+          ptyService.sendOutput(sId, `\x1b[33m${formatted}\x1b[0m`);
+        }
+      }
+    });
+
+    child.on('error', (err: Error) => {
+      clearTimeout(timer);
+      clearInterval(progressTimer);
+      activePromptProcesses.delete(entry);
+      if (sessionIds && sessionIds.length > 0) {
+        for (const sId of sessionIds) {
+          ptyService.setRunning(sId, false);
+          ptyService.sendOutput(sId, `\r\n\x1b[1;31m✖ Erro ao executar ${pName}: ${err.message}\x1b[0m\r\n\r\n`);
+        }
+      }
+      if (!resolved) {
+        resolved = true;
+        resolve({
+          response: stdout.trim(),
+          error: entry.isCancelled ? 'Operação cancelada pelo usuário' : err.message,
+          cancelled: entry.isCancelled,
+        });
+      }
+    });
+
+    child.on('close', (code: number) => {
+      clearTimeout(timer);
+      clearInterval(progressTimer);
+      activePromptProcesses.delete(entry);
+      if (sessionIds && sessionIds.length > 0) {
+        for (const sId of sessionIds) {
+          ptyService.setRunning(sId, false);
+        }
+        const endBanner = entry.isCancelled
+          ? `\r\n\x1b[1;31m✖ [${cliCmd.toUpperCase()}] Interrompido pelo usuário.\x1b[0m\r\n\r\n`
+          : code === 0
+          ? `\r\n\x1b[1;32m✔ [${cliCmd.toUpperCase()}] Finalizado com sucesso.\x1b[0m\r\n\r\n`
+          : `\r\n\x1b[1;31m✖ [${cliCmd.toUpperCase()}] Encerrou com código ${code}.\x1b[0m\r\n\r\n`;
+        for (const sId of sessionIds) {
+          ptyService.sendOutput(sId, endBanner);
+        }
+      }
+      if (!resolved) {
+        resolved = true;
+        if (entry.isCancelled) {
+          resolve({
+            response: '',
+            error: 'Operação cancelada pelo usuário',
+            cancelled: true,
+          });
+          return;
+        }
+        if (code === 0 && stdout.trim()) {
+          resolve({ response: stdout.trim() });
+        } else {
+          const errorMsg = (stderr.trim() || stdout.trim() || `CLI encerrou com código ${code}`).trim();
+          resolve({
+            response: stdout.trim(),
+            error: errorMsg,
+          });
+        }
+      }
+    });
+  });
 });
 
 // Check Installed AI CLIs on the system
@@ -458,44 +938,76 @@ ipcMain.handle('ai:checkClis', async () => {
   };
 });
 
-let activeDirectCliChild: any = null;
-let isCurrentDirectCliCancelled = false;
+ipcMain.handle('ai:cancel', async (_event, runId?: string, cwd?: string) => {
+  let cancelled = false;
+  if (runId) {
+    cancelled = orchestratorService.cancel(runId);
+  }
 
-function killProcessTree(child: any): void {
-  if (!child || !child.pid) return;
-  const pid = child.pid;
-  try {
-    if (process.platform === 'win32') {
-      const { execSync } = require('node:child_process');
-      execSync(`taskkill /pid ${pid} /T /F 2>nul`);
-    } else {
-      try { process.kill(-pid, 'SIGKILL'); } catch {}
-      try { process.kill(pid, 'SIGKILL'); } catch {}
+  for (const entry of Array.from(activePromptProcesses)) {
+    // Se runId for especificado, só cancela os processos vinculados a esse runId.
+    // Se NÃO for especificado (ex: Ctrl+C no chat ou Escape na UI), só cancela prompts sem runId.
+    // Isso impede que abrir um modal, fechar um popup ou acionar o chat cancele fluxos da orquestração.
+    const shouldCancel = runId ? (entry.runId === runId) : !entry.runId;
+    if (shouldCancel) {
+      entry.isCancelled = true;
+      clearTimeout(entry.timer);
       try {
-        const { execSync } = require('node:child_process');
-        execSync(`pkill -9 -P ${pid} 2>/dev/null || true`);
-      } catch {}
+        killProcessTree(entry.child);
+      } catch (err) {
+        console.warn('[ai:cancel] Erro ao matar subprocesso de prompt:', err);
+      }
+      if (entry.sessionIds && entry.sessionIds.length > 0) {
+        for (const sId of entry.sessionIds) {
+          ptyService.sendOutput(sId, `\r\n\x1b[1;31m✖ Execução cancelada pelo usuário.\x1b[0m\r\n\r\n`);
+        }
+      }
+      entry.resolve({
+        response: '',
+        error: 'Operação cancelada pelo usuário',
+        cancelled: true,
+      });
+      activePromptProcesses.delete(entry);
+      cancelled = true;
     }
-  } catch {}
-  try { child.kill('SIGKILL'); } catch {}
-}
+  }
 
-ipcMain.handle('ai:orchestratorProviders', async () => orchestratorService.providers());
-ipcMain.handle('ai:orchestrate', async (_event, input) => orchestratorService.run(input, (event) => mainWindow?.webContents.send('ai:orchestrator-event', event)));
-ipcMain.handle('ai:orchestratorCancel', async (_event, runId?: string) => ({ cancelled: orchestratorService.cancel(runId) }));
-ipcMain.handle('ai:cancel', async (_event, runId?: string) => {
-  let cancelled = orchestratorService.cancel(runId);
-  if (activeDirectCliChild) {
-    const child = activeDirectCliChild;
-    activeDirectCliChild = null;
-    isCurrentDirectCliCancelled = true;
-    killProcessTree(child);
-    cancelled = true;
+  if (!runId) {
+    // Com cwd cancela só a execução daquele projeto; sem cwd, todas (comportamento anterior)
+    for (const [key, run] of Array.from(activeDirectCliRuns.entries())) {
+      if (cwd && key.split('\u0000')[0] !== cwd) continue;
+      run.cancel();
+      cancelled = true;
+    }
   }
   return { cancelled };
 });
+ipcMain.handle('ai:orchestratorCancel', async (_event, runId: string) => ({ cancelled: orchestratorService.cancel(runId) }));
 ipcMain.handle('ai:autonomousRun', async (_event, input) => autonomousService.run(input, (event) => mainWindow?.webContents.send('ai:orchestrator-event', event)));
 ipcMain.handle('ai:autonomousCancel', async (_event, runId: string) => ({ cancelled: autonomousService.cancel(runId) }));
+
+// Flutter apps (preview web-server para o node "webview" da Orquestração)
+ipcMain.handle('flutter:run', async (_event, { runId, cwd, port }: { runId: string; cwd: string; port: number }) => {
+  return flutterService.run(runId, cwd, port, (event) => mainWindow?.webContents.send('flutter:event', event));
+});
+ipcMain.handle('flutter:stop', async (_event, runId: string) => {
+  return flutterService.stop(runId);
+});
+
+// Captura de janelas nativas (usado para embutir o Simulador iOS no macOS, best-effort)
+ipcMain.handle('capture:listWindows', async (_event, { filter }: { filter?: string } = {}) => {
+  const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 0, height: 0 } });
+  const isSimulator = filter && /simulator/i.test(filter);
+  const filtered = filter
+    ? sources.filter((s) => {
+        if (isSimulator) {
+          return /iphone|ipad|ipod|apple\s*watch|simulator/i.test(s.name);
+        }
+        return s.name.toLowerCase().includes(filter.toLowerCase());
+      })
+    : sources;
+  return filtered.map((s) => ({ id: s.id, name: s.name }));
+});
 
 // Dynamic Slash Commands extractor from active CLI
 ipcMain.handle('ai:getCommands', async (_event, { providerId }: { providerId: string }) => {
@@ -547,20 +1059,31 @@ ipcMain.handle('ai:runCli', async (_event, {
   additionalDirs,
   useOrchestrator,
   orchestratorConfig,
+  permissions,
+  streamText,
 }: {
   cliCmd: string;
   prompt: string;
   model?: string;
   cwd?: string;
+  streamText?: boolean;
   additionalDirs?: string[];
   useOrchestrator?: boolean;
   orchestratorConfig?: any;
+  permissions?: {
+    executionMode: 'always-proceed' | 'request-review' | 'strict' | 'proceed-in-sandbox';
+    externalFilesAccess: 'allow' | 'ask' | 'deny';
+    networkAccess: 'allow' | 'ask' | 'deny';
+    allowlistCommands: string[];
+    denylistCommands: string[];
+  };
 }) => {
   const fs = require('node:fs');
   const path = require('node:path');
   const { spawn } = require('node:child_process');
   const userHome = process.env.HOME || '';
   const targetCwd = cwd && fs.existsSync(cwd) ? cwd : (userHome || process.cwd());
+  const promptToSend = injectPortlessDirective(prompt, targetCwd);
 
   const customPaths = [
     path.join(userHome, '.local/bin'),
@@ -586,107 +1109,104 @@ ipcMain.handle('ai:runCli', async (_event, {
     }
   }
 
+  // Políticas salvas em "Permissões" do chat. Sem política salva, mantém o comportamento legado (sem aprovação).
+  const mode = permissions?.executionMode ?? 'always-proceed';
+  if (permissions?.externalFilesAccess === 'deny') additionalDirs = [];
+  const claudePermissionArgs = (): string[] => {
+    const a: string[] = [];
+    if (!permissions || mode === 'always-proceed' || mode === 'proceed-in-sandbox') a.push('--dangerously-skip-permissions');
+    else a.push('--permission-mode', mode === 'strict' ? 'default' : 'acceptEdits');
+    if (permissions) {
+      const bash = (list: string[]) => list.map((c) => `Bash(${c}:*)`);
+      const allowed = mode === 'always-proceed' || mode === 'proceed-in-sandbox' ? [] : bash(permissions.allowlistCommands);
+      const denied = [...bash(permissions.denylistCommands), ...(permissions.networkAccess === 'deny' ? ['WebFetch', 'WebSearch'] : [])];
+      if (allowed.length) a.push('--allowedTools', ...allowed);
+      if (denied.length) a.push('--disallowedTools', ...denied);
+    }
+    return a;
+  };
+
   const args: string[] = [];
   if (cliCmd === 'claude') {
-    let resolvedModel = model?.trim() || '';
-    if (resolvedModel) {
-      const lower = resolvedModel.toLowerCase();
-      if (lower === 'default' || lower === 'padrão') {
-        resolvedModel = '';
-      } else if (lower.includes('sonnet') && lower.includes('1m')) {
-        resolvedModel = 'sonnet[1m]';
-      } else if (lower.includes('opus') && lower.includes('1m')) {
-        resolvedModel = 'opus[1m]';
-      } else if (lower.includes('fable') && lower.includes('1m')) {
-        resolvedModel = 'fable[1m]';
-      } else if (lower.includes('opus') && lower.includes('plan')) {
-        resolvedModel = 'opusplan';
-      } else if (lower.includes('sonnet')) {
-        resolvedModel = 'sonnet';
-      } else if (lower.includes('opus')) {
-        resolvedModel = 'opus';
-      } else if (lower.includes('haiku')) {
-        resolvedModel = 'haiku';
-      } else if (lower.includes('fable')) {
-        resolvedModel = 'fable';
-      } else if (lower.includes('best')) {
-        resolvedModel = 'best';
-      }
-    }
-
+    const resolvedModel = normalizeClaudeModel(model);
     if (resolvedModel && !prompt.startsWith('/')) {
       args.push('--model', resolvedModel);
     }
-    args.push('--dangerously-skip-permissions');
-    args.push('-p', prompt);
+    args.push(...claudePermissionArgs());
+    // Texto em tempo real (Design): o Claude só imprime no fim sem stream-json
+    if (streamText) args.push('--output-format', 'stream-json', '--verbose', '--include-partial-messages');
+    args.push('-p', promptToSend);
   } else if (cliCmd === 'agy') {
     if (model && !prompt.startsWith('/')) {
       args.push('--model', model);
     }
     args.push('--dangerously-skip-permissions');
+    if (streamText) args.push('--output-format', 'stream-json');
     args.push('--add-dir', targetCwd);
     if (additionalDirs && additionalDirs.length > 0) {
       for (const dir of additionalDirs) {
         args.push('--add-dir', dir);
       }
     }
-    args.push('-p', prompt);
+    args.push('-p', promptToSend);
   } else if (cliCmd === 'codex') {
     args.push('exec');
     if (model && !prompt.startsWith('/')) {
       args.push('-m', model);
     }
-    args.push('--dangerously-bypass-approvals-and-sandbox');
+    if (!permissions || mode === 'always-proceed') args.push('--dangerously-bypass-approvals-and-sandbox');
+    else args.push('--sandbox', mode === 'strict' ? 'read-only' : 'workspace-write');
     args.push('--cd', targetCwd);
-    args.push(prompt);
+    args.push(promptToSend);
   } else if (cliCmd === 'gemini') {
     if (model && !prompt.startsWith('/')) {
       args.push('--model', model);
     }
-    args.push('-p', prompt);
+    args.push('-p', promptToSend);
   } else if (cliCmd === 'ollama') {
-    args.push('run', model || 'llama3', prompt);
+    args.push('run', model || 'llama3', promptToSend);
   } else {
-    args.push(prompt);
+    args.push(promptToSend);
   }
 
-  // Strip Antigravity IDE and Electron internals so the CLI executes in a pristine clean environment
-  const cleanEnv = { ...process.env };
-  for (const key of Object.keys(cleanEnv)) {
-    if (
-      key.startsWith('ANTIGRAVITY_') ||
-      key.startsWith('VSCODE_') ||
-      key.startsWith('ELECTRON_') ||
-      key.startsWith('GEMINI_')
-    ) {
-      delete cleanEnv[key];
+  // Skills ativas do DevFlow: flags do CLI (ex.: --plugin-dir do Claude) antes do prompt,
+  // e índice no prompt para CLIs sem suporte nativo (ex.: Antigravity)
+  if (!prompt.startsWith('/')) {
+    const skillArgs = skillsService.cliArgs(cliCmd);
+    if (skillArgs.length) {
+      const promptIdx = args.lastIndexOf(promptToSend);
+      args.splice(promptIdx > 0 && args[promptIdx - 1] === '-p' ? promptIdx - 1 : Math.max(0, promptIdx), 0, ...skillArgs);
+    }
+    const preamble = skillsService.promptPreamble(cliCmd);
+    if (preamble) {
+      const promptIdx = args.lastIndexOf(promptToSend);
+      if (promptIdx >= 0) args[promptIdx] = preamble + promptToSend;
     }
   }
 
-  const env = {
-    ...cleanEnv,
-    TERM: 'xterm-256color',
-    COLORTERM: 'truecolor',
-    PATH: envPath,
-    HOME: userHome,
-  };
+  const env = getCleanEnv();
 
   // If the orchestrator is active, follow the orchestrator configuration and route through the Rust orchestrator service.
   // Otherwise, use direct CLI execution of the selected AI.
   if (useOrchestrator && !prompt.startsWith('/')) {
-    const orchestratorProvider =
-      cliCmd === 'agy' || cliCmd === 'antigravity'
-        ? 'antigravity'
-        : (cliCmd === 'codex' ? 'codex' : 'claude');
+    const supportedProviders = ['agy', 'antigravity', 'codex', 'claude'];
+    if (supportedProviders.includes(cliCmd)) {
+      const orchestratorProvider =
+        cliCmd === 'agy' || cliCmd === 'antigravity'
+          ? 'antigravity'
+          : (cliCmd === 'codex' ? 'codex' : 'claude');
 
-    return orchestratorService.run({
-      provider: orchestratorProvider,
-      request: prompt,
-      cwd: targetCwd,
-      model,
-      additionalDirs,
-      mode: orchestratorConfig?.mode || 'execute',
-    }, (event) => mainWindow?.webContents.send('ai:orchestrator-event', event));
+      const resolvedModel = cliCmd === 'claude' ? normalizeClaudeModel(model) : model;
+
+      return orchestratorService.run({
+        provider: orchestratorProvider,
+        request: promptToSend,
+        cwd: targetCwd,
+        model: resolvedModel,
+        additionalDirs,
+        mode: orchestratorConfig?.mode || 'execute',
+      }, (event) => mainWindow?.webContents.send('ai:orchestrator-event', event));
+    }
   }
 
   return new Promise((resolve) => {
@@ -694,55 +1214,97 @@ ipcMain.handle('ai:runCli', async (_event, {
     let stderr = '';
     let resolved = false;
 
-    isCurrentDirectCliCancelled = false;
+    let isCancelled = false;
     const child = spawn(binaryPath, args, {
       cwd: targetCwd,
       env,
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    activeDirectCliChild = child;
+    // chave única por execução (duas execuções no mesmo projeto não podem perder o handle de cancelamento)
+    const runKey = `${targetCwd}\u0000${++directRunSeq}`;
+    activeDirectCliRuns.set(runKey, {
+      child,
+      cancel: () => {
+        isCancelled = true;
+        activeDirectCliRuns.delete(runKey);
+        killProcessTree(child);
+      },
+    });
+    const releaseRun = () => {
+      activeDirectCliRuns.delete(runKey);
+    };
 
-    child.stdout?.on('data', (data: Buffer) => {
-      if (isCurrentDirectCliCancelled) return;
-      const chunk = data.toString();
-      stdout += chunk;
+    const emitText = (text: string) =>
       mainWindow?.webContents.send('ai:orchestrator-event', {
         provider: cliCmd,
         kind: 'progress',
         message: 'stdout',
-        payload: { text: chunk },
+        payload: { text },
         timestamp_ms: Date.now(),
       });
+    const jsonStream = (cliCmd === 'claude' || cliCmd === 'agy') && !!streamText;
+    let lineBuf = '';
+    let finalResult = '';
+    child.stdout?.on('data', (data: Buffer) => {
+      if (isCancelled) return;
+      const chunk = data.toString();
+      if (!jsonStream) {
+        stdout += chunk;
+        emitText(chunk);
+        return;
+      }
+      // stream-json: uma linha JSON por evento; só os text_delta viram texto
+      lineBuf += chunk;
+      const lines = lineBuf.split('\n');
+      lineBuf = lines.pop() || '';
+      for (const line of lines) {
+        try {
+          const evt = JSON.parse(line);
+          const delta = evt.type === 'stream_event' ? evt.event?.delta : null;
+          if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
+            stdout += delta.text;
+            emitText(delta.text);
+          } else if (evt.type === 'result' && typeof evt.result === 'string') {
+            finalResult = evt.result;
+          } else if (evt.event === 'step_update' && evt.step_update?.step_type === 'agent_response' && typeof evt.step_update.text_delta === 'string') {
+            // Antigravity: trechos da resposta do agente
+            stdout += evt.step_update.text_delta;
+            emitText(evt.step_update.text_delta);
+          } else if (evt.event === 'result' && typeof evt.result?.response === 'string') {
+            finalResult = evt.result.response;
+          }
+        } catch {}
+      }
     });
 
     child.stderr?.on('data', (data: Buffer) => {
-      if (isCurrentDirectCliCancelled) return;
+      if (isCancelled) return;
       stderr += data.toString();
     });
 
     child.on('error', (err: Error) => {
-      activeDirectCliChild = null;
+      releaseRun();
       if (!resolved) {
         resolved = true;
         resolve({
-          stdout: isCurrentDirectCliCancelled ? '' : stdout.trim(),
+          stdout: isCancelled ? '' : stdout.trim(),
           stderr: (stderr + '\n' + err.message).trim(),
           exitCode: 1,
-          cancelled: isCurrentDirectCliCancelled,
+          cancelled: isCancelled,
         });
       }
     });
 
     child.on('close', (code: number) => {
-      activeDirectCliChild = null;
+      releaseRun();
       if (!resolved) {
         resolved = true;
         resolve({
-          stdout: isCurrentDirectCliCancelled ? '' : stdout.trim(),
-          stderr: isCurrentDirectCliCancelled ? 'Interrompido pelo usuário' : stderr.trim(),
-          exitCode: isCurrentDirectCliCancelled ? 130 : (code ?? 0),
-          cancelled: isCurrentDirectCliCancelled,
+          stdout: isCancelled ? '' : (finalResult || stdout).trim(),
+          stderr: isCancelled ? 'Interrompido pelo usuário' : stderr.trim(),
+          exitCode: isCancelled ? 130 : (code ?? 0),
+          cancelled: isCancelled,
         });
       }
     });
@@ -791,6 +1353,33 @@ ipcMain.handle('git:createIssue', async (_event, { workspacePath, title, body }:
 ipcMain.handle('git:clone', async (_event, { repoUrl, targetDir }: { repoUrl: string; targetDir: string }) => {
   return gitService.cloneRepo(repoUrl, targetDir);
 });
+
+ipcMain.handle('git:getRecentCommitsSummary', async (_event, options: any = {}) => {
+  return gitService.getRecentCommitsSummary(options);
+});
+
+// Andares (git worktrees) para a Orquestração
+ipcMain.handle('git:worktreeList', async (_event, { repoPath }: { repoPath: string }) => {
+  return gitService.listWorktrees(repoPath);
+});
+ipcMain.handle(
+  'git:worktreeCreate',
+  async (_event, { repoPath, branchName, targetDir }: { repoPath: string; branchName: string; targetDir: string }) => {
+    return gitService.createWorktree(repoPath, branchName, targetDir);
+  }
+);
+ipcMain.handle(
+  'git:worktreeRemove',
+  async (_event, { repoPath, worktreePath }: { repoPath: string; worktreePath: string }) => {
+    return gitService.removeWorktree(repoPath, worktreePath);
+  }
+);
+ipcMain.handle(
+  'git:worktreeLand',
+  async (_event, { repoPath, branchName, baseBranch }: { repoPath: string; branchName: string; baseBranch: string }) => {
+    return gitService.landWorktree(repoPath, branchName, baseBranch);
+  }
+);
 
 // Native macOS Dialogs (Abrir Arquivo / Pasta)
 ipcMain.handle('dialog:openFile', async () => {
@@ -972,6 +1561,9 @@ ipcMain.handle('shell:exec', async (_event, { command, cwd }: { command: string;
 
 // Open external URL in default browser
 ipcMain.handle('shell:openExternal', async (_event, { url }: { url: string }) => {
+  if (!url || !/^(https?:|mailto:)/i.test(url)) {
+    return { success: false, error: 'esquema não permitido' };
+  }
   try {
     await shell.openExternal(url);
     return { success: true };
@@ -1123,6 +1715,60 @@ ipcMain.handle('github:updateProjectItemStatus', async (_event, { projectId, ite
   }
 });
 
+ipcMain.handle('github:fetchIssueDetails', async (_event, { owner, repo, number }: { owner: string; repo: string; number: number }) => {
+  try {
+    const details = await githubAuthService.fetchIssueDetails(owner, repo, number);
+    return { success: true, details };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:updateProjectItemField', async (_event, { projectId, itemId, fieldId, value }: { projectId: string; itemId: string; fieldId: string; value: Record<string, any> }) => {
+  try {
+    const item = await githubAuthService.updateProjectItemField(projectId, itemId, fieldId, value);
+    return { success: true, item };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:clearProjectItemField', async (_event, { projectId, itemId, fieldId }: { projectId: string; itemId: string; fieldId: string }) => {
+  try {
+    const item = await githubAuthService.clearProjectItemField(projectId, itemId, fieldId);
+    return { success: true, item };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:addIssueToProject', async (_event, { projectId, contentId }: { projectId: string; contentId: string }) => {
+  try {
+    const itemId = await githubAuthService.addIssueToProject(projectId, contentId);
+    return { success: true, itemId };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:removeProjectItem', async (_event, { projectId, itemId }: { projectId: string; itemId: string }) => {
+  try {
+    await githubAuthService.removeProjectItem(projectId, itemId);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:setIssueType', async (_event, { issueId, issueTypeId }: { issueId: string; issueTypeId: string | null }) => {
+  try {
+    const issueType = await githubAuthService.setIssueType(issueId, issueTypeId);
+    return { success: true, issueType };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMain.handle('github:fetchOrgs', async () => {
   try {
     const orgs = await githubAuthService.fetchOrgs();
@@ -1199,7 +1845,7 @@ ipcMain.handle(
   'github:updateIssue',
   async (
     _event,
-    { owner, repo, issueNumber, title, body, state, labels, ensureLabels, milestone }: {
+    { owner, repo, issueNumber, title, body, state, labels, ensureLabels, milestone, assignees }: {
       owner: string;
       repo: string;
       issueNumber: number;
@@ -1209,10 +1855,11 @@ ipcMain.handle(
       labels?: string[];
       ensureLabels?: Array<{ name: string; color: string }>;
       milestone?: number | null;
+      assignees?: string[];
     },
   ) => {
     try {
-      const issue = await githubAuthService.updateIssue(owner, repo, issueNumber, { title, body, state, labels, ensureLabels, milestone });
+      const issue = await githubAuthService.updateIssue(owner, repo, issueNumber, { title, body, state, labels, ensureLabels, milestone, assignees });
       return { success: true, issue };
     } catch (err: any) {
       return { success: false, error: err.message };
@@ -1220,10 +1867,207 @@ ipcMain.handle(
   },
 );
 
-ipcMain.handle('github:deleteIssue', async (_event, { nodeId }: { nodeId: string }) => {
+ipcMain.handle(
+  'github:deleteIssue',
+  async (_event, input: { nodeId?: string; owner?: string; repo?: string; issueNumber?: number }) => {
+    try {
+      await githubAuthService.deleteIssue(input);
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  },
+);
+
+ipcMain.handle(
+  'github:lockIssue',
+  async (_event, { owner, repo, issueNumber, locked }: { owner: string; repo: string; issueNumber: number; locked: boolean }) => {
+    try {
+      const res = await githubAuthService.lockIssue(owner, repo, issueNumber, locked);
+      return { success: true, ...res };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  },
+);
+
+ipcMain.handle(
+  'github:pinIssue',
+  async (_event, { issueId, pinned }: { issueId: string; pinned: boolean }) => {
+    try {
+      const res = await githubAuthService.pinIssue(issueId, pinned);
+      return { success: true, ...res };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  },
+);
+
+ipcMain.handle(
+  'github:setIssueSubscription',
+  async (_event, { owner, repo, issueNumber, subscribed }: { owner: string; repo: string; issueNumber: number; subscribed: boolean }) => {
+    try {
+      const res = await githubAuthService.setIssueSubscription(owner, repo, issueNumber, subscribed);
+      return { success: true, ...res };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  },
+);
+
+ipcMain.handle(
+  'github:transferIssue',
+  async (_event, { owner, repo, issueNumber, newOwner, newRepo }: { owner: string; repo: string; issueNumber: number; newOwner: string; newRepo: string }) => {
+    try {
+      const issue = await githubAuthService.transferIssue(owner, repo, issueNumber, newOwner, newRepo);
+      return { success: true, issue };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  },
+);
+
+// ---- Time (pessoas, times e acesso) ----
+const teamHandler = <A extends any[]>(fn: (...args: A) => Promise<any>, key?: string) => async (_event: any, ...args: A) => {
   try {
-    await githubAuthService.deleteIssue(nodeId);
-    return { success: true };
+    const data = await fn(...args);
+    return key ? { success: true, [key]: data } : { success: true, ...(data && typeof data === 'object' && !Array.isArray(data) ? data : {}) };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+};
+
+ipcMain.handle('github:fetchTeamInsights', teamHandler(({ owner, repo }: { owner: string; repo: string }) => githubAuthService.fetchTeamInsights(owner, repo), 'insights'));
+ipcMain.handle('github:fetchOrgTeams', teamHandler(({ org }: { org: string }) => githubAuthService.fetchOrgTeams(org), 'teams'));
+ipcMain.handle(
+  'github:fetchCollaboratorPermissions',
+  teamHandler(({ owner, repo }: { owner: string; repo: string }) => githubAuthService.fetchCollaboratorPermissions(owner, repo), 'collaborators'),
+);
+ipcMain.handle(
+  'github:setCollaboratorPermission',
+  teamHandler(({ owner, repo, username, role }: { owner: string; repo: string; username: string; role: string }) =>
+    githubAuthService.setCollaboratorPermission(owner, repo, username, role),
+  ),
+);
+ipcMain.handle(
+  'github:removeCollaborator',
+  teamHandler(({ owner, repo, username }: { owner: string; repo: string; username: string }) => githubAuthService.removeCollaborator(owner, repo, username)),
+);
+ipcMain.handle(
+  'github:cancelInvitation',
+  teamHandler(({ owner, repo, invitationId }: { owner: string; repo: string; invitationId: number }) =>
+    githubAuthService.cancelInvitation(owner, repo, invitationId),
+  ),
+);
+ipcMain.handle(
+  'github:setTeamRepoPermission',
+  teamHandler(({ org, teamSlug, owner, repo, role }: { org: string; teamSlug: string; owner: string; repo: string; role: string }) =>
+    githubAuthService.setTeamRepoPermission(org, teamSlug, owner, repo, role),
+  ),
+);
+ipcMain.handle(
+  'github:removeTeamRepo',
+  teamHandler(({ org, teamSlug, owner, repo }: { org: string; teamSlug: string; owner: string; repo: string }) =>
+    githubAuthService.removeTeamRepo(org, teamSlug, owner, repo),
+  ),
+);
+ipcMain.handle(
+  'github:createTeam',
+  teamHandler(({ org, name, description }: { org: string; name: string; description?: string }) => githubAuthService.createTeam(org, name, description), 'team'),
+);
+ipcMain.handle(
+  'github:requestReviewers',
+  teamHandler(({ owner, repo, pullNumber, reviewers }: { owner: string; repo: string; pullNumber: number; reviewers: string[] }) =>
+    githubAuthService.requestReviewers(owner, repo, pullNumber, reviewers),
+  ),
+);
+ipcMain.handle(
+  'github:addAssignees',
+  teamHandler(({ owner, repo, issueNumber, assignees }: { owner: string; repo: string; issueNumber: number; assignees: string[] }) =>
+    githubAuthService.addAssignees(owner, repo, issueNumber, assignees),
+  ),
+);
+
+// ---- Skills (biblioteca do DevFlow, ativadas em todos os CLIs) ----
+ipcMain.handle('skills:call', async (_event, { action, payload }: { action: string; payload: any }) => {
+  try {
+    const p = payload || {};
+    const token = await githubAuthService.peekAccessToken();
+    let data: any;
+    switch (action) {
+      case 'listInstalled':
+        data = skillsService.listInstalled();
+        break;
+      case 'listExternal':
+        data = skillsService.listExternal();
+        break;
+      case 'listSources':
+        data = skillsService.getSources();
+        break;
+      case 'addSource':
+        data = skillsService.addSource(p.input);
+        break;
+      case 'removeSource':
+        skillsService.removeSource(p.id);
+        break;
+      case 'listCatalog':
+        data = await skillsService.listCatalog(p.sourceId, Boolean(p.force), token || undefined);
+        break;
+      case 'install':
+        data = await skillsService.install(p.sourceId, p.path, token || undefined);
+        break;
+      case 'uninstall':
+        skillsService.uninstall(p.id);
+        break;
+      case 'setActive':
+        skillsService.setActive(p.id, Boolean(p.active));
+        break;
+      case 'setAlwaysOn':
+        skillsService.setAlwaysOn(p.id, Boolean(p.on));
+        break;
+      case 'searchRegistry':
+        data = await skillsService.searchRegistry(p.query);
+        break;
+      case 'installFromRegistry':
+        data = await skillsService.installFromRegistry(p.repo, p.skillId, token || undefined);
+        break;
+      case 'read':
+        data = skillsService.readSkill(p.id);
+        break;
+      case 'save':
+        skillsService.updateSkillMd(p.id, p.content);
+        break;
+      case 'create':
+        data = skillsService.create(p);
+        break;
+      case 'importLocal':
+        data = skillsService.importLocal(p.dir);
+        break;
+      case 'openFolder':
+        await shell.openPath(p.id ? `${skillsService.root}/${p.id}` : skillsService.root);
+        break;
+      case 'cliArgsString':
+        data = skillsService.cliArgsString(p.cmd);
+        break;
+      case 'summary':
+        data = { active: skillsService.getActive().map((s) => ({ id: s.id, name: s.name })), installed: skillsService.listInstalled().length };
+        break;
+      default:
+        throw new Error(`Ação desconhecida: ${action}`);
+    }
+    if (['install', 'installFromRegistry', 'uninstall', 'setActive', 'setAlwaysOn', 'create', 'importLocal'].includes(action)) {
+      BrowserWindow.getAllWindows().forEach((w) => w.webContents.send('skills:changed'));
+    }
+    return { success: true, data };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:settings', async (_event, { action, payload }: { action: string; payload: any }) => {
+  try {
+    const data = await githubAuthService.settingsAction(action, payload);
+    return { success: true, data };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -1242,6 +2086,24 @@ ipcMain.handle('github:addIssueComment', async (_event, { owner, repo, issueNumb
   try {
     const comment = await githubAuthService.addIssueComment(owner, repo, issueNumber, body);
     return { success: true, comment };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:updateIssueComment', async (_event, { owner, repo, commentId, body }: { owner: string; repo: string; commentId: number; body: string }) => {
+  try {
+    const comment = await githubAuthService.updateIssueComment(owner, repo, commentId, body);
+    return { success: true, comment };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('github:deleteIssueComment', async (_event, { owner, repo, commentId }: { owner: string; repo: string; commentId: number }) => {
+  try {
+    await githubAuthService.deleteIssueComment(owner, repo, commentId);
+    return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -1285,7 +2147,56 @@ ipcMain.handle(
   },
 );
 
+ipcMain.handle(
+  'github:deleteMilestone',
+  async (
+    _event,
+    { owner, repo, milestoneNumber }: { owner: string; repo: string; milestoneNumber: number },
+  ) => {
+    try {
+      await githubAuthService.deleteMilestone(owner, repo, milestoneNumber);
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Falha ao deletar marco' };
+    }
+  },
+);
+
 app.whenReady().then(() => {
+  // Desativa restrições de X-Frame-Options, COOP, COEP e frame-ancestors para que o componente de navegador
+  // interno da orquestração consiga renderizar localhost e páginas externas sem erro de SAMEORIGIN ou bloqueios.
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const responseHeaders = { ...details.responseHeaders };
+    for (const key of Object.keys(responseHeaders)) {
+      const lower = key.toLowerCase();
+      if (
+        lower === 'x-frame-options' ||
+        lower === 'cross-origin-opener-policy' ||
+        lower === 'cross-origin-embedder-policy' ||
+        lower === 'cross-origin-resource-policy'
+      ) {
+        delete responseHeaders[key];
+      } else if (lower === 'content-security-policy') {
+        responseHeaders[key] = responseHeaders[key].map((csp) =>
+          csp
+            .replace(/frame-ancestors\s+[^;]+;?/gi, '')
+            .replace(/frame-src\s+[^;]+;?/gi, '')
+        );
+      }
+    }
+    responseHeaders['Access-Control-Allow-Origin'] = ['*'];
+    responseHeaders['Access-Control-Allow-Private-Network'] = ['true'];
+
+    callback({ cancel: false, responseHeaders });
+  });
+
+  app.on('web-contents-created', (_, contents) => {
+    contents.setWindowOpenHandler(() => {
+      // Bloqueia abertura de navegador externo pelo dispositivo a partir de conteúdos web internos
+      return { action: 'deny' };
+    });
+  });
+
   if (process.platform === 'darwin' && appIconImage && app.dock) {
     try {
       app.dock.setIcon(appIconImage);

@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Shape, Page } from './types';
+import type { Shape, Page, DesignStyle, DesignVariable, DesignMode } from './types';
+import type { RulerGuide } from './rulers';
+
+export interface DocVariables {
+  list: DesignVariable[];
+  modes: DesignMode[];
+  activeModeId: string;
+}
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -13,12 +20,18 @@ export function usePersistedDesign(
   pages: Page[],
   selectedPageId: string,
   pageViewports: Record<string, { x: number; y: number; zoom: number }>,
-  skipSave: boolean
+  skipSave: boolean,
+  styles: DesignStyle[] = [],
+  variables?: DocVariables,
+  guides: Record<string, RulerGuide[]> = {}
 ) {
   const [loadedShapes, setLoadedShapes] = useState<Shape[] | null>(null);
   const [loadedPages, setLoadedPages] = useState<Page[] | null>(null);
   const [loadedSelectedPageId, setLoadedSelectedPageId] = useState<string | null>(null);
   const [loadedPageViewports, setLoadedPageViewports] = useState<Record<string, { x: number; y: number; zoom: number }> | null>(null);
+  const [loadedStyles, setLoadedStyles] = useState<DesignStyle[] | null>(null);
+  const [loadedVariables, setLoadedVariables] = useState<DocVariables | null>(null);
+  const [loadedGuides, setLoadedGuides] = useState<Record<string, RulerGuide[]> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastLoadedPathRef = useRef<string | null>(null);
@@ -30,6 +43,9 @@ export function usePersistedDesign(
     setLoadedPages(null);
     setLoadedSelectedPageId(null);
     setLoadedPageViewports(null);
+    setLoadedStyles(null);
+    setLoadedVariables(null);
+    setLoadedGuides(null);
 
     (async () => {
       try {
@@ -52,6 +68,15 @@ export function usePersistedDesign(
         }
         if (parsed?.selectedPageId && typeof parsed.selectedPageId === 'string') {
           setLoadedSelectedPageId(parsed.selectedPageId);
+        }
+        if (parsed?.guides && typeof parsed.guides === 'object') {
+          setLoadedGuides(parsed.guides);
+        }
+        if (parsed?.variables && Array.isArray(parsed.variables.list)) {
+          setLoadedVariables(parsed.variables);
+        }
+        if (Array.isArray(parsed?.styles)) {
+          setLoadedStyles(parsed.styles);
         }
         if (parsed?.pageViewports && typeof parsed.pageViewports === 'object') {
           setLoadedPageViewports(parsed.pageViewports);
@@ -84,6 +109,9 @@ export function usePersistedDesign(
           pages,
           selectedPageId,
           pageViewports,
+          styles,
+          variables,
+          guides,
           updatedAt: Date.now(),
         },
         null,
@@ -95,13 +123,16 @@ export function usePersistedDesign(
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
-  }, [shapes, pages, selectedPageId, pageViewports, workspacePath, isLoading, skipSave]);
+  }, [shapes, pages, selectedPageId, pageViewports, styles, variables, guides, workspacePath, isLoading, skipSave]);
 
   return {
     loadedShapes,
     loadedPages,
     loadedSelectedPageId,
     loadedPageViewports,
+    loadedStyles,
+    loadedVariables,
+    loadedGuides,
     isLoading,
   };
 }

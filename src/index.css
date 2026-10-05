@@ -73,6 +73,53 @@ button {
   background: rgba(128, 128, 128, 0.45);
 }
 
+/* Issue Description Specific Scrollable Container */
+.issue-description-body-scrollable {
+  display: block !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  min-height: 180px !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  overscroll-behavior: auto !important;
+  scrollbar-width: thin !important;
+}
+.issue-description-body-scrollable::-webkit-scrollbar {
+  width: 6px !important;
+  height: 6px !important;
+}
+.issue-description-body-scrollable::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+.issue-description-body-scrollable::-webkit-scrollbar-thumb {
+  background: rgba(140, 140, 140, 0.45) !important;
+  border-radius: 6px !important;
+}
+.issue-description-body-scrollable::-webkit-scrollbar-thumb:hover {
+  background: rgba(140, 140, 140, 0.75) !important;
+}
+
+.issue-description-scrollable {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  overscroll-behavior: auto !important;
+  scrollbar-width: thin !important;
+}
+.issue-description-scrollable::-webkit-scrollbar {
+  width: 6px !important;
+  height: 6px !important;
+}
+.issue-description-scrollable::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+.issue-description-scrollable::-webkit-scrollbar-thumb {
+  background: rgba(140, 140, 140, 0.45) !important;
+  border-radius: 6px !important;
+}
+.issue-description-scrollable::-webkit-scrollbar-thumb:hover {
+  background: rgba(140, 140, 140, 0.75) !important;
+}
+
 .font-code {
   font-family: 'JetBrains Mono', Menlo, monospace;
 }
@@ -247,7 +294,8 @@ body.resizing-row {
   }
 }
 
-.spin-animate {
+.spin-animate,
+.animate-spin {
   animation: spin 1s linear infinite;
 }
 

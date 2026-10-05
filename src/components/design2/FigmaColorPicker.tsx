@@ -13,6 +13,8 @@ import {
   GripVertical,
 } from 'lucide-react';
 import ScrubbableNumberInput from './ScrubbableNumberInput';
+import type { FillItem, GradientStop } from './types';
+import { cssGradient, defaultGradientStops, sortStops } from './gradient';
 
 interface FigmaColorPickerProps {
   color: string; // e.g. '#D9D9D9' or '#000000'
@@ -21,6 +23,12 @@ interface FigmaColorPickerProps {
   accentColor?: string;
   onChange: (hex: string, opacity: number) => void;
   onClose: () => void;
+  /** Tipo do preenchimento em edição e dados do gradiente (quando linear/radial) */
+  fillType?: FillItem['type'];
+  gradientStops?: GradientStop[];
+  gradientAngle?: number;
+  /** Mudanças de tipo, paradas ou ângulo do gradiente */
+  onGradientChange?: (patch: { type?: FillItem['type']; gradientStops?: GradientStop[]; gradientAngle?: number }) => void;
 }
 
 // Utilitários de conversão de cores HSV <-> RGB <-> Hex
@@ -109,9 +117,33 @@ export default function FigmaColorPicker({
   accentColor = '#007acc',
   onChange,
   onClose,
+  fillType: fillTypeProp,
+  gradientStops,
+  gradientAngle = 90,
+  onGradientChange,
 }: FigmaColorPickerProps) {
   const [tab, setTab] = useState<'custom' | 'libraries'>('custom');
-  const [fillType, setFillType] = useState<string>('solid');
+  const [fillType, setFillTypeState] = useState<string>(fillTypeProp || 'solid');
+  const [activeStop, setActiveStop] = useState(0);
+  const isGradientMode = (fillType === 'linear' || fillType === 'radial' || fillType === 'angular' || fillType === 'diamond') && Boolean(gradientStops && gradientStops.length >= 2 && onGradientChange);
+  const stops = gradientStops || [];
+  const gradientBarRef = useRef<HTMLDivElement>(null);
+
+  // Troca o tipo: ao entrar em gradiente cria as paradas a partir da cor atual
+  const setFillType = (next: string) => {
+    setFillTypeState(next);
+    if (!onGradientChange) return;
+    if (next === 'linear' || next === 'radial' || next === 'angular' || next === 'diamond') {
+      onGradientChange({
+        type: next,
+        gradientStops: stops.length >= 2 ? stops : defaultGradientStops(color, opacity),
+        gradientAngle,
+      });
+      setActiveStop(0);
+    } else if (next === 'solid') {
+      onGradientChange({ type: 'solid' });
+    }
+  };
   const [format, setFormat] = useState<'Hex' | 'RGB' | 'HSL'>('Hex');
 
   const textPrimary = themeTokens?.textPrimary || '#ffffff';
@@ -140,8 +172,27 @@ export default function FigmaColorPicker({
   const emitChange = useCallback((h: number, s: number, v: number, a: number) => {
     const { r, g, b } = hsvToRgb(h, s, v);
     const hex = rgbToHex(r, g, b);
+    if (isGradientMode) {
+      // No modo gradiente os controles de cor editam a parada selecionada
+      onGradientChange!({ gradientStops: stops.map((st, i) => (i === activeStop ? { ...st, color: hex, opacity: a } : st)) });
+      return;
+    }
     onChange(hex, a);
-  }, [onChange]);
+  }, [onChange, isGradientMode, onGradientChange, stops, activeStop]);
+
+  // Ao trocar a parada selecionada, os controles passam a mostrar a cor dela
+  useEffect(() => {
+    if (!isGradientMode) return;
+    const st = stops[Math.min(activeStop, stops.length - 1)];
+    if (!st) return;
+    const c = hexToRgb(st.color);
+    const hsv = rgbToHsv(c.r, c.g, c.b);
+    setHue(hsv.h || 0);
+    setSat(hsv.s);
+    setVal(hsv.v);
+    setAlpha(st.opacity);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeStop, isGradientMode]);
 
   // Manipulação da área 2D de saturação e brilho
   const handleSatValMove = useCallback((e: MouseEvent | React.MouseEvent) => {
@@ -429,6 +480,22 @@ export default function FigmaColorPicker({
         </button>
         <button
           type="button"
+          onClick={() => setFillType('angular')}
+          style={{ background: fillType === 'angular' ? `${accentColor}22` : 'transparent', border: 'none', borderRadius: 4, color: fillType === 'angular' ? accentColor : textSecondary, cursor: 'pointer', padding: 4, display: 'flex' }}
+          title="Gradiente angular"
+        >
+          <span style={{ fontSize: 11, fontWeight: 700 }}>◐</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setFillType('diamond')}
+          style={{ background: fillType === 'diamond' ? `${accentColor}22` : 'transparent', border: 'none', borderRadius: 4, color: fillType === 'diamond' ? accentColor : textSecondary, cursor: 'pointer', padding: 4, display: 'flex' }}
+          title="Gradiente diamante"
+        >
+          <span style={{ fontSize: 11, fontWeight: 700 }}>◇</span>
+        </button>
+        <button
+          type="button"
           onClick={() => setFillType('image')}
           style={{
             background: fillType === 'image' ? `${accentColor}22` : 'transparent',
@@ -485,6 +552,100 @@ export default function FigmaColorPicker({
           <Trash2 size={13} />
         </button>
       </div>
+
+      {/* ----------------------------------------------------------------- */}
+      {/* EDITOR DE GRADIENTE (linear/radial)                                */}
+      {/* ----------------------------------------------------------------- */}
+      {isGradientMode && (
+        <div style={{ padding: '10px 10px 0 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div
+            ref={gradientBarRef}
+            title="Clique na barra para adicionar uma parada"
+            onMouseDown={(e) => {
+              if (e.target !== e.currentTarget) return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              const position = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+              const near = sortStops(stops).reduce((a, b) => (Math.abs(b.position - position) < Math.abs(a.position - position) ? b : a));
+              const next = [...stops, { position: Math.round(position * 100) / 100, color: near.color, opacity: near.opacity }];
+              onGradientChange!({ gradientStops: next });
+              setActiveStop(next.length - 1);
+            }}
+            style={{
+              position: 'relative',
+              height: 18,
+              borderRadius: 4,
+              cursor: 'copy',
+              backgroundImage: `${cssGradient({ type: 'linear', gradientStops: stops }, 90)}, repeating-conic-gradient(#888 0% 25%, #444 0% 50%)`,
+              backgroundSize: '100% 100%, 8px 8px',
+            }}
+          >
+            {stops.map((st, i) => (
+              <div
+                key={i}
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  setActiveStop(i);
+                  const bar = gradientBarRef.current;
+                  if (!bar) return;
+                  const onMove = (ev: MouseEvent) => {
+                    const rect = bar.getBoundingClientRect();
+                    const position = Math.round(Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width)) * 100) / 100;
+                    onGradientChange!({ gradientStops: stops.map((x, k) => (k === i ? { ...x, position } : x)) });
+                  };
+                  const onUp = () => {
+                    window.removeEventListener('mousemove', onMove);
+                    window.removeEventListener('mouseup', onUp);
+                  };
+                  window.addEventListener('mousemove', onMove);
+                  window.addEventListener('mouseup', onUp);
+                }}
+                style={{
+                  position: 'absolute',
+                  top: -3,
+                  left: `calc(${st.position * 100}% - 6px)`,
+                  width: 12,
+                  height: 24,
+                  borderRadius: 3,
+                  background: st.color,
+                  border: `2px solid ${i === activeStop ? accentColor : '#ffffff'}`,
+                  boxShadow: '0 1px 4px rgba(0,0,0,0.5)',
+                  cursor: 'ew-resize',
+                  boxSizing: 'border-box',
+                }}
+              />
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+            {(fillType === 'linear' || fillType === 'angular') && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: textSecondary }}>
+                Ângulo
+                <ScrubbableNumberInput
+                  value={gradientAngle}
+                  onChange={(v: number) => onGradientChange!({ gradientAngle: Math.round(v) })}
+                  min={-360}
+                  max={360}
+                  suffix="°"
+                  style={{ width: 62, height: 22 }}
+                />
+              </label>
+            )}
+            <span style={{ flex: 1 }} />
+            <button
+              type="button"
+              disabled={stops.length <= 2}
+              onClick={() => {
+                onGradientChange!({ gradientStops: stops.filter((_, i) => i !== activeStop) });
+                setActiveStop(0);
+              }}
+              title="Remover parada selecionada"
+              style={{ background: 'transparent', border: 'none', color: stops.length <= 2 ? `${textSecondary}55` : textSecondary, cursor: stops.length <= 2 ? 'not-allowed' : 'pointer', padding: 3, display: 'flex' }}
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ----------------------------------------------------------------- */}
       {/* GRADIENTE 2D SATURAÇÃO & BRILHO                                    */}

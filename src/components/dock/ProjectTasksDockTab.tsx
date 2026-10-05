@@ -11,8 +11,12 @@ import {
   User,
   ListTodo,
   Layers,
+  AtSign,
+  SquareTerminal,
 } from 'lucide-react';
 import type { GitHubIssueItem } from '../../types/ide';
+import { issueBelongsToSprint } from '../ProjectsSchedulerView';
+import { logSystemActivity } from '../../utils/brainService';
 
 interface ProjectTasksDockTabProps {
   issues: GitHubIssueItem[];
@@ -22,7 +26,7 @@ interface ProjectTasksDockTabProps {
   onOpenIssueDetails?: (issueNumber: number) => void;
   currentUserLogin?: string;
   repoName?: string;
-  sprints?: Array<{ title: string; number?: number }>;
+  sprints?: Array<{ title: string; number?: number; iterationId?: string; isProjectIteration?: boolean }>;
   themeTokens: any;
   isEffectiveDark: boolean;
   accentColor: string;
@@ -49,7 +53,7 @@ const UserAvatar: React.FC<{
           background: isEffectiveDark ? '#27272a' : '#e4e4e7',
           color: isEffectiveDark ? '#a1a1aa' : '#52525b',
           fontSize: 9.5,
-          fontWeight: 600,
+          fontWeight: 400,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -73,7 +77,7 @@ const UserAvatar: React.FC<{
         height: size,
         borderRadius: '50%',
         objectFit: 'cover',
-        border: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.1)'}`,
+        border: 'none',
         flexShrink: 0,
         cursor: 'pointer',
         display: 'block',
@@ -88,7 +92,7 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
   onRefresh,
   onDoWithAi,
   onOpenIssueDetails,
-  currentUserLogin = 'walancy',
+  currentUserLogin,
   repoName,
   sprints = [],
   themeTokens,
@@ -96,8 +100,16 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
   accentColor,
 }) => {
   const [filterMode, setFilterMode] = useState<'mine' | 'all'>('mine');
+  const [stateFilter, setStateFilter] = useState<'all' | 'open' | 'closed'>('all');
   const [selectedSprint, setSelectedSprint] = useState<string>('ALL'); // 'ALL' | 'NO_SPRINT' | sprint title
   const [searchQuery, setSearchQuery] = useState('');
+
+  const handleStateFilterChange = (nextFilter: 'all' | 'open' | 'closed') => {
+    setStateFilter(nextFilter);
+    try {
+      logSystemActivity('tarefas', 'filter_state', repoName || 'default', { state: nextFilter });
+    } catch {}
+  };
 
   // Local persistent mapping for sprints assigned to issues (scoped to project)
   const storageKey = repoName ? `devflow_issue_sprints_${repoName}` : 'devflow_issue_sprints';
@@ -130,7 +142,19 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
     };
   }, [storageKey]);
 
-  const normalizedUser = (currentUserLogin || 'walancy').toLowerCase().replace('@', '');
+  const effectiveCurrentUserLogin = useMemo(() => {
+    if (currentUserLogin) return currentUserLogin;
+    try {
+      const raw = localStorage.getItem('devflow_projects_cache_v2');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.currentUser?.login) return parsed.currentUser.login;
+      }
+    } catch {}
+    return '';
+  }, [currentUserLogin]);
+
+  const normalizedUser = effectiveCurrentUserLogin.toLowerCase().replace('@', '');
 
   // Helper to extract assignee logins
   const getAssigneeLogins = (issue: GitHubIssueItem): string[] => {
@@ -193,60 +217,156 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
     return authorLogin.toLowerCase() === normalizedUser;
   };
 
-  // Helper to get issue's sprint title
+  // Helper to extract issue's sprint title (Project V2 iteration, Milestone, prefix or label)
   const getIssueSprint = (issue: GitHubIssueItem): string => {
     // 1. From localStorage override (scoped to current project)
     if (localSprintMap[issue.number]) {
       return localSprintMap[issue.number];
     }
 
-    // 2. From issue.milestone.title
-    if (issue.milestone?.title) {
-      return issue.milestone.title.trim();
+    // 2. From GitHub Projects V2 iteration title
+    if (issue.iterationTitle && typeof issue.iterationTitle === 'string' && issue.iterationTitle.trim()) {
+      return issue.iterationTitle.trim();
     }
 
-    // 3. From labels matching /sprint/i
+    // 3. From issue.milestoneTitle or issue.milestone.title
+    const msTitle = issue.milestoneTitle || issue.milestone?.title;
+    if (msTitle && typeof msTitle === 'string' && msTitle.trim()) {
+      return msTitle.trim();
+    }
+
+    // 4. From labels matching /sprint/i
     if (Array.isArray(issue.labels)) {
-      const sprintLabel = issue.labels.find((l) => {
-        const n = typeof l === 'string' ? l : l.name;
-        return /sprint/i.test(n);
+      const sprintLabel: any = issue.labels.find((l: any) => {
+        const n = typeof l === 'string' ? l : l?.name;
+        return typeof n === 'string' && /sprint/i.test(n);
       });
       if (sprintLabel) {
-        return typeof sprintLabel === 'string' ? sprintLabel.trim() : sprintLabel.name.trim();
+        return typeof sprintLabel === 'string' ? sprintLabel.trim() : String(sprintLabel?.name || '').trim();
+      }
+    }
+
+    // 5. From issue title prefix (e.g. "Sprint13 — ...", "Sprint 2: ...", "Sprint9-10 ...")
+    if (issue.title && typeof issue.title === 'string') {
+      const titleMatch = issue.title.match(/^sprint\s*([0-9]+(?:-[0-9]+)?)/i);
+      if (titleMatch) {
+        return `Sprint ${titleMatch[1]}`;
       }
     }
 
     return '';
   };
 
-  // Discover and build sprints list with real counts from current project
+  // Extrai número ou range da sprint (ex: "Sprint 13" -> "13", "Sprint 9-10" -> "9-10", "Sprint 2 - Cadastro" -> "2")
+  const extractSprintNum = (s: string): string | null => {
+    const m = s.match(/sprint\s*([0-9]+(?:-[0-9]+)?)/i);
+    return m ? m[1] : null;
+  };
+
+  // Decide se uma issue pertence a uma sprint usando a mesma regra da tela de projetos
+  const checkIssueBelongsToSprint = (issue: GitHubIssueItem, targetSprintTitle: string): boolean => {
+    if (!targetSprintTitle || targetSprintTitle === 'ALL') return true;
+    const issueSprint = getIssueSprint(issue);
+    if (targetSprintTitle === 'NO_SPRINT') {
+      return !issueSprint;
+    }
+    if (!issueSprint) return false;
+
+    // 1. Busca o objeto da sprint alvo na prop `sprints` para obter metadados reais (iterationId, number, etc.)
+    const targetSprintObj = (sprints || []).find(
+      (s) => s.title && s.title.toLowerCase().trim() === targetSprintTitle.toLowerCase().trim()
+    );
+
+    const spNumStr = extractSprintNum(targetSprintTitle);
+    const spNum = spNumStr && /^\d+$/.test(spNumStr) ? parseInt(spNumStr, 10) : undefined;
+
+    const sprintDescriptor = {
+      title: targetSprintTitle,
+      number: targetSprintObj?.number ?? spNum ?? 0,
+      isVirtual: true,
+      iterationId: targetSprintObj?.iterationId,
+      isProjectIteration: targetSprintObj?.isProjectIteration,
+    };
+
+    // 2. Se ambos tiverem iterationId, bate direto por ID único de iteração Project V2
+    if (sprintDescriptor.iterationId && issue.iterationId) {
+      return sprintDescriptor.iterationId === issue.iterationId;
+    }
+
+    // 3. Usa a função canônica issueBelongsToSprint da tela de projetos
+    if (issueBelongsToSprint(issue as any, sprintDescriptor as any)) {
+      return true;
+    }
+
+    // 4. Comparação direta com o sprint resolvido da issue (issueSprint)
+    const tNorm = targetSprintTitle.toLowerCase().trim();
+    const iNorm = issueSprint.toLowerCase().trim();
+    if (tNorm === iNorm) return true;
+
+    // 5. Comparação precisa por número de sprint extraído (evita falsos positivos como "Sprint 1" dar match em "Sprint 13")
+    const issNumStr = extractSprintNum(iNorm);
+    if (spNumStr && issNumStr) {
+      return spNumStr === issNumStr;
+    }
+
+    // 6. Comparação por título sem caracteres especiais
+    const cleanT = tNorm.replace(/[^a-z0-9]/g, '');
+    const cleanI = iNorm.replace(/[^a-z0-9]/g, '');
+    if (cleanT && cleanI && cleanT === cleanI) return true;
+
+    return false;
+  };
+
+  // Extrai número da sprint para ordenação decrescente (ex: "Sprint 13" -> 13)
+  const getSprintSortNumber = (title: string): number => {
+    const m = title.match(/sprint\s*(\d+)/i);
+    return m ? parseInt(m[1], 10) : 0;
+  };
+
+  // Constrói lista de sprints do projeto de forma idêntica à tela de projetos
   const sprintOptions = useMemo(() => {
-    const map = new Map<string, { title: string; count: number }>();
+    const map = new Map<string, { title: string; count: number; sortKey: number }>();
     let noSprintCount = 0;
 
-    // Seed passed sprints only if explicitly provided for this project
+    // 1. Sprints fornecidas pelo repositório / Projects V2
     sprints.forEach((sp) => {
       if (sp.title && sp.title.trim()) {
         const title = sp.title.trim();
-        map.set(title.toLowerCase(), { title, count: 0 });
+        const key = title.toLowerCase();
+        if (!map.has(key)) {
+          map.set(key, { title, count: 0, sortKey: getSprintSortNumber(title) });
+        }
       }
     });
 
-    // Count issues per sprint
+    // 2. Sprints descobertas diretamente nas issues (iterações, marcos, títulos e labels)
     issues.forEach((i) => {
       const sp = getIssueSprint(i);
       if (sp) {
-        const key = sp.toLowerCase().trim();
-        const existing = map.get(key) || { title: sp, count: 0 };
-        existing.count += 1;
-        map.set(key, existing);
-      } else {
-        noSprintCount += 1;
+        const key = sp.toLowerCase();
+        if (!map.has(key)) {
+          map.set(key, { title: sp, count: 0, sortKey: getSprintSortNumber(sp) });
+        }
       }
     });
 
-    // Only include sprints that actually have issues in this project
-    const list = Array.from(map.values()).filter((sp) => sp.count > 0);
+    // 3. Contagem de issues por sprint usando a lógica unificada
+    const list = Array.from(map.values());
+    list.forEach((item) => {
+      item.count = issues.filter((i) => checkIssueBelongsToSprint(i, item.title)).length;
+    });
+
+    // 4. Contagem de tarefas sem sprint
+    noSprintCount = issues.filter((i) => !getIssueSprint(i)).length;
+
+    // 5. Ordenação: sprints mais recentes no topo (ex: Sprint 13, Sprint 12, ... Sprint 1)
+    list.sort((a, b) => {
+      if (a.sortKey !== b.sortKey) {
+        return b.sortKey - a.sortKey;
+      }
+      return a.title.localeCompare(b.title);
+    });
+
     return { list, noSprintCount };
   }, [issues, sprints, localSprintMap]);
 
@@ -257,8 +377,8 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
     }
   }, [sprintOptions.list.length, selectedSprint]);
 
-  // Filtered issues
-  const filteredIssues = useMemo(() => {
+  // Base issues for current user & sprint filters (for accurate pill count in the current context)
+  const contextIssues = useMemo(() => {
     let list = issues;
 
     // Filter by user assignment
@@ -266,16 +386,33 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
       list = list.filter(isLinkedToUser);
     }
 
-    // Filter by selected sprint
+    // Filter by selected sprint via checkIssueBelongsToSprint
     if (selectedSprint === 'NO_SPRINT') {
       list = list.filter((i) => !getIssueSprint(i));
     } else if (selectedSprint !== 'ALL') {
-      const target = selectedSprint.toLowerCase().trim();
-      list = list.filter((i) => {
-        const sp = getIssueSprint(i).toLowerCase().trim();
-        if (!sp) return false;
-        return sp === target || sp.startsWith(target) || target.startsWith(sp);
-      });
+      list = list.filter((i) => checkIssueBelongsToSprint(i, selectedSprint));
+    }
+
+    return list;
+  }, [issues, filterMode, selectedSprint, normalizedUser, localSprintMap, sprints]);
+
+  const openCount = useMemo(() => {
+    return contextIssues.filter((i) => (i.state || 'open').toLowerCase() === 'open').length;
+  }, [contextIssues]);
+
+  const closedCount = useMemo(() => {
+    return contextIssues.filter((i) => (i.state || 'open').toLowerCase() === 'closed').length;
+  }, [contextIssues]);
+
+  // Filtered issues including state filter (all / open / closed) and search query
+  const filteredIssues = useMemo(() => {
+    let list = contextIssues;
+
+    // Filter by state
+    if (stateFilter === 'open') {
+      list = list.filter((i) => (i.state || 'open').toLowerCase() === 'open');
+    } else if (stateFilter === 'closed') {
+      list = list.filter((i) => (i.state || 'open').toLowerCase() === 'closed');
     }
 
     // Filter by search query
@@ -285,20 +422,17 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
         const matchesNum = `#${i.number}`.includes(q) || String(i.number) === q;
         const matchesTitle = i.title.toLowerCase().includes(q);
         const matchesLabels = (i.labels || []).some((l) => l.name.toLowerCase().includes(q));
-        return matchesNum || matchesTitle || matchesLabels;
+        const matchesSprint = getIssueSprint(i).toLowerCase().includes(q);
+        return matchesNum || matchesTitle || matchesLabels || matchesSprint;
       });
     }
 
     return list;
-  }, [issues, filterMode, selectedSprint, searchQuery, normalizedUser, localSprintMap]);
+  }, [contextIssues, stateFilter, searchQuery, localSprintMap]);
 
   const myIssuesCount = useMemo(() => {
     return issues.filter(isLinkedToUser).length;
   }, [issues, normalizedUser]);
-
-  const openCount = useMemo(() => {
-    return filteredIssues.filter((i) => (i.state || 'open').toLowerCase() === 'open').length;
-  }, [filteredIssues]);
 
   const textPrimary = themeTokens?.textPrimary || (isEffectiveDark ? '#f4f4f5' : '#0f172a');
   const textSecondary = themeTokens?.textSecondary || (isEffectiveDark ? '#8b949e' : '#64748b');
@@ -313,7 +447,7 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
         alignSelf: 'stretch',
         background: themeTokens?.bgCard || (isEffectiveDark ? '#141414' : '#ffffff'),
         borderRadius: 10,
-        border: '1px solid ' + (themeTokens?.border || (isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)')),
+        border: 'none',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
@@ -321,20 +455,21 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
         fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, sans-serif',
       }}
     >
-      {/* Header Toolbar - Minimalista e alinhado */}
+      {/* Header Toolbar - Minimalista, sem bordas ou sombras com divisorias de baixa opacidade */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '8px 12px',
-          borderBottom: '1px solid ' + (themeTokens?.border || (isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)')),
+          borderBottom: '1px solid ' + (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'),
           gap: 10,
           flexWrap: 'wrap',
         }}
       >
-        {/* Left: Minimalist Tabs & Counters */}
+        {/* Left: Minimalist Tabs (Usuário & Estado Abertas/Fechadas) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {/* Grupo de Filtro por Usuário */}
           <div
             style={{
               display: 'inline-flex',
@@ -354,7 +489,7 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
                 borderRadius: 5,
                 padding: '3px 8px',
                 fontSize: 11.5,
-                fontWeight: filterMode === 'mine' ? 600 : 400,
+                fontWeight: 400,
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
@@ -371,7 +506,7 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
                   borderRadius: 8,
                   background: filterMode === 'mine' ? (isEffectiveDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.07)') : 'transparent',
                   color: filterMode === 'mine' ? textPrimary : textSecondary,
-                  fontWeight: 600,
+                  fontWeight: 400,
                 }}
               >
                 {myIssuesCount}
@@ -388,7 +523,7 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
                 borderRadius: 5,
                 padding: '3px 8px',
                 fontSize: 11.5,
-                fontWeight: filterMode === 'all' ? 600 : 400,
+                fontWeight: 400,
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
@@ -405,7 +540,7 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
                   borderRadius: 8,
                   background: filterMode === 'all' ? (isEffectiveDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.07)') : 'transparent',
                   color: filterMode === 'all' ? textPrimary : textSecondary,
-                  fontWeight: 600,
+                  fontWeight: 400,
                 }}
               >
                 {issues.length}
@@ -413,9 +548,127 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
             </button>
           </div>
 
-          <span style={{ color: textSecondary, fontSize: 11, marginLeft: 4 }}>
-            {openCount} {openCount === 1 ? 'aberta' : 'abertas'}
-          </span>
+          {/* Divisória de baixa opacidade */}
+          <div
+            style={{
+              width: 1,
+              height: 14,
+              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)',
+              margin: '0 2px',
+            }}
+          />
+
+          {/* Grupo de Filtro por Estado: Todas | Abertas | Fechadas */}
+          <div
+            style={{
+              display: 'inline-flex',
+              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
+              borderRadius: 6,
+              padding: 2,
+              gap: 2,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => handleStateFilterChange('all')}
+              style={{
+                background: stateFilter === 'all' ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.09)' : '#ffffff') : 'transparent',
+                color: stateFilter === 'all' ? textPrimary : textSecondary,
+                border: 'none',
+                borderRadius: 5,
+                padding: '3px 8px',
+                fontSize: 11.5,
+                fontWeight: 400,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                transition: 'all 0.12s ease',
+              }}
+            >
+              <span>Todas</span>
+              <span
+                style={{
+                  fontSize: 10,
+                  padding: '1px 5px',
+                  borderRadius: 8,
+                  background: stateFilter === 'all' ? (isEffectiveDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.07)') : 'transparent',
+                  color: stateFilter === 'all' ? textPrimary : textSecondary,
+                  fontWeight: 400,
+                }}
+              >
+                {contextIssues.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleStateFilterChange('open')}
+              style={{
+                background: stateFilter === 'open' ? 'rgba(34, 197, 94, 0.15)' : 'transparent',
+                color: stateFilter === 'open' ? '#22c55e' : textSecondary,
+                border: 'none',
+                borderRadius: 5,
+                padding: '3px 8px',
+                fontSize: 11.5,
+                fontWeight: 400,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                transition: 'all 0.12s ease',
+              }}
+            >
+              <CircleDot size={12} color={stateFilter === 'open' ? '#22c55e' : textSecondary} />
+              <span>Abertas</span>
+              <span
+                style={{
+                  fontSize: 10,
+                  padding: '1px 5px',
+                  borderRadius: 8,
+                  background: stateFilter === 'open' ? 'rgba(34, 197, 94, 0.2)' : 'transparent',
+                  color: stateFilter === 'open' ? '#22c55e' : textSecondary,
+                  fontWeight: 400,
+                }}
+              >
+                {openCount}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleStateFilterChange('closed')}
+              style={{
+                background: stateFilter === 'closed' ? 'rgba(168, 85, 247, 0.15)' : 'transparent',
+                color: stateFilter === 'closed' ? '#a855f7' : textSecondary,
+                border: 'none',
+                borderRadius: 5,
+                padding: '3px 8px',
+                fontSize: 11.5,
+                fontWeight: 400,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                transition: 'all 0.12s ease',
+              }}
+            >
+              <CheckCircle2 size={12} color={stateFilter === 'closed' ? '#a855f7' : textSecondary} />
+              <span>Fechadas</span>
+              <span
+                style={{
+                  fontSize: 10,
+                  padding: '1px 5px',
+                  borderRadius: 8,
+                  background: stateFilter === 'closed' ? 'rgba(168, 85, 247, 0.2)' : 'transparent',
+                  color: stateFilter === 'closed' ? '#a855f7' : textSecondary,
+                  fontWeight: 400,
+                }}
+              >
+                {closedCount}
+              </span>
+            </button>
+          </div>
         </div>
 
         {/* Right: Search & Refresh */}
@@ -426,9 +679,9 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
               alignItems: 'center',
               gap: 6,
               background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
-              border: '1px solid ' + (themeTokens?.border || (isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)')),
+              border: 'none',
               borderRadius: 6,
-              padding: '3px 8px',
+              padding: '4px 8px',
               width: 170,
             }}
           >
@@ -446,6 +699,7 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
                 fontSize: 11.5,
                 width: '100%',
                 fontFamily: 'inherit',
+                fontWeight: 400,
               }}
             />
           </div>
@@ -456,9 +710,9 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
             title="Recarregar issues do GitHub"
             style={{
               background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
-              border: '1px solid ' + (themeTokens?.border || (isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)')),
+              border: 'none',
               borderRadius: 6,
-              padding: '5px 7px',
+              padding: '6px',
               color: textSecondary,
               cursor: 'pointer',
               display: 'flex',
@@ -468,14 +722,12 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.color = accentColor;
-              e.currentTarget.style.borderColor = accentColor;
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.color = textSecondary;
-              e.currentTarget.style.borderColor = themeTokens?.border || 'transparent';
             }}
           >
-            <RefreshCw size={12} className={isLoading ? 'animate-spin' : ''} />
+            <RefreshCw size={13} className={isLoading ? 'animate-spin' : ''} />
           </button>
         </div>
       </div>
@@ -761,8 +1013,14 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
               }}
             >
               <ListTodo size={22} color={textSecondary} style={{ opacity: 0.5 }} />
-              <div style={{ fontSize: 12.5, fontWeight: 500, color: textPrimary }}>
-                {filterMode === 'mine' ? 'Nenhuma tarefa atribuída a você nesta sprint' : 'Nenhuma tarefa encontrada nesta sprint'}
+              <div style={{ fontSize: 12.5, fontWeight: 400, color: textPrimary }}>
+                {stateFilter === 'closed'
+                  ? 'Nenhuma tarefa fechada encontrada'
+                  : stateFilter === 'open'
+                  ? 'Nenhuma tarefa aberta encontrada'
+                  : filterMode === 'mine'
+                  ? 'Nenhuma tarefa atribuída a você nesta sprint'
+                  : 'Nenhuma tarefa encontrada nesta sprint'}
               </div>
               <div style={{ fontSize: 11, maxWidth: 340, lineHeight: 1.4 }}>
                 {selectedSprint !== 'ALL' ? (
@@ -778,7 +1036,7 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
                 ) : filterMode === 'mine' ? (
                   `Não há issues vinculadas a @${normalizedUser}. Alterne para "Todas" para visualizar todas as tarefas.`
                 ) : (
-                  'Não há issues abertas correspondentes à busca.'
+                  'Não há issues correspondentes aos filtros selecionados.'
                 )}
               </div>
             </div>
@@ -869,11 +1127,11 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
                             gap: 3,
                             fontSize: 9.5,
                             fontWeight: 500,
-                            padding: '1px 5px',
+                            padding: '2px 6px',
                             borderRadius: 3,
                             background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
                             color: accentColor,
-                            border: `1px solid ${accentColor}33`,
+                            border: 'none',
                             maxWidth: 110,
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
@@ -893,12 +1151,12 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
                               key={lbl.id || lbl.name || lIdx}
                               style={{
                                 fontSize: 9.5,
-                                fontWeight: 500,
-                                padding: '1px 5px',
+                                fontWeight: 400,
+                                padding: '2px 6px',
                                 borderRadius: 3,
                                 background: `${bgHex}18`,
                                 color: isEffectiveDark ? '#e4e4e7' : '#334155',
-                                border: `1px solid ${bgHex}33`,
+                                border: 'none',
                                 maxWidth: 100,
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
@@ -972,10 +1230,9 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
                         padding: '4px 10px',
                         color: '#ffffff',
                         fontSize: 11,
-                        fontWeight: 600,
+                        fontWeight: 500,
                         cursor: 'pointer',
                         transition: 'all 0.15s ease',
-                        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.2)',
                       }}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.filter = 'brightness(1.1)';
@@ -987,6 +1244,81 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
                       }}
                     >
                       <span>Fazer com IA</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.dispatchEvent(
+                          new CustomEvent('devflow:mention-issue-terminal', { detail: { issue } })
+                        );
+                        logSystemActivity('tarefas', 'mention_issue_terminal', repoName || 'default', {
+                          issueNumber: issue.number,
+                          title: issue.title,
+                        });
+                      }}
+                      title="Mencionar no terminal (mostrar tag de issue)"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: 'transparent',
+                        border: 'none',
+                        borderRadius: 4,
+                        padding: '4px',
+                        color: textSecondary,
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.color = accentColor || '#FF6A00';
+                        e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = textSecondary;
+                        e.currentTarget.style.background = 'transparent';
+                      }}
+                    >
+                      <AtSign size={13} />
+                    </button>
+
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        window.dispatchEvent(
+                          new CustomEvent('devflow:send-issue-terminal', { detail: { issue } })
+                        );
+                        logSystemActivity('tarefas', 'send_issue_terminal', repoName || 'default', {
+                          issueNumber: issue.number,
+                          title: issue.title,
+                        });
+                      }}
+                      title="Enviar para o terminal ativo"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: 'transparent',
+                        border: 'none',
+                        borderRadius: 4,
+                        padding: '4px',
+                        color: textSecondary,
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.color = accentColor || '#FF6A00';
+                        e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = textSecondary;
+                        e.currentTarget.style.background = 'transparent';
+                      }}
+                    >
+                      <SquareTerminal size={13} />
                     </button>
 
                     {issue.url && (

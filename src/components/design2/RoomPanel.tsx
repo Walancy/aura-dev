@@ -10,7 +10,7 @@ interface RoomPanelProps {
   isBrowsing: boolean;
   accentColor: string;
   themeTokens: { textPrimary: string; textSecondary: string; bgCard: string; bgCardSecondary: string; border: string; hoverBg: string };
-  onHost: (name: string) => void;
+  onHost: (name: string, allowEdit: boolean) => void;
   onStopHosting: () => void;
   onStartBrowsing: () => void;
   onStopBrowsing: () => void;
@@ -49,6 +49,7 @@ export default function RoomPanel({
 }: RoomPanelProps) {
   const [showHostForm, setShowHostForm] = useState(false);
   const [roomName, setRoomName] = useState('Minha sala de design');
+  const [allowEdit, setAllowEdit] = useState(true);
 
   if (role === 'hosting' && hostedRoom) {
     return (
@@ -101,7 +102,7 @@ export default function RoomPanel({
             onChange={(e) => setRoomName(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && roomName.trim()) {
-                onHost(roomName.trim());
+                onHost(roomName.trim(), allowEdit);
                 setShowHostForm(false);
               }
             }}
@@ -119,7 +120,7 @@ export default function RoomPanel({
           <button
             onClick={() => {
               if (roomName.trim()) {
-                onHost(roomName.trim());
+                onHost(roomName.trim(), allowEdit);
                 setShowHostForm(false);
               }
             }}
@@ -127,6 +128,10 @@ export default function RoomPanel({
           >
             Iniciar
           </button>
+          <label title="Quem entrar na sala poderá editar o design (última edição vale)" style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: themeTokens.textSecondary, cursor: 'pointer' }}>
+            <input type="checkbox" checked={allowEdit} onChange={(e) => setAllowEdit(e.target.checked)} />
+            Permitir edição
+          </label>
         </div>
       )}
 

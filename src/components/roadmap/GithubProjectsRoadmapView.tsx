@@ -2,6 +2,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Plus,
   CircleDot,
   CheckCircle2,
@@ -24,6 +25,8 @@ export interface GithubProjectsRoadmapViewProps {
   showToast?: (msg: string) => void;
 }
 
+export const MONTH_NAMES_PT = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+
 export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewProps> = ({
   issues = [],
   repoName = 'repositório',
@@ -42,6 +45,9 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
   const [leftColWidth, setLeftColWidth] = useState(360);
   const [isResizingLeftCol, setIsResizingLeftCol] = useState(false);
   const [sortOrder, setSortOrder] = useState<'default' | 'asc' | 'desc'>('default');
+  const [showMarkers, setShowMarkers] = useState(true);
+  const [dateFieldMode, setDateFieldMode] = useState<'issue' | 'sprint'>('issue');
+  const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false);
 
   const timelineScrollRef = useRef<HTMLDivElement>(null);
   const leftTableScrollRef = useRef<HTMLDivElement>(null);
@@ -241,11 +247,13 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
           }
         }
         if (!startIso || !dueIso) {
-          const fallback = new Date(viewYear, viewMonth, 10);
-          if (!isNaN(fallback.getTime())) {
-            startIso = fallback.toISOString().slice(0, 10);
-            fallback.setDate(fallback.getDate() + 4);
-            dueIso = fallback.toISOString().slice(0, 10);
+          const rawUpdated = (task as any).updatedAtIso;
+          const baseDate = rawUpdated ? new Date(rawUpdated) : new Date();
+          if (!isNaN(baseDate.getTime())) {
+            startIso = baseDate.toISOString().slice(0, 10);
+            const due = new Date(baseDate);
+            due.setDate(due.getDate() + 3);
+            dueIso = due.toISOString().slice(0, 10);
           }
         }
       } else if (startIso && !dueIso) {
@@ -296,6 +304,25 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
     }
   };
 
+  const handleShiftIssueDates = (task: ProjectIssue, deltaDays: number, mode: 'both' | 'start' | 'due' = 'both') => {
+    if (!task || deltaDays === 0 || !onUpdateIssueDates) return;
+    const span = getTaskBarSpan(task);
+    if (!span) return;
+    const sDate = new Date(span.startIso);
+    const dDate = new Date(span.dueIso);
+    if (mode === 'both' || mode === 'start') {
+      sDate.setDate(sDate.getDate() + deltaDays);
+    }
+    if (mode === 'both' || mode === 'due') {
+      dDate.setDate(dDate.getDate() + deltaDays);
+    }
+    if (sDate > dDate) return;
+    const newStart = sDate.toISOString().slice(0, 10);
+    const newDue = dDate.toISOString().slice(0, 10);
+    onUpdateIssueDates(task.id, newStart, newDue);
+    showToast?.(`Datas de #${task.githubNumber || task.id} alteradas para ${newStart} → ${newDue}`);
+  };
+
   return (
     <div
       style={{
@@ -335,20 +362,28 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <button
             type="button"
+            onClick={() => {
+              setShowMarkers((m) => {
+                const next = !m;
+                showToast?.(next ? 'Marcadores ativados.' : 'Marcadores desativados.');
+                return next;
+              });
+            }}
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: 5,
-              background: 'transparent',
+              background: showMarkers ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)') : 'transparent',
               border: 'none',
-              color: textSecondary,
+              color: showMarkers ? accentColor : textSecondary,
               fontSize: 11.5,
               cursor: 'pointer',
               padding: '4px 8px',
               borderRadius: 4,
             }}
             onMouseEnter={(e) => (e.currentTarget.style.color = textPrimary)}
-            onMouseLeave={(e) => (e.currentTarget.style.color = textSecondary)}
+            onMouseLeave={(e) => (e.currentTarget.style.color = showMarkers ? accentColor : textSecondary)}
+            title="Alternar marcadores verticais no cronograma"
           >
             <Pin size={12} />
             <span>Markers</span>
@@ -378,23 +413,31 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
 
           <button
             type="button"
+            onClick={() => {
+              setDateFieldMode((m) => {
+                const next = m === 'issue' ? 'sprint' : 'issue';
+                showToast?.(next === 'issue' ? 'Exibindo datas da Issue' : 'Exibindo datas vinculadas da Sprint');
+                return next;
+              });
+            }}
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: 5,
-              background: 'transparent',
+              background: dateFieldMode === 'sprint' ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)') : 'transparent',
               border: 'none',
-              color: textSecondary,
+              color: dateFieldMode === 'sprint' ? accentColor : textSecondary,
               fontSize: 11.5,
               cursor: 'pointer',
               padding: '4px 8px',
               borderRadius: 4,
             }}
             onMouseEnter={(e) => (e.currentTarget.style.color = textPrimary)}
-            onMouseLeave={(e) => (e.currentTarget.style.color = textSecondary)}
+            onMouseLeave={(e) => (e.currentTarget.style.color = dateFieldMode === 'sprint' ? accentColor : textSecondary)}
+            title="Alternar campo de datas utilizado"
           >
             <Calendar size={12} />
-            <span>Date fields</span>
+            <span>Date fields: {dateFieldMode === 'issue' ? 'Issue' : 'Sprint'}</span>
           </button>
 
           <div
@@ -406,7 +449,69 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
             }}
           />
 
-          <span style={{ fontSize: 11.5, color: textSecondary, padding: '0 4px' }}>Month</span>
+          <div style={{ position: 'relative' }}>
+            <button
+              type="button"
+              onClick={() => setIsMonthPickerOpen((p) => !p)}
+              style={{
+                fontSize: 11.5,
+                color: isMonthPickerOpen ? accentColor : textSecondary,
+                padding: '3px 7px',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                borderRadius: 4,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+              }}
+              title="Mudar mês do roadmap"
+            >
+              <span>{monthTitle || 'Mês'}</span>
+              <ChevronDown size={11} />
+            </button>
+            {isMonthPickerOpen && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 24,
+                  right: 0,
+                  background: isEffectiveDark ? '#161b22' : '#ffffff',
+                  border: isEffectiveDark ? '1px solid #30363d' : '1px solid #d0d7de',
+                  borderRadius: 6,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
+                  padding: 6,
+                  zIndex: 100,
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, 1fr)',
+                  gap: 4,
+                  minWidth: 190,
+                }}
+              >
+                {MONTH_NAMES_PT.map((mName, mIdx) => (
+                  <button
+                    key={mIdx}
+                    type="button"
+                    onClick={() => {
+                      setViewMonth(mIdx);
+                      setIsMonthPickerOpen(false);
+                    }}
+                    style={{
+                      padding: '4px 6px',
+                      fontSize: 11,
+                      border: 'none',
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                      background: viewMonth === mIdx ? accentColor : 'transparent',
+                      color: viewMonth === mIdx ? accentContrastText : textPrimary,
+                    }}
+                  >
+                    {mName.slice(0, 3)}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           <button
             type="button"
@@ -851,6 +956,57 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
                         e.currentTarget.style.boxShadow = '0 1px 2px rgba(0,0,0,0.1)';
                       }}
                     >
+                      {/* Handle Esquerdo de Redimensionamento */}
+                      <div
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          const startX = e.clientX;
+                          const onMouseUp = (ev: MouseEvent) => {
+                            document.removeEventListener('mouseup', onMouseUp);
+                            const deltaX = ev.clientX - startX;
+                            const days = Math.round(deltaX / DAY_COL_WIDTH);
+                            if (days !== 0) handleShiftIssueDates(task, days, 'start');
+                          };
+                          document.addEventListener('mouseup', onMouseUp);
+                        }}
+                        style={{
+                          position: 'absolute',
+                          left: 0,
+                          top: 0,
+                          bottom: 0,
+                          width: 8,
+                          cursor: 'ew-resize',
+                          background: 'rgba(0, 0, 0, 0.2)',
+                          zIndex: 5,
+                        }}
+                        title="Arrastar para alterar data de início"
+                      />
+
+                      {/* Handle Direito de Redimensionamento */}
+                      <div
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          const startX = e.clientX;
+                          const onMouseUp = (ev: MouseEvent) => {
+                            document.removeEventListener('mouseup', onMouseUp);
+                            const deltaX = ev.clientX - startX;
+                            const days = Math.round(deltaX / DAY_COL_WIDTH);
+                            if (days !== 0) handleShiftIssueDates(task, days, 'due');
+                          };
+                          document.addEventListener('mouseup', onMouseUp);
+                        }}
+                        style={{
+                          position: 'absolute',
+                          right: 0,
+                          top: 0,
+                          bottom: 0,
+                          width: 8,
+                          cursor: 'ew-resize',
+                          background: 'rgba(0, 0, 0, 0.2)',
+                          zIndex: 5,
+                        }}
+                        title="Arrastar para alterar prazo final"
+                      />
                       {isClosed ? (
                         <CheckCircle2 size={11.5} color="#8957e5" style={{ flexShrink: 0 }} />
                       ) : (

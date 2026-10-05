@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Search,
   ChevronDown,
@@ -86,12 +87,18 @@ import { AI_PROVIDERS } from '../constants/ai';
 import { ConfirmDeleteModal } from './modals/ConfirmDeleteModal';
 import { IssueDetailSidesheet } from './modals/IssueDetailSidesheet';
 import { AssignMemberModal } from './modals/AssignMemberModal';
-import { ManageAccessView, type AccessItem } from './team/ManageAccessView';
+import { TeamWorkspaceView } from './team/TeamWorkspaceView';
+import { getProjectSettings, resolveProjectStatus, formatSprintName, subscribeProjectSettings } from './settings/projectSettingsStore';
 import { GithubProjectsKanbanBoard, type KanbanColumnDef } from './kanban/GithubProjectsKanbanBoard';
 import { GithubProjectsRoadmapView } from './roadmap/GithubProjectsRoadmapView';
 import { ProjectRisksDashboard } from './risks/ProjectRisksDashboard';
+import { ProjectMilestonesView } from './milestones/ProjectMilestonesView';
+import { ProjectReportsView } from './reports/ProjectReportsView';
+import { ProjectLinksView } from './links/ProjectLinksView';
+import { ProjectSettingsView } from './settings/ProjectSettingsView';
 import { getLanguageSvgUrl } from './FileIcon';
 import { ProjectIconModal } from './modals/ProjectIconModal';
+import { logSystemActivity } from '../utils/brainService';
 
 export interface ProjectsSchedulerViewProps {
   workspacePath?: string;
@@ -138,7 +145,7 @@ export interface ProjectsSchedulerViewProps {
   onInstallAiCli?: (provider: any) => void;
 }
 
-interface ProjectCardData {
+export interface ProjectCardData {
   id: number | string;
   badge: number;
   title: string;
@@ -272,34 +279,16 @@ const ProjectIconBadge: React.FC<ProjectIconBadgeProps> = ({
         style={{
           width: size,
           height: size,
-          borderRadius: '50%',
-          objectFit: 'cover',
-          display: 'block',
-        }}
-        draggable={false}
-      />
-    );
-  }
-
-  // 2. Ícone oficial da tecnologia/linguagem (ex: TypeScript, Dart, HTML, etc.)
-  if (langSvg) {
-    return (
-      <img
-        src={langSvg}
-        alt={card.language || ''}
-        style={{
-          width: Math.round(size * 0.65),
-          height: Math.round(size * 0.65),
           objectFit: 'contain',
           display: 'block',
-          userSelect: 'none',
+          background: 'transparent',
         }}
         draggable={false}
       />
     );
   }
 
-  // 3. Avatar da organização ou proprietário do repositório
+  // 2. Avatar da organização ou proprietário do repositório (ex: logo da Estância Bahia)
   if (card.ownerAvatarUrl && !imgError) {
     return (
       <img
@@ -309,25 +298,45 @@ const ProjectIconBadge: React.FC<ProjectIconBadgeProps> = ({
         style={{
           width: size,
           height: size,
-          borderRadius: '50%',
-          objectFit: 'cover',
+          objectFit: 'contain',
           display: 'block',
+          background: 'transparent',
         }}
         draggable={false}
       />
     );
   }
 
-  // 4. Fallback numérico padrão
+  // 3. Ícone oficial da tecnologia/linguagem (ex: TypeScript, Dart, HTML, etc.)
+  if (langSvg) {
+    return (
+      <img
+        src={langSvg}
+        alt={card.language || ''}
+        style={{
+          width: size,
+          height: size,
+          objectFit: 'contain',
+          display: 'block',
+          userSelect: 'none',
+          background: 'transparent',
+        }}
+        draggable={false}
+      />
+    );
+  }
+
+  // 4. Fallback numérico padrão sem fundo
   return (
     <span
       style={{
         textAlign: 'center',
         color: badgeColor,
         fontSize: size <= 20 ? 9.5 : 11.5,
-        fontWeight: '300',
+        fontWeight: '400',
         lineHeight: 1,
         transition: 'color 0.18s ease',
+        background: 'transparent',
       }}
     >
       {card.badge}
@@ -342,6 +351,7 @@ export interface ProjectIssue {
   description: string;
   dateStr: string;
   createdAtIso: string; // data real de criação, usada como posição de fallback na timeline
+  closedAtIso?: string; // data de fechamento no GitHub (usada nas métricas do time)
   durationDays: number; // dias em aberto (mínimo 1), largura de fallback na timeline
   startDateIso?: string; // YYYY-MM-DD, derivada da sprint (milestone) atribuída à issue
   dueDateIso?: string; // YYYY-MM-DD, derivada da sprint (milestone) atribuída à issue
@@ -388,7 +398,7 @@ export interface ProjectIssue {
   kanbanColumnId?: string;
 }
 
-interface GithubRepoSummary {
+export interface GithubRepoSummary {
   id: number;
   name: string;
   full_name: string;
@@ -416,6 +426,11 @@ export interface SprintOption {
   number: number;
   iterationId?: string;
   isProjectIteration?: boolean;
+  projectId?: string; // node id do Project V2 dono da iteração
+  iterationFieldId?: string; // node id do campo de iteração ("Sprint") no Project V2
+  // true apenas para sprints "descobertas" por texto (label/nome de milestone em outro formato),
+  // sem number de milestone real nem iterationId — únicas para as quais é seguro comparar por título.
+  isVirtual?: boolean;
   title: string;
   state: 'open' | 'closed';
   startDateIso?: string;
@@ -423,6 +438,73 @@ export interface SprintOption {
   durationLabel?: string;
   openIssues: number;
   closedIssues: number;
+}
+
+// Decide se uma issue pertence a uma sprint (Milestone real ou Iteration do Projects V2).
+// Compara sempre por identidade (iterationId ou milestoneNumber), nunca por texto de título entre
+// os dois sistemas — Milestones e Iterations são independentes no GitHub e podem ter nomes iguais
+// ("Sprint 2") sem serem a mesma coisa; comparar por título fazia uma issue aparecer em ambas.
+export function issueBelongsToSprint(
+  issue: Pick<ProjectIssue, 'milestoneNumber' | 'iterationId' | 'iterationTitle' | 'milestoneTitle'> & { title?: string },
+  sprint: Pick<SprintOption, 'number' | 'iterationId' | 'isProjectIteration' | 'isVirtual' | 'title'>
+): boolean {
+  // 1. Se ambos tiverem iterationId, bate direto por id
+  if (sprint.iterationId && issue.iterationId && sprint.iterationId === issue.iterationId) {
+    return true;
+  }
+  // 2. Se ambos tiverem milestone number válido
+  if (sprint.number && sprint.number > 0 && issue.milestoneNumber === sprint.number) {
+    return true;
+  }
+  // 3. Comparação de títulos (normalizado)
+  const spTitle = (sprint.title || '').toLowerCase().trim();
+  const itTitle = (issue.iterationTitle || '').toLowerCase().trim();
+  const msTitle = (issue.milestoneTitle || '').toLowerCase().trim();
+  if (spTitle) {
+    const getSprintNum = (s: string) => {
+      const m = s.match(/sprint\s*([0-9]+(?:-[0-9]+)?)/i);
+      return m ? m[1] : null;
+    };
+    const spNum = getSprintNum(spTitle);
+
+    if (itTitle) {
+      if (itTitle === spTitle) return true;
+      const itNum = getSprintNum(itTitle);
+      if (spNum && itNum) {
+        if (spNum === itNum) return true;
+      } else if (!spNum && !itNum && (itTitle.startsWith(spTitle) || spTitle.startsWith(itTitle))) {
+        return true;
+      }
+    }
+
+    if (msTitle) {
+      if (msTitle === spTitle) return true;
+      const msNum = getSprintNum(msTitle);
+      if (spNum && msNum) {
+        if (spNum === msNum) return true;
+      } else if (!spNum && !msNum && (msTitle.startsWith(spTitle) || spTitle.startsWith(msTitle))) {
+        return true;
+      }
+    }
+
+    // 4. Comparação por número de sprint no título da issue (ex: 'Sprint13 — ...')
+    if (spNum && issue.title) {
+      const titleNum = getSprintNum(issue.title);
+      if (titleNum && titleNum === spNum) return true;
+    }
+
+    // Comparação por número de milestone numérico
+    if (spNum && /^\d+$/.test(spNum) && issue.milestoneNumber === parseInt(spNum, 10)) {
+      return true;
+    }
+  }
+
+  // 5. Fallback para iterationId exclusivo se nada mais bateu
+  if (sprint.isProjectIteration || sprint.iterationId) {
+    return Boolean(sprint.iterationId && issue.iterationId === sprint.iterationId);
+  }
+
+  return false;
 }
 
 export interface RepoCollaborator {
@@ -453,7 +535,7 @@ export interface ProjectRelease {
 
 export const RELEASES_DATA: Record<string, ProjectRelease> = {};
 
-function extractOwnerRepo(urlOrFullName?: string): { owner: string; repo: string } | null {
+export function extractOwnerRepo(urlOrFullName?: string): { owner: string; repo: string } | null {
   if (!urlOrFullName) return null;
   const match = urlOrFullName.match(/[:/]([^/:]+)\/([^/:]+?)(?:\.git)?$/);
   if (match) {
@@ -466,6 +548,297 @@ function extractOwnerRepo(urlOrFullName?: string): { owner: string; repo: string
     }
   }
   return null;
+}
+
+export function buildUnifiedProjectCards(params: {
+  repos?: GithubRepoSummary[];
+  localClonedRepos?: Array<{ dir: string; name: string; repoFullName?: string; remoteUrl?: string }>;
+  workspacePath?: string;
+  repoDetailsCache?: Record<string, any>;
+  orgs?: Array<{ login: string; avatarUrl: string }>;
+  currentUser?: { login: string; avatarUrl: string } | null;
+  customProjectIcons?: Record<string, string>;
+  isEffectiveDark?: boolean;
+}): ProjectCardData[] {
+  const {
+    repos = [],
+    localClonedRepos = [],
+    workspacePath,
+    repoDetailsCache = {},
+    orgs = [],
+    currentUser,
+    customProjectIcons = {},
+    isEffectiveDark = true,
+  } = params;
+
+  const list: ProjectCardData[] = [];
+  const seenNames = new Set<string>();
+
+  const resolveCurrentSprint = (cachedObj: any) => {
+    if (!cachedObj?.sprints || cachedObj.sprints.length === 0) return null;
+    const openSprints = cachedObj.sprints.filter((s: any) => s.state === 'open');
+    if (openSprints.length === 0) return null;
+
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const running = openSprints.find(
+      (s: any) => s.startDateIso && s.dueDateIso && todayIso >= s.startDateIso && todayIso <= s.dueDateIso
+    );
+    const withDue = openSprints
+      .filter((s: any) => s.dueDateIso)
+      .sort((a: any, b: any) => (a.dueDateIso > b.dueDateIso ? 1 : -1));
+    const active = running || (withDue.length > 0 ? withDue[0] : openSprints[0]);
+    if (!active) return null;
+
+    const daysBadge = calculateSprintDaysBadge(active.dueDateIso, isEffectiveDark);
+    return {
+      number: active.number,
+      title: active.title,
+      dueDateIso: active.dueDateIso,
+      daysBadge,
+    };
+  };
+
+  // 1. Repositórios do GitHub autenticado
+  repos.forEach((repo, idx) => {
+    seenNames.add(repo.name.toLowerCase());
+    if (repo.full_name) seenNames.add(repo.full_name.toLowerCase());
+
+    // Priorização estrita para localMatch evitando cruzamento indevido entre projetos
+    let localMatch = localClonedRepos.find((l) => {
+      const matchFull = Boolean(l.repoFullName && repo.full_name && l.repoFullName.toLowerCase() === repo.full_name.toLowerCase());
+      const matchName = l.name.toLowerCase() === repo.name.toLowerCase();
+      return matchFull && matchName;
+    });
+    if (!localMatch) {
+      // Só casa por nome quando o remoto do clone é desconhecido ou é este mesmo repositório:
+      // repos homônimos de donos diferentes (appmoove/ainaobra x SelberSRFQ/ainaobra) não podem dividir a mesma pasta
+      localMatch = localClonedRepos.find(
+        (l) =>
+          l.name.toLowerCase() === repo.name.toLowerCase() &&
+          (!l.repoFullName || !repo.full_name || l.repoFullName.toLowerCase() === repo.full_name.toLowerCase())
+      );
+    }
+    if (!localMatch) {
+      localMatch = localClonedRepos.find((l) => {
+        if (!l.repoFullName || !repo.full_name) return false;
+        if (l.repoFullName.toLowerCase() !== repo.full_name.toLowerCase()) return false;
+        const isOtherRepo = repos.some((other) => other.id !== repo.id && other.name.toLowerCase() === l.name.toLowerCase());
+        return !isOtherRepo;
+      });
+    }
+
+    // Se a pasta aberta é um clone com remoto conhecido, só o repositório desse remoto é o "atual"
+    const workspaceClone = workspacePath
+      ? localClonedRepos.find((l) => l.dir.toLowerCase() === workspacePath.toLowerCase())
+      : undefined;
+    const isCurrentWorkspace = workspaceClone?.repoFullName && repo.full_name
+      ? workspaceClone.repoFullName.toLowerCase() === repo.full_name.toLowerCase()
+      : Boolean(workspacePath && (
+        workspacePath.toLowerCase().endsWith(`/${repo.name.toLowerCase()}`) ||
+        workspacePath.toLowerCase().endsWith(`/${repo.name.toLowerCase()}/`)
+      )) ||
+      Boolean(localMatch && workspacePath && localMatch.dir.toLowerCase() === workspacePath.toLowerCase() && repo.name.toLowerCase() === localMatch.name.toLowerCase());
+
+    const localDir = getProjectSettings(repo.full_name).local.path || (isCurrentWorkspace ? workspacePath : localMatch?.dir);
+    const cached =
+      repoDetailsCache[repo.full_name] ||
+      (repo.owner?.login && repoDetailsCache[`${repo.owner.login}/${repo.name}`]) ||
+      repoDetailsCache[repo.name] ||
+      Object.entries(repoDetailsCache).find(
+        ([k]) => k.toLowerCase() === repo.full_name?.toLowerCase() || k.toLowerCase().endsWith(`/${repo.name.toLowerCase()}`)
+      )?.[1];
+    const doneCount = cached ? cached.issues.filter((i: any) => i.status === 'Concluído').length : 0;
+    const inProgressCount = cached ? cached.issues.filter((i: any) => i.status === 'Em Progresso').length : 0;
+    const openCount = cached ? cached.issues.filter((i: any) => i.status === 'A Fazer').length : repo.open_issues_count;
+    const total = cached ? cached.issues.length : 0;
+    const percentValue = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+    const currentSprint = resolveCurrentSprint(cached);
+
+    list.push({
+      id: repo.id,
+      badge: idx + 1,
+      title: repo.name,
+      name: repo.name,
+      description: repo.description,
+      language: repo.language,
+      isPrivate: repo.private,
+      updatedAtIso: repo.updated_at,
+      progressPercent: percentValue,
+      sprint: currentSprint?.title || '',
+      percentage: `${percentValue}%`,
+      percentValue,
+      solidFlex: '1 1 0',
+      dottedWidth: 52,
+      faintWidth: 36,
+      issuesDone: doneCount,
+      issuesOpen: openCount,
+      issuesInProgress: inProgressCount,
+      alertStatus: null,
+      org: repo.owner?.login,
+      fullName: repo.full_name,
+      owner: repo.owner?.login,
+      repoName: repo.name,
+      htmlUrl: repo.html_url,
+      isCloned: Boolean(localMatch || isCurrentWorkspace),
+      localDir,
+      ownerAvatarUrl: repo.owner?.avatar_url,
+      defaultBranch: repo.default_branch || 'main',
+      currentSprint,
+    });
+  });
+
+  // 2. Repositórios locais clonados que não foram listados via GitHub
+  localClonedRepos.forEach((locRepo) => {
+    if (seenNames.has(locRepo.name.toLowerCase())) return;
+    if (locRepo.repoFullName && seenNames.has(locRepo.repoFullName.toLowerCase())) return;
+    seenNames.add(locRepo.name.toLowerCase());
+    if (locRepo.repoFullName) seenNames.add(locRepo.repoFullName.toLowerCase());
+
+    let owner = locRepo.repoFullName?.split('/')[0] || '';
+    let repoName = locRepo.repoFullName?.split('/')[1] || locRepo.name;
+    if (!owner && locRepo.remoteUrl) {
+      const parsed = extractOwnerRepo(locRepo.remoteUrl);
+      if (parsed) {
+        owner = parsed.owner;
+        repoName = parsed.repo;
+      }
+    }
+    if (!owner && currentUser?.login) {
+      owner = currentUser.login;
+    }
+    const fullName = (owner && repoName) ? `${owner}/${repoName}` : (locRepo.repoFullName || locRepo.name);
+    const isCurrentWorkspace = Boolean(
+      workspacePath &&
+        (workspacePath.toLowerCase() === locRepo.dir.toLowerCase() ||
+         workspacePath.toLowerCase().endsWith(`/${locRepo.name.toLowerCase()}`))
+    );
+    const cached =
+      repoDetailsCache[fullName] ||
+      (owner && repoName ? repoDetailsCache[`${owner}/${repoName}`] : undefined) ||
+      repoDetailsCache[repoName] ||
+      repoDetailsCache[locRepo.name] ||
+      Object.entries(repoDetailsCache).find(
+        ([k]) => k.toLowerCase() === fullName.toLowerCase() || k.toLowerCase().endsWith(`/${repoName.toLowerCase()}`)
+      )?.[1];
+    const doneCount = cached ? cached.issues.filter((i: any) => i.status === 'Concluído').length : 0;
+    const inProgressCount = cached ? cached.issues.filter((i: any) => i.status === 'Em Progresso').length : 0;
+    const openCount = cached ? cached.issues.filter((i: any) => i.status === 'A Fazer').length : 0;
+    const total = cached ? cached.issues.length : 0;
+    const percentValue = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+    const currentSprint = resolveCurrentSprint(cached);
+
+    const locOwnerAvatar =
+      (owner && orgs.find((o) => o.login.toLowerCase() === owner.toLowerCase())?.avatarUrl) ||
+      (currentUser && owner?.toLowerCase() === currentUser.login.toLowerCase() ? currentUser.avatarUrl : undefined);
+
+    list.push({
+      id: `local-${locRepo.name}`,
+      badge: list.length + 1,
+      title: locRepo.name,
+      name: locRepo.name,
+      description: `Projeto local em ${locRepo.dir}`,
+      language: undefined,
+      isPrivate: false,
+      updatedAtIso: undefined,
+      progressPercent: percentValue,
+      sprint: currentSprint?.title || 'Local',
+      percentage: `${percentValue}%`,
+      percentValue,
+      solidFlex: '1 1 0',
+      dottedWidth: 52,
+      faintWidth: 36,
+      issuesDone: doneCount,
+      issuesOpen: openCount,
+      issuesInProgress: inProgressCount,
+      alertStatus: null,
+      org: owner || undefined,
+      fullName,
+      owner,
+      repoName,
+      htmlUrl: locRepo.remoteUrl,
+      isCloned: true,
+      localDir: locRepo.dir,
+      ownerAvatarUrl: locOwnerAvatar,
+      defaultBranch: 'main',
+      currentSprint,
+    });
+  });
+
+  // 3. Workspace ativa se não estiver presente na lista
+  if (workspacePath && !list.some((p) => p.localDir && p.localDir.toLowerCase() === workspacePath.toLowerCase())) {
+    const folderName = workspacePath.split('/').filter(Boolean).pop() || 'Workspace';
+    const localMatch = localClonedRepos.find((l) => l.dir.toLowerCase() === workspacePath.toLowerCase());
+    let owner = localMatch?.repoFullName?.split('/')[0] || '';
+    let repoName = localMatch?.repoFullName?.split('/')[1] || folderName;
+    if (!owner && localMatch?.remoteUrl) {
+      const parsed = extractOwnerRepo(localMatch.remoteUrl);
+      if (parsed) {
+        owner = parsed.owner;
+        repoName = parsed.repo;
+      }
+    }
+    if (!owner && folderName.toLowerCase() === 'devflow-desktop') {
+      owner = 'Walancy';
+      repoName = 'aura-dev';
+    }
+    if (!owner && currentUser?.login) {
+      owner = currentUser.login;
+    }
+    const fullName = (owner && repoName) ? `${owner}/${repoName}` : folderName;
+    const displayName = folderName.toLowerCase() === 'devflow-desktop' ? 'Aura Dev' : repoName;
+    const cached =
+      repoDetailsCache[fullName] ||
+      (owner && repoName ? repoDetailsCache[`${owner}/${repoName}`] : undefined) ||
+      repoDetailsCache[repoName] ||
+      repoDetailsCache[displayName] ||
+      Object.entries(repoDetailsCache).find(
+        ([k]) => k.toLowerCase() === fullName.toLowerCase() || k.toLowerCase().endsWith(`/${repoName.toLowerCase()}`)
+      )?.[1];
+    const doneCount = cached ? cached.issues.filter((i: any) => i.status === 'Concluído').length : 0;
+    const inProgressCount = cached ? cached.issues.filter((i: any) => i.status === 'Em Progresso').length : 0;
+    const openCount = cached ? cached.issues.filter((i: any) => i.status === 'A Fazer').length : 0;
+    const total = cached ? cached.issues.length : 0;
+    const percentValue = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+    const currentSprint = resolveCurrentSprint(cached);
+
+    const wsOwnerAvatar =
+      (owner && orgs.find((o) => o.login.toLowerCase() === owner.toLowerCase())?.avatarUrl) ||
+      (currentUser && owner?.toLowerCase() === currentUser.login.toLowerCase() ? currentUser.avatarUrl : undefined);
+
+    list.unshift({
+      id: 'active-workspace',
+      badge: 1,
+      title: displayName,
+      name: displayName,
+      description: `Workspace ativa em ${workspacePath}`,
+      language: undefined,
+      isPrivate: false,
+      updatedAtIso: undefined,
+      progressPercent: percentValue,
+      sprint: currentSprint?.title || 'Local',
+      percentage: `${percentValue}%`,
+      percentValue,
+      solidFlex: '1 1 0',
+      dottedWidth: 52,
+      faintWidth: 36,
+      issuesDone: doneCount,
+      issuesOpen: openCount,
+      issuesInProgress: inProgressCount,
+      alertStatus: null,
+      org: owner || undefined,
+      fullName,
+      owner,
+      repoName,
+      htmlUrl: localMatch?.remoteUrl,
+      isCloned: true,
+      localDir: workspacePath,
+      ownerAvatarUrl: wsOwnerAvatar,
+      defaultBranch: 'main',
+      currentSprint,
+    });
+  }
+
+  return list;
 }
 
 const STATUS_FILTER_OPTIONS = [
@@ -1016,6 +1389,9 @@ export interface GithubSprintItem {
   number: number;
   iterationId?: string;
   isProjectIteration?: boolean;
+  isVirtual?: boolean;
+  projectId?: string;
+  iterationFieldId?: string;
   title: string;
   durationLabel: string;
   startDateIso: string;
@@ -1023,129 +1399,6 @@ export interface GithubSprintItem {
   dateRangeLabel: string;
   status: 'Current' | 'Planned' | 'Completed';
 }
-
-const SAMPLE_GITHUB_SPRINTS: GithubSprintItem[] = [
-  {
-    id: 'sprint-2',
-    number: 2,
-    title: 'Sprint2 - Cadastro e Perfis de Acesso',
-    durationLabel: '2 weeks',
-    startDateIso: '2026-09-16',
-    dueDateIso: '2026-09-29',
-    dateRangeLabel: 'Sep 16 - Sep 29',
-    status: 'Current',
-  },
-  {
-    id: 'sprint-3',
-    number: 3,
-    title: 'Sprint3 - Catálogo de Lotes, Motor de Frete e Entrada da Streaming Multicanal',
-    durationLabel: '2 weeks',
-    startDateIso: '2026-09-30',
-    dueDateIso: '2026-10-13',
-    dateRangeLabel: 'Sep 30 - Oct 13',
-    status: 'Planned',
-  },
-  {
-    id: 'sprint-4',
-    number: 4,
-    title: 'Sprint4 - Habilitação, Crédito e Player de Streaming',
-    durationLabel: '2 weeks',
-    startDateIso: '2026-10-14',
-    dueDateIso: '2026-10-27',
-    dateRangeLabel: 'Oct 14 - Oct 27',
-    status: 'Planned',
-  },
-  {
-    id: 'sprint-5',
-    number: 5,
-    title: 'Sprint5 - Leilão Ao Vivo — Motor de Lances',
-    durationLabel: '2 weeks',
-    startDateIso: '2026-10-28',
-    dueDateIso: '2026-11-10',
-    dateRangeLabel: 'Oct 28 - Nov 10',
-    status: 'Planned',
-  },
-  {
-    id: 'sprint-6',
-    number: 6,
-    title: 'Sprint6 - Integração Smart TV Samsung',
-    durationLabel: '2 weeks',
-    startDateIso: '2026-11-11',
-    dueDateIso: '2026-11-24',
-    dateRangeLabel: 'Nov 11 - Nov 24',
-    status: 'Planned',
-  },
-  {
-    id: 'sprint-7',
-    number: 7,
-    title: 'Sprint7 - Integração Smart TV LG',
-    durationLabel: '2 weeks',
-    startDateIso: '2026-11-25',
-    dueDateIso: '2026-12-08',
-    dateRangeLabel: 'Nov 25 - Dec 08',
-    status: 'Planned',
-  },
-  {
-    id: 'sprint-8',
-    number: 8,
-    title: 'Sprint8 - Testes de Carga do Leilão ao Vivo',
-    durationLabel: '2 weeks',
-    startDateIso: '2026-12-09',
-    dueDateIso: '2026-12-22',
-    dateRangeLabel: 'Dec 09 - Dec 22',
-    status: 'Planned',
-  },
-  {
-    id: 'sprint-9',
-    number: 9,
-    title: 'Sprint9 - Otimizações de Latência e Cache Redis',
-    durationLabel: '2 weeks',
-    startDateIso: '2026-12-23',
-    dueDateIso: '2027-01-05',
-    dateRangeLabel: 'Dec 23 - Jan 05',
-    status: 'Planned',
-  },
-  {
-    id: 'sprint-10',
-    number: 10,
-    title: 'Sprint10 - App Mobile Flutter e Notificações Push',
-    durationLabel: '2 weeks',
-    startDateIso: '2027-01-06',
-    dueDateIso: '2027-01-19',
-    dateRangeLabel: 'Jan 06 - Jan 19',
-    status: 'Planned',
-  },
-  {
-    id: 'sprint-11',
-    number: 11,
-    title: 'Sprint11 - Compliance LGPD e Auditoria de Segurança',
-    durationLabel: '2 weeks',
-    startDateIso: '2027-01-20',
-    dueDateIso: '2027-02-02',
-    dateRangeLabel: 'Jan 20 - Feb 02',
-    status: 'Planned',
-  },
-  {
-    id: 'sprint-12',
-    number: 12,
-    title: 'Sprint12 - Lançamento Oficial e Go-Live',
-    durationLabel: '2 weeks',
-    startDateIso: '2027-02-03',
-    dueDateIso: '2027-02-16',
-    dateRangeLabel: 'Feb 03 - Feb 16',
-    status: 'Planned',
-  },
-  {
-    id: 'sprint-1',
-    number: 1,
-    title: 'Sprint1 - Setup Inicial e Arquitetura',
-    durationLabel: '2 weeks',
-    startDateIso: '2026-09-02',
-    dueDateIso: '2026-09-15',
-    dateRangeLabel: 'Sep 02 - Sep 15',
-    status: 'Completed',
-  },
-];
 
 // Extrai iterações (Sprints) dos campos de Projects V2 do GitHub
 function extractProjectIterations(projects: any[]): SprintOption[] {
@@ -1187,6 +1440,8 @@ function extractProjectIterations(projects: any[]): SprintOption[] {
             number: sprintNum,
             iterationId: it.id,
             isProjectIteration: true,
+            projectId: proj.id,
+            iterationFieldId: f.id,
             title: it.title,
             state: it.state,
             startDateIso: startIso,
@@ -1262,14 +1517,18 @@ function extractProjectV2ColumnsAndItems(project: any): {
 
   if (!project) return { columns, statusFieldId, projectId, itemsMap };
 
-  // 1. Procurar o campo Status no Project V2
+  // 1. Procurar o campo Status no Project V2 (nome configurável em Configurações → Fluxo de trabalho)
   const fields = project.fields?.nodes || [];
-  const statusField = fields.find(
-    (f: any) =>
-      f &&
-      Array.isArray(f.options) &&
-      (f.name?.toLowerCase() === 'status' || f.__typename === 'ProjectV2SingleSelectField')
-  );
+  const cfgRepo: string | undefined = project.repositories?.nodes?.[0]?.nameWithOwner;
+  const projectStatusName = (getProjectSettings(cfgRepo).workflow.statusFieldName || 'status').toLowerCase();
+  const statusField =
+    fields.find((f: any) => f && Array.isArray(f.options) && f.name?.toLowerCase() === projectStatusName) ||
+    fields.find(
+      (f: any) =>
+        f &&
+        Array.isArray(f.options) &&
+        (f.name?.toLowerCase() === 'status' || f.__typename === 'ProjectV2SingleSelectField')
+    );
 
   if (statusField) {
     statusFieldId = statusField.id;
@@ -1278,6 +1537,7 @@ function extractProjectV2ColumnsAndItems(project: any): {
       const colorKey = String(opt.color || '').toUpperCase();
       const dotColor = GITHUB_PROJECT_COLOR_MAP[colorKey] || (opt.color?.startsWith('#') ? opt.color : '#94a3b8');
       const isDone =
+        resolveProjectStatus(cfgRepo, opt.name) === 'Concluído' ||
         opt.name.toLowerCase().includes('done') ||
         opt.name.toLowerCase().includes('conclu') ||
         opt.name.toLowerCase().includes('finaliz') ||
@@ -1305,32 +1565,33 @@ function extractProjectV2ColumnsAndItems(project: any): {
       itemId: item.id,
     };
 
+    const wfCfg = getProjectSettings(repoFullName).workflow;
+    const statusName = (wfCfg.statusFieldName || 'status').toLowerCase();
     const fieldValues = item.fieldValues?.nodes || [];
     for (const fv of fieldValues) {
       if (!fv) continue;
+      const fieldName = fv.field?.name?.toLowerCase();
       // Single select: Status
       if (fv.optionId || (fv.name && fv.field)) {
-        const fieldName = fv.field?.name?.toLowerCase();
-        if (!fieldName || fieldName === 'status') {
+        if (!fieldName || fieldName === statusName) {
           itemData.statusName = fv.name;
           itemData.statusOptionId = fv.optionId;
         }
       }
       // Number: Estimate / Story Points
-      if (typeof fv.number === 'number') {
+      if (typeof fv.number === 'number' && (!wfCfg.estimateFieldName || fieldName === wfCfg.estimateFieldName.toLowerCase())) {
         itemData.estimate = fv.number;
       }
       // Iteration: Sprint
-      if (fv.iterationId || fv.title) {
+      if ((fv.iterationId || fv.title) && (!wfCfg.iterationFieldName || !fieldName || fieldName === wfCfg.iterationFieldName.toLowerCase())) {
         itemData.iterationId = fv.iterationId;
         itemData.iterationTitle = fv.title;
       }
     }
 
-    if (repoFullName) {
-      itemsMap.set(`${repoFullName.toLowerCase()}#${content.number}`, itemData);
-    }
-    itemsMap.set(String(content.number), itemData);
+    // Só a chave com o repositório: um Project de org mistura issues de vários repos, e a chave
+    // pelo número puro fazia a #3 de um repo herdar a sprint/status da #3 de outro.
+    itemsMap.set(repoFullName ? `${repoFullName.toLowerCase()}#${content.number}` : String(content.number), itemData);
   }
 
   return { columns, statusFieldId, projectId, itemsMap };
@@ -1342,7 +1603,7 @@ function getStatusBarColor(status: ProjectIssue['status'], isEffectiveDark: bool
   return isEffectiveDark ? '#444444' : '#cbd5e1';
 }
 
-function mapGithubIssueToProjectIssue(gh: any, projectId: number | string, pulls: any[]): ProjectIssue {
+export function mapGithubIssueToProjectIssue(gh: any, projectId: number | string, pulls: any[]): ProjectIssue {
   const labelObjs: Array<{ name: string; color?: string }> = (gh.labels || [])
     .map((l: any) => (typeof l === 'string' ? { name: l } : { name: l?.name || '', color: l?.color }))
     .filter((l: any) => Boolean(l.name));
@@ -1477,6 +1738,7 @@ function mapGithubIssueToProjectIssue(gh: any, projectId: number | string, pulls
     description: gh.body || '',
     dateStr: createdAt.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' }),
     createdAtIso: createdAt.toISOString(),
+    closedAtIso: closedAt ? closedAt.toISOString() : undefined,
     durationDays: daysOpen,
     startDateIso,
     dueDateIso,
@@ -1725,7 +1987,7 @@ interface ProjectsGlobalCache {
   orgs: Array<{ login: string; avatarUrl: string }>;
   repoDetailsCache: Record<
     string,
-    { issues: ProjectIssue[]; sprints: SprintOption[]; collaborators: RepoCollaborator[]; isLoading: boolean; error: string | null }
+    { issues: ProjectIssue[]; sprints: SprintOption[]; collaborators: RepoCollaborator[]; isLoading: boolean; error: string | null; fetchedAt?: number }
   >;
   lastFetchedAt: number;
 }
@@ -1789,6 +2051,7 @@ function persistProjectsCache() {
           lastFetchedAt: GLOBAL_PROJECTS_CACHE.lastFetchedAt,
         })
       );
+      window.dispatchEvent(new CustomEvent('devflow_projects_cache_updated'));
     } catch (err) {
       console.warn('Aviso ao persistir cache de projetos:', err);
     }
@@ -1937,7 +2200,39 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
   const [selectedSprint, setSelectedSprint] = useState('Todas as Linguagens');
   const [selectedStatus, setSelectedStatus] = useState('Todos os Projetos');
   const [selectedVersion, setSelectedVersion] = useState('v2.4 - Produção');
-  const [selectedOrg, setSelectedOrg] = useState('Todas');
+  const [selectedOrg, _setSelectedOrg] = useState<string>(() => {
+    try {
+      return localStorage.getItem('header_selected_org') || 'Todas';
+    } catch {
+      return 'Todas';
+    }
+  });
+
+  const setSelectedOrg = useCallback((org: string | ((prev: string) => string)) => {
+    _setSelectedOrg((prev) => {
+      const next = typeof org === 'function' ? org(prev) : org;
+      try {
+        localStorage.setItem('header_selected_org', next);
+        window.dispatchEvent(new CustomEvent('header_selected_org_changed', { detail: next }));
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleOrgChanged = (e: any) => {
+      const nextOrg = e?.detail || localStorage.getItem('header_selected_org');
+      if (nextOrg && nextOrg !== selectedOrg) {
+        _setSelectedOrg(nextOrg);
+      }
+    };
+    window.addEventListener('header_selected_org_changed', handleOrgChanged);
+    window.addEventListener('storage', handleOrgChanged);
+    return () => {
+      window.removeEventListener('header_selected_org_changed', handleOrgChanged);
+      window.removeEventListener('storage', handleOrgChanged);
+    };
+  }, [selectedOrg]);
 
   // GitHub Projects da Organização
   interface GithubOrgProjectItem {
@@ -1949,6 +2244,8 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
     closed?: boolean;
     updatedAt?: string;
     isCustom?: boolean;
+    org?: string;
+    repositories?: { nodes: Array<{ id: string; name: string; nameWithOwner: string }> };
   }
 
   const [githubOrgProjects, setGithubOrgProjects] = useState<GithubOrgProjectItem[]>([]);
@@ -1965,6 +2262,7 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
   const [projectV2Columns, setProjectV2Columns] = useState<KanbanColumnDef[] | null>(null);
   const [projectV2StatusFieldId, setProjectV2StatusFieldId] = useState<string | null>(null);
   const [projectV2Id, setProjectV2Id] = useState<string | null>(null);
+  const [projectV2Iterations, setProjectV2Iterations] = useState<SprintOption[]>([]);
   const projectV2ItemsMapRef = useRef<Map<string, ProjectV2ItemData>>(new Map());
 
   const selectedGithubProject = useMemo(() => {
@@ -2043,13 +2341,14 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
     setSelectedGithubProjectNumber(null);
   }, [selectedOrg, fetchGithubProjectsForOrg]);
 
-  // Carrega os repositórios vinculados ao Project selecionado e suas colunas/itens
+  // Carrega os repositórios vinculados ao Project selecionado e suas colunas/itens/sprints
   useEffect(() => {
     if (selectedGithubProjectNumber == null) {
       setSelectedGithubProjectRepos(null);
       setProjectV2Columns(null);
       setProjectV2StatusFieldId(null);
       setProjectV2Id(null);
+      setProjectV2Iterations([]);
       projectV2ItemsMapRef.current.clear();
       return;
     }
@@ -2058,7 +2357,11 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
       setIsLoadingProjectItems(true);
       try {
         if (window.electronAPI?.github?.fetchProjectItems) {
-          const res = await window.electronAPI.github.fetchProjectItems(selectedGithubProjectNumber, selectedOrg);
+          const selectedProjItem = githubOrgProjects.find((p) => p.number === selectedGithubProjectNumber);
+          const effectiveOrg = (selectedOrg && selectedOrg !== 'Todas' && selectedOrg !== 'all')
+            ? selectedOrg
+            : (selectedProjItem?.org || undefined);
+          const res = await window.electronAPI.github.fetchProjectItems(selectedGithubProjectNumber, effectiveOrg);
           if (!isCancelled && res.success && res.project) {
             const { columns, statusFieldId, projectId, itemsMap } = extractProjectV2ColumnsAndItems(res.project);
             if (columns.length > 0) {
@@ -2070,7 +2373,14 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
             setProjectV2Id(projectId);
             projectV2ItemsMapRef.current = itemsMap;
 
+            // Extrai as iterações (Sprints) reais do Project V2 do GitHub
+            const projectIts = extractProjectIterations([res.project]);
+            setProjectV2Iterations(projectIts);
+
             const repoSet = new Set<string>();
+            for (const r of res.project.repositories?.nodes || []) {
+              if (r.nameWithOwner) repoSet.add(r.nameWithOwner.toLowerCase());
+            }
             for (const item of res.project.items?.nodes || []) {
               const repoNameWithOwner = item.content?.repository?.nameWithOwner;
               if (repoNameWithOwner) {
@@ -2083,33 +2393,52 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
               setSelectedGithubProjectRepos(null);
             }
 
-            // Atualiza imediatamente as issues em cache com os dados do Project V2
+            // Atualiza imediatamente as issues em cache com os dados do Project V2 e vincula sprints
             setRepoDetailsCache((prev) => {
               let hasChanges = false;
               const nextCache = { ...prev };
               for (const key of Object.keys(nextCache)) {
                 const entry = nextCache[key];
-                if (!entry?.issues?.length) continue;
-                const newIssues = entry.issues.map((iss) => {
-                  const itData =
-                    (iss.githubNumber && itemsMap.get(`${key.toLowerCase()}#${iss.githubNumber}`)) ||
-                    (iss.githubNumber && itemsMap.get(String(iss.githubNumber)));
-                  if (itData) {
+                if (!entry) continue;
+
+                // Atualiza issues com iterationId e iterationTitle
+                let newIssues = entry.issues;
+                if (entry.issues?.length) {
+                  newIssues = entry.issues.map((iss) => {
+                    const itData = iss.githubNumber ? itemsMap.get(`${key.toLowerCase()}#${iss.githubNumber}`) : undefined;
+                    if (itData) {
+                      hasChanges = true;
+                      return {
+                        ...iss,
+                        projectV2ItemId: itData.itemId,
+                        projectV2Status: itData.statusName || iss.projectV2Status,
+                        projectV2StatusOptionId: itData.statusOptionId || iss.projectV2StatusOptionId,
+                        projectV2Estimate: itData.estimate ?? iss.projectV2Estimate,
+                        iterationId: itData.iterationId || iss.iterationId,
+                        iterationTitle: itData.iterationTitle || iss.iterationTitle,
+                      };
+                    }
+                    return iss;
+                  });
+                }
+
+                // Mescla as iterações do Project V2 nas sprints do repositório
+                let newSprints = entry.sprints || [];
+                if (projectIts.length > 0) {
+                  const seen = new Set(newSprints.map((s) => s.iterationId || s.title.toLowerCase().trim()));
+                  const additions = projectIts.filter((it) => !seen.has(it.iterationId) && !seen.has(it.title.toLowerCase().trim()));
+                  if (additions.length > 0 || newSprints.length === 0) {
+                    newSprints = [...projectIts, ...newSprints.filter((s) => !projectIts.some((it) => it.title.toLowerCase().trim() === s.title.toLowerCase().trim()))];
                     hasChanges = true;
-                    return {
-                      ...iss,
-                      projectV2ItemId: itData.itemId,
-                      projectV2Status: itData.statusName || iss.projectV2Status,
-                      projectV2StatusOptionId: itData.statusOptionId || iss.projectV2StatusOptionId,
-                      projectV2Estimate: itData.estimate ?? iss.projectV2Estimate,
-                      iterationId: itData.iterationId || iss.iterationId,
-                      iterationTitle: itData.iterationTitle || iss.iterationTitle,
-                    };
                   }
-                  return iss;
-                });
+                }
+
                 if (hasChanges) {
-                  nextCache[key] = { ...entry, issues: newIssues };
+                  nextCache[key] = {
+                    ...entry,
+                    issues: newIssues,
+                    sprints: newSprints,
+                  };
                 }
               }
               return hasChanges ? nextCache : prev;
@@ -2120,6 +2449,7 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
         if (!isCancelled) {
           setSelectedGithubProjectRepos(null);
           setProjectV2Columns(null);
+          setProjectV2Iterations([]);
         }
       } finally {
         if (!isCancelled) setIsLoadingProjectItems(false);
@@ -2127,10 +2457,30 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
     };
     loadItems();
     return () => { isCancelled = true; };
-  }, [selectedGithubProjectNumber, selectedOrg]);
+  }, [selectedGithubProjectNumber, selectedOrg, githubOrgProjects]);
 
   // Ref e função de rolagem horizontal da prateleira de cards de projetos
   const shelfCardsRef = useRef<HTMLDivElement>(null);
+  const [isProjectsShelfCollapsed, setIsProjectsShelfCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('projects_shelf_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  // Durante a animação o conteúdo fica recortado; aberto, volta a overflow visível (dropdowns dos filtros).
+  const [isProjectsShelfAnimating, setIsProjectsShelfAnimating] = useState(false);
+  const toggleProjectsShelf = useCallback(() => {
+    setIsProjectsShelfAnimating(true);
+    setIsProjectsShelfCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('projects_shelf_collapsed', String(next));
+      } catch {}
+      return next;
+    });
+    window.setTimeout(() => setIsProjectsShelfAnimating(false), 380);
+  }, []);
   const scrollShelf = (direction: 'left' | 'right') => {
     if (!shelfCardsRef.current) return;
     const amount = shelfCardsRef.current.clientWidth * 0.75;
@@ -2180,7 +2530,9 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
       const next = { ...prev, [projectKey]: iconUrlOrData };
       try {
         localStorage.setItem('devflow_custom_project_icons', JSON.stringify(next));
+        window.dispatchEvent(new CustomEvent('devflow_custom_project_icons_changed'));
       } catch {}
+      logSystemActivity('projects', 'update_project_icon', projectKey, { hasIcon: true });
       return next;
     });
   }, []);
@@ -2191,7 +2543,9 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
       delete next[projectKey];
       try {
         localStorage.setItem('devflow_custom_project_icons', JSON.stringify(next));
+        window.dispatchEvent(new CustomEvent('devflow_custom_project_icons_changed'));
       } catch {}
+      logSystemActivity('projects', 'remove_project_icon', projectKey);
       return next;
     });
   }, []);
@@ -2243,12 +2597,28 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
   const [reposError, setReposError] = useState<string | null>(null);
 
   // Cache de issues/sprints/time por repositório (chave = "owner/repo"), inicializado com cache persistido
-  const [repoDetailsCache, setRepoDetailsCache] = useState<
+  const [repoDetailsCache, _setRepoDetailsCache] = useState<
     Record<
       string,
-      { issues: ProjectIssue[]; sprints: SprintOption[]; collaborators: RepoCollaborator[]; isLoading: boolean; error: string | null }
+      { issues: ProjectIssue[]; sprints: SprintOption[]; collaborators: RepoCollaborator[]; isLoading: boolean; error: string | null; fetchedAt?: number }
     >
   >(() => GLOBAL_PROJECTS_CACHE.repoDetailsCache);
+
+  const setRepoDetailsCache: React.Dispatch<
+    React.SetStateAction<
+      Record<
+        string,
+        { issues: ProjectIssue[]; sprints: SprintOption[]; collaborators: RepoCollaborator[]; isLoading: boolean; error: string | null; fetchedAt?: number }
+      >
+    >
+  > = useCallback((action) => {
+    _setRepoDetailsCache((prev) => {
+      const next = typeof action === 'function' ? (action as any)(prev) : action;
+      GLOBAL_PROJECTS_CACHE.repoDetailsCache = next;
+      persistProjectsCache();
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -2307,250 +2677,17 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
 
   // Cards da prateleira superior = unificação de repositórios do GitHub, projetos locais e workspace ativa
   const allCards: ProjectCardData[] = useMemo(() => {
-    const list: ProjectCardData[] = [];
-    const seenNames = new Set<string>();
-
-    const resolveCurrentSprint = (cachedObj: any) => {
-      if (!cachedObj?.sprints || cachedObj.sprints.length === 0) return null;
-      const openSprints = cachedObj.sprints.filter((s: any) => s.state === 'open');
-      if (openSprints.length === 0) return null;
-
-      const todayIso = new Date().toISOString().slice(0, 10);
-      const running = openSprints.find(
-        (s: any) => s.startDateIso && s.dueDateIso && todayIso >= s.startDateIso && todayIso <= s.dueDateIso
-      );
-      const withDue = openSprints
-        .filter((s: any) => s.dueDateIso)
-        .sort((a: any, b: any) => (a.dueDateIso > b.dueDateIso ? 1 : -1));
-      const active = running || (withDue.length > 0 ? withDue[0] : openSprints[0]);
-      if (!active) return null;
-
-      const daysBadge = calculateSprintDaysBadge(active.dueDateIso, isEffectiveDark);
-      return {
-        number: active.number,
-        title: active.title,
-        dueDateIso: active.dueDateIso,
-        daysBadge,
-      };
-    };
-
-    // 1. Repositórios do GitHub autenticado
-    repos.forEach((repo, idx) => {
-      seenNames.add(repo.name.toLowerCase());
-      if (repo.full_name) seenNames.add(repo.full_name.toLowerCase());
-
-      const localMatch = localClonedRepos.find((l) => {
-        if (l.repoFullName && repo.full_name && l.repoFullName.toLowerCase() === repo.full_name.toLowerCase()) return true;
-        if (l.name.toLowerCase() === repo.name.toLowerCase()) return true;
-        return false;
-      });
-
-      const isCurrentWorkspace =
-        Boolean(workspacePath && workspacePath.toLowerCase().endsWith(`/${repo.name.toLowerCase()}`)) ||
-        Boolean(workspacePath && workspacePath.toLowerCase().endsWith(`/${repo.name.toLowerCase()}/`)) ||
-        Boolean(localMatch && workspacePath && localMatch.dir.toLowerCase() === workspacePath.toLowerCase());
-
-      const localDir = isCurrentWorkspace ? workspacePath : localMatch?.dir;
-      const cached =
-        repoDetailsCache[repo.full_name] ||
-        (repo.owner?.login && repoDetailsCache[`${repo.owner.login}/${repo.name}`]) ||
-        repoDetailsCache[repo.name] ||
-        Object.entries(repoDetailsCache).find(
-          ([k]) => k.toLowerCase() === repo.full_name?.toLowerCase() || k.toLowerCase().endsWith(`/${repo.name.toLowerCase()}`)
-        )?.[1];
-      const doneCount = cached ? cached.issues.filter((i) => i.status === 'Concluído').length : 0;
-      const inProgressCount = cached ? cached.issues.filter((i) => i.status === 'Em Progresso').length : 0;
-      const openCount = cached ? cached.issues.filter((i) => i.status === 'A Fazer').length : repo.open_issues_count;
-      const total = cached ? cached.issues.length : 0;
-      const percentValue = total > 0 ? Math.round((doneCount / total) * 100) : 0;
-      const currentSprint = resolveCurrentSprint(cached);
-
-      list.push({
-        id: repo.id,
-        badge: idx + 1,
-        title: repo.name,
-        name: repo.name,
-        description: repo.description,
-        language: repo.language,
-        isPrivate: repo.private,
-        updatedAtIso: repo.updated_at,
-        progressPercent: percentValue,
-        sprint: currentSprint?.title || '',
-        percentage: `${percentValue}%`,
-        percentValue,
-        solidFlex: '1 1 0',
-        dottedWidth: 52,
-        faintWidth: 36,
-        issuesDone: doneCount,
-        issuesOpen: openCount,
-        issuesInProgress: inProgressCount,
-        alertStatus: null,
-        org: repo.owner?.login,
-        fullName: repo.full_name,
-        owner: repo.owner?.login,
-        repoName: repo.name,
-        htmlUrl: repo.html_url,
-        isCloned: Boolean(localMatch || isCurrentWorkspace),
-        localDir,
-        ownerAvatarUrl: repo.owner?.avatar_url,
-        defaultBranch: repo.default_branch || 'main',
-        currentSprint,
-      });
+    return buildUnifiedProjectCards({
+      repos,
+      localClonedRepos,
+      workspacePath,
+      repoDetailsCache,
+      orgs,
+      currentUser,
+      customProjectIcons,
+      isEffectiveDark,
     });
-
-    // 2. Repositórios locais clonados que não foram listados via GitHub
-    localClonedRepos.forEach((locRepo) => {
-      if (seenNames.has(locRepo.name.toLowerCase())) return;
-      if (locRepo.repoFullName && seenNames.has(locRepo.repoFullName.toLowerCase())) return;
-      seenNames.add(locRepo.name.toLowerCase());
-      if (locRepo.repoFullName) seenNames.add(locRepo.repoFullName.toLowerCase());
-
-      let owner = locRepo.repoFullName?.split('/')[0] || '';
-      let repoName = locRepo.repoFullName?.split('/')[1] || locRepo.name;
-      if (!owner && locRepo.remoteUrl) {
-        const parsed = extractOwnerRepo(locRepo.remoteUrl);
-        if (parsed) {
-          owner = parsed.owner;
-          repoName = parsed.repo;
-        }
-      }
-      if (!owner && currentUser?.login) {
-        owner = currentUser.login;
-      }
-      const fullName = (owner && repoName) ? `${owner}/${repoName}` : (locRepo.repoFullName || locRepo.name);
-      const isCurrentWorkspace = Boolean(
-        workspacePath &&
-          (workspacePath.toLowerCase() === locRepo.dir.toLowerCase() ||
-           workspacePath.toLowerCase().endsWith(`/${locRepo.name.toLowerCase()}`))
-      );
-      const cached =
-        repoDetailsCache[fullName] ||
-        (owner && repoName ? repoDetailsCache[`${owner}/${repoName}`] : undefined) ||
-        repoDetailsCache[repoName] ||
-        repoDetailsCache[locRepo.name] ||
-        Object.entries(repoDetailsCache).find(
-          ([k]) => k.toLowerCase() === fullName.toLowerCase() || k.toLowerCase().endsWith(`/${repoName.toLowerCase()}`)
-        )?.[1];
-      const doneCount = cached ? cached.issues.filter((i) => i.status === 'Concluído').length : 0;
-      const inProgressCount = cached ? cached.issues.filter((i) => i.status === 'Em Progresso').length : 0;
-      const openCount = cached ? cached.issues.filter((i) => i.status === 'A Fazer').length : 0;
-      const total = cached ? cached.issues.length : 0;
-      const percentValue = total > 0 ? Math.round((doneCount / total) * 100) : 0;
-      const currentSprint = resolveCurrentSprint(cached);
-
-      const locOwnerAvatar =
-        (owner && orgs.find((o) => o.login.toLowerCase() === owner.toLowerCase())?.avatarUrl) ||
-        (currentUser && owner?.toLowerCase() === currentUser.login.toLowerCase() ? currentUser.avatarUrl : undefined);
-
-      list.push({
-        id: `local-${locRepo.name}`,
-        badge: list.length + 1,
-        title: locRepo.name,
-        name: locRepo.name,
-        description: `Projeto local em ${locRepo.dir}`,
-        language: undefined,
-        isPrivate: false,
-        updatedAtIso: undefined,
-        progressPercent: percentValue,
-        sprint: currentSprint?.title || 'Local',
-        percentage: `${percentValue}%`,
-        percentValue,
-        solidFlex: '1 1 0',
-        dottedWidth: 52,
-        faintWidth: 36,
-        issuesDone: doneCount,
-        issuesOpen: openCount,
-        issuesInProgress: inProgressCount,
-        alertStatus: null,
-        org: owner || undefined,
-        fullName,
-        owner,
-        repoName,
-        htmlUrl: locRepo.remoteUrl,
-        isCloned: true,
-        localDir: locRepo.dir,
-        ownerAvatarUrl: locOwnerAvatar,
-        defaultBranch: 'main',
-        currentSprint,
-      });
-    });
-
-    // 3. Workspace ativa se não estiver presente na lista
-    if (workspacePath && !list.some((p) => p.localDir && p.localDir.toLowerCase() === workspacePath.toLowerCase())) {
-      const folderName = workspacePath.split('/').filter(Boolean).pop() || 'Workspace';
-      const localMatch = localClonedRepos.find((l) => l.dir.toLowerCase() === workspacePath.toLowerCase());
-      let owner = localMatch?.repoFullName?.split('/')[0] || '';
-      let repoName = localMatch?.repoFullName?.split('/')[1] || folderName;
-      if (!owner && localMatch?.remoteUrl) {
-        const parsed = extractOwnerRepo(localMatch.remoteUrl);
-        if (parsed) {
-          owner = parsed.owner;
-          repoName = parsed.repo;
-        }
-      }
-      if (!owner && folderName.toLowerCase() === 'devflow-desktop') {
-        owner = 'Walancy';
-        repoName = 'aura-dev';
-      }
-      if (!owner && currentUser?.login) {
-        owner = currentUser.login;
-      }
-      const fullName = (owner && repoName) ? `${owner}/${repoName}` : folderName;
-      const displayName = folderName.toLowerCase() === 'devflow-desktop' ? 'Aura Dev' : repoName;
-      const cached =
-        repoDetailsCache[fullName] ||
-        (owner && repoName ? repoDetailsCache[`${owner}/${repoName}`] : undefined) ||
-        repoDetailsCache[repoName] ||
-        repoDetailsCache[displayName] ||
-        Object.entries(repoDetailsCache).find(
-          ([k]) => k.toLowerCase() === fullName.toLowerCase() || k.toLowerCase().endsWith(`/${repoName.toLowerCase()}`)
-        )?.[1];
-      const doneCount = cached ? cached.issues.filter((i) => i.status === 'Concluído').length : 0;
-      const inProgressCount = cached ? cached.issues.filter((i) => i.status === 'Em Progresso').length : 0;
-      const openCount = cached ? cached.issues.filter((i) => i.status === 'A Fazer').length : 0;
-      const total = cached ? cached.issues.length : 0;
-      const percentValue = total > 0 ? Math.round((doneCount / total) * 100) : 0;
-      const currentSprint = resolveCurrentSprint(cached);
-
-      const wsOwnerAvatar =
-        (owner && orgs.find((o) => o.login.toLowerCase() === owner.toLowerCase())?.avatarUrl) ||
-        (currentUser && owner?.toLowerCase() === currentUser.login.toLowerCase() ? currentUser.avatarUrl : undefined);
-
-      list.unshift({
-        id: 'active-workspace',
-        badge: 1,
-        title: displayName,
-        name: displayName,
-        description: `Workspace ativa em ${workspacePath}`,
-        language: undefined,
-        isPrivate: false,
-        updatedAtIso: undefined,
-        progressPercent: percentValue,
-        sprint: currentSprint?.title || 'Local',
-        percentage: `${percentValue}%`,
-        percentValue,
-        solidFlex: '1 1 0',
-        dottedWidth: 52,
-        faintWidth: 36,
-        issuesDone: doneCount,
-        issuesOpen: openCount,
-        issuesInProgress: inProgressCount,
-        alertStatus: null,
-        org: owner || undefined,
-        fullName,
-        owner,
-        repoName,
-        htmlUrl: localMatch?.remoteUrl,
-        isCloned: true,
-        localDir: workspacePath,
-        ownerAvatarUrl: wsOwnerAvatar,
-        defaultBranch: 'main',
-        currentSprint,
-      });
-    }
-
-    return list;
-  }, [repos, localClonedRepos, workspacePath, repoDetailsCache, orgs, currentUser]);
+  }, [repos, localClonedRepos, workspacePath, repoDetailsCache, orgs, currentUser, customProjectIcons, isEffectiveDark]);
 
   // Opções do filtro de "linguagem" derivadas dos repositórios reais (substitui as sprints fictícias)
   const sprintFilterOptions = useMemo(() => {
@@ -2575,7 +2712,9 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
       });
     }
     orgs.forEach((o) => {
-      list.push({ id: o.login, name: o.login, slug: `@${o.login}`, avatarColor: '#0ea5e9', avatarUrl: o.avatarUrl });
+      if (!list.some((existing) => existing.name.toLowerCase() === o.login.toLowerCase())) {
+        list.push({ id: o.login, name: o.login, slug: `@${o.login}`, avatarColor: '#0ea5e9', avatarUrl: o.avatarUrl });
+      }
     });
     return list;
   }, [orgs, currentUser, accentColor]);
@@ -2592,15 +2731,25 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
     const headerProjectChanged = lastSyncedHeaderProjectRef.current !== currentHeaderKey;
 
     if (isFirstRun || headerProjectChanged) {
-      hasAutoSelectedRef.current = true;
-      lastSyncedHeaderProjectRef.current = currentHeaderKey;
-
       const matchingCard = findMatchingCard(allCards, workspacePath, repoName);
       if (matchingCard) {
-        setSelectedCardId(matchingCard.id);
-        // Garante que o card correspondente não esteja oculto por filtros de organização
-        if (selectedOrg !== 'Todas' && matchingCard.org && matchingCard.org !== selectedOrg) {
-          setSelectedOrg('Todas');
+        hasAutoSelectedRef.current = true;
+        lastSyncedHeaderProjectRef.current = currentHeaderKey;
+        // Verifica se o matchingCard pertence à organização atualmente filtrada
+        const orgQ = selectedOrg.toLowerCase();
+        const cardOwner = (matchingCard.owner || matchingCard.org || '').toLowerCase();
+        const cardFullName = (matchingCard.fullName || '').toLowerCase();
+        const belongsToSelectedOrg =
+          selectedOrg === 'Todas' ||
+          selectedOrg === 'all' ||
+          cardOwner === orgQ ||
+          cardFullName.startsWith(`${orgQ}/`) ||
+          ((matchingCard.org || '').toLowerCase() === orgQ);
+
+        if (belongsToSelectedOrg) {
+          setSelectedCardId(matchingCard.id);
+        } else if (isFirstRun) {
+          setSelectedCardId(matchingCard.id);
         }
       } else if (isFirstRun && allCards.length > 0) {
         setSelectedCardId(allCards[0].id);
@@ -2642,15 +2791,22 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
     }
     if (!owner || !repoName) return;
 
-    const existing = repoDetailsCache[fullName] || repoDetailsCache[`${owner}/${repoName}`] || (repoName ? repoDetailsCache[repoName] : undefined);
+    // IMPORTANTE: nunca usar a chave "sem dono" (ex: apenas "painel-interno") pra decidir se já
+    // tem cache — dois repositórios diferentes (de owners diferentes, ou até o mesmo nome numa
+    // org e num fork pessoal) podem compartilhar o mesmo nome curto, e usar essa chave ambígua
+    // fazia o app achar que já tinha dados válidos (de OUTRO repo) e nunca buscar as issues reais
+    // deste repositório.
+    const existing = repoDetailsCache[fullName] || repoDetailsCache[`${owner}/${repoName}`];
     const hasCachedIssues = (existing?.issues?.length || 0) > 0;
+    const CACHE_TTL_MS = 5 * 60 * 1000;
+    const isFresh = !!existing?.fetchedAt && Date.now() - existing.fetchedAt < CACHE_TTL_MS;
 
-    if (!force && hasCachedIssues && !existing?.isLoading && existing?.error === null) {
+    if (!force && hasCachedIssues && isFresh && !existing?.isLoading && existing?.error === null) {
       return;
     }
 
     setRepoDetailsCache((prev) => {
-      const cur = prev[fullName] || prev[`${owner}/${repoName}`] || (repoName ? prev[repoName] : undefined);
+      const cur = prev[fullName] || prev[`${owner}/${repoName}`];
       const hasIssues = (cur?.issues?.length || 0) > 0;
       return {
         ...prev,
@@ -2660,6 +2816,7 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
           collaborators: cur?.collaborators || [],
           isLoading: !hasIssues,
           error: null,
+          fetchedAt: cur?.fetchedAt,
         },
         [`${owner}/${repoName}`]: {
           issues: cur?.issues || [],
@@ -2667,6 +2824,7 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
           collaborators: cur?.collaborators || [],
           isLoading: !hasIssues,
           error: null,
+          fetchedAt: cur?.fetchedAt,
         },
       };
     });
@@ -2683,25 +2841,64 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
       const milestonesRaw = milestonesRes.status === 'fulfilled' && milestonesRes.value?.success ? milestonesRes.value.milestones || [] : [];
       const repoProjectsRaw = repoProjectsRes.status === 'fulfilled' && repoProjectsRes.value?.success ? repoProjectsRes.value.projects || [] : [];
 
-      // 1. Projects da organização correspondentes a este repositório
+      // 1. Projects da organização correspondentes a este repositório.
+      const repoBaseName = repoName.toLowerCase();
       const matchedOrgProjects = (githubOrgProjects || []).filter((p) => {
         if (!p) return false;
-        if (p.repositories && Array.isArray(p.repositories)) {
-          if (p.repositories.some((r: any) => (r.nameWithOwner || '').toLowerCase() === fullName.toLowerCase())) return true;
-        }
-        const cleanRepo = repoName.toLowerCase().replace(/[-_]/g, ' ');
-        const cleanProj = (p.title || '').toLowerCase().replace(/[-_]/g, ' ');
-        if (cleanProj.includes(cleanRepo) || cleanRepo.includes(cleanProj)) return true;
-        if (cleanRepo.includes('estancia') && cleanProj.includes('estancia')) return true;
         if (selectedGithubProjectNumber != null && p.number === selectedGithubProjectNumber) return true;
+
+        const linkedRepos = p.repositories?.nodes;
+        if (Array.isArray(linkedRepos)) {
+          if (linkedRepos.some((r: any) => (r.nameWithOwner || '').toLowerCase() === fullName.toLowerCase())) return true;
+        }
+
+        // Vínculo descoberto pelos itens do Project
+        if ((p as any).discoveredRepos && (p as any).discoveredRepos.has(fullName.toLowerCase())) return true;
+
+        // Vínculo por prefixo de repositórios irmãos da mesma organização
+        // Ex: se p.repositories tem "appmoove/estancia-bahia-painel-interno", outros repos
+        // "appmoove/estancia-bahia-api" ou "appmoove/estancia-bahia-painel-web" são do mesmo Project #90
+        if (Array.isArray(linkedRepos) && linkedRepos.length > 0) {
+          const pOrg = ((p as any).org || '').toLowerCase();
+          const targetOwner = owner.toLowerCase();
+          if (!pOrg || pOrg === targetOwner) {
+            const hasCommonPrefix = linkedRepos.some((r: any) => {
+              const rName = ((r.nameWithOwner || r.name || '').split('/')[1] || r.name || '').toLowerCase();
+              const prefixParts = rName.split('-');
+              const prefixMatch = prefixParts.length > 1 ? prefixParts.slice(0, 2).join('-') : prefixParts[0];
+              return prefixMatch.length >= 4 && repoBaseName.startsWith(prefixMatch);
+            });
+            if (hasCommonPrefix) return true;
+          }
+        }
+
+        // Vínculo por slug do título do Project na mesma organização
+        // Ex: Project "Estância Bahia" -> "estancia-bahia", vincula "estancia-bahia-api"
+        if (p.title) {
+          const slug = p.title.toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '');
+          if (slug.length >= 4 && (repoBaseName.startsWith(slug) || repoBaseName.includes(slug))) {
+            const pOrg = ((p as any).org || '').toLowerCase();
+            if (!pOrg || pOrg === owner.toLowerCase()) return true;
+          }
+        }
+
         return false;
       });
 
-      const allRelevantProjects: any[] = [...repoProjectsRaw];
+      let allRelevantProjects: any[] = [...repoProjectsRaw];
       for (const op of matchedOrgProjects) {
         if (!allRelevantProjects.some((p) => p.number === op.number || (p.id && op.id && p.id === op.id))) {
           allRelevantProjects.push(op);
         }
+      }
+      // Project vinculado manualmente nas Configurações tem prioridade sobre a detecção
+      const linkedProject = getProjectSettings(fullName).workflow.linkedProject;
+      if (linkedProject?.number) {
+        const known = [...repoProjectsRaw, ...(githubOrgProjects || [])].find((p: any) => p?.number === linkedProject.number);
+        allRelevantProjects = [known || { number: linkedProject.number, title: linkedProject.title }];
       }
 
       // 2. Extrai iterações/sprints dos projects encontrados
@@ -2718,7 +2915,48 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
 
         try {
           if (window.electronAPI?.github?.fetchProjectItems) {
-            const itemsRes = await window.electronAPI.github.fetchProjectItems(proj.number, owner);
+            // Extrai a organização do Project a partir de proj.org ou da URL do project
+            const urlOrgMatch = proj.url ? proj.url.match(/github\.com\/orgs\/([^/]+)\/projects/i) : null;
+            const projOrg = proj.org || (urlOrgMatch ? urlOrgMatch[1] : undefined);
+            const hasSelectedOrg = Boolean(selectedOrg && selectedOrg !== 'Todas' && selectedOrg !== 'all');
+
+            const ownerCandidates = Array.from(
+              new Set<string | undefined>([
+                projOrg,
+                hasSelectedOrg ? selectedOrg : undefined,
+                owner,
+                undefined,
+              ].filter((o, i) => i === 3 || Boolean(o)))
+            );
+
+            let itemsRes: { success: boolean; project?: any; error?: string } | null = null;
+            for (const candidate of ownerCandidates) {
+              const res = await window.electronAPI.github.fetchProjectItems(proj.number, candidate);
+              const linked = res?.project?.repositories?.nodes;
+              const hasRepoItems = (res?.project?.items?.nodes || []).some(
+                (it: any) => (it.content?.repository?.nameWithOwner || '').toLowerCase() === fullName.toLowerCase()
+              );
+              const linksRepo =
+                !Array.isArray(linked) ||
+                linked.length === 0 ||
+                linked.some((r: any) => (r.nameWithOwner || '').toLowerCase() === fullName.toLowerCase()) ||
+                hasRepoItems;
+
+              if (res?.success && res.project && (proj.id ? res.project.id === proj.id : linksRepo || linkedProject?.number === proj.number)) {
+                itemsRes = res;
+                // Registra repositórios descobertos nos itens para repositórios irmãos
+                if (Array.isArray(res.project.items?.nodes)) {
+                  for (const it of res.project.items.nodes) {
+                    const rName = it.content?.repository?.nameWithOwner;
+                    if (rName) {
+                      if (!proj.discoveredRepos) proj.discoveredRepos = new Set<string>();
+                      proj.discoveredRepos.add(rName.toLowerCase());
+                    }
+                  }
+                }
+                break;
+              }
+            }
             if (itemsRes?.success && itemsRes.project) {
               const moreIts = extractProjectIterations([itemsRes.project]);
               for (const it of moreIts) {
@@ -2743,25 +2981,6 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
         } catch (err) {
           console.warn('Erro ao carregar itens do project:', err);
         }
-      }
-
-      // Fallback Estância Bahia: se as iterações do project ainda não vieram pela API (ex: escopo do token),
-      // injeta as iterações conhecidas do project Estância Bahia para que a aba de sprints mostre todas as sprints
-      if (projectIterationsList.length === 0 && (repoName.includes('estancia-bahia') || fullName.includes('estancia-bahia'))) {
-        SAMPLE_GITHUB_SPRINTS.forEach((sp) => {
-          projectIterationsList.push({
-            number: sp.number,
-            iterationId: sp.id,
-            isProjectIteration: true,
-            title: sp.title,
-            state: sp.status === 'Completed' ? 'closed' : 'open',
-            startDateIso: sp.startDateIso,
-            dueDateIso: sp.dueDateIso,
-            durationLabel: sp.durationLabel,
-            openIssues: 0,
-            closedIssues: 0,
-          });
-        });
       }
 
       // 3. Sprints customizadas/locais salvas no localStorage para este projeto
@@ -2871,10 +3090,17 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
         }
       }
 
+      const allProjectIterations = [...projectIterationsList];
+      for (const it of projectV2Iterations) {
+        if (!allProjectIterations.some((pi) => (pi.iterationId && it.iterationId && pi.iterationId === it.iterationId) || pi.title.toLowerCase().trim() === it.title.toLowerCase().trim())) {
+          allProjectIterations.push(it);
+        }
+      }
+
       const sprints: SprintOption[] = [
-        ...projectIterationsList,
+        ...allProjectIterations,
         ...resolvedMilestones
-          .filter((m: any) => !projectIterationsList.some((pi) => pi.title.toLowerCase() === m.title.toLowerCase() || pi.number === m.number))
+          .filter((m: any) => !allProjectIterations.some((pi) => pi.title.toLowerCase().trim() === m.title.toLowerCase().trim()))
           .map((m: any) => ({
             number: m.number,
             title: m.title,
@@ -2884,7 +3110,7 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
             openIssues: m.open_issues ?? 0,
             closedIssues: m.closed_issues ?? 0,
           })),
-        ...localCustomSprints.filter((ls) => !projectIterationsList.some((pi) => pi.title.toLowerCase() === ls.title.toLowerCase())),
+        ...localCustomSprints.filter((ls) => !allProjectIterations.some((pi) => pi.title.toLowerCase().trim() === ls.title.toLowerCase().trim())),
       ];
 
       // Descobre sprints adicionais a partir de localSprintMap, labels das issues ou milestones
@@ -2909,7 +3135,8 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
       discoveredSprintTitles.forEach((st) => {
         if (!sprints.some((sp) => sp.title.toLowerCase() === st.toLowerCase())) {
           sprints.push({
-            number: sprints.length + 1,
+            number: -(sprints.length + 1000),
+            isVirtual: true,
             title: st,
             state: 'open',
             openIssues: 0,
@@ -2942,74 +3169,22 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
         if (itInfo) {
           issue.iterationId = itInfo.iterationId;
           issue.iterationTitle = itInfo.iterationTitle;
-        } else if (projectIterationsList.length > 0) {
-          const lowerTitle = (gh.title || '').toLowerCase();
-          for (const it of projectIterationsList) {
-            const cleanIt = it.title.toLowerCase();
-            if (
-              (lowerTitle.includes('cadastro') && cleanIt.includes('cadastro')) ||
-              (lowerTitle.includes('catálogo') || lowerTitle.includes('catalogo')) && cleanIt.includes('catálogo') ||
-              (lowerTitle.includes('habilitação') || lowerTitle.includes('habilitacao')) && cleanIt.includes('habilitação') ||
-              (lowerTitle.includes('lance') && cleanIt.includes('lance')) ||
-              (lowerTitle.includes('samsung') && cleanIt.includes('samsung')) ||
-              (lowerTitle.includes('tv lg') && cleanIt.includes('lg')) ||
-              (lowerTitle.includes('carga') && cleanIt.includes('carga'))
-            ) {
-              issue.iterationId = it.iterationId;
-              issue.iterationTitle = it.title;
-              break;
-            }
-          }
         }
 
-        const v2Data =
-          projectV2ItemsMapRef.current.get(`${fullName.toLowerCase()}#${gh.number}`) ||
-          projectV2ItemsMapRef.current.get(String(gh.number));
+        const v2Data = projectV2ItemsMapRef.current.get(`${fullName.toLowerCase()}#${gh.number}`);
         if (v2Data) {
           issue.projectV2ItemId = v2Data.itemId;
           if (v2Data.statusName) {
             issue.projectV2Status = v2Data.statusName;
-            const sLower = v2Data.statusName.toLowerCase().trim();
-            if (
-              sLower.includes('progress') ||
-              sLower.includes('andamento') ||
-              sLower.includes('doing') ||
-              sLower.includes('wip') ||
-              sLower.includes('fazendo') ||
-              sLower.includes('desenvolv') ||
-              sLower.includes('dev') ||
-              sLower.includes('test') ||
-              sLower.includes('review') ||
-              sLower.includes('revis') ||
-              sLower.includes('qa')
-            ) {
-              if (gh.state !== 'closed') {
-                issue.status = 'Em Progresso';
-              }
-            } else if (
-              sLower.includes('done') ||
-              sLower.includes('conclu') ||
-              sLower.includes('finaliz') ||
-              sLower.includes('closed') ||
-              sLower.includes('pronto')
-            ) {
-              issue.status = 'Concluído';
-            } else if (
-              sLower.includes('todo') ||
-              sLower.includes('to do') ||
-              sLower.includes('a fazer') ||
-              sLower.includes('backlog') ||
-              sLower.includes('pendente')
-            ) {
-              if (gh.state !== 'closed') {
-                issue.status = 'A Fazer';
-              }
-            }
+            // Mapeamento explícito das Configurações → fallback por nome da coluna
+            const mapped = resolveProjectStatus(fullName, v2Data.statusName);
+            if (mapped === 'Concluído') issue.status = 'Concluído';
+            else if (mapped && String(gh.state || '').toLowerCase() !== 'closed') issue.status = mapped;
           }
           if (v2Data.statusOptionId) issue.projectV2StatusOptionId = v2Data.statusOptionId;
           if (v2Data.estimate != null) issue.projectV2Estimate = v2Data.estimate;
-          if (v2Data.iterationId && !issue.iterationId) issue.iterationId = v2Data.iterationId;
-          if (v2Data.iterationTitle && !issue.iterationTitle) issue.iterationTitle = v2Data.iterationTitle;
+          if (v2Data.iterationId) issue.iterationId = v2Data.iterationId;
+          if (v2Data.iterationTitle) issue.iterationTitle = v2Data.iterationTitle;
         }
 
         return issue;
@@ -3017,10 +3192,7 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
 
       // Atualiza contagem de issues em cada sprint descoberta
       sprints.forEach((sp) => {
-        const spLower = sp.title.toLowerCase().trim();
-        const sprintIssues = mapped.filter(
-          (i) => (i.milestoneTitle || i.iterationTitle || '').toLowerCase().trim() === spLower
-        );
+        const sprintIssues = mapped.filter((i) => issueBelongsToSprint(i, sp));
         if (sprintIssues.length > 0) {
           sp.openIssues = sprintIssues.filter((i) => i.status !== 'Concluído').length;
           sp.closedIssues = sprintIssues.filter((i) => i.status === 'Concluído').length;
@@ -3036,11 +3208,12 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
       }));
 
       setRepoDetailsCache((prev) => {
+        // Não grava mais na chave "sem dono" (bare repoName) — ela é ambígua entre repos de
+        // owners diferentes com o mesmo nome curto e causava vazamento de issues de um repo pro outro.
         const next = {
           ...prev,
-          [fullName]: { issues: mapped, sprints, collaborators, isLoading: false, error: null },
-          [`${owner}/${repoName}`]: { issues: mapped, sprints, collaborators, isLoading: false, error: null },
-          ...(repoName ? { [repoName]: { issues: mapped, sprints, collaborators, isLoading: false, error: null } } : {}),
+          [fullName]: { issues: mapped, sprints, collaborators, isLoading: false, error: null, fetchedAt: Date.now() },
+          [`${owner}/${repoName}`]: { issues: mapped, sprints, collaborators, isLoading: false, error: null, fetchedAt: Date.now() },
         };
         GLOBAL_PROJECTS_CACHE.repoDetailsCache = next;
         persistProjectsCache();
@@ -3048,34 +3221,98 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
       });
     } catch (err: any) {
       setRepoDetailsCache((prev) => {
-        const cur = prev[fullName] || prev[`${owner}/${repoName}`] || (repoName ? prev[repoName] : undefined);
+        const cur = prev[fullName] || prev[`${owner}/${repoName}`];
         return {
           ...prev,
           [fullName]: { issues: cur?.issues || [], sprints: cur?.sprints || [], collaborators: cur?.collaborators || [], isLoading: false, error: err?.message || 'Erro ao buscar dados do repositório.' },
           [`${owner}/${repoName}`]: { issues: cur?.issues || [], sprints: cur?.sprints || [], collaborators: cur?.collaborators || [], isLoading: false, error: err?.message || 'Erro ao buscar dados do repositório.' },
-          ...(repoName ? { [repoName]: { issues: cur?.issues || [], sprints: cur?.sprints || [], collaborators: cur?.collaborators || [], isLoading: false, error: err?.message || 'Erro ao buscar dados do repositório.' } } : {}),
         };
       });
     }
-  }, [allCards, repoDetailsCache, currentUser, githubOrgProjects, selectedGithubProjectNumber]);
+  }, [allCards, repoDetailsCache, currentUser, githubOrgProjects, selectedGithubProjectNumber, selectedOrg]);
+
+  const lastSyncedSelectedCardIdRef = useRef<number | string | null>(null);
 
   useEffect(() => {
-    const targetProject = (selectedCardId ? allCards.find((c) => c.id === selectedCardId) : null) || selectedProject || allCards[0];
-    if (!targetProject || !targetProject.fullName) return;
-    if (!repoDetailsCache[targetProject.fullName] || repoDetailsCache[targetProject.fullName].error) {
-      fetchRepoDetails(targetProject.fullName);
+    if (selectedCardId === null) {
+      lastSyncedSelectedCardIdRef.current = null;
+      return;
+    }
+
+    const targetProject = allCards.find((c) => c.id === selectedCardId) || selectedProject;
+    if (!targetProject) return;
+    const fullName = targetProject.fullName || (targetProject.owner && targetProject.repoName ? `${targetProject.owner}/${targetProject.repoName}` : '');
+    if (!fullName) return;
+
+    // Sempre que o usuário abre um card na tela de projetos, roda a sincronização com o GitHub
+    if (lastSyncedSelectedCardIdRef.current !== selectedCardId) {
+      lastSyncedSelectedCardIdRef.current = selectedCardId;
+      logSystemActivity('projects', 'open_card_sync_github', targetProject.title || targetProject.name, {
+        cardId: selectedCardId,
+        fullName,
+      });
+      fetchRepoDetails(fullName, true);
+    } else if (!repoDetailsCache[fullName] || repoDetailsCache[fullName].error) {
+      fetchRepoDetails(fullName);
     }
   }, [selectedCardId, selectedProject?.fullName, allCards, repoDetailsCache, fetchRepoDetails]);
 
   // Ao trocar de card de projeto, reseta a sprint aberta para selecionar a sprint ativa do novo projeto
   useEffect(() => {
-    setOpenedSprintNumber(null);
+    setOpenedSprintId(null);
   }, [selectedCardId]);
 
   const [sprintDropdownOpen, setSprintDropdownOpen] = useState(false);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [versionDropdownOpen, setVersionDropdownOpen] = useState(false);
   const [orgDropdownOpen, setOrgDropdownOpen] = useState(false);
+  const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
+
+  // Refs e reposicionamento dos dropdowns portados para document.body (imunes a stacking context e overflow)
+  const sprintTriggerRef = useRef<HTMLDivElement>(null);
+  const sprintDropdownRef = useRef<HTMLDivElement>(null);
+  const orgTriggerRef = useRef<HTMLDivElement>(null);
+  const orgDropdownRef = useRef<HTMLDivElement>(null);
+  const projectTriggerRef = useRef<HTMLDivElement>(null);
+  const projectDropdownRef = useRef<HTMLDivElement>(null);
+  const statusTriggerRef = useRef<HTMLDivElement>(null);
+  const statusDropdownRef = useRef<HTMLDivElement>(null);
+  const filterTriggerRef = useRef<HTMLButtonElement>(null);
+  const filterDropdownRef = useRef<HTMLDivElement>(null);
+  const [, setDropdownRepositionTick] = useState(0);
+
+  useEffect(() => {
+    const anyOpen = sprintDropdownOpen || orgDropdownOpen || githubProjectDropdownOpen || statusDropdownOpen || filterDropdownOpen;
+    if (!anyOpen) return;
+
+    const handlePointerDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (sprintTriggerRef.current?.contains(target) || sprintDropdownRef.current?.contains(target)) return;
+      if (orgTriggerRef.current?.contains(target) || orgDropdownRef.current?.contains(target)) return;
+      if (projectTriggerRef.current?.contains(target) || projectDropdownRef.current?.contains(target)) return;
+      if (statusTriggerRef.current?.contains(target) || statusDropdownRef.current?.contains(target)) return;
+      if (filterTriggerRef.current?.contains(target) || filterDropdownRef.current?.contains(target)) return;
+
+      setSprintDropdownOpen(false);
+      setOrgDropdownOpen(false);
+      setGithubProjectDropdownOpen(false);
+      setStatusDropdownOpen(false);
+      setFilterDropdownOpen(false);
+    };
+
+    const handleReposition = () => {
+      setDropdownRepositionTick((t) => t + 1);
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('resize', handleReposition);
+    window.addEventListener('scroll', handleReposition, true);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('resize', handleReposition);
+      window.removeEventListener('scroll', handleReposition, true);
+    };
+  }, [sprintDropdownOpen, orgDropdownOpen, githubProjectDropdownOpen, statusDropdownOpen, filterDropdownOpen]);
 
   // Estados para as funcionalidades de GitHub
   const [selectedAssignee, setSelectedAssignee] = useState<string | null>(null);
@@ -3088,10 +3325,15 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
     const unsubscribe = window.electronAPI?.ai?.onOrchestratorEvent?.((event: any) => {
       const issueId = event?.payload?.issueId || event?.issueId;
       if (!issueId) return;
-      setAutonomousRuns((current) => ({
-        ...current,
-        [issueId]: { ...current[issueId], phase: event.phase || event.kind, status: 'running' },
-      }));
+      setAutonomousRuns((current) => {
+        if (current[issueId]?.phase === 'cancelled' || current[issueId]?.status === 'failed') {
+          return current;
+        }
+        return {
+          ...current,
+          [issueId]: { ...current[issueId], phase: event.phase || event.kind, status: 'running' },
+        };
+      });
     });
     return () => unsubscribe?.();
   }, []);
@@ -3102,6 +3344,64 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
       setToastMessage((current) => (current === msg ? null : current));
     }, 3200);
   };
+
+  // Sincronização com o GitHub sempre que o usuário abre um card de projeto
+  const handleOpenProjectCard = useCallback(
+    (card: ProjectCardData, toggle = true) => {
+      setSelectedCardId((prev) => {
+        const next = toggle ? (prev === card.id ? null : card.id) : card.id;
+        if (next !== null) {
+          const fullName = card.fullName || (card.owner && card.repoName ? `${card.owner}/${card.repoName}` : '');
+          if (fullName) {
+            logSystemActivity('projects', 'open_card_sync_github', card.title || card.name, {
+              cardId: card.id,
+              fullName,
+            });
+            fetchRepoDetails(fullName, true);
+            showToast(`Sincronizando ${card.title || card.name} com o GitHub...`);
+          }
+        }
+        return next;
+      });
+    },
+    [fetchRepoDetails]
+  );
+
+  const handleSelectProjectById = useCallback(
+    (cardId: number | string | null, forceSync = true) => {
+      setSelectedCardId(cardId);
+      if (cardId !== null && forceSync) {
+        const target = allCards.find((c) => c.id === cardId);
+        const fullName = target?.fullName || (target?.owner && target?.repoName ? `${target.owner}/${target.repoName}` : '');
+        if (fullName) {
+          logSystemActivity('projects', 'open_card_sync_github', target?.title || target?.name || 'Projeto', {
+            cardId,
+            fullName,
+          });
+          fetchRepoDetails(fullName, true);
+          showToast(`Sincronizando ${target?.title || target?.name || 'projeto'} com o GitHub...`);
+        }
+      }
+    },
+    [allCards, fetchRepoDetails]
+  );
+
+  // Sincronização com o GitHub e registro no fluxo de logs ao abrir um card de tarefa/issue
+  const handleOpenIssueCardDetail = useCallback(
+    (issue: ProjectIssue) => {
+      setActiveSidesheetIssue(issue);
+      const projName = selectedProject?.title || selectedProject?.name || issue.repoName || 'repositório';
+      logSystemActivity('projects', 'open_issue_card_sync', projName, {
+        issueId: issue.id,
+        githubNumber: issue.githubNumber,
+        title: issue.title,
+      });
+      if (selectedProject?.fullName) {
+        fetchRepoDetails(selectedProject.fullName, true);
+      }
+    },
+    [selectedProject?.title, selectedProject?.name, selectedProject?.fullName, fetchRepoDetails]
+  );
 
   const handleAutonomousRun = async (issue: ProjectIssue) => {
     const cwd = localStorage.getItem('ide_workspace_path');
@@ -3124,7 +3424,20 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
       projectNumber: Number.isFinite(configuredProjectNumber) && configuredProjectNumber > 0 ? configuredProjectNumber : undefined,
     });
     if (!result) return;
-    setAutonomousRuns((current) => ({ ...current, [issue.id]: { runId: result.runId, status: result.status, phase: result.status === 'done' ? 'completed' : 'review', summary: result.summary } }));
+    setAutonomousRuns((current) => {
+      if (current[issue.id]?.phase === 'cancelled') {
+        return current;
+      }
+      return {
+        ...current,
+        [issue.id]: {
+          runId: result.runId,
+          status: result.status,
+          phase: result.status === 'done' ? 'completed' : 'review',
+          summary: result.summary,
+        },
+      };
+    });
     showToast(result.status === 'done' ? `Tarefa concluída: ${issue.title}` : `Tarefa enviada para revisão: ${issue.title}`);
   };
 
@@ -3200,6 +3513,13 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
   }, [timelineZoom]);
 
   const timelineColWidth = timelineZoom === 'month' ? 68 : 130;
+
+  // Visualização padrão configurada por projeto (Configurações → Geral)
+  useEffect(() => {
+    if (!selectedProject?.fullName) return;
+    setViewMode(getProjectSettings(selectedProject.fullName).prefs.defaultView);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProject?.fullName]);
 
   const todayStart = useMemo(() => {
     const d = new Date();
@@ -3386,7 +3706,6 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
   };
   const [taskSearchQuery, setTaskSearchQuery] = useState('');
   const [selectedPriorityFilter, setSelectedPriorityFilter] = useState<string>('Todas');
-  const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
   const [sortMode, setSortMode] = useState<'default' | 'priority' | 'date'>('default');
   const [isAddTaskModalOpen, setIsAddTaskModalOpen] = useState(false);
 
@@ -3424,7 +3743,7 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
   const [isCreateSprintModalOpen, setIsCreateSprintModalOpen] = useState(false);
   const [sprintCreationContext, setSprintCreationContext] = useState<'create' | 'edit' | null>(null);
   const [newSprintTitle, setNewSprintTitle] = useState('');
-  const [newSprintDuration, setNewSprintDuration] = useState<7 | 15>(7);
+  const [newSprintDuration, setNewSprintDuration] = useState<number>(7);
   const [newSprintStartDate, setNewSprintStartDate] = useState(() => {
     const t = new Date();
     return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
@@ -3468,8 +3787,17 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
       if (card.percentValue < 90) return false;
     }
 
-    if (selectedOrg !== 'Todas') {
-      if (card.org && card.org !== selectedOrg) return false;
+    if (selectedOrg !== 'Todas' && selectedOrg !== 'all') {
+      const orgQ = selectedOrg.toLowerCase();
+      const cardOwner = (card.owner || card.org || '').toLowerCase();
+      const cardFullName = (card.fullName || '').toLowerCase();
+      const cardOrg = (card.org || '').toLowerCase();
+      const belongsToOrg =
+        cardOwner === orgQ ||
+        cardFullName.startsWith(`${orgQ}/`) ||
+        cardOrg === orgQ;
+
+      if (!belongsToOrg) return false;
     }
 
     if (selectedGithubProjectNumber != null && selectedGithubProjectRepos && selectedGithubProjectRepos.size > 0) {
@@ -3486,6 +3814,16 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
     if (!aPinned && bPinned) return 1;
     return 0;
   });
+
+  // Se o card selecionado atualmente não estiver visível nos cards filtrados (ex: mudou organização),
+  // seleciona automaticamente o primeiro card da lista filtrada para carregar tarefas, issues e roadmap do projeto
+  useEffect(() => {
+    if (filteredCards.length === 0) return;
+    const isCurrentStillVisible = filteredCards.some((c) => c.id === selectedCardId);
+    if (!isCurrentStillVisible) {
+      setSelectedCardId(filteredCards[0].id);
+    }
+  }, [filteredCards, selectedCardId]);
 
   // Carrega em background os detalhes (sprints e issues) dos cards filtrados para exibir a sprint e dias restantes
   useEffect(() => {
@@ -3563,10 +3901,18 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
     } catch {}
   };
 
-  const handleAddCustomLink = () => {
-    if (!newLinkLabel.trim() || !newLinkUrl.trim() || !selectedProject?.fullName) return;
+  const handleAddCustomLink = (linkData?: { label: string; url: string; category?: any; description?: string; [key: string]: any }) => {
+    if (!selectedProject?.fullName) return;
     const key = selectedProject.fullName;
-    const entry = { id: `${Date.now()}`, label: newLinkLabel.trim(), url: newLinkUrl.trim() };
+    const label = linkData?.label ?? newLinkLabel.trim();
+    const url = linkData?.url ?? newLinkUrl.trim();
+    if (!label || !url) return;
+    const entry = {
+      id: `${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      label,
+      url,
+      ...(linkData || {}),
+    };
     persistCustomLinks({ ...customLinks, [key]: [...(customLinks[key] || []), entry] });
     setNewLinkLabel('');
     setNewLinkUrl('');
@@ -3633,12 +3979,8 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
   };
 
   const openAddTaskModal = (initialTemplate?: 'bug' | 'feature' | 'blank') => {
-    if (initialTemplate) {
-      applyIssueTemplate(initialTemplate);
-    } else {
-      resetNewTaskForm();
-      setTaskModalStep('choose_template');
-    }
+    resetNewTaskForm();
+    applyIssueTemplate(initialTemplate || 'blank');
     setIsAddTaskModalOpen(true);
   };
 
@@ -3716,11 +4058,13 @@ Arquitetura, componentes ou dependências envolvidas.
       return;
     }
 
-    const activeProvider = AI_PROVIDERS.find((p) => p.id === localAiProvider) || AI_PROVIDERS[0];
+    const projectAi = getProjectSettings(selectedProject?.fullName).ai;
+    const activeProvider = AI_PROVIDERS.find((p) => p.id === (projectAi.providerId || localAiProvider)) || AI_PROVIDERS[0];
+    const effectiveModel = projectAi.model || (projectAi.providerId && projectAi.providerId !== localAiProvider ? undefined : localAiModel);
     setIsGeneratingAiDescription(true);
-    showToast(`Gerando descrição com ${activeProvider.name} (${localAiModel})...`);
+    showToast(`Gerando descrição com ${activeProvider.name} (${effectiveModel || 'padrão'})...`);
 
-    const prompt = `Gere uma descrição profissional e detalhada em Markdown para uma issue no GitHub.
+    const prompt = `${projectAi.contextNotes.trim() ? `Contexto do projeto:\n${projectAi.contextNotes.trim()}\n\n` : ''}Gere uma descrição profissional e detalhada em Markdown para uma issue no GitHub.
 Tipo: ${selectedTemplate === 'bug' ? 'Bug / Defeito' : selectedTemplate === 'feature' ? 'Feature / Tarefa de Sprint' : 'Tarefa'}
 Título: "${newTaskTitle}"
 Repositório: "${selectedProject?.fullName || selectedProject?.title || 'DevFlow'}"
@@ -3767,7 +4111,7 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
           const res = await window.electronAPI.ai.runCli({
             cliCmd: activeProvider.cliCommand,
             prompt,
-            model: localAiModel,
+            model: effectiveModel,
             cwd: (selectedProject as any)?.path,
           });
           const out = res?.stdout?.trim() || '';
@@ -3829,7 +4173,7 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
       }
 
       setNewTaskDescription(generated);
-      showToast(`Descrição gerada com sucesso pela IA (${activeProvider.name} · ${localAiModel})!`);
+      showToast(`Descrição gerada com sucesso pela IA (${activeProvider.name} · ${effectiveModel || 'padrão'})!`);
     } catch (err: any) {
       showToast('Erro ao comunicar com a IA.');
     } finally {
@@ -3843,7 +4187,7 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
   const [issuesSidebarTab, setIssuesSidebarTab] = useState<
     'all' | 'assigned' | 'created' | 'mentioned' | 'recent' | 'views' | 'projects' | 'milestones' | 'labels'
   >('all');
-  const [issuesStateFilter, setIssuesStateFilter] = useState<'open' | 'closed'>('open');
+  const [issuesStateFilter, setIssuesStateFilter] = useState<'all' | 'open' | 'closed'>('all');
   const [issuesSearchQuery, setIssuesSearchQuery] = useState('');
   const [selectedIssueCheckboxes, setSelectedIssueCheckboxes] = useState<Set<string>>(new Set());
   const [activeIssuesDropdown, setActiveIssuesDropdown] = useState<
@@ -3903,20 +4247,19 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
   const filteredGithubIssues = useMemo(() => {
     let list = combinedGithubIssues;
 
-    // Filtro por Estado (open vs closed)
+    // Filtro por Estado (all vs open vs closed)
     if (issuesStateFilter === 'open') {
       list = list.filter((i) => i.rawState !== 'closed' && i.status !== 'Concluído');
-    } else {
+    } else if (issuesStateFilter === 'closed') {
       list = list.filter((i) => i.rawState === 'closed' || i.status === 'Concluído');
     }
 
     // Filtro por Tab da Sidebar
+    const me = (currentUser?.login || '').toLowerCase();
     if (issuesSidebarTab === 'assigned') {
-      const me = currentUser?.login?.toLowerCase() || 'nelsonappmoove';
-      list = list.filter((i) => i.assignees.some((a) => a.name.toLowerCase().includes(me)));
+      list = me ? list.filter((i) => i.assignees.some((a) => a.name.toLowerCase().includes(me))) : list;
     } else if (issuesSidebarTab === 'created') {
-      const me = currentUser?.login?.toLowerCase() || 'nelsonappmoove';
-      list = list.filter((i) => (i.author || '').toLowerCase().includes(me));
+      list = me ? list.filter((i) => (i.author || '').toLowerCase().includes(me)) : list;
     } else if (issuesSidebarTab === 'mentioned') {
       list = list.filter((i) => (i.commentsCount || 0) > 0);
     }
@@ -4010,7 +4353,7 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
   const [hoveredSprintRowId, setHoveredSprintRowId] = useState<string | null>(null);
 
   // Detalhe de uma sprint aberta: lista de tarefas + visualização lista/calendário/issues
-  const [openedSprintNumber, setOpenedSprintNumber] = useState<number | null>(null);
+  const [openedSprintId, setOpenedSprintId] = useState<string | null>(null);
   const [sprintDetailViewMode, setSprintDetailViewMode] = useState<'list' | 'issues' | 'calendar' | 'roadmap' | 'kanban'>('issues');
   const [isEditingSprintDates, setIsEditingSprintDates] = useState(false);
   const [editSprintStartDate, setEditSprintStartDate] = useState('');
@@ -4102,9 +4445,34 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
 
   const combinedSprints = useMemo<GithubSprintItem[]>(() => {
     const list: GithubSprintItem[] = [];
+    const sourceSprints: SprintOption[] = [];
+    const seenIds = new Set<string>();
+    const seenTitles = new Set<string>();
+
+    // 1. Sprints/Iterações do Project V2 ativo (quando filtrado por Project ou vinculadas)
+    if (projectV2Iterations && projectV2Iterations.length > 0) {
+      for (const it of projectV2Iterations) {
+        sourceSprints.push(it);
+        if (it.iterationId) seenIds.add(it.iterationId);
+        if (it.title) seenTitles.add(it.title.toLowerCase().trim());
+      }
+    }
+
+    // 2. Sprints/Marcos do repositório selecionado (caso existam marcos locais não duplicados)
     if (sprintsForSelectedRepo && sprintsForSelectedRepo.length > 0) {
+      for (const sp of sprintsForSelectedRepo) {
+        const titleKey = (sp.title || '').toLowerCase().trim();
+        if (sp.iterationId && seenIds.has(sp.iterationId)) continue;
+        if (titleKey && seenTitles.has(titleKey)) continue;
+        sourceSprints.push(sp);
+        if (sp.iterationId) seenIds.add(sp.iterationId);
+        if (titleKey) seenTitles.add(titleKey);
+      }
+    }
+
+    if (sourceSprints.length > 0) {
       const todayIso = new Date().toISOString().slice(0, 10);
-      sprintsForSelectedRepo.forEach((sp) => {
+      sourceSprints.forEach((sp) => {
         const isClosed = sp.state === 'closed';
         const isPlanned = !isClosed && sp.startDateIso && sp.startDateIso > todayIso;
         const isCurrent = !isClosed && !isPlanned;
@@ -4124,6 +4492,9 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
           status,
           iterationId: sp.iterationId,
           isProjectIteration: sp.isProjectIteration,
+          isVirtual: sp.isVirtual,
+          projectId: sp.projectId,
+          iterationFieldId: sp.iterationFieldId,
         });
       });
     }
@@ -4157,7 +4528,7 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
     }
 
     return list;
-  }, [sprintsForSelectedRepo, customSprintsList, rawProjectIssues]);
+  }, [projectV2Iterations, sprintsForSelectedRepo, customSprintsList, rawProjectIssues]);
 
   const activeSprintsCount = useMemo(() => {
     return combinedSprints.filter((s) => s.status !== 'Completed').length;
@@ -4185,12 +4556,12 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
       confirmLabel: 'Excluir Sprint',
       onConfirm: () => {
         setCustomSprintsList((prev) => prev.filter((s) => s.id !== sprintId));
-        if (sprint && sprint.number === openedSprintNumber) {
+        if (sprint && sprint.id === openedSprintId) {
           const remaining = combinedSprints.filter((s) => s.id !== sprintId);
           if (remaining.length > 0) {
-            setOpenedSprintNumber(remaining[0].number);
+            setOpenedSprintId(remaining[0].id);
           } else {
-            setOpenedSprintNumber(null);
+            setOpenedSprintId(null);
           }
         }
         setDeleteConfirmState((prev) => ({ ...prev, isOpen: false }));
@@ -4435,8 +4806,7 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
       const activeStatusFieldId = projectV2StatusFieldId;
       const projectItemId =
         issue.projectV2ItemId ||
-        projectV2ItemsMapRef.current.get(`${card.fullName.toLowerCase()}#${issue.githubNumber}`)?.itemId ||
-        projectV2ItemsMapRef.current.get(String(issue.githubNumber))?.itemId;
+        projectV2ItemsMapRef.current.get(`${card.fullName.toLowerCase()}#${issue.githubNumber}`)?.itemId;
 
       if (activeProjId && activeStatusFieldId && targetCol?.optionId && projectItemId) {
         try {
@@ -4478,9 +4848,13 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
     const card = selectedProject;
     const issue = rawProjectIssues.find((i) => i.id === issueId) || sampleIssuesList.find((i) => i.id === issueId);
     if (!issue) return;
+    if (!currentUser?.login) {
+      showToast('Faça login com o GitHub para atribuir esta tarefa a você.');
+      return;
+    }
 
-    const meLogin = currentUser?.login || 'walancy';
-    const meAvatar = currentUser?.avatarUrl;
+    const meLogin = currentUser.login;
+    const meAvatar = currentUser.avatarUrl;
     const meInitial = meLogin.charAt(0).toUpperCase();
     const newAssignee = { name: meLogin, initial: meInitial, avatarBg: accentColor, avatarUrl: meAvatar };
 
@@ -4574,7 +4948,7 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
   };
 
   const handleOpenEditIssue = (issue: ProjectIssue) => {
-    setActiveSidesheetIssue(issue);
+    handleOpenIssueCardDetail(issue);
     setEditingIssue(issue);
     setEditIssueTitle(issue.title);
     setEditIssueDescription(issue.description);
@@ -4623,17 +4997,20 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
         throw new Error(res?.error || 'Falha ao atualizar issue no GitHub.');
       }
 
-      const mapped = mapGithubIssueToProjectIssue(res.issue, card.id, []);
-      setRepoDetailsCache((prev) => ({
-        ...prev,
-        [fullName]: {
-          issues: (prev[fullName]?.issues || []).map((i) => (i.id === current.id ? mapped : i)),
-          sprints: prev[fullName]?.sprints || [],
-          collaborators: prev[fullName]?.collaborators || [],
-          isLoading: false,
-          error: null,
-        },
-      }));
+      // O REST de issues não conhece os campos do Projects V2: preserva sprint/iteration, status e
+      // estimate do item — sem isso, qualquer edição no painel jogava a issue pro backlog.
+      const fresh = mapGithubIssueToProjectIssue(res.issue, card.id, []);
+      const mapped: ProjectIssue = {
+        ...fresh,
+        iterationId: current.iterationId,
+        iterationTitle: current.iterationTitle,
+        projectV2ItemId: current.projectV2ItemId,
+        projectV2Status: current.projectV2Status,
+        projectV2StatusOptionId: current.projectV2StatusOptionId,
+        projectV2Estimate: current.projectV2Estimate,
+        pullRequest: fresh.pullRequest || current.pullRequest,
+      };
+      patchIssueInRepoCache(card, current.id, () => mapped);
 
       if (activeSidesheetIssue?.id === current.id) {
         setActiveSidesheetIssue(mapped);
@@ -4699,11 +5076,13 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
   };
 
   const handleDeleteIssue = (issue: ProjectIssue) => {
-    const card = allCards.find((c) => c.id === issue.projectId);
-    if (!card || !card.fullName || !issue.nodeId) {
-      showToast('Não foi possível excluir: dados da issue incompletos.');
+    const card = allCards.find((c) => c.id === issue.projectId) || selectedProject;
+    const fullName = card?.fullName || (issue as any).repoFullName;
+    if (!fullName) {
+      showToast('Não foi possível identificar o repositório da tarefa.');
       return;
     }
+    const [owner, repo] = fullName.split('/');
     const issueTitle = issue.title || 'esta tarefa';
     const issueId = issue.id ? `(${issue.id})` : '';
 
@@ -4715,9 +5094,13 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
       confirmLabel: 'Excluir Tarefa',
       onConfirm: async () => {
         setDeleteConfirmState((prev) => ({ ...prev, isDeleting: true }));
-        const fullName = card.fullName;
         try {
-          const res = await window.electronAPI?.github?.deleteIssue?.(issue.nodeId);
+          const res = await window.electronAPI?.github?.deleteIssue?.({
+            nodeId: issue.nodeId,
+            owner,
+            repo,
+            issueNumber: issue.githubNumber,
+          });
           if (!res?.success) throw new Error(res?.error || 'Falha ao excluir a issue no GitHub.');
           setRepoDetailsCache((prev) => ({
             ...prev,
@@ -4729,7 +5112,8 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
               error: null,
             },
           }));
-          showToast(`Tarefa ${issue.id} excluída.`);
+          showToast(`Tarefa ${issue.id} excluída com sucesso.`);
+          setActiveSidesheetIssue(null);
           setDeleteConfirmState((prev) => ({ ...prev, isOpen: false, isDeleting: false }));
         } catch (err: any) {
           setDeleteConfirmState((prev) => ({ ...prev, isDeleting: false }));
@@ -4752,12 +5136,18 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
         setDeleteConfirmState((prev) => ({ ...prev, isDeleting: true }));
         let deletedCount = 0;
         for (const task of tasks) {
-          const card = allCards.find((c) => c.id === task.projectId);
-          if (card && card.fullName && task.nodeId) {
+          const card = allCards.find((c) => c.id === task.projectId) || selectedProject;
+          const fullName = card?.fullName || (task as any).repoFullName;
+          if (fullName) {
+            const [owner, repo] = fullName.split('/');
             try {
-              const res = await window.electronAPI?.github?.deleteIssue?.(task.nodeId);
+              const res = await window.electronAPI?.github?.deleteIssue?.({
+                nodeId: task.nodeId,
+                owner,
+                repo,
+                issueNumber: task.githubNumber,
+              });
               if (res?.success) {
-                const fullName = card.fullName;
                 setRepoDetailsCache((prev) => ({
                   ...prev,
                   [fullName]: {
@@ -4776,11 +5166,70 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
     });
   };
 
+  const handlePromptRemoveTaskFromSprint = (issue: ProjectIssue) => {
+    const taskTitle = issue.title || 'esta tarefa';
+    const issueNum = issue.githubNumber ? `#${issue.githubNumber}` : '';
+    const sprintTitle = openedSprint?.title || 'sprint';
+
+    setDeleteConfirmState({
+      isOpen: true,
+      title: 'Desvincular da Sprint',
+      message: `Tem certeza que deseja desvincular ${issueNum} "${taskTitle}" da sprint "${sprintTitle}"?`,
+      itemDescription: 'A tarefa não será excluída, mas retornará ao backlog / sem sprint.',
+      confirmLabel: 'Desvincular da Sprint',
+      isDeleting: false,
+      onConfirm: async () => {
+        setDeleteConfirmState((prev) => ({ ...prev, isDeleting: true }));
+        try {
+          await handleSetIssueSprint(issue, null);
+          setDeleteConfirmState((prev) => ({ ...prev, isOpen: false, isDeleting: false }));
+          showToast(`Tarefa desvinculada da sprint "${sprintTitle}".`);
+        } catch {
+          setDeleteConfirmState((prev) => ({ ...prev, isOpen: false, isDeleting: false }));
+        }
+      },
+    });
+  };
+
+  const handlePromptBatchRemoveFromSprint = (tasks: ProjectIssue[]) => {
+    if (tasks.length === 0) return;
+    const count = tasks.length;
+    const sprintTitle = openedSprint?.title || 'sprint';
+
+    setDeleteConfirmState({
+      isOpen: true,
+      title: 'Desvincular Tarefas da Sprint',
+      message: `Deseja desvincular as ${count} tarefas selecionadas da sprint "${sprintTitle}"?`,
+      itemDescription: 'Todas as tarefas selecionadas voltarão ao backlog / sem sprint.',
+      confirmLabel: `Desvincular ${count} Tarefa${count > 1 ? 's' : ''}`,
+      isDeleting: false,
+      onConfirm: async () => {
+        setDeleteConfirmState((prev) => ({ ...prev, isDeleting: true }));
+        let countRemoved = 0;
+        for (const t of tasks) {
+          try {
+            await handleSetIssueSprint(t, null);
+            countRemoved++;
+          } catch {}
+        }
+        setDeleteConfirmState((prev) => ({ ...prev, isOpen: false, isDeleting: false }));
+        showToast(`${countRemoved} tarefa(s) desvinculada(s) da sprint.`);
+      },
+    });
+  };
+
   const openCreateSprintModal = (context: 'create' | 'edit') => {
-    const t = new Date();
-    setNewSprintTitle('');
-    setNewSprintDuration(7);
-    setNewSprintStartDate(`${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`);
+    // Padrões das Configurações → Fluxo de trabalho: duração, dia de início e padrão de nome
+    const sprintCfg = getProjectSettings(selectedProject?.fullName).sprint;
+    const now = new Date();
+    const t = new Date(now.getFullYear(), now.getMonth(), now.getDate() + ((sprintCfg.startWeekday - now.getDay() + 7) % 7));
+    const startIso = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    const end = new Date(t.getTime() + (sprintCfg.durationDays - 1) * 86400000);
+    const endIso = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
+    const nextNumber = sprintsForSelectedRepo.filter((sp) => /sprint/i.test(sp.title)).length + 1;
+    setNewSprintTitle(formatSprintName(sprintCfg.namePattern, nextNumber, startIso, endIso));
+    setNewSprintDuration(sprintCfg.durationDays);
+    setNewSprintStartDate(startIso);
     setSprintCreationContext(context);
     setIsCreateSprintModalOpen(true);
   };
@@ -4859,7 +5308,7 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
     if (sprintCreationContext === 'create') setNewTaskMilestoneNumber(sprint.number);
     if (sprintCreationContext === 'edit') setEditIssueMilestoneNumber(sprint.number);
 
-    setOpenedSprintNumber(sprint.number);
+    setOpenedSprintId(`sprint-${sprint.number}`);
     showToast(`Sprint "${sprint.title}" criada.`);
     setIsCreateSprintModalOpen(false);
     setSprintCreationContext(null);
@@ -4894,12 +5343,13 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
     }
   };
 
-  // Abrir no Terminal do DevFlow ou Terminal do Sistema
+  // Abrir no Terminal do DevFlow ou Terminal do Sistema com o diretório correto
   const handleOpenTerminalForProject = async (card: ProjectCardData) => {
-    const termCommand = card.fullName ? `echo "Projeto: ${card.title}"` : '';
+    const targetDir = card.localDir || getProjectSettings(card.fullName).local.path || workspacePath;
+    const termCommand = card.fullName ? `echo "📁 Projeto: ${card.title} (${card.fullName})"` : '';
     if (window.electronAPI?.shell?.openInSystemTerminal) {
-      await window.electronAPI.shell.openInSystemTerminal(termCommand);
-      showToast(`Terminal aberto para ${card.title}.`);
+      await window.electronAPI.shell.openInSystemTerminal(termCommand, targetDir || undefined);
+      showToast(`Terminal aberto para ${card.title}${targetDir ? ` em ${targetDir}` : ''}.`);
     } else {
       showToast(`Terminal: ${card.title} pronto para uso.`);
     }
@@ -4971,33 +5421,26 @@ Formate com seções bem organizadas:
   };
 
   const openedSprint = useMemo(
-    () => combinedSprints.find((s) => s.number === openedSprintNumber) || null,
-    [combinedSprints, openedSprintNumber]
+    () => combinedSprints.find((s) => s.id === openedSprintId) || null,
+    [combinedSprints, openedSprintId]
   );
 
   const sprintDetailTasks = useMemo(() => {
-    if (!openedSprint || openedSprint.number === -1 || (openedSprintNumber == null && combinedSprints.some((s) => s.number === -1))) {
+    if (!openedSprint || openedSprint.number === -1 || (openedSprintId == null && combinedSprints.some((s) => s.number === -1))) {
       return rawProjectIssues.filter(
         (i) => (!i.milestoneNumber || i.milestoneNumber === 0 || i.milestoneNumber === -1) && !i.iterationId && !i.iterationTitle
       );
     }
-    if (openedSprint.isProjectIteration || openedSprint.iterationId) {
-      return rawProjectIssues.filter((i) => {
-        if (openedSprint.iterationId && i.iterationId === openedSprint.iterationId) return true;
-        if (i.iterationTitle && openedSprint.title && i.iterationTitle.toLowerCase().trim() === openedSprint.title.toLowerCase().trim()) return true;
-        return false;
-      });
-    }
-    return rawProjectIssues.filter((i) => i.milestoneNumber === openedSprintNumber);
-  }, [rawProjectIssues, openedSprintNumber, openedSprint, combinedSprints]);
+    return rawProjectIssues.filter((i) => issueBelongsToSprint(i, openedSprint));
+  }, [rawProjectIssues, openedSprintId, openedSprint, combinedSprints]);
 
   const tasksAvailableToAddToSprint = useMemo(() => {
-    if (!openedSprint || openedSprintNumber === -1) {
+    if (!openedSprint || openedSprint.number === -1) {
       return [];
     }
-    const currentDetailTaskNumbers = new Set(sprintDetailTasks.map((t) => t.number));
-    return rawProjectIssues.filter((i) => !currentDetailTaskNumbers.has(i.number));
-  }, [rawProjectIssues, openedSprintNumber, openedSprint, sprintDetailTasks]);
+    const currentDetailTaskIds = new Set(sprintDetailTasks.map((t) => t.id));
+    return rawProjectIssues.filter((i) => !currentDetailTaskIds.has(i.id));
+  }, [rawProjectIssues, openedSprintId, openedSprint, sprintDetailTasks]);
 
   // Visibilidade e dimensões da barra de sprints e contêiner central da sprint (estilo IDE)
   const [isSprintSidebarVisible, setIsSprintSidebarVisible] = useState<boolean>(() => {
@@ -5081,13 +5524,13 @@ Formate com seções bem organizadas:
   // Auto-seleciona a sprint atual/primeira quando estiver na aba de sprints e nenhuma estiver selecionada
   useEffect(() => {
     if (selectedSection === 'sprints' && combinedSprints.length > 0) {
-      if (openedSprintNumber == null || !combinedSprints.some((s) => s.number === openedSprintNumber)) {
+      if (openedSprintId == null || !combinedSprints.some((s) => s.id === openedSprintId)) {
         const currentSprint =
           combinedSprints.find((s) => s.number !== -1 && s.status === 'Current') ||
           combinedSprints.find((s) => s.number !== -1) ||
           combinedSprints[0];
         if (currentSprint) {
-          setOpenedSprintNumber(currentSprint.number);
+          setOpenedSprintId(currentSprint.id);
           if (currentSprint.startDateIso) {
             const d = new Date(`${currentSprint.startDateIso}T00:00:00`);
             if (!Number.isNaN(d.getTime())) {
@@ -5097,15 +5540,15 @@ Formate com seções bem organizadas:
         }
       }
     }
-  }, [selectedSection, combinedSprints, openedSprintNumber]);
+  }, [selectedSection, combinedSprints, openedSprintId]);
 
-  const handleOpenSprintDetail = (sprintNumber: number) => {
-    setOpenedSprintNumber(sprintNumber);
+  const handleOpenSprintDetail = (sprintId: string) => {
+    setOpenedSprintId(sprintId);
     setSprintDetailViewMode('issues');
     setIsEditingSprintDates(false);
     setIsAddExistingTaskOpen(false);
     setSprintCalendarMonthOffset(0);
-    const sp = combinedSprints.find((s) => s.number === sprintNumber);
+    const sp = combinedSprints.find((s) => s.id === sprintId);
     if (sp?.startDateIso) {
       const d = new Date(`${sp.startDateIso}T00:00:00`);
       if (!Number.isNaN(d.getTime())) {
@@ -5115,7 +5558,7 @@ Formate com seções bem organizadas:
   };
 
   const handleCloseSprintDetail = () => {
-    setOpenedSprintNumber(null);
+    setOpenedSprintId(null);
     setIsEditingSprintDates(false);
     setIsAddExistingTaskOpen(false);
   };
@@ -5152,7 +5595,7 @@ Formate com seções bem organizadas:
 
   const handleSaveSprintDates = async () => {
     const card = selectedProject;
-    if (!card || openedSprintNumber == null || isSavingSprintDates) return;
+    if (!card || !openedSprint || isSavingSprintDates) return;
     if (!editSprintStartDate || !editSprintDueDate) {
       showToast('Informe as datas de início e fim da sprint.');
       return;
@@ -5168,11 +5611,14 @@ Formate com seções bem organizadas:
     const fullName = card.fullName || `${card.owner || ''}/${card.repoName || ''}` || 'local-project';
     const owner = card.owner;
     const repoName = card.repoName;
-    const sprintNumber = openedSprintNumber;
+    const sprintNumber = openedSprint.number;
+    // Iterations do Projects V2 têm datas definidas na configuração do campo no GitHub; o "number"
+    // delas é derivado do título e não corresponde a nenhum milestone — nunca enviar pra API de milestones.
+    const isRealMilestone = !openedSprint.isProjectIteration && !openedSprint.iterationId && !openedSprint.isVirtual;
 
     setIsSavingSprintDates(true);
     try {
-      if (owner && repoName && sprintNumber > 0 && window.electronAPI?.github?.updateMilestone) {
+      if (owner && repoName && isRealMilestone && sprintNumber > 0 && window.electronAPI?.github?.updateMilestone) {
         try {
           const description = encodeSprintDescription('Sprint atualizada.', finalStart);
           await window.electronAPI.github.updateMilestone(owner, repoName, sprintNumber, {
@@ -5202,6 +5648,8 @@ Formate com seções bem organizadas:
             startDateIso: finalStart,
             dueDateIso: finalDue,
             state: 'open',
+            openIssues: 0,
+            closedIssues: 0,
           });
         }
         localStorage.setItem(storageKey, JSON.stringify(list));
@@ -5227,6 +5675,8 @@ Formate com seções bem organizadas:
             startDateIso: finalStart,
             dueDateIso: finalDue,
             state: 'open',
+            openIssues: 0,
+            closedIssues: 0,
           });
         }
         return {
@@ -5253,75 +5703,250 @@ Formate com seções bem organizadas:
     }
   };
 
-  const handleSetIssueSprint = async (issue: ProjectIssue, sprintNumber: number | null) => {
-    const targetSprint = sprintNumber != null ? combinedSprints.find((s) => s.number === sprintNumber) : null;
-    const targetMilestone = (!targetSprint || targetSprint.number === -1 || targetSprint.isProjectIteration) ? null : targetSprint.number;
-    setSampleIssuesList((prev) =>
-      prev.map((i) =>
-        i.id === issue.id
-          ? {
-              ...i,
-              milestoneNumber: targetMilestone ?? undefined,
-              iterationId: targetSprint?.iterationId,
-              iterationTitle: targetSprint?.title,
-            }
-          : i
-      )
-    );
+  // Handler para atualizar datas de um marco
+  const handleUpdateMilestoneDates = async (milestoneNumber: number, startIso: string, dueIso: string) => {
+    const card = selectedProject;
+    if (!card || !card.owner || !card.repoName) return;
+    const { owner, repoName, fullName } = card;
+
+    if (window.electronAPI?.github?.updateMilestone && milestoneNumber > 0) {
+      try {
+        await window.electronAPI.github.updateMilestone(owner, repoName, milestoneNumber, {
+          due_on: dueIso ? new Date(`${dueIso}T12:00:00`).toISOString() : undefined,
+        });
+      } catch (err) {
+        console.warn('Erro ao atualizar marco no GitHub:', err);
+      }
+    }
+
+    setRepoDetailsCache((prev) => {
+      const cur = prev[fullName] || { issues: [], sprints: [], collaborators: [], isLoading: false, error: null };
+      return {
+        ...prev,
+        [fullName]: {
+          ...cur,
+          sprints: (cur.sprints || []).map((s) =>
+            s.number === milestoneNumber ? { ...s, startDateIso: startIso, dueDateIso: dueIso } : s
+          ),
+        },
+      };
+    });
+  };
+
+  // Alternar estado do marco (Aberto / Concluído)
+  const handleToggleMilestoneState = async (milestoneNumber: number, newState: 'open' | 'closed') => {
+    const card = selectedProject;
+    if (!card || !card.owner || !card.repoName) return;
+    const { owner, repoName, fullName } = card;
+
+    if (window.electronAPI?.github?.updateMilestone && milestoneNumber > 0) {
+      try {
+        await window.electronAPI.github.updateMilestone(owner, repoName, milestoneNumber, {
+          state: newState,
+        });
+      } catch (err) {
+        console.warn('Erro ao alternar estado do marco no GitHub:', err);
+      }
+    }
+
+    // Ao fechar: move as issues abertas para a próxima sprint, se configurado
+    if (newState === 'closed' && milestoneNumber > 0 && getProjectSettings(fullName).sprint.carryOver === 'next') {
+      const closing = sprintsForSelectedRepo.find((sp) => sp.number === milestoneNumber);
+      const next = sprintsForSelectedRepo
+        .filter((sp) => sp.state === 'open' && sp.number > 0 && sp.number !== milestoneNumber && !sp.isProjectIteration && !sp.isVirtual)
+        .filter((sp) => !closing?.dueDateIso || !sp.dueDateIso || sp.dueDateIso >= closing.dueDateIso)
+        .sort((a, b) => (a.dueDateIso || '9999').localeCompare(b.dueDateIso || '9999'))[0];
+      const pending = rawProjectIssues.filter((i) => i.milestoneNumber === milestoneNumber && i.status !== 'Concluído' && i.githubNumber);
+      if (next && pending.length > 0) {
+        let moved = 0;
+        for (const iss of pending) {
+          try {
+            const r = await window.electronAPI?.github?.updateIssue?.(owner, repoName, iss.githubNumber!, { milestone: next.number });
+            if (r?.success) moved++;
+          } catch {}
+        }
+        if (moved > 0) {
+          showToast(`${moved} issue(s) não concluída(s) movidas para "${next.title}".`);
+          fetchRepoDetails(fullName, true);
+        }
+      } else if (pending.length > 0) {
+        showToast(`${pending.length} issue(s) abertas ficaram na sprint fechada — não há próxima sprint aberta.`);
+      }
+    }
+
+    setRepoDetailsCache((prev) => {
+      const cur = prev[fullName] || { issues: [], sprints: [], collaborators: [], isLoading: false, error: null };
+      return {
+        ...prev,
+        [fullName]: {
+          ...cur,
+          sprints: (cur.sprints || []).map((s) =>
+            s.number === milestoneNumber ? { ...s, state: newState } : s
+          ),
+        },
+      };
+    });
+  };
+
+  // Excluir marco
+  const handleDeleteMilestone = async (milestoneNumber: number) => {
+    const card = selectedProject;
+    if (!card || !card.owner || !card.repoName) return;
+    const { owner, repoName, fullName } = card;
+
+    let deletedNatively = false;
+    if (window.electronAPI?.github?.deleteMilestone && milestoneNumber > 0) {
+      try {
+        const res = await window.electronAPI.github.deleteMilestone(owner, repoName, milestoneNumber);
+        if (res?.success) deletedNatively = true;
+      } catch (err) {
+        console.warn('Erro ao deletar marco via IPC:', err);
+      }
+    }
+
+    if (!deletedNatively && window.electronAPI?.shell?.exec && milestoneNumber > 0) {
+      try {
+        await window.electronAPI.shell.exec(
+          `export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh api --method DELETE "repos/${owner}/${repoName}/milestones/${milestoneNumber}"`,
+          workspacePath || '/tmp'
+        );
+      } catch (err) {
+        console.warn('Erro ao deletar marco via gh CLI fallback:', err);
+      }
+    }
+
+    setRepoDetailsCache((prev) => {
+      const cur = prev[fullName] || { issues: [], sprints: [], collaborators: [], isLoading: false, error: null };
+      return {
+        ...prev,
+        [fullName]: {
+          ...cur,
+          sprints: (cur.sprints || []).filter((s) => s.number !== milestoneNumber),
+        },
+      };
+    });
+  };
+
+  // Vincular ou desvincular issue do marco
+  const handleAssignIssueToMilestone = async (issueNumber: number, milestoneNumber: number | null) => {
+    const card = selectedProject;
+    if (!card || !card.owner || !card.repoName) return;
+    const { owner, repoName, fullName } = card;
+
+    if (window.electronAPI?.github?.updateIssue) {
+      try {
+        await window.electronAPI.github.updateIssue(owner, repoName, issueNumber, {
+          milestone: milestoneNumber,
+        });
+      } catch (err) {
+        console.warn('Erro ao vincular issue ao marco no GitHub:', err);
+      }
+    }
+
+    setRepoDetailsCache((prev) => {
+      const cur = prev[fullName] || { issues: [], sprints: [], collaborators: [], isLoading: false, error: null };
+      return {
+        ...prev,
+        [fullName]: {
+          ...cur,
+          issues: (cur.issues || []).map((i) =>
+            (i.githubNumber || (i as any).number) === issueNumber
+              ? { ...i, milestoneNumber: milestoneNumber ?? undefined }
+              : i
+          ),
+        },
+      };
+    });
+  };
+
+  const patchIssueInRepoCache = (card: ProjectCardData, issueId: string, patch: (i: ProjectIssue) => ProjectIssue) => {
+    const keys = Array.from(new Set([card.fullName, card.owner && card.repoName ? `${card.owner}/${card.repoName}` : null].filter(Boolean) as string[]));
+    setRepoDetailsCache((prev) => {
+      const next = { ...prev };
+      keys.forEach((k) => {
+        const cur = prev[k];
+        if (!cur) return;
+        next[k] = { ...cur, issues: cur.issues.map((i) => (i.id === issueId ? patch(i) : i)) };
+      });
+      return next;
+    });
+  };
+
+  // Garante que a issue é um item do Project V2 informado e devolve o id do item naquele Project.
+  // O projectV2ItemId em cache não serve: quando a issue está em mais de um Project, ele é de um só.
+  const resolveProjectItemId = async (card: ProjectCardData, issue: ProjectIssue, projectId: string): Promise<string> => {
+    const gh = window.electronAPI?.github;
+    if (!gh?.fetchIssueDetails || !gh.addIssueToProject) throw new Error('API do GitHub indisponível.');
+    const res = await gh.fetchIssueDetails(card.owner!, card.repoName!, issue.githubNumber!);
+    if (!res?.success || !res.details) throw new Error(res?.error || 'Falha ao consultar a issue no GitHub.');
+    const existing = res.details.projectItems.find((pi) => pi.project.id === projectId);
+    if (existing) return existing.itemId;
+    const added = await gh.addIssueToProject(projectId, issue.nodeId || res.details.issue.id);
+    if (!added?.success || !added.itemId) throw new Error(added?.error || 'Falha ao adicionar a issue ao Project.');
+    return added.itemId;
+  };
+
+  const handleSetIssueSprint = async (issue: ProjectIssue, sprintId: string | null) => {
+    const targetSprint = sprintId != null ? combinedSprints.find((s) => s.id === sprintId) || null : null;
+    const isBacklog = !targetSprint || targetSprint.number === -1;
+    const isIterationTarget = !isBacklog && Boolean(targetSprint!.iterationId);
+    const isMilestoneTarget = !isBacklog && !isIterationTarget && !targetSprint!.isVirtual && !targetSprint!.isProjectIteration && targetSprint!.number > 0;
+    const doneMsg = isBacklog ? 'Tarefa movida para o backlog.' : 'Tarefa adicionada à sprint.';
 
     const card = allCards.find((c) => c.id === issue.projectId);
     if (!card || !card.owner || !card.repoName || !card.fullName || issue.githubNumber == null) {
-      showToast(sprintNumber == null || sprintNumber === -1 ? 'Tarefa no backlog do projeto.' : 'Tarefa adicionada à sprint.');
+      setSampleIssuesList((prev) =>
+        prev.map((i) =>
+          i.id === issue.id
+            ? {
+                ...i,
+                milestoneNumber: isMilestoneTarget ? targetSprint!.number : isBacklog ? undefined : i.milestoneNumber,
+                iterationId: isIterationTarget ? targetSprint!.iterationId : isBacklog ? undefined : i.iterationId,
+                iterationTitle: isIterationTarget ? targetSprint!.title : isBacklog ? undefined : i.iterationTitle,
+              }
+            : i
+        )
+      );
+      showToast(doneMsg);
       return;
     }
-    const fullName = card.fullName;
-    const owner = card.owner;
-    const repoName = card.repoName;
+    const gh = window.electronAPI?.github;
 
     try {
-      if (targetMilestone !== null || !targetSprint?.isProjectIteration) {
-        const res = await window.electronAPI?.github?.updateIssue?.(owner, repoName, issue.githubNumber, { milestone: targetMilestone });
+      if (isIterationTarget) {
+        const sp = targetSprint!;
+        if (!sp.projectId || !sp.iterationFieldId || !gh?.updateProjectItemField) {
+          throw new Error('Não foi possível identificar o campo de Sprint do Project no GitHub.');
+        }
+        const itemId = await resolveProjectItemId(card, issue, sp.projectId);
+        const res = await gh.updateProjectItemField(sp.projectId, itemId, sp.iterationFieldId, { iterationId: sp.iterationId });
+        if (!res?.success) throw new Error(res?.error || 'Falha ao atualizar a sprint no GitHub.');
+        patchIssueInRepoCache(card, issue.id, (i) => ({ ...i, iterationId: sp.iterationId, iterationTitle: sp.title, projectV2ItemId: itemId }));
+      } else if (isMilestoneTarget) {
+        const res = await gh?.updateIssue?.(card.owner, card.repoName, issue.githubNumber, { milestone: targetSprint!.number });
         if (!res?.success || !res.issue) throw new Error(res?.error || 'Falha ao atualizar a tarefa no GitHub.');
         const mapped = mapGithubIssueToProjectIssue(res.issue, card.id, []);
-        setRepoDetailsCache((prev) => ({
-          ...prev,
-          [fullName]: {
-            issues: (prev[fullName]?.issues || []).map((i) =>
-              i.id === issue.id
-                ? {
-                    ...mapped,
-                    iterationId: targetSprint?.iterationId,
-                    iterationTitle: targetSprint?.title,
-                  }
-                : i
-            ),
-            sprints: prev[fullName]?.sprints || [],
-            collaborators: prev[fullName]?.collaborators || [],
-            isLoading: false,
-            error: null,
-          },
-        }));
+        patchIssueInRepoCache(card, issue.id, (i) => ({ ...i, milestoneNumber: mapped.milestoneNumber, milestoneTitle: mapped.milestoneTitle, startDateIso: mapped.startDateIso, dueDateIso: mapped.dueDateIso }));
+      } else if (isBacklog) {
+        // Remove a issue da sprint em que ela realmente está, em cada sistema (iteration e/ou milestone).
+        if (issue.iterationId) {
+          const currentIteration = combinedSprints.find((s) => s.iterationId === issue.iterationId);
+          if (currentIteration?.projectId && currentIteration.iterationFieldId && gh?.clearProjectItemField) {
+            const itemId = await resolveProjectItemId(card, issue, currentIteration.projectId);
+            const res = await gh.clearProjectItemField(currentIteration.projectId, itemId, currentIteration.iterationFieldId);
+            if (!res?.success) throw new Error(res?.error || 'Falha ao remover a sprint no GitHub.');
+          }
+        }
+        if (issue.milestoneNumber != null && issue.milestoneNumber > 0) {
+          const res = await gh?.updateIssue?.(card.owner, card.repoName, issue.githubNumber, { milestone: null });
+          if (!res?.success) throw new Error(res?.error || 'Falha ao remover o milestone no GitHub.');
+        }
+        patchIssueInRepoCache(card, issue.id, (i) => ({ ...i, milestoneNumber: undefined, milestoneTitle: undefined, iterationId: undefined, iterationTitle: undefined }));
       } else {
-        setRepoDetailsCache((prev) => ({
-          ...prev,
-          [fullName]: {
-            issues: (prev[fullName]?.issues || []).map((i) =>
-              i.id === issue.id
-                ? {
-                    ...i,
-                    iterationId: targetSprint?.iterationId,
-                    iterationTitle: targetSprint?.title,
-                  }
-                : i
-            ),
-            sprints: prev[fullName]?.sprints || [],
-            collaborators: prev[fullName]?.collaborators || [],
-            isLoading: false,
-            error: null,
-          },
-        }));
+        // Sprint "virtual" (sem milestone nem iteration reais no GitHub): só existe localmente.
+        patchIssueInRepoCache(card, issue.id, (i) => ({ ...i, milestoneTitle: targetSprint!.title }));
       }
-      showToast(sprintNumber == null || sprintNumber === -1 ? 'Tarefa no backlog.' : 'Tarefa adicionada à sprint.');
+      showToast(doneMsg);
     } catch (err: any) {
       showToast(err?.message || 'Erro ao atualizar a tarefa no GitHub.');
     }
@@ -5492,6 +6117,8 @@ Formate com seções bem organizadas:
         {/* Cabeçalho de Controles e Filtros */}
         <div
           style={{
+            position: 'relative',
+            zIndex: 100,
             width: isGridMode ? 'calc(100% - 48px)' : '100%',
             maxWidth: isGridMode ? 1860 : '100%',
             alignSelf: isGridMode ? 'center' : 'stretch',
@@ -5523,6 +6150,38 @@ Formate com seções bem organizadas:
                 gap: 10,
               }}
             >
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleProjectsShelf();
+                }}
+                title={isProjectsShelfCollapsed ? 'Exibir filtros e projetos' : 'Ocultar filtros e projetos'}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 26,
+                  height: 26,
+                  marginRight: -4,
+                  borderRadius: 6,
+                  border: 'none',
+                  background: 'transparent',
+                  color: theme.textSecondary,
+                  cursor: 'pointer',
+                  transition: 'background 0.15s ease',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              >
+                <ChevronDown
+                  size={18}
+                  style={{
+                    transform: isProjectsShelfCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+                    transition: 'transform 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                  }}
+                />
+              </button>
               <span
                 style={{
                   fontSize: 26,
@@ -5550,6 +6209,20 @@ Formate com seções bem organizadas:
             </div>
           </div>
 
+          <div
+            style={{
+              position: 'relative',
+              zIndex: (sprintDropdownOpen || orgDropdownOpen || githubProjectDropdownOpen || statusDropdownOpen) ? 1000 : 50,
+              display: 'grid',
+              gridTemplateRows: isProjectsShelfCollapsed ? '0fr' : '1fr',
+              opacity: isProjectsShelfCollapsed ? 0 : 1,
+              transform: isProjectsShelfCollapsed ? 'translateY(-6px)' : undefined,
+              marginTop: isProjectsShelfCollapsed ? (isGridMode ? -10 : -6) : 0,
+              transition: 'grid-template-rows 0.35s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease, transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), margin-top 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
+              pointerEvents: isProjectsShelfCollapsed ? 'none' : 'auto',
+            }}
+          >
+          <div style={{ minHeight: 0, overflow: (!sprintDropdownOpen && !orgDropdownOpen && !githubProjectDropdownOpen && !statusDropdownOpen && (isProjectsShelfCollapsed || isProjectsShelfAnimating)) ? 'hidden' : 'visible' }}>
           {/* Linha 2: [Dropdown de Sprint + Campo de Busca + Filtro por Assignees] à esquerda e [Versão + Status] à direita no canto direito */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 16, border: 'none', flexWrap: 'wrap' }}>
             {/* Lado Esquerdo: Dropdown de Sprint + Campo de Busca + Filtro de Assignees */}
@@ -5557,11 +6230,14 @@ Formate com seções bem organizadas:
               {/* Dropdown de Sprint */}
               <div style={{ position: 'relative' }}>
                 <div
+                  ref={sprintTriggerRef}
                   onClick={(e) => {
                     e.stopPropagation();
                     setSprintDropdownOpen((prev) => !prev);
                     setStatusDropdownOpen(false);
                     setVersionDropdownOpen(false);
+                    setOrgDropdownOpen(false);
+                    setGithubProjectDropdownOpen(false);
                   }}
                   style={{
                     display: 'flex',
@@ -5582,18 +6258,19 @@ Formate com seções bem organizadas:
                   <ChevronDown size={14} color={theme.textSecondary} />
                 </div>
 
-                {/* Menu de Sprint */}
-                {sprintDropdownOpen && (
+                {/* Menu de Sprint via Portal */}
+                {sprintDropdownOpen && sprintTriggerRef.current && createPortal(
                   <div
+                    ref={sprintDropdownRef}
                     onClick={(e) => e.stopPropagation()}
                     style={{
-                      position: 'absolute',
-                      top: 'calc(100% + 6px)',
-                      left: 0,
+                      position: 'fixed',
+                      top: sprintTriggerRef.current.getBoundingClientRect().bottom + 6,
+                      left: Math.max(8, Math.min(sprintTriggerRef.current.getBoundingClientRect().left, window.innerWidth - 180)),
                       background: theme.dropdownBg,
                       borderRadius: 8,
                       padding: 5,
-                      zIndex: 1000,
+                      zIndex: 999999,
                       minWidth: 170,
                       boxShadow: theme.dropdownShadow,
                       display: 'flex',
@@ -5631,7 +6308,8 @@ Formate com seções bem organizadas:
                         {selectedSprint === opt && <Check size={13} color={accentColor} />}
                       </div>
                     ))}
-                  </div>
+                  </div>,
+                  document.body
                 )}
               </div>
 
@@ -5676,6 +6354,8 @@ Formate com seções bem organizadas:
                 alignItems: 'center',
                 gap: 16,
                 border: 'none',
+                position: 'relative',
+                zIndex: (orgDropdownOpen || githubProjectDropdownOpen || statusDropdownOpen) ? 1000 : 1,
               }}
             >
                 {/* Seletor de Organização */}
@@ -5691,6 +6371,7 @@ Formate com seções bem organizadas:
                     Organização
                   </span>
                   <div
+                    ref={orgTriggerRef}
                     onClick={(e) => {
                       e.stopPropagation();
                       setOrgDropdownOpen((prev) => !prev);
@@ -5757,18 +6438,19 @@ Formate com seções bem organizadas:
                     <ChevronDown size={14} color={theme.textSecondary} />
                   </div>
 
-                  {/* Menu de Organização */}
-                  {orgDropdownOpen && (
+                  {/* Menu de Organização via Portal */}
+                  {orgDropdownOpen && orgTriggerRef.current && createPortal(
                     <div
+                      ref={orgDropdownRef}
                       onClick={(e) => e.stopPropagation()}
                       style={{
-                        position: 'absolute',
-                        top: 'calc(100% + 6px)',
-                        right: 0,
+                        position: 'fixed',
+                        top: orgTriggerRef.current.getBoundingClientRect().bottom + 6,
+                        left: Math.max(8, Math.min(orgTriggerRef.current.getBoundingClientRect().right - 220, window.innerWidth - 228)),
                         background: theme.dropdownBg,
                         borderRadius: 10,
                         padding: 6,
-                        zIndex: 1000,
+                        zIndex: 999999,
                         minWidth: 220,
                         boxShadow: theme.dropdownShadow,
                         display: 'flex',
@@ -5851,12 +6533,13 @@ Formate com seções bem organizadas:
                           </div>
                         );
                       })}
-                    </div>
+                    </div>,
+                    document.body
                   )}
                 </div>
 
               {/* Seletor de GitHub Project da Organização */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative', zIndex: githubProjectDropdownOpen ? 1001 : 1 }}>
                 <span
                   style={{
                     fontSize: 13,
@@ -5906,6 +6589,7 @@ Formate com seções bem organizadas:
                 )}
 
                 <div
+                  ref={projectTriggerRef}
                   onClick={(e) => {
                     e.stopPropagation();
                     setGithubProjectDropdownOpen((prev) => !prev);
@@ -5996,15 +6680,16 @@ Formate com seções bem organizadas:
                   </button>
                 )}
 
-                {/* Menu Dropdown de Projects */}
-                {githubProjectDropdownOpen && (
+                {/* Menu Dropdown de Projects via Portal */}
+                {githubProjectDropdownOpen && projectTriggerRef.current && createPortal(
                   <div
+                    ref={projectDropdownRef}
                     onClick={(e) => e.stopPropagation()}
                     style={{
-                      position: 'absolute',
-                      top: 'calc(100% + 6px)',
-                      left: 0,
-                      zIndex: 9999,
+                      position: 'fixed',
+                      top: projectTriggerRef.current.getBoundingClientRect().bottom + 6,
+                      left: Math.max(8, Math.min(projectTriggerRef.current.getBoundingClientRect().left, window.innerWidth - 328)),
+                      zIndex: 999999,
                       background: isEffectiveDark ? '#161616' : '#ffffff',
                       border: `1px solid ${isEffectiveDark ? '#2e2e2e' : '#e2e8f0'}`,
                       borderRadius: 10,
@@ -6312,7 +6997,8 @@ Formate com seções bem organizadas:
                       <Plus size={13} color={accentColor} />
                       <span>Adicionar Project por URL ou Número</span>
                     </div>
-                  </div>
+                  </div>,
+                  document.body
                 )}
               </div>
 
@@ -6329,11 +7015,14 @@ Formate com seções bem organizadas:
                     Status
                   </span>
                   <div
+                    ref={statusTriggerRef}
                     onClick={(e) => {
                       e.stopPropagation();
                       setStatusDropdownOpen((prev) => !prev);
                       setSprintDropdownOpen(false);
                       setVersionDropdownOpen(false);
+                      setOrgDropdownOpen(false);
+                      setGithubProjectDropdownOpen(false);
                     }}
                     style={{
                       display: 'flex',
@@ -6362,18 +7051,19 @@ Formate com seções bem organizadas:
                     <ChevronDown size={14} color={theme.textSecondary} />
                   </div>
 
-                  {/* Menu de Status */}
-                  {statusDropdownOpen && (
+                  {/* Menu de Status via Portal */}
+                  {statusDropdownOpen && statusTriggerRef.current && createPortal(
                     <div
+                      ref={statusDropdownRef}
                       onClick={(e) => e.stopPropagation()}
                       style={{
-                        position: 'absolute',
-                        top: 'calc(100% + 6px)',
-                        right: 0,
+                        position: 'fixed',
+                        top: statusTriggerRef.current.getBoundingClientRect().bottom + 6,
+                        left: Math.max(8, Math.min(statusTriggerRef.current.getBoundingClientRect().right - 190, window.innerWidth - 198)),
                         background: theme.dropdownBg,
                         borderRadius: 8,
                         padding: 5,
-                        zIndex: 1000,
+                        zIndex: 999999,
                         minWidth: 190,
                         boxShadow: theme.dropdownShadow,
                         display: 'flex',
@@ -6411,7 +7101,8 @@ Formate com seções bem organizadas:
                           {selectedStatus === opt && <Check size={13} color={accentColor} />}
                         </div>
                       ))}
-                    </div>
+                    </div>,
+                    document.body
                   )}
                 </div>
 
@@ -6479,6 +7170,8 @@ Formate com seções bem organizadas:
               </div>
             </div>
           </div>
+          </div>
+          </div>
 
       {/* Div dos cards / lista posicionada logo abaixo dos controles */}
       <div
@@ -6491,19 +7184,26 @@ Formate com seções bem organizadas:
           }
         }}
         style={{
+          position: 'relative',
+          zIndex: 1,
           width: isGridMode ? 'calc(100% - 48px)' : '100%',
           maxWidth: isGridMode ? 1860 : '100%',
-          margin: isGridMode ? '0 auto' : '0',
+          margin: isProjectsShelfCollapsed
+            ? (isGridMode ? '-16px auto 0' : '-5px 0 0')
+            : (isGridMode ? '0 auto' : '0'),
           alignSelf: isGridMode ? 'center' : 'stretch',
-          height: isGridMode ? 'auto' : 190,
-          minHeight: isGridMode ? 'auto' : 190,
-          maxHeight: isGridMode ? 'calc(100vh - 220px)' : 190,
+          height: isProjectsShelfCollapsed ? 0 : isGridMode ? 'auto' : 190,
+          minHeight: isProjectsShelfCollapsed ? 0 : isGridMode ? 'auto' : 190,
+          maxHeight: isProjectsShelfCollapsed ? 0 : isGridMode ? 'calc(100vh - 220px)' : 190,
+          opacity: isProjectsShelfCollapsed ? 0 : 1,
+          transform: isProjectsShelfCollapsed ? 'translateY(-8px)' : 'translateY(0)',
+          pointerEvents: isProjectsShelfCollapsed ? 'none' : undefined,
           flexShrink: 0,
-          padding: effectiveProjectLayoutMode === 'list' ? 0 : 5,
+          padding: isProjectsShelfCollapsed ? 0 : effectiveProjectLayoutMode === 'list' ? 0 : 5,
           background: theme.bgShelf,
           borderRadius: 10,
-          border: theme.shelfBorder,
-          boxShadow: theme.shelfShadow,
+          border: isProjectsShelfCollapsed ? 'none' : theme.shelfBorder,
+          boxShadow: isProjectsShelfCollapsed ? 'none' : theme.shelfShadow,
           justifyContent: isGridMode ? undefined : 'flex-start',
           alignItems: 'stretch',
           alignContent: isGridMode ? 'start' : undefined,
@@ -6558,7 +7258,7 @@ Formate com seções bem organizadas:
                       <tr
                         key={card.id}
                         id={`project-card-${card.id}`}
-                        onClick={() => setSelectedCardId((prev) => (prev === card.id ? null : card.id))}
+                        onClick={() => handleOpenProjectCard(card)}
                         onMouseEnter={() => setHoveredCardId(card.id)}
                         onMouseLeave={() => setHoveredCardId(null)}
                         style={{
@@ -6790,7 +7490,7 @@ Formate com seções bem organizadas:
               <div
                 key={card.id}
                 id={`project-card-${card.id}`}
-                onClick={() => setSelectedCardId((prev) => (prev === card.id ? null : card.id))}
+                onClick={() => handleOpenProjectCard(card)}
                 onMouseEnter={() => setHoveredCardId(card.id)}
                 onMouseLeave={() => setHoveredCardId(null)}
                 style={{
@@ -6811,12 +7511,7 @@ Formate com seções bem organizadas:
                   cursor: 'pointer',
                   boxSizing: 'border-box',
                   transform: isHovered ? 'translateY(-3px)' : 'translateY(0)',
-                  boxShadow:
-                    isHovered && isGridMode
-                      ? isEffectiveDark
-                        ? '0 8px 24px rgba(0, 0, 0, 0.45)'
-                        : '0 8px 24px rgba(0, 0, 0, 0.08)'
-                      : 'none',
+                  boxShadow: 'none',
                   transition: 'all 0.22s cubic-bezier(0.16, 1, 0.3, 1)',
                 }}
               >
@@ -6858,15 +7553,14 @@ Formate com seções bem organizadas:
                         style={{
                           width: 24,
                           height: 24,
-                          borderRadius: '50%',
-                          background: badgeBg,
+                          background: 'transparent',
                           border: 'none',
+                          boxShadow: 'none',
                           display: 'inline-flex',
                           justifyContent: 'center',
                           alignItems: 'center',
                           flexShrink: 0,
                           position: 'relative',
-                          transition: 'background 0.18s ease',
                         }}
                       >
                         {/* Pontinho vermelho (crítico) ou amarelo (alerta) no canto superior esquerdo da bolinha */}
@@ -6876,19 +7570,12 @@ Formate com seções bem organizadas:
                               position: 'absolute',
                               top: -1,
                               left: -1,
-                              width: 7,
-                              height: 7,
+                              width: 6,
+                              height: 6,
                               borderRadius: '50%',
                               background: card.alertStatus === 'critico' ? '#ef4444' : '#f59e0b',
-                              border: isSelected
-                                ? `1.5px solid ${accentColor}`
-                                : isHovered
-                                ? `1.5px solid ${theme.cardHoverBg}`
-                                : `1.5px solid ${theme.cardBg}`,
-                              boxShadow:
-                                card.alertStatus === 'critico'
-                                  ? '0 0 6px rgba(239, 68, 68, 0.85)'
-                                  : '0 0 6px rgba(245, 158, 11, 0.85)',
+                              border: 'none',
+                              boxShadow: 'none',
                               zIndex: 3,
                             }}
                             title={card.alertStatus === 'critico' ? 'Status: Crítico' : 'Status: Alerta'}
@@ -7371,6 +8058,8 @@ Formate com seções bem organizadas:
         {!isGridMode && (
           <div
             style={{
+              position: 'relative',
+              zIndex: 1,
               width: '100%',
               display: 'flex',
               flexDirection: 'column',
@@ -7521,7 +8210,7 @@ Formate com seções bem organizadas:
                     color: theme.textSecondary,
                   }}
                 >
-                  {openIssuesCount}
+                  {combinedGithubIssues.length}
                 </span>
               </div>
 
@@ -7704,6 +8393,43 @@ Formate com seções bem organizadas:
                       ) : (
                         <Square size={15} color={theme.textSecondary} />
                       )}
+                    </div>
+
+                    {/* Aba Todas */}
+                    <div
+                      onClick={() => setIssuesStateFilter('all')}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        cursor: 'pointer',
+                        padding: '4px 8px',
+                        borderRadius: 6,
+                        background: issuesStateFilter === 'all' ? (isEffectiveDark ? '#262626' : '#e2e8f0') : 'transparent',
+                        transition: 'background 0.12s ease',
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 12.5,
+                          fontWeight: issuesStateFilter === 'all' ? 600 : 400,
+                          color: issuesStateFilter === 'all' ? theme.textPrimary : theme.textSecondary,
+                        }}
+                      >
+                        Todas
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 600,
+                          padding: '0 5px',
+                          borderRadius: 8,
+                          background: isEffectiveDark ? '#1a1a1a' : '#cbd5e1',
+                          color: issuesStateFilter === 'all' ? theme.textPrimary : theme.textSecondary,
+                        }}
+                      >
+                        {openIssuesCount + closedIssuesCount}
+                      </span>
                     </div>
 
                     {/* Aba Open */}
@@ -8323,7 +9049,7 @@ Formate com seções bem organizadas:
                       isEffectiveDark={isEffectiveDark}
                       accentColor={accentColor}
                       accentContrastText={accentContrastText}
-                      onOpenIssueDetail={(issue) => setActiveSidesheetIssue(issue)}
+                      onOpenIssueDetail={handleOpenIssueCardDetail}
                       onMoveIssue={handleMoveIssueToColumn}
                       onAddNewIssue={() => openAddTaskModal()}
                       showToast={showToast}
@@ -8338,7 +9064,13 @@ Formate com seções bem organizadas:
                       isEffectiveDark={isEffectiveDark}
                       accentColor={accentColor}
                       accentContrastText={accentContrastText}
-                      onOpenIssueDetail={(issue) => setActiveSidesheetIssue(issue)}
+                      onOpenIssueDetail={handleOpenIssueCardDetail}
+                      onUpdateIssueDates={(issueId, startDateIso, dueDateIso) => {
+                        const card = selectedProject;
+                        if (card) {
+                          patchIssueInRepoCache(card, issueId, (i) => ({ ...i, startDateIso, dueDateIso, dateStr: startDateIso }));
+                        }
+                      }}
                       onAddNewIssue={() => openAddTaskModal()}
                       showToast={showToast}
                     />
@@ -8897,7 +9629,7 @@ Formate com seções bem organizadas:
                       width: 3,
                       height: 36,
                       borderRadius: 3,
-                      background: hexToRgba(theme.textSecondary, isEffectiveDark ? 0.35 : 0.25),
+                      background: isDraggingSprintContent ? accentColor : 'transparent',
                       transition: 'all 0.15s ease',
                     }}
                   />
@@ -8930,7 +9662,7 @@ Formate com seções bem organizadas:
                       width: 3,
                       height: 36,
                       borderRadius: 3,
-                      background: hexToRgba(theme.textSecondary, isEffectiveDark ? 0.35 : 0.25),
+                      background: isDraggingSprintContent ? accentColor : 'transparent',
                       transition: 'all 0.15s ease',
                     }}
                   />
@@ -8941,7 +9673,7 @@ Formate com seções bem organizadas:
               <SprintDetailPanel
                 allCards={allCards}
                 selectedProject={selectedProject}
-                onSelectProject={(cardId) => setSelectedCardId(cardId)}
+                onSelectProject={(cardId) => handleSelectProjectById(cardId)}
                 isSprintSidebarVisible={isSprintSidebarVisible}
                 toggleSprintSidebar={toggleSprintSidebar}
                 currentUser={currentUser}
@@ -8977,10 +9709,11 @@ Formate com seções bem organizadas:
                 isAddExistingTaskOpen={isAddExistingTaskOpen}
                 setIsAddExistingTaskOpen={setIsAddExistingTaskOpen}
                 onAddExistingTask={(issue) => {
-                  if (openedSprintNumber != null) handleSetIssueSprint(issue, openedSprintNumber);
+                  if (openedSprintId != null) handleSetIssueSprint(issue, openedSprintId);
                   setIsAddExistingTaskOpen(false);
                 }}
-                onRemoveTaskFromSprint={(issue) => handleSetIssueSprint(issue, null)}
+                onRemoveTaskFromSprint={handlePromptRemoveTaskFromSprint}
+                onBatchRemoveTasksFromSprint={handlePromptBatchRemoveFromSprint}
                 onToggleTaskStatus={handleToggleIssueStatus}
                 onAssignToMe={handleAssignToMe}
                 collaborators={collaboratorsForSelectedRepo}
@@ -8990,7 +9723,11 @@ Formate com seções bem organizadas:
                 onReassignTask={handleAssignIssue}
                 onCreateNewTask={() => {
                   openAddTaskModal();
-                  setNewTaskMilestoneNumber(openedSprintNumber);
+                  setNewTaskMilestoneNumber(
+                    openedSprint && !openedSprint.isProjectIteration && !openedSprint.isVirtual && openedSprint.number > 0
+                      ? openedSprint.number
+                      : null
+                  );
                 }}
                 sprintCalendarMonthOffset={sprintCalendarMonthOffset}
                 setSprintCalendarMonthOffset={setSprintCalendarMonthOffset}
@@ -9009,410 +9746,102 @@ Formate com seções bem organizadas:
             isEffectiveDark={isEffectiveDark}
             accentColor={accentColor}
             accentContrastText={accentContrastText}
-            onOpenIssueDetail={(issue) => setActiveSidesheetIssue(issue)}
+            onOpenIssueDetail={handleOpenIssueCardDetail}
             onReassignTask={(issue) => handleOpenEditIssue(issue)}
             showToast={showToast}
           />
         ) : selectedSection === 'marcos' ? (
           /* ========================================================================= */
-          /* TELA DE MARCOS: roadmap de todos os milestones (sprints) do repositório    */
+          /* TELA DE MARCOS: Gestão de releases, DoD, equipe e roadmap de milestones   */
           /* ========================================================================= */
-          <div
-            style={{
-              width: '100%',
-              background: theme.bgShelf,
-              borderRadius: 10,
-              border: theme.shelfBorder,
-              boxShadow: theme.shelfShadow,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 5,
-              padding: 5,
-              boxSizing: 'border-box',
-              flex: 1,
-              minHeight: 360,
+          <ProjectMilestonesView
+            milestones={(() => {
+              const list = [...sprintsForSelectedRepo];
+              (customSprintsList || []).forEach((cs) => {
+                if (!list.some((s) => s.number === cs.number || s.title.toLowerCase() === cs.title.toLowerCase())) {
+                  list.push({
+                    number: cs.number,
+                    title: cs.title,
+                    state: cs.status === 'Completed' ? 'closed' : 'open',
+                    startDateIso: cs.startDateIso,
+                    dueDateIso: cs.dueDateIso,
+                    openIssues: 0,
+                    closedIssues: 0,
+                  });
+                }
+              });
+              return list;
+            })()}
+            issues={rawProjectIssues}
+            collaborators={collaboratorsForSelectedRepo}
+            selectedProject={selectedProject}
+            repoName={selectedRepoRaw?.full_name || selectedProject?.repoName || selectedProject?.title || 'repositório'}
+            theme={theme}
+            isEffectiveDark={isEffectiveDark}
+            accentColor={accentColor}
+            accentContrastText={accentContrastText}
+            onOpenCreateMilestone={() => openCreateSprintModal('create')}
+            onDeleteMilestone={handleDeleteMilestone}
+            onOpenIssueDetail={handleOpenIssueCardDetail}
+            onCreateTaskInMilestone={(mNum) => {
+              openAddTaskModal();
+              setNewTaskMilestoneNumber(mNum);
             }}
-          >
-            <div
-              style={{
-                background: theme.viewCanvasBg,
-                borderRadius: 8,
-                padding: 16,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 14,
-                flex: 1,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <Milestone size={17} color={accentColor} />
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: theme.textPrimary }}>Marcos do Projeto</div>
-                  <div style={{ fontSize: 11.5, color: theme.textSecondary }}>Roadmap dos milestones de {selectedProject?.title || 'repositório'}</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => openCreateSprintModal('create')}
-                  style={{
-                    marginLeft: 'auto',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    background: accentColor,
-                    border: 'none',
-                    borderRadius: 8,
-                    padding: '6px 14px',
-                    color: accentContrastText,
-                    fontSize: 12,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <Plus size={13.5} color={accentContrastText} />
-                  <span>Novo Marco</span>
-                </button>
-              </div>
-
-              {sprintsForSelectedRepo.length === 0 ? (
-                <div style={{ padding: '40px 0', textAlign: 'center', color: theme.textSecondary, fontSize: 13 }}>
-                  Nenhum marco criado ainda para este repositório.
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {[...sprintsForSelectedRepo]
-                    .sort((a, b) => (a.dueDateIso || '9999').localeCompare(b.dueDateIso || '9999'))
-                    .map((sprint) => {
-                      const total = sprint.openIssues + sprint.closedIssues;
-                      const percent = total > 0 ? Math.round((sprint.closedIssues / total) * 100) : 0;
-                      return (
-                        <div
-                          key={sprint.number}
-                          style={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 8,
-                            padding: '12px 14px',
-                            borderRadius: 8,
-                            background: theme.viewCardBg,
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <span style={{ fontSize: 13, fontWeight: 500, color: theme.textPrimary, flex: 1, minWidth: 0 }}>{sprint.title}</span>
-                            <span
-                              style={{
-                                fontSize: 10.5,
-                                fontWeight: 600,
-                                padding: '2px 8px',
-                                borderRadius: 4,
-                                background: sprint.state === 'closed' ? 'rgba(16, 185, 129, 0.15)' : hexToRgba(accentColor, 0.15),
-                                color: sprint.state === 'closed' ? '#10b981' : accentColor,
-                              }}
-                            >
-                              {sprint.state === 'closed' ? 'Concluído' : 'Aberto'}
-                            </span>
-                            {sprint.dueDateIso && (
-                              <span style={{ fontSize: 11, color: theme.textSecondary }}>até {formatShortDate(sprint.dueDateIso)}</span>
-                            )}
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div style={{ flex: 1, height: 5, borderRadius: 3, background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', overflow: 'hidden' }}>
-                              <div style={{ width: `${percent}%`, height: '100%', background: percent === 100 ? '#10b981' : accentColor, borderRadius: 3 }} />
-                            </div>
-                            <span style={{ fontSize: 11, color: theme.textSecondary, minWidth: 70, textAlign: 'right' }}>
-                              {sprint.closedIssues}/{total} issues
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                </div>
-              )}
-            </div>
-          </div>
+            onUpdateMilestoneDates={handleUpdateMilestoneDates}
+            onToggleMilestoneState={handleToggleMilestoneState}
+            onAssignIssueToMilestone={handleAssignIssueToMilestone}
+            showToast={showToast}
+          />
         ) : selectedSection === 'relatorio' ? (
           /* ========================================================================= */
-          /* TELA DE RELATÓRIO: dashboard agregando os dados reais já carregados       */
+          /* TELA DE RELATÓRIO: DASHBOARD EXECUTIVO & ANALYTICS MODULAR COM IA         */
           /* ========================================================================= */
-          <div
-            style={{
-              width: '100%',
-              background: theme.bgShelf,
-              borderRadius: 10,
-              border: theme.shelfBorder,
-              boxShadow: theme.shelfShadow,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 5,
-              padding: 5,
-              boxSizing: 'border-box',
-              flex: 1,
-              minHeight: 360,
-            }}
-          >
-            <div
-              style={{
-                background: theme.viewCanvasBg,
-                borderRadius: 8,
-                padding: 16,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 18,
-                flex: 1,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <BarChart2 size={17} color={accentColor} />
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: theme.textPrimary }}>Relatório do Projeto</div>
-                  <div style={{ fontSize: 11.5, color: theme.textSecondary }}>{selectedProject?.title || 'repositório'}</div>
-                </div>
-              </div>
-
-              {(() => {
-                const total = rawProjectIssues.length;
-                const done = rawProjectIssues.filter((i) => i.status === 'Concluído').length;
-                const inProgress = rawProjectIssues.filter((i) => i.status === 'Em Progresso').length;
-                const todo = rawProjectIssues.filter((i) => i.status === 'A Fazer').length;
-                const priorityCounts: Record<string, number> = { Baixa: 0, Média: 0, Alta: 0, Urgente: 0 };
-                rawProjectIssues.forEach((i) => { priorityCounts[i.priority] = (priorityCounts[i.priority] || 0) + 1; });
-                const assigneeCounts = new Map<string, { count: number; avatarUrl?: string }>();
-                rawProjectIssues.forEach((i) => {
-                  i.assignees.forEach((a) => {
-                    const entry = assigneeCounts.get(a.name) || { count: 0, avatarUrl: a.avatarUrl };
-                    entry.count += 1;
-                    assigneeCounts.set(a.name, entry);
+          <ProjectReportsView
+            selectedProject={selectedProject}
+            repoName={selectedRepoRaw?.full_name || selectedProject?.repoName || selectedProject?.title || 'repositório'}
+            issues={rawProjectIssues}
+            sprints={(() => {
+              const list = [...sprintsForSelectedRepo];
+              (customSprintsList || []).forEach((cs) => {
+                if (!list.some((s) => s.number === cs.number || s.title.toLowerCase() === cs.title.toLowerCase())) {
+                  list.push({
+                    number: cs.number,
+                    title: cs.title,
+                    state: cs.status === 'Completed' ? 'closed' : 'open',
+                    startDateIso: cs.startDateIso,
+                    dueDateIso: cs.dueDateIso,
+                    openIssues: 0,
+                    closedIssues: 0,
                   });
-                });
-                const topAssignees = Array.from(assigneeCounts.entries())
-                  .sort((a, b) => b[1].count - a[1].count)
-                  .slice(0, 5);
-
-                return (
-                  <>
-                    {/* Cards de resumo */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
-                      {[
-                        { label: 'Total de Issues', value: total, color: theme.textPrimary },
-                        { label: 'Concluídas', value: done, color: '#10b981' },
-                        { label: 'Em Progresso', value: inProgress, color: '#f59e0b' },
-                        { label: 'Abertas', value: todo, color: '#3b82f6' },
-                        { label: 'Sprints Ativas', value: activeSprintsCount, color: accentColor },
-                      ].map((stat) => (
-                        <div key={stat.label} style={{ background: theme.viewCardBg, borderRadius: 8, padding: '12px 14px' }}>
-                          <div style={{ fontSize: 22, fontWeight: 600, color: stat.color }}>{stat.value}</div>
-                          <div style={{ fontSize: 11, color: theme.textSecondary, marginTop: 2 }}>{stat.label}</div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Distribuição por prioridade */}
-                    <div>
-                      <div style={{ fontSize: 12.5, fontWeight: 500, color: theme.textPrimary, marginBottom: 8 }}>Distribuição por Prioridade</div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {(['Urgente', 'Alta', 'Média', 'Baixa'] as const).map((p) => {
-                          const count = priorityCounts[p] || 0;
-                          const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-                          const color = p === 'Urgente' ? '#dc2626' : p === 'Alta' ? '#ef4444' : p === 'Média' ? '#f59e0b' : '#22c55e';
-                          return (
-                            <div key={p} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <span style={{ fontSize: 11, color: theme.textSecondary, width: 60 }}>{p}</span>
-                              <div style={{ flex: 1, height: 6, borderRadius: 3, background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', overflow: 'hidden' }}>
-                                <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 3 }} />
-                              </div>
-                              <span style={{ fontSize: 11, color: theme.textSecondary, width: 30, textAlign: 'right' }}>{count}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Top responsáveis */}
-                    {topAssignees.length > 0 && (
-                      <div>
-                        <div style={{ fontSize: 12.5, fontWeight: 500, color: theme.textPrimary, marginBottom: 8 }}>Responsáveis com Mais Issues</div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          {topAssignees.map(([name, info]) => (
-                            <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <div style={{ width: 22, height: 22, borderRadius: '50%', overflow: 'hidden', background: accentColor, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 10 }}>
-                                {info.avatarUrl ? <img src={info.avatarUrl} alt={name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : name.charAt(0).toUpperCase()}
-                              </div>
-                              <span style={{ fontSize: 12, color: theme.textPrimary, flex: 1 }}>{name}</span>
-                              <span style={{ fontSize: 11, color: theme.textSecondary }}>{info.count} issue(s)</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </>
-                );
-              })()}
-            </div>
-          </div>
+                }
+              });
+              return list;
+            })()}
+            collaborators={collaboratorsForSelectedRepo}
+            theme={theme}
+            isEffectiveDark={isEffectiveDark}
+            accentColor={accentColor}
+            accentContrastText={accentContrastText}
+            onOpenIssueDetail={handleOpenIssueCardDetail}
+            showToast={showToast}
+          />
         ) : selectedSection === 'links' ? (
-          /* ========================================================================= */
-          /* TELA DE LINKS: URLs reais do repositório + links customizados locais       */
-          /* ========================================================================= */
-          <div
-            style={{
-              width: '100%',
-              background: theme.bgShelf,
-              borderRadius: 10,
-              border: theme.shelfBorder,
-              boxShadow: theme.shelfShadow,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 5,
-              padding: 5,
-              boxSizing: 'border-box',
-              flex: 1,
-              minHeight: 360,
-            }}
-          >
-            <div
-              style={{
-                background: theme.viewCanvasBg,
-                borderRadius: 8,
-                padding: 16,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 18,
-                flex: 1,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <Link2 size={17} color={accentColor} />
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: theme.textPrimary }}>Links do Projeto</div>
-                  <div style={{ fontSize: 11.5, color: theme.textSecondary }}>{selectedProject?.title || 'repositório'}</div>
-                </div>
-              </div>
-
-              {/* Links reais do repositório */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {[
-                  { label: 'Repositório no GitHub', url: selectedProject?.htmlUrl },
-                  { label: 'Clone (HTTPS)', url: selectedRepoRaw?.clone_url },
-                  { label: 'Clone (SSH)', url: selectedRepoRaw?.ssh_url },
-                  { label: 'Homepage', url: selectedRepoRaw?.homepage || undefined },
-                ]
-                  .filter((l) => l.url)
-                  .map((l) => (
-                    <div
-                      key={l.label}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 10,
-                        padding: '9px 12px',
-                        borderRadius: 8,
-                        background: theme.viewCardBg,
-                      }}
-                    >
-                      <span style={{ fontSize: 12.5, color: theme.textPrimary, fontWeight: 500, minWidth: 150 }}>{l.label}</span>
-                      <span style={{ fontSize: 11.5, color: theme.textSecondary, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {l.url}
-                      </span>
-                      <Copy
-                        size={13}
-                        color={theme.textSecondary}
-                        style={{ cursor: 'pointer', flexShrink: 0 }}
-                        title="Copiar link"
-                        onClick={() => {
-                          navigator.clipboard?.writeText(l.url!);
-                          showToast('Link copiado.');
-                        }}
-                      />
-                      <ExternalLink
-                        size={13}
-                        color={theme.textSecondary}
-                        style={{ cursor: 'pointer', flexShrink: 0 }}
-                        title="Abrir"
-                        onClick={() => window.electronAPI?.shell?.openExternal?.(l.url!)}
-                      />
-                    </div>
-                  ))}
-              </div>
-
-              {/* Links customizados */}
-              <div>
-                <div style={{ fontSize: 12.5, fontWeight: 500, color: theme.textPrimary, marginBottom: 8 }}>Links Personalizados</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
-                  {(customLinks[selectedProject?.fullName || ''] || []).map((link) => (
-                    <div
-                      key={link.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 10,
-                        padding: '9px 12px',
-                        borderRadius: 8,
-                        background: theme.viewCardBg,
-                      }}
-                    >
-                      <span style={{ fontSize: 12.5, color: theme.textPrimary, fontWeight: 500, minWidth: 150 }}>{link.label}</span>
-                      <span style={{ fontSize: 11.5, color: theme.textSecondary, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {link.url}
-                      </span>
-                      <ExternalLink
-                        size={13}
-                        color={theme.textSecondary}
-                        style={{ cursor: 'pointer', flexShrink: 0 }}
-                        onClick={() => window.electronAPI?.shell?.openExternal?.(link.url)}
-                      />
-                      <Trash2
-                        size={13}
-                        color="#ef4444"
-                        style={{ cursor: 'pointer', flexShrink: 0 }}
-                        onClick={() => handleRemoveCustomLink(link.id)}
-                      />
-                    </div>
-                  ))}
-                  {(customLinks[selectedProject?.fullName || ''] || []).length === 0 && (
-                    <div style={{ fontSize: 12, color: theme.textSecondary, padding: '6px 2px' }}>Nenhum link personalizado ainda.</div>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <input
-                    type="text"
-                    value={newLinkLabel}
-                    onChange={(e) => setNewLinkLabel(e.target.value)}
-                    placeholder="Nome (ex: Figma, Documentação)"
-                    style={{ background: theme.controlBg, border: 'none', borderRadius: 6, padding: '7px 10px', color: theme.textPrimary, fontSize: 12, outline: 'none', flex: '1 1 160px' }}
-                  />
-                  <input
-                    type="text"
-                    value={newLinkUrl}
-                    onChange={(e) => setNewLinkUrl(e.target.value)}
-                    placeholder="https://..."
-                    style={{ background: theme.controlBg, border: 'none', borderRadius: 6, padding: '7px 10px', color: theme.textPrimary, fontSize: 12, outline: 'none', flex: '2 1 220px' }}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAddCustomLink}
-                    disabled={!newLinkLabel.trim() || !newLinkUrl.trim()}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 5,
-                      background: accentColor,
-                      border: 'none',
-                      borderRadius: 6,
-                      padding: '7px 14px',
-                      color: accentContrastText,
-                      fontSize: 12,
-                      cursor: !newLinkLabel.trim() || !newLinkUrl.trim() ? 'default' : 'pointer',
-                      opacity: !newLinkLabel.trim() || !newLinkUrl.trim() ? 0.5 : 1,
-                    }}
-                  >
-                    <Plus size={13} color={accentContrastText} />
-                    <span>Adicionar</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+          <ProjectLinksView
+            selectedProject={selectedProject}
+            selectedRepoRaw={selectedRepoRaw}
+            repoFullName={selectedProject?.fullName}
+            customLinks={(customLinks[selectedProject?.fullName || ''] || []) as any}
+            onAddCustomLink={handleAddCustomLink}
+            onRemoveCustomLink={handleRemoveCustomLink}
+            theme={theme}
+            isEffectiveDark={isEffectiveDark}
+            accentColor={accentColor}
+            accentContrastText={accentContrastText}
+            showToast={showToast}
+          />
         ) : selectedSection === 'time' ? (
           /* ========================================================================= */
-          /* TELA DE TIME: MANAGE ACCESS (PADRÃO GITHUB COM DESIGN NATIVO DEVFLOW)    */
+          /* TELA DE TIME: VISÃO, MEMBROS, TIMES, ACESSO E INSIGHTS                    */
           /* ========================================================================= */
           <div
             style={{
@@ -9430,170 +9859,71 @@ Formate com seções bem organizadas:
               minHeight: 360,
             }}
           >
-            <ManageAccessView
+            <TeamWorkspaceView
               projectName={selectedProject?.title}
               repoFullName={selectedProject?.fullName}
-              collaborators={collaboratorsForSelectedRepo}
-              isLoading={isLoadingProjectIssues}
+              issues={rawProjectIssues}
+              sprints={sprintsForSelectedRepo}
+              sprintMatcher={issueBelongsToSprint}
+              currentUserLogin={currentUser?.login}
+              orgRepoNames={repos
+                .filter((r) => r.owner?.login?.toLowerCase() === (selectedProject?.fullName || '').split('/')[0]?.toLowerCase())
+                .map((r) => r.full_name)}
+              aiProvider={(() => {
+                const projectAi = getProjectSettings(selectedProject?.fullName).ai;
+                const prov = AI_PROVIDERS.find((p) => p.id === (projectAi.providerId || localAiProvider)) || AI_PROVIDERS[0];
+                const model = projectAi.model || (projectAi.providerId && projectAi.providerId !== localAiProvider ? undefined : localAiModel);
+                return { id: prov.id, name: prov.name, cliCommand: prov.cliCommand, model, cwd: selectedProject?.localDir || workspacePath, contextNotes: projectAi.contextNotes };
+              })()}
               theme={theme}
               accentColor={accentColor}
               accentContrastText={accentContrastText}
               isEffectiveDark={isEffectiveDark}
-              onRefreshCollaborators={() => {
+              showToast={showToast}
+              onIssuesChanged={() => {
                 if (selectedProject?.fullName) fetchRepoDetails(selectedProject.fullName, true);
               }}
-              onRequestDeleteCollaborator={(item: AccessItem) => {
+              requestConfirm={(req) =>
                 setDeleteConfirmState({
                   isOpen: true,
-                  title: 'Remover Acesso',
-                  message: `Tem certeza que deseja revogar o acesso de "${item.name || item.login}" a este repositório?`,
-                  itemDescription: `Papel: ${item.role} • ${item.type === 'team' ? 'Time' : 'Colaborador'} • Esta ação revogará todas as permissões imediatas.`,
-                  confirmLabel: 'Remover Acesso',
+                  title: req.title,
+                  message: req.message,
+                  itemDescription: req.itemDescription,
+                  confirmLabel: req.confirmLabel,
                   isDeleting: false,
-                  onConfirm: () => {
+                  onConfirm: async () => {
                     setDeleteConfirmState((prev) => ({ ...prev, isDeleting: true }));
-                    setTimeout(() => {
+                    try {
+                      await req.onConfirm();
+                    } finally {
                       setDeleteConfirmState((prev) => ({ ...prev, isOpen: false, isDeleting: false }));
-                      showToast(`Acesso de "${item.name || item.login}" removido com sucesso.`);
-                    }, 350);
+                    }
                   },
-                });
-              }}
-              onRequestBulkDelete={(items: AccessItem[]) => {
-                setDeleteConfirmState({
-                  isOpen: true,
-                  title: 'Remover Acessos em Massa',
-                  message: `Tem certeza que deseja revogar o acesso de ${items.length} ${items.length === 1 ? 'membro' : 'membros/times'} a este repositório?`,
-                  itemDescription: `${items.map((i) => i.name || i.login).slice(0, 4).join(', ')}${items.length > 4 ? ` e mais ${items.length - 4}` : ''}. Esta ação revogará todas as permissões imediatas.`,
-                  confirmLabel: 'Remover Acessos',
-                  isDeleting: false,
-                  onConfirm: () => {
-                    setDeleteConfirmState((prev) => ({ ...prev, isDeleting: true }));
-                    setTimeout(() => {
-                      setDeleteConfirmState((prev) => ({ ...prev, isOpen: false, isDeleting: false }));
-                      showToast(`Acesso de ${items.length} itens removido com sucesso.`);
-                    }, 350);
-                  },
-                });
-              }}
-              showToast={showToast}
+                })
+              }
             />
           </div>
         ) : selectedSection === 'configuracoes' ? (
-          /* ========================================================================= */
-          /* TELA DE CONFIGURAÇÕES: metadados reais do repositório selecionado         */
-          /* ========================================================================= */
-          <div
-            style={{
-              width: '100%',
-              background: theme.bgShelf,
-              borderRadius: 10,
-              border: theme.shelfBorder,
-              boxShadow: theme.shelfShadow,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 5,
-              padding: 5,
-              boxSizing: 'border-box',
-              flex: 1,
-              minHeight: 360,
+          <ProjectSettingsView
+            selectedProject={selectedProject}
+            selectedRepoRaw={selectedRepoRaw}
+            repoFullName={selectedProject?.fullName}
+            workspacePath={workspacePath}
+            onRefreshRepoDetails={() => selectedProject?.fullName && fetchRepoDetails(selectedProject.fullName, true)}
+            onDataConfigChanged={() => selectedProject?.fullName && fetchRepoDetails(selectedProject.fullName, true)}
+            onRepoGone={() => {
+              const gone = selectedProject?.fullName;
+              setSelectedCardId(null);
+              setRepos((prev) => prev.filter((r) => r.full_name !== gone));
             }}
-          >
-            <div
-              style={{
-                background: theme.viewCanvasBg,
-                borderRadius: 8,
-                padding: 16,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 16,
-                flex: 1,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <Settings size={17} color={accentColor} />
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: theme.textPrimary }}>Configurações do Repositório</div>
-                  <div style={{ fontSize: 11.5, color: theme.textSecondary }}>{selectedRepoRaw?.full_name || selectedProject?.title}</div>
-                </div>
-                {selectedProject?.htmlUrl && (
-                  <button
-                    type="button"
-                    onClick={() => window.electronAPI?.shell?.openExternal?.(`${selectedProject.htmlUrl}/settings`)}
-                    style={{
-                      marginLeft: 'auto',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      background: theme.controlBg,
-                      border: 'none',
-                      borderRadius: 8,
-                      padding: '6px 14px',
-                      color: theme.textPrimary,
-                      fontSize: 12,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <ExternalLink size={13} />
-                    <span>Editar no GitHub</span>
-                  </button>
-                )}
-              </div>
-
-              {selectedRepoRaw?.description && (
-                <div style={{ fontSize: 12.5, color: theme.textSecondary, lineHeight: 1.5 }}>{selectedRepoRaw.description}</div>
-              )}
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10 }}>
-                <div style={{ background: theme.viewCardBg, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {selectedRepoRaw?.private ? <Lock size={14} color={theme.textSecondary} /> : <Globe size={14} color={theme.textSecondary} />}
-                  <span style={{ fontSize: 12, color: theme.textPrimary }}>{selectedRepoRaw?.private ? 'Privado' : 'Público'}</span>
-                </div>
-                <div style={{ background: theme.viewCardBg, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <GitBranch size={14} color={theme.textSecondary} />
-                  <span style={{ fontSize: 12, color: theme.textPrimary }}>{selectedRepoRaw?.default_branch || 'main'}</span>
-                </div>
-                <div style={{ background: theme.viewCardBg, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Star size={14} color={theme.textSecondary} />
-                  <span style={{ fontSize: 12, color: theme.textPrimary }}>{selectedRepoRaw?.stargazers_count ?? 0} stars</span>
-                </div>
-                <div style={{ background: theme.viewCardBg, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <GitFork size={14} color={theme.textSecondary} />
-                  <span style={{ fontSize: 12, color: theme.textPrimary }}>{selectedRepoRaw?.forks_count ?? 0} forks</span>
-                </div>
-                {selectedRepoRaw?.language && (
-                  <div style={{ background: theme.viewCardBg, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Tag size={14} color={theme.textSecondary} />
-                    <span style={{ fontSize: 12, color: theme.textPrimary }}>{selectedRepoRaw.language}</span>
-                  </div>
-                )}
-                {selectedRepoRaw?.updated_at && (
-                  <div style={{ background: theme.viewCardBg, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Clock size={14} color={theme.textSecondary} />
-                    <span style={{ fontSize: 12, color: theme.textPrimary }}>
-                      Atualizado {new Date(selectedRepoRaw.updated_at).toLocaleDateString('pt-BR')}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {selectedRepoRaw?.topics && selectedRepoRaw.topics.length > 0 && (
-                <div>
-                  <div style={{ fontSize: 12.5, fontWeight: 500, color: theme.textPrimary, marginBottom: 8 }}>Topics</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {selectedRepoRaw.topics.map((topic) => (
-                      <span
-                        key={topic}
-                        style={{ fontSize: 11, padding: '3px 9px', borderRadius: 12, background: hexToRgba(accentColor, 0.15), color: accentColor }}
-                      >
-                        {topic}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
+            customLinks={(customLinks[selectedProject?.fullName || ''] || []) as any}
+            onSaveCustomLinks={(links) => selectedProject?.fullName && persistCustomLinks({ ...customLinks, [selectedProject.fullName]: links as any })}
+            theme={theme}
+            isEffectiveDark={isEffectiveDark}
+            accentColor={accentColor}
+            accentContrastText={accentContrastText}
+            showToast={showToast}
+          />
         ) : (
         <>
         {/* ========================================================================= */}
@@ -9837,6 +10167,7 @@ Formate com seções bem organizadas:
             {/* Botão de Filtro com Dropdown */}
             <div style={{ position: 'relative' }}>
               <button
+                ref={filterTriggerRef}
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -9863,18 +10194,19 @@ Formate com seções bem organizadas:
                 <span>{selectedPriorityFilter === 'Todas' ? 'Filtro' : selectedPriorityFilter}</span>
               </button>
 
-              {/* Dropdown de Filtro */}
-              {filterDropdownOpen && (
+              {/* Dropdown de Filtro via Portal */}
+              {filterDropdownOpen && filterTriggerRef.current && createPortal(
                 <div
+                  ref={filterDropdownRef}
                   onClick={(e) => e.stopPropagation()}
                   style={{
-                    position: 'absolute',
-                    top: 'calc(100% + 6px)',
-                    right: 0,
+                    position: 'fixed',
+                    top: filterTriggerRef.current.getBoundingClientRect().bottom + 6,
+                    left: Math.max(8, Math.min(filterTriggerRef.current.getBoundingClientRect().right - 150, window.innerWidth - 160)),
                     background: theme.dropdownBg,
                     borderRadius: 8,
                     padding: 5,
-                    zIndex: 1000,
+                    zIndex: 999999,
                     minWidth: 150,
                     boxShadow: theme.dropdownShadow,
                     display: 'flex',
@@ -9913,7 +10245,8 @@ Formate com seções bem organizadas:
                       {selectedPriorityFilter === prio && <Check size={12} color={accentColor} />}
                     </div>
                   ))}
-                </div>
+                </div>,
+                document.body
               )}
             </div>
 
@@ -11043,7 +11376,13 @@ Formate com seções bem organizadas:
                 isEffectiveDark={isEffectiveDark}
                 accentColor={accentColor}
                 accentContrastText={accentContrastText}
-                onOpenIssueDetail={(issue) => setActiveSidesheetIssue(issue)}
+                onOpenIssueDetail={handleOpenIssueCardDetail}
+                onUpdateIssueDates={(issueId, startDateIso, dueDateIso) => {
+                  const card = selectedProject;
+                  if (card) {
+                    patchIssueInRepoCache(card, issueId, (i) => ({ ...i, startDateIso, dueDateIso, dateStr: startDateIso }));
+                  }
+                }}
                 onAddNewIssue={() => openAddTaskModal()}
                 showToast={showToast}
               />
@@ -11063,7 +11402,7 @@ Formate com seções bem organizadas:
                 isEffectiveDark={isEffectiveDark}
                 accentColor={accentColor}
                 accentContrastText={accentContrastText}
-                onOpenIssueDetail={(issue) => setActiveSidesheetIssue(issue)}
+                onOpenIssueDetail={handleOpenIssueCardDetail}
                 onMoveIssue={handleMoveIssueToColumn}
                 onAddNewIssue={() => openAddTaskModal()}
                 showToast={showToast}
@@ -11142,9 +11481,9 @@ Formate com seções bem organizadas:
                           >
                             <GitPullRequest size={11.5} />
                             <span>#{iss.pullRequest.number}</span>
-                            {iss.pullRequest.ciStatus === 'success' && <CheckCircle2 size={11} color="#10b981" title="CI: Passou" />}
-                            {iss.pullRequest.ciStatus === 'failure' && <AlertCircle size={11} color="#ef4444" title="CI: Falhou" />}
-                            {iss.pullRequest.ciStatus === 'pending' && <Clock size={11} color="#f59e0b" title="CI: Em execução" />}
+                            {iss.pullRequest.ciStatus === 'success' && <span title="CI: Passou" style={{ display: 'inline-flex' }}><CheckCircle2 size={11} color="#10b981" /></span>}
+                            {iss.pullRequest.ciStatus === 'failure' && <span title="CI: Falhou" style={{ display: 'inline-flex' }}><AlertCircle size={11} color="#ef4444" /></span>}
+                            {iss.pullRequest.ciStatus === 'pending' && <span title="CI: Em execução" style={{ display: 'inline-flex' }}><Clock size={11} color="#f59e0b" /></span>}
                           </div>
                         ) : (
                           <span style={{ fontSize: 11, color: theme.textMuted }}>—</span>
@@ -11524,64 +11863,6 @@ Formate com seções bem organizadas:
                       </div>
                       <ArrowRight size={15} color={theme.textSecondary} />
                     </div>
-
-                    {/* Opção 4: Processo de Desenvolvimento AppMoove */}
-                    <div
-                      onClick={() => {
-                        showToast('Diretrizes de processo AppMoove: Fases, Definition of Ready/Done e branch protection.');
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '12px 14px',
-                        borderRadius: 6,
-                        border: 'none',
-                        cursor: 'pointer',
-                        transition: 'background 0.12s ease',
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = theme.dropdownItemHover)}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                    >
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                        <span style={{ fontSize: 13.5, fontWeight: 600, color: theme.textPrimary }}>
-                          Processo de Desenvolvimento AppMoove
-                        </span>
-                        <span style={{ fontSize: 12, color: theme.textSecondary }}>
-                          Fluxo de fases, gates, Definition of Ready/Done e branches protegidas.
-                        </span>
-                      </div>
-                      <ExternalLink size={15} color={theme.textSecondary} />
-                    </div>
-
-                    {/* Opção 5: Docs do retrofit deste repo */}
-                    <div
-                      onClick={() => {
-                        showToast('Documentação de retrofit: PRD as-is, arquitetura as-is, ADRs e baseline.');
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '12px 14px',
-                        borderRadius: 6,
-                        border: 'none',
-                        cursor: 'pointer',
-                        transition: 'background 0.12s ease',
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = theme.dropdownItemHover)}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                    >
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                        <span style={{ fontSize: 13.5, fontWeight: 600, color: theme.textPrimary }}>
-                          Docs do retrofit deste repo
-                        </span>
-                        <span style={{ fontSize: 12, color: theme.textSecondary }}>
-                          PRD as-is, arquitetura as-is, ADRs, dívida técnica e baseline.
-                        </span>
-                      </div>
-                      <ExternalLink size={15} color={theme.textSecondary} />
-                    </div>
                   </div>
                 </>
               ) : (
@@ -11671,6 +11952,43 @@ Formate com seções bem organizadas:
                         <X size={15} />
                       </button>
                     </div>
+                  </div>
+
+                  {/* Seletor rápido de template */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '0 20px 10px',
+                      borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'}`,
+                    }}
+                  >
+                    <span style={{ fontSize: 11.5, color: theme.textSecondary, fontWeight: 500, marginRight: 2 }}>Template:</span>
+                    {(['blank', 'bug', 'feature'] as const).map((tKey) => {
+                      const isSel = selectedTemplate === tKey;
+                      const label = tKey === 'blank' ? 'Tarefa em branco' : tKey === 'bug' ? 'Bug' : 'Tarefa / Feature';
+                      return (
+                        <button
+                          key={tKey}
+                          type="button"
+                          onClick={() => applyIssueTemplate(tKey)}
+                          style={{
+                            padding: '4px 10px',
+                            borderRadius: 6,
+                            border: 'none',
+                            background: isSel ? accentColor : (isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)'),
+                            color: isSel ? accentContrastText : theme.textPrimary,
+                            fontSize: 12,
+                            fontWeight: isSel ? 600 : 400,
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
                   </div>
 
                   {/* Corpo do Formulário */}
@@ -11881,16 +12199,17 @@ Formate com seções bem organizadas:
                               }
                             }}
                             placeholder="Digite a descrição da tarefa..."
-                            rows={7}
+                            rows={8}
                             style={{
                               width: '100%',
+                              minHeight: 180,
                               background: 'transparent',
                               border: 'none',
                               padding: '10px 12px',
                               fontSize: 12.5,
                               color: theme.textPrimary,
                               outline: 'none',
-                              resize: 'none',
+                              resize: 'vertical',
                               fontFamily: 'inherit',
                               lineHeight: 1.55,
                               boxSizing: 'border-box',
@@ -11899,10 +12218,11 @@ Formate com seções bem organizadas:
                         ) : (
                           <div
                             style={{
-                              minHeight: 160,
-                              maxHeight: 300,
+                              minHeight: 180,
+                              maxHeight: 360,
                               overflowY: 'auto',
                               padding: '10px 12px',
+                              boxSizing: 'border-box',
                             }}
                           >
                             {!newTaskDescription.trim() ? (
@@ -12222,6 +12542,7 @@ Formate com seções bem organizadas:
                             )}
 
                             {/* Botão de Criação de Descrição com IA */}
+                            {getProjectSettings(selectedProject?.fullName).ai.automations.issueDescription && (
                             <button
                               type="button"
                               onClick={handleGenerateAiDescription}
@@ -12249,6 +12570,7 @@ Formate com seções bem organizadas:
                                   : 'Gerar com IA'}
                               </span>
                             </button>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -12330,7 +12652,7 @@ Formate com seções bem organizadas:
                           }}
                         >
                           <option value="">Sem sprint</option>
-                          {sprintsForSelectedRepo.filter((s) => s.state === 'open').map((s) => (
+                          {sprintsForSelectedRepo.filter((s) => s.state === 'open' && !s.isProjectIteration && !s.isVirtual).map((s) => (
                             <option key={s.number} value={s.number}>
                               {s.title}
                               {s.dueDateIso ? ` (até ${formatShortDate(s.dueDateIso)})` : ''}
@@ -12500,6 +12822,10 @@ Formate com seções bem organizadas:
             setEditingIssue(null);
           }}
           onUpdateIssue={handleSidesheetUpdateIssue}
+          onIssuePatched={(iss, patch) => {
+            const card = allCards.find((c) => c.id === iss.projectId) || selectedProject;
+            if (card) patchIssueInRepoCache(card, iss.id, (i) => ({ ...i, ...patch }));
+          }}
           onDeleteIssue={handleDeleteIssue}
           onCreateBranchForIssue={(issue) => {
             const slug = (issue.title || 'issue')
@@ -12591,7 +12917,7 @@ Formate com seções bem organizadas:
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <label style={{ fontSize: 12, color: theme.textSecondary, fontWeight: '300' }}>Duração</label>
                 <div style={{ display: 'inline-flex', background: theme.controlBg, borderRadius: 8, padding: 3, gap: 2, alignSelf: 'flex-start' }}>
-                  {([7, 15] as const).map((d) => (
+                  {Array.from(new Set([7, 15, getProjectSettings(selectedProject?.fullName).sprint.durationDays])).sort((a, b) => a - b).map((d) => (
                     <button
                       key={d}
                       type="button"
@@ -13154,7 +13480,7 @@ Formate com seções bem organizadas:
         )}
 
         {/* Dropdown Menu Flutuante de Opções do Projeto (Fixed Position - Nunca corta) */}
-        {activeProjectMenu && (
+        {activeProjectMenu && createPortal(
           <>
             {/* Backdrop invisível para fechar ao clicar fora */}
             <div
@@ -13531,7 +13857,8 @@ Formate com seções bem organizadas:
                 <span>Alterar Ícone do Projeto</span>
               </div>
             </div>
-          </>
+          </>,
+          document.body
         )}
 
         {/* Modal de Personalização do Ícone do Projeto (Sem clonar) */}
@@ -13608,7 +13935,7 @@ function SprintDetailPanel(props: {
   accentContrastText: string;
   combinedSprints: GithubSprintItem[];
   openedSprint: GithubSprintItem | null;
-  onSelectSprint: (sprintNumber: number) => void;
+  onSelectSprint: (sprintId: string) => void;
   onDeleteSprint?: (sprintId: string) => void;
   onCreateSprint?: () => void;
   sprintSidebarFilter: 'all' | 'active' | 'completed';
@@ -13635,6 +13962,7 @@ function SprintDetailPanel(props: {
   setIsAddExistingTaskOpen: (v: boolean | ((prev: boolean) => boolean)) => void;
   onAddExistingTask: (issue: ProjectIssue) => void;
   onRemoveTaskFromSprint: (issue: ProjectIssue) => void;
+  onBatchRemoveTasksFromSprint?: (tasks: ProjectIssue[]) => void;
   onToggleTaskStatus: (issueId: string) => void;
   onAssignToMe?: (issueId: string) => void;
   collaborators?: RepoCollaborator[];
@@ -13690,6 +14018,7 @@ function SprintDetailPanel(props: {
     setIsAddExistingTaskOpen,
     onAddExistingTask,
     onRemoveTaskFromSprint,
+    onBatchRemoveTasksFromSprint,
     onToggleTaskStatus,
     onAssignToMe,
     collaborators = [],
@@ -13905,16 +14234,16 @@ function SprintDetailPanel(props: {
   };
 
   const handleBatchRemoveFromSprint = () => {
-    let count = 0;
-    selectedIssueIds.forEach((id) => {
-      const task = displayedTasks.find((t) => t.id === id);
-      if (task) {
-        onRemoveTaskFromSprint?.(task);
-        count++;
-      }
-    });
+    const tasksToRemove = selectedIssueIds
+      .map((id) => displayedTasks.find((t) => t.id === id))
+      .filter((t): t is ProjectIssue => !!t);
+    if (tasksToRemove.length === 0) return;
+    if (onBatchRemoveTasksFromSprint) {
+      onBatchRemoveTasksFromSprint(tasksToRemove);
+    } else {
+      tasksToRemove.forEach((t) => onRemoveTaskFromSprint?.(t));
+    }
     setSelectedIssueIds([]);
-    showToast(`${count} issue(s) desvinculada(s) da sprint`);
   };
 
   const handleBatchDelete = () => {
@@ -14450,34 +14779,41 @@ function SprintDetailPanel(props: {
   const [sprintTaskFilter, setSprintTaskFilter] = useState<SprintTaskFilter>('all');
   const [isSprintTaskFilterOpen, setIsSprintTaskFilterOpen] = useState(false);
 
-  const me = (currentUser?.login || 'walancy').toLowerCase();
+  const me = (currentUser?.login || '').toLowerCase();
 
   // Tarefas filtradas conforme seleção do dropdown
   const displayedTasks = useMemo(() => {
+    let list = sprintDetailTasks;
     if (sprintTaskFilter === 'assigned') {
-      return sprintDetailTasks.filter((t) =>
+      list = list.filter((t) =>
         t.assignees?.some((a) => (a.name || '').toLowerCase().includes(me) || (a.name || '').toLowerCase() === me)
       );
-    }
-    if (sprintTaskFilter === 'created') {
-      return sprintDetailTasks.filter((t) =>
+    } else if (sprintTaskFilter === 'created') {
+      list = list.filter((t) =>
         (t.author || '').toLowerCase().includes(me) || (t.author || '').toLowerCase() === me
       );
-    }
-    if (sprintTaskFilter === 'mentioned') {
-      return sprintDetailTasks.filter((t) =>
+    } else if (sprintTaskFilter === 'mentioned') {
+      list = list.filter((t) =>
         (t.commentsCount || 0) > 0 || (t.description || '').toLowerCase().includes(`@${me}`)
       );
-    }
-    if (sprintTaskFilter === 'recent') {
-      return [...sprintDetailTasks].sort((a, b) => {
+    } else if (sprintTaskFilter === 'recent') {
+      list = [...list].sort((a, b) => {
         const da = new Date(a.createdAtIso || a.dateStr).getTime() || 0;
         const db = new Date(b.createdAtIso || b.dateStr).getTime() || 0;
         return db - da;
       });
     }
-    return sprintDetailTasks;
-  }, [sprintDetailTasks, sprintTaskFilter, me]);
+
+    if (selectedCalendarDayIso) {
+      list = list.filter((t) => {
+        const raw = t.createdAtIso || t.dateStr || (t as any).updatedAtIso;
+        if (!raw) return false;
+        return raw.slice(0, 10) === selectedCalendarDayIso;
+      });
+    }
+
+    return list;
+  }, [sprintDetailTasks, sprintTaskFilter, me, selectedCalendarDayIso]);
 
   const sprintFilterOptions: {
     key: SprintTaskFilter;
@@ -14611,14 +14947,15 @@ function SprintDetailPanel(props: {
       {/* ========================================================================= */}
       <div
         style={{
+          position: 'relative',
           display: 'flex',
           height: '100%',
-          width: isSprintSidebarVisible ? sprintSidebarWidth + 52 + 16 : 0,
-          minWidth: isSprintSidebarVisible ? sprintSidebarWidth + 52 + 16 : 0,
-          maxWidth: isSprintSidebarVisible ? sprintSidebarWidth + 52 + 16 : 0,
+          width: isSprintSidebarVisible ? sprintSidebarWidth + 48 + 5 : 0,
+          minWidth: isSprintSidebarVisible ? sprintSidebarWidth + 48 + 5 : 0,
+          maxWidth: isSprintSidebarVisible ? sprintSidebarWidth + 48 + 5 : 0,
           opacity: isSprintSidebarVisible ? 1 : 0,
           transform: isSprintSidebarVisible ? 'translateX(0)' : 'translateX(-24px)',
-          overflow: 'hidden',
+          overflow: isSprintSidebarVisible ? 'visible' : 'hidden',
           transition: isDraggingSprintSidebar
             ? 'none'
             : 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), max-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease, transform 0.28s cubic-bezier(0.4, 0, 0.2, 1)',
@@ -14632,15 +14969,15 @@ function SprintDetailPanel(props: {
         {/* ========================================================================= */}
       <div
         style={{
-          width: 52,
+          width: 48,
           flexShrink: 0,
-          background: 'transparent',
+          background: isEffectiveDark ? '#141416' : '#f8fafc',
+          borderRadius: 8,
           border: 'none',
-          borderRight: `1px solid ${hexToRgba(theme.textSecondary, isEffectiveDark ? 0.08 : 0.06)}`,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          padding: '2px 4px 2px 0',
+          padding: '4px 3px',
         }}
       >
         <div
@@ -14668,7 +15005,8 @@ function SprintDetailPanel(props: {
                 padding: '14px 2px',
                 cursor: 'pointer',
                 borderRadius: 6,
-                border: `1px dashed ${isEffectiveDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)'}`,
+                border: 'none',
+                background: isEffectiveDark ? '#18181b' : '#ffffff',
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
@@ -14677,17 +15015,15 @@ function SprintDetailPanel(props: {
                 transition: 'background 0.15s, border-color 0.15s',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = accentColor;
-                e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)';
+                e.currentTarget.style.background = isEffectiveDark ? '#222225' : '#f1f5f9';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)';
-                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.background = isEffectiveDark ? '#18181b' : '#ffffff';
               }}
             >
-              <Calendar size={13} style={{ color: accentColor, opacity: 0.85 }} />
+              <Calendar size={13} style={{ color: theme.textSecondary }} />
               <span style={{ fontSize: 9.5 }}>Sem datas</span>
-              <span style={{ fontSize: 8.5, color: accentColor, textDecoration: 'underline' }}>
+              <span style={{ fontSize: 8.5, color: theme.textPrimary, textDecoration: 'underline' }}>
                 Definir
               </span>
             </div>
@@ -14724,50 +15060,53 @@ function SprintDetailPanel(props: {
                     title={`${item.day} de ${item.monthName} (${item.wd})${isToday ? ' · Hoje' : ''}${isPast ? ' · Passado' : ''}${dayTasksCount > 0 ? ` · ${dayTasksCount} tarefa(s)` : ''}`}
                     style={{
                       display: 'flex',
-                      alignItems: 'baseline',
-                      justifyContent: 'flex-start',
-                      gap: 3,
-                      padding: '3px 6px',
-                      borderRadius: 4,
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '4px 2px',
+                      borderRadius: 6,
                       cursor: 'pointer',
-                      fontSize: 11,
-                      fontWeight: isSelected || isToday ? 700 : 500,
-                      opacity: isSelected ? 1 : isPast ? 0.35 : 1,
                       background: isSelected
-                        ? hexToRgba(accentColor, isEffectiveDark ? 0.22 : 0.14)
-                        : 'transparent',
-                      color: isSelected
-                        ? accentColor
+                        ? (isEffectiveDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.1)')
                         : isToday
-                        ? accentColor
-                        : theme.textPrimary,
+                        ? (isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')
+                        : (isEffectiveDark ? '#18181b' : '#ffffff'),
                       border: 'none',
-                      transition: 'all 0.12s ease',
+                      color: isSelected || isToday
+                        ? theme.textPrimary
+                        : isPast
+                        ? hexToRgba(theme.textPrimary, 0.5)
+                        : theme.textPrimary,
+                      transition: 'all 0.15s ease',
+                      marginBottom: 3,
+                      position: 'relative',
+                      boxShadow: 'none',
                     }}
                     onMouseEnter={(e) => {
                       if (!isSelected) {
-                        e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
-                        if (isPast) e.currentTarget.style.opacity = '0.7';
+                        e.currentTarget.style.background = isEffectiveDark ? '#222' : '#f1f5f9';
                       }
                     }}
                     onMouseLeave={(e) => {
                       if (!isSelected) {
-                        e.currentTarget.style.background = 'transparent';
-                        if (isPast) e.currentTarget.style.opacity = '0.35';
+                        e.currentTarget.style.background = isToday
+                          ? (isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')
+                          : (isEffectiveDark ? '#18181b' : '#ffffff');
                       }
                     }}
                   >
-                    <span style={{ fontSize: 11.5, fontWeight: isToday || isSelected ? 700 : 500 }}>{item.day}</span>
-                    <span style={{ fontSize: 9.5, opacity: isToday || isSelected ? 0.9 : 0.65, textTransform: 'lowercase' }}>{item.wd}</span>
+                    <span style={{ fontSize: 11.5, fontWeight: isToday || isSelected ? 700 : 600, lineHeight: 1 }}>{item.day}</span>
+                    <span style={{ fontSize: 9, opacity: isToday || isSelected ? 0.9 : 0.65, textTransform: 'lowercase', marginTop: 2 }}>{item.wd}</span>
                     {dayTasksCount > 0 && (
                       <span
                         style={{
-                          width: 3.5,
-                          height: 3.5,
+                          position: 'absolute',
+                          top: 2,
+                          right: 3,
+                          width: 4,
+                          height: 4,
                           borderRadius: '50%',
-                          background: isSelected || isToday ? accentColor : hexToRgba(accentColor, 0.7),
-                          marginLeft: 1,
-                          alignSelf: 'center',
+                          background: theme.textSecondary,
                         }}
                       />
                     )}
@@ -14940,7 +15279,7 @@ function SprintDetailPanel(props: {
             </div>
           ) : (
             filteredSprints.map((sp) => {
-              const isSelected = openedSprint ? sp.number === openedSprint.number : false;
+              const isSelected = openedSprint ? sp.id === openedSprint.id : false;
               const dotColor = sp.status === 'Current' ? '#58a6ff' : sp.status === 'Completed' ? '#22c55e' : '#94a3b8';
 
               // Obter tarefas reais desta sprint
@@ -14948,14 +15287,9 @@ function SprintDetailPanel(props: {
                 if (sp.number === -1) {
                   return (!i.milestoneNumber || i.milestoneNumber === 0 || i.milestoneNumber === -1) && !i.iterationId && !i.iterationTitle;
                 }
-                if (sp.isProjectIteration || sp.iterationId) {
-                  if (sp.iterationId && i.iterationId === sp.iterationId) return true;
-                  if (i.iterationTitle && sp.title && i.iterationTitle.toLowerCase().trim() === sp.title.toLowerCase().trim()) return true;
-                  return false;
-                }
-                return i.milestoneNumber === sp.number;
+                return issueBelongsToSprint(i, sp);
               });
-              const effectiveTasks = (openedSprint && sp.number === openedSprint.number && sprintDetailTasks.length > 0)
+              const effectiveTasks = (openedSprint && sp.id === openedSprint.id && sprintDetailTasks.length > 0)
                 ? sprintDetailTasks
                 : sprintIssues;
               const closedCount = effectiveTasks.filter((t) => t.status === 'Concluído').length;
@@ -15034,17 +15368,20 @@ function SprintDetailPanel(props: {
               return (
                 <div
                   key={sp.id}
-                  onClick={() => onSelectSprint(sp.number)}
+                  onClick={() => onSelectSprint(sp.id)}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 5,
-                    padding: '9px 10px 10px 10px',
-                    borderRadius: 7,
+                    gap: 6,
+                    padding: '10px 12px',
+                    borderRadius: 8,
                     cursor: 'pointer',
-                    background: isSelected ? hexToRgba(accentColor, isEffectiveDark ? 0.18 : 0.12) : 'transparent',
+                    background: isSelected
+                      ? (isEffectiveDark ? '#2a2a2e' : '#e9ecf0')
+                      : isEffectiveDark ? '#18181b' : '#ffffff',
                     border: 'none',
-                    transition: 'all 0.12s ease',
+                    boxShadow: 'none',
+                    transition: 'all 0.15s ease',
                     position: 'relative',
                     overflow: 'hidden',
                     flexShrink: 0,
@@ -15052,12 +15389,12 @@ function SprintDetailPanel(props: {
                   }}
                   onMouseEnter={(e) => {
                     if (!isSelected) {
-                      e.currentTarget.style.background = isEffectiveDark ? '#202020' : '#f1f5f9';
+                      e.currentTarget.style.background = isEffectiveDark ? '#222225' : '#f8fafc';
                     }
                   }}
                   onMouseLeave={(e) => {
                     if (!isSelected) {
-                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.background = isEffectiveDark ? '#18181b' : '#ffffff';
                     }
                   }}
                 >
@@ -15158,7 +15495,7 @@ function SprintDetailPanel(props: {
                       style={{
                         fontSize: 10.5,
                         fontWeight: isSelected ? 600 : 500,
-                        color: isSelected ? accentColor : theme.textSecondary,
+                        color: isSelected ? theme.textPrimary : theme.textSecondary,
                       }}
                     >
                       {progressPercent}%
@@ -15180,7 +15517,7 @@ function SprintDetailPanel(props: {
                       style={{
                         height: '100%',
                         width: `${progressPercent}%`,
-                        background: isSelected ? accentColor : (isEffectiveDark ? 'rgba(255, 255, 255, 0.35)' : 'rgba(0, 0, 0, 0.25)'),
+                        background: isSelected ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.6)' : 'rgba(0, 0, 0, 0.45)') : (isEffectiveDark ? 'rgba(255, 255, 255, 0.35)' : 'rgba(0, 0, 0, 0.25)'),
                         transition: 'width 0.25s ease, background 0.15s ease',
                       }}
                     />
@@ -15202,13 +15539,14 @@ function SprintDetailPanel(props: {
         }}
         title="Arraste para ajustar a largura da lista de sprints (Duplo clique para restaurar 240px)"
         style={{
-          width: 6,
-          margin: '0 -7px',
+          position: 'absolute',
+          top: 0,
+          bottom: 0,
+          right: -5,
+          width: 5,
           cursor: 'col-resize',
-          zIndex: 10,
+          zIndex: 20,
           background: 'transparent',
-          alignSelf: 'stretch',
-          flexShrink: 0,
         }}
       />
       </div>
@@ -16047,6 +16385,41 @@ function SprintDetailPanel(props: {
                             </div>
                           ) : (
                             <>
+                              {/* Todas */}
+                              <button
+                                type="button"
+                                onClick={() => setIssueStateFilter('all')}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  background: issueStateFilter === 'all'
+                                    ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
+                                    : 'transparent',
+                                  border: 'none',
+                                  borderRadius: 20,
+                                  padding: '3px 10px',
+                                  color: issueStateFilter === 'all' ? theme.textPrimary : theme.textSecondary,
+                                  fontSize: 12.5,
+                                  fontWeight: issueStateFilter === 'all' ? 600 : 500,
+                                  cursor: 'pointer',
+                                  transition: 'all 0.12s ease',
+                                }}
+                              >
+                                <span>Todas</span>
+                                <span
+                                  style={{
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)',
+                                    borderRadius: 10,
+                                    padding: '0 6px',
+                                  }}
+                                >
+                                  {openIssuesCount + closedIssuesCount}
+                                </span>
+                              </button>
+
                               {/* Aberto */}
                               <button
                                 type="button"
@@ -16861,7 +17234,7 @@ function SprintDetailPanel(props: {
                           const isSelected = selectedIssueIds.includes(task.id);
                           const isClosed = task.status === 'Concluído';
                           const taskNum = task.githubNumber || task.id.replace(/\D/g, '') || (taskIdx + 1);
-                          const authorName = task.author || (currentUser as any)?.login || 'Walancy';
+                          const authorName = task.author || (currentUser as any)?.login || 'Desconhecido';
                           const timeAgo = formatGithubTimeAgo(task.createdAtIso || task.dateStr);
 
                           const subIssues = extractSubIssuesForIssue(task, allIssuesMap);
@@ -17692,6 +18065,12 @@ function SprintDetailPanel(props: {
                     accentColor={accentColor}
                     accentContrastText={accentContrastText}
                     onOpenIssueDetail={(issue) => onEditTask?.(issue)}
+                    onUpdateIssueDates={(issueId, startDateIso, dueDateIso) => {
+                      const t = displayedTasks.find((item) => item.id === issueId);
+                      if (t && onEditTask) {
+                        onEditTask({ ...t, startDateIso, dueDateIso, dateStr: startDateIso });
+                      }
+                    }}
                     onAddNewIssue={onCreateNewTask}
                     showToast={showToast}
                   />
@@ -17768,7 +18147,9 @@ export const ProjectsSchedulerView: React.FC<ProjectsSchedulerViewProps> = (prop
  */
 export async function prefetchProjectsData(workspacePath?: string) {
   try {
-    const hasCached = GLOBAL_PROJECTS_CACHE.repos.length > 0 || GLOBAL_PROJECTS_CACHE.localClonedRepos.length > 0;
+    const hasCached =
+      (GLOBAL_PROJECTS_CACHE.repos.length > 0 || GLOBAL_PROJECTS_CACHE.localClonedRepos.length > 0) &&
+      GLOBAL_PROJECTS_CACHE.orgs.length > 0;
     if (hasCached && Date.now() - GLOBAL_PROJECTS_CACHE.lastFetchedAt < 120000) {
       return;
     }
@@ -17795,9 +18176,40 @@ export async function prefetchProjectsData(workspacePath?: string) {
     if (reposRes?.success && reposRes.repos) {
       GLOBAL_PROJECTS_CACHE.repos = reposRes.repos;
     }
-    if (orgsRes?.success && orgsRes.orgs) {
+    if (orgsRes?.success && orgsRes.orgs && orgsRes.orgs.length > 0) {
       GLOBAL_PROJECTS_CACHE.orgs = orgsRes.orgs;
     }
+
+    if ((!GLOBAL_PROJECTS_CACHE.orgs || GLOBAL_PROJECTS_CACHE.orgs.length === 0) && window.electronAPI?.shell?.exec) {
+      try {
+        const ghOrgsRes = await window.electronAPI.shell.exec(
+          'export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; gh api user/orgs',
+          workspacePath || process.cwd()
+        );
+        if (ghOrgsRes && ghOrgsRes.exitCode === 0 && ghOrgsRes.stdout.trim()) {
+          const parsed = JSON.parse(ghOrgsRes.stdout);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            GLOBAL_PROJECTS_CACHE.orgs = parsed.map((o: any) => ({ login: o.login, avatarUrl: o.avatar_url }));
+          }
+        }
+      } catch {}
+    }
+
+    if (!GLOBAL_PROJECTS_CACHE.currentUser && window.electronAPI?.shell?.exec) {
+      try {
+        const ghUserRes = await window.electronAPI.shell.exec(
+          'export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; gh api user',
+          workspacePath || process.cwd()
+        );
+        if (ghUserRes && ghUserRes.exitCode === 0 && ghUserRes.stdout.trim()) {
+          const parsed = JSON.parse(ghUserRes.stdout);
+          if (parsed?.login) {
+            GLOBAL_PROJECTS_CACHE.currentUser = { login: parsed.login, avatarUrl: parsed.avatar_url };
+          }
+        }
+      } catch {}
+    }
+
     GLOBAL_PROJECTS_CACHE.lastFetchedAt = Date.now();
     persistProjectsCache();
   } catch (err) {

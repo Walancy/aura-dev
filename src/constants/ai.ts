@@ -240,7 +240,24 @@ export const AI_PROVIDERS: AiProviderConfig[] = [
 
 export const formatModelDisplayName = (modelStr?: string | null): string => {
   if (!modelStr) return '';
-  return modelStr.trim();
+  const s = modelStr.trim();
+  const lower = s.toLowerCase();
+
+  // Gemini / Antigravity Flash & Pro models
+  if (lower === 'gemini-3.8-flash-high' || lower === 'flash 3.8 (high)') return 'Flash 3.8 (High)';
+  if (lower === 'gemini-3.8-flash-medium' || lower === 'flash 3.8 (medium)') return 'Flash 3.8 (Medium)';
+  if (lower === 'gemini-3.8-flash-low' || lower === 'flash 3.8 (low)') return 'Flash 3.8 (Low)';
+  if (lower === 'gemini-3.7-flash-high' || lower === 'flash 3.7 (high)') return 'Flash 3.7 (High)';
+  if (lower === 'gemini-3.7-flash-medium' || lower === 'flash 3.7 (medium)') return 'Flash 3.7 (Medium)';
+  if (lower === 'gemini-3.7-flash-low' || lower === 'flash 3.7 (low)') return 'Flash 3.7 (Low)';
+  if (lower === 'gemini-3.6-flash-high' || lower === 'flash 3.6 (high)') return 'Flash 3.6 (High)';
+  if (lower === 'gemini-3.1-pro-high' || lower === 'pro 3.1 (high)') return 'Pro 3.1 (High)';
+  if (lower === 'gemini-3.1-pro-low' || lower === 'pro 3.1 (low)') return 'Pro 3.1 (Low)';
+  if (lower === 'claude-sonnet-4-6') return 'Sonnet 4.6';
+  if (lower === 'claude-opus-4-6-thinking') return 'Opus 4.6 (Thinking)';
+  if (lower === 'gpt-oss-120b-medium') return 'GPT-OSS 120B';
+
+  return s;
 };
 
 export interface AiQuotaConfig {

@@ -60,6 +60,40 @@ import {
 import type { ProjectIssue, RepoCollaborator, SprintOption } from '../ProjectsSchedulerView';
 import { renderMarkdownPreview } from '../../utils/markdown';
 import { hexToRgba } from '../../utils/color';
+import type { GithubIssueDetails, GithubProjectFieldDef, GithubProjectItemDetails } from '../../electron.d';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
+
+const GITHUB_NAMED_COLORS: Record<string, string> = {
+  GRAY: '#8b949e',
+  BLUE: '#388bfd',
+  GREEN: '#3fb950',
+  YELLOW: '#d29922',
+  ORANGE: '#db6d28',
+  RED: '#f85149',
+  PINK: '#db61a2',
+  PURPLE: '#a371f7',
+};
+
+function githubColorToHex(color?: string | null): string {
+  if (!color) return '#8b949e';
+  const named = GITHUB_NAMED_COLORS[color.toUpperCase()];
+  if (named) return named;
+  return color.startsWith('#') ? color : `#${color}`;
+}
+
+// Tipos de campo do Projects V2 editáveis pelo painel (os demais — Title, Assignees, Labels,
+// Milestone, Repository, etc. — são nativos da issue e já têm seção própria).
+const EDITABLE_PROJECT_FIELD_TYPES = new Set(['SINGLE_SELECT', 'ITERATION', 'NUMBER', 'TEXT', 'DATE']);
+
+function formatIterationRange(startDate?: string, duration?: number): string {
+  if (!startDate) return '';
+  const start = new Date(`${startDate.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(start.getTime())) return '';
+  const end = new Date(start);
+  end.setDate(end.getDate() + Math.max((duration || 1) - 1, 0));
+  const fmt = (d: Date) => d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).replace('.', '');
+  return `${fmt(start)} – ${fmt(end)}`;
+}
 
 export interface IssueDetailSidesheetProps {
   isOpen: boolean;
@@ -88,6 +122,9 @@ export interface IssueDetailSidesheetProps {
   onDeleteIssue?: (issue: ProjectIssue) => void;
   onCreateBranchForIssue?: (issue: ProjectIssue) => void;
   onAskAiAboutIssue?: (issue: ProjectIssue) => void;
+  // Notifica o pai quando dados do Projects V2 (sprint/iteration, status, estimate) mudam no GitHub,
+  // para as listas (aba Sprints, quadro) refletirem sem esperar o próximo refetch.
+  onIssuePatched?: (issue: ProjectIssue, patch: Partial<ProjectIssue>) => void;
   showToast?: (msg: string) => void;
 }
 
@@ -95,6 +132,8 @@ interface IssueComment {
   id: number;
   user?: { login?: string; avatar_url?: string };
   created_at?: string;
+  updated_at?: string;
+  html_url?: string;
   body?: string;
 }
 
@@ -245,6 +284,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   onDeleteIssue,
   onCreateBranchForIssue,
   onAskAiAboutIssue,
+  onIssuePatched,
   showToast = (msg: string) => console.log(msg),
 }) => {
   const [currentIssue, setCurrentIssue] = useState<ProjectIssue | null>(initialIssue);
@@ -253,7 +293,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   useEffect(() => {
     setCurrentIssue(initialIssue);
     setHistoryStack([]);
-  }, [initialIssue?.id, initialIssue?.githubNumber]);
+  }, [initialIssue?.id, initialIssue?.githubNumber, initialIssue?.description]);
 
   const issue = currentIssue || initialIssue;
 
@@ -267,10 +307,13 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
       }
     ) => {
       setCurrentIssue((prev) => (prev ? { ...prev, ...updatedFields } : null));
-      return externalUpdateIssue?.(updatedFields, issue);
+      const result = await externalUpdateIssue?.(updatedFields, issue);
+      reloadDetailsRef.current?.();
+      return result;
     },
     [externalUpdateIssue, issue]
   );
+  const reloadDetailsRef = useRef<(() => void) | null>(null);
 
   // Design system tokens derivados do tema e accentColor
   // Cor de fundo para cards neutra DevFlow (#181818 / #161616 no dark / #f8fafc no light)
@@ -321,6 +364,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   const [showReactionPicker, setShowReactionPicker] = useState(false);
   const reactionPickerRef = useRef<HTMLDivElement | null>(null);
   const [reactions, setReactions] = useState<Record<string, number>>({});
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
 
   useEffect(() => {
     if (!isDescMenuOpen && !showReactionPicker && !isEditHistoryOpen) return;
@@ -350,6 +394,38 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   const subIssueMenuRef = useRef<HTMLDivElement | null>(null);
   const commentFileInputRef = useRef<HTMLInputElement | null>(null);
   const contentScrollRef = useRef<HTMLDivElement | null>(null);
+
+  // Permite que quando o scroll de um componente interno chegar ao fim ou topo,
+  // o scroll do componente externo (contentScrollRef) role suavemente.
+  const handleInternalScrollWheel = useCallback((e: React.WheelEvent<HTMLElement>) => {
+    const el = e.currentTarget;
+    const parent = contentScrollRef.current;
+    if (!el || !parent) return;
+
+    const deltaY = e.deltaY;
+    if (deltaY === 0) return;
+
+    if (deltaY > 0) {
+      // Rolando para baixo
+      const maxScrollTop = el.scrollHeight - el.clientHeight;
+      const remainingInnerScroll = Math.max(0, maxScrollTop - el.scrollTop);
+      if (remainingInnerScroll <= 1) {
+        parent.scrollTop += deltaY;
+      } else if (deltaY > remainingInnerScroll) {
+        el.scrollTop = maxScrollTop;
+        parent.scrollTop += (deltaY - remainingInnerScroll);
+      }
+    } else if (deltaY < 0) {
+      // Rolando para cima
+      if (el.scrollTop <= 1) {
+        parent.scrollTop += deltaY;
+      } else if (Math.abs(deltaY) > el.scrollTop) {
+        const excess = Math.abs(deltaY) - el.scrollTop;
+        el.scrollTop = 0;
+        parent.scrollTop -= excess;
+      }
+    }
+  }, []);
 
   // Split button dropdown popup states
   const [isSubIssueSplitOpen, setIsSubIssueSplitOpen] = useState(false);
@@ -390,6 +466,69 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   const [newCommentText, setNewCommentText] = useState('');
   const [commentTab, setCommentTab] = useState<'write' | 'preview'>('write');
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+  const [commentMenuId, setCommentMenuId] = useState<number | null>(null);
+  const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
+  const [editingCommentText, setEditingCommentText] = useState('');
+  const [commentToDelete, setCommentToDelete] = useState<{ id: number; snippet?: string } | null>(null);
+  const [isDeletingComment, setIsDeletingComment] = useState(false);
+  const [busyCommentId, setBusyCommentId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (commentMenuId == null) return;
+    const close = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest('[data-comment-menu]')) {
+        setCommentMenuId(null);
+      }
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [commentMenuId]);
+
+  const handleSaveCommentEdit = async (commentId: number) => {
+    const body = editingCommentText.trim();
+    if (!body || !repoFullName) return;
+    const [owner, repo] = repoFullName.split('/');
+    setBusyCommentId(commentId);
+    try {
+      const res = await window.electronAPI?.github?.updateIssueComment?.(owner, repo, commentId, body);
+      if (!res?.success) throw new Error(res?.error || 'Falha ao editar o comentário no GitHub.');
+      setComments((prev) => prev.map((c) => (c.id === commentId ? { ...c, ...(res.comment || {}), body } : c)));
+      setEditingCommentId(null);
+      showToast('Comentário atualizado.');
+    } catch (err: any) {
+      showToast(err?.message || 'Falha ao editar o comentário no GitHub.');
+    } finally {
+      setBusyCommentId(null);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: number) => {
+    if (!repoFullName) return;
+    const [owner, repo] = repoFullName.split('/');
+    setBusyCommentId(commentId);
+    setCommentMenuId(null);
+    try {
+      const res = await window.electronAPI?.github?.deleteIssueComment?.(owner, repo, commentId);
+      if (!res?.success) throw new Error(res?.error || 'Falha ao excluir o comentário no GitHub.');
+      setComments((prev) => prev.filter((c) => c.id !== commentId));
+      showToast('Comentário excluído.');
+    } catch (err: any) {
+      showToast(err?.message || 'Falha ao excluir o comentário no GitHub.');
+    } finally {
+      setBusyCommentId(null);
+    }
+  };
+
+  const handleConfirmDeleteComment = async () => {
+    if (!commentToDelete) return;
+    try {
+      setIsDeletingComment(true);
+      await handleDeleteComment(commentToDelete.id);
+      setCommentToDelete(null);
+    } finally {
+      setIsDeletingComment(false);
+    }
+  };
 
   // Sidebar popups & dropdowns
   const [activeSidebarPopup, setActiveSidebarPopup] = useState<
@@ -406,21 +545,342 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   const [isAssigneeDropdownOpen, setIsAssigneeDropdownOpen] = useState(false);
   const [isLabelDropdownOpen, setIsLabelDropdownOpen] = useState(false);
   const [isTypeDropdownOpen, setIsTypeDropdownOpen] = useState(false);
-  const [selectedType, setSelectedType] = useState<string>('No type');
   const [isPriorityDropdownOpen, setIsPriorityDropdownOpen] = useState(false);
   const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
-  const [isSprintDropdownOpen, setIsSprintDropdownOpen] = useState(false);
-  const [isProjectCardExpanded, setIsProjectCardExpanded] = useState(true);
-  const [selectedSize, setSelectedSize] = useState<string>('');
-  const [isSizeDropdownOpen, setIsSizeDropdownOpen] = useState(false);
-  const [estimateValue, setEstimateValue] = useState<string>('');
   const [isSubscribed, setIsSubscribed] = useState(true);
+
+  // Dados "frescos" da issue direto da API do GitHub (GraphQL), buscados sempre que o painel abre.
+  const [details, setDetails] = useState<GithubIssueDetails | null>(null);
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
+  const [openProjectFieldKey, setOpenProjectFieldKey] = useState<string | null>(null);
+  const [collapsedProjectItems, setCollapsedProjectItems] = useState<Set<string>>(new Set());
+  const [savingFieldKey, setSavingFieldKey] = useState<string | null>(null);
+  const detailsRequestRef = useRef(0);
+  const [repoOwner, repoName] = (repoFullName || '').split('/');
+
+  const selectedType = details?.issue.issueType?.name || 'No type';
+  const selectedTypeColor = details?.issue.issueType?.color ? githubColorToHex(details.issue.issueType.color) : undefined;
   const [isConversationLocked, setIsConversationLocked] = useState(false);
   const [isPinned, setIsPinned] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
 
   // Status saving state
   const [isSavingStatus, setIsSavingStatus] = useState(false);
+
+  // Issue actions states (clone, lock, pin, subscribe, transfer)
+  const [isCloningIssue, setIsCloningIssue] = useState(false);
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
+  const [transferTargetRepo, setTransferTargetRepo] = useState('');
+  const [isTransferringIssue, setIsTransferringIssue] = useState(false);
+  const [isTogglingLock, setIsTogglingLock] = useState(false);
+  const [isTogglingPin, setIsTogglingPin] = useState(false);
+  const [isTogglingSubscription, setIsTogglingSubscription] = useState(false);
+  const [showCustomizeNotifyMenu, setShowCustomizeNotifyMenu] = useState(false);
+
+  const handleCloneIssue = async () => {
+    if (!issue) return;
+    setIsCloningIssue(true);
+    try {
+      const targetFullName = repoFullName || (issue as any).repoFullName || '';
+      const [owner, repo] = targetFullName.split('/');
+      if (owner && repo && window.electronAPI?.github?.createIssue) {
+        const rawLabels = (issue as any).labels || issue.rawLabels || [];
+        const labels = rawLabels.map((l: any) =>
+          typeof l === 'string' ? { name: l, color: 'ededed' } : { name: l.name, color: l.color || 'ededed' }
+        );
+        const assignees = (issue.assignees || [])
+          .map((a: any) => (typeof a === 'string' ? a : a.login || a.name))
+          .filter(Boolean);
+        const res = await window.electronAPI.github.createIssue(owner, repo, {
+          title: `[Clone] ${issue.title}`,
+          body: issue.description || (issue as any).body || '',
+          labels,
+          assignees,
+          milestone: (issue as any).milestone?.number,
+        });
+        if (res?.success && res.issue) {
+          showToast(`Issue clonada com sucesso (#${res.issue.number})!`);
+          navigator.clipboard?.writeText?.(res.issue.html_url || `${issue.title}\n\n${issue.description || ''}`);
+          setIsMoreMenuOpen(false);
+          return;
+        }
+      }
+      navigator.clipboard?.writeText?.(`${issue.title}\n\n${issue.description || ''}`);
+      showToast('Conteúdo da issue copiado para a área de transferência!');
+      setIsMoreMenuOpen(false);
+    } catch (err: any) {
+      showToast(err?.message || 'Falha ao clonar a issue.');
+    } finally {
+      setIsCloningIssue(false);
+    }
+  };
+
+  const handleToggleLockIssue = async () => {
+    if (!issue || !issue.githubNumber || !repoOwner || !repoName) {
+      setIsConversationLocked((prev) => !prev);
+      showToast(!isConversationLocked ? 'Conversa bloqueada localmente.' : 'Conversa desbloqueada localmente.');
+      setIsMoreMenuOpen(false);
+      return;
+    }
+    setIsTogglingLock(true);
+    const nextLocked = !isConversationLocked;
+    try {
+      if (window.electronAPI?.github?.lockIssue) {
+        const res = await window.electronAPI.github.lockIssue(repoOwner, repoName, issue.githubNumber, nextLocked);
+        if (!res?.success) throw new Error(res?.error || 'Falha ao alterar bloqueio de conversa.');
+      }
+      setIsConversationLocked(nextLocked);
+      showToast(nextLocked ? 'Conversa bloqueada no GitHub!' : 'Conversa desbloqueada no GitHub.');
+    } catch (err: any) {
+      showToast(err?.message || 'Erro ao alterar bloqueio de conversa no GitHub.');
+    } finally {
+      setIsTogglingLock(false);
+      setIsMoreMenuOpen(false);
+    }
+  };
+
+  const handleTogglePinIssue = async () => {
+    if (!issue) return;
+    setIsTogglingPin(true);
+    const nextPinned = !isPinned;
+    try {
+      if (issue.nodeId && window.electronAPI?.github?.pinIssue) {
+        const res = await window.electronAPI.github.pinIssue(issue.nodeId, nextPinned);
+        if (!res?.success) throw new Error(res?.error || 'Falha ao alterar fixação.');
+      }
+      try {
+        const key = `pinned_issue_${repoFullName || 'global'}_${issue.id}`;
+        if (nextPinned) localStorage.setItem(key, 'true');
+        else localStorage.removeItem(key);
+      } catch {}
+      setIsPinned(nextPinned);
+      showToast(nextPinned ? 'Issue fixada no topo!' : 'Issue desafixada.');
+    } catch (err: any) {
+      showToast(err?.message || 'Erro ao fixar issue no GitHub.');
+    } finally {
+      setIsTogglingPin(false);
+      setIsMoreMenuOpen(false);
+    }
+  };
+
+  const handleToggleSubscription = async (forcedSubscribed?: boolean) => {
+    if (!issue) return;
+    setIsTogglingSubscription(true);
+    const nextSub = forcedSubscribed !== undefined ? forcedSubscribed : !isSubscribed;
+    try {
+      if (issue.githubNumber && repoOwner && repoName && window.electronAPI?.github?.setIssueSubscription) {
+        const res = await window.electronAPI.github.setIssueSubscription(repoOwner, repoName, issue.githubNumber, nextSub);
+        if (!res?.success) throw new Error(res?.error || 'Falha ao alterar notificações.');
+      }
+      setIsSubscribed(nextSub);
+      showToast(nextSub ? 'Notificações ativadas no GitHub!' : 'Notificações desativadas.');
+    } catch (err: any) {
+      showToast(err?.message || 'Erro ao alterar inscrições no GitHub.');
+    } finally {
+      setIsTogglingSubscription(false);
+      setShowCustomizeNotifyMenu(false);
+    }
+  };
+
+  const handleExecuteTransferIssue = async () => {
+    const rawTarget = transferTargetRepo.trim();
+    if (!rawTarget || !rawTarget.includes('/')) {
+      showToast('Informe o repositório de destino no formato "owner/repo"');
+      return;
+    }
+    const [targetOwner, targetRepoName] = rawTarget.split('/');
+    if (!issue?.githubNumber || !repoOwner || !repoName) {
+      showToast('Dados da issue ou repositório de origem incompletos.');
+      return;
+    }
+    setIsTransferringIssue(true);
+    try {
+      if (window.electronAPI?.github?.transferIssue) {
+        const res = await window.electronAPI.github.transferIssue(repoOwner, repoName, issue.githubNumber, targetOwner, targetRepoName);
+        if (!res?.success) throw new Error(res?.error || 'Falha ao transferir a issue.');
+        showToast(`Issue transferida com sucesso para ${rawTarget}!`);
+        setIsTransferModalOpen(false);
+        onClose();
+        return;
+      }
+      showToast('API de transferência indisponível no momento.');
+    } catch (err: any) {
+      showToast(err?.message || 'Erro ao transferir issue.');
+    } finally {
+      setIsTransferringIssue(false);
+    }
+  };
+
+  const loadDetails = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const num = initialIssue?.githubNumber;
+      if (!num || !repoOwner || !repoName || !window.electronAPI?.github?.fetchIssueDetails) return null;
+      const reqId = ++detailsRequestRef.current;
+      if (!opts?.silent) setIsLoadingDetails(true);
+      setDetailsError(null);
+      try {
+        const res = await window.electronAPI.github.fetchIssueDetails(repoOwner, repoName, num);
+        if (reqId !== detailsRequestRef.current) return null;
+        if (!res?.success || !res.details) throw new Error(res?.error || 'Falha ao carregar a issue do GitHub.');
+        setDetails(res.details);
+        return res.details;
+      } catch (err: any) {
+        if (reqId === detailsRequestRef.current) setDetailsError(err?.message || 'Falha ao carregar a issue do GitHub.');
+        return null;
+      } finally {
+        if (reqId === detailsRequestRef.current) setIsLoadingDetails(false);
+      }
+    },
+    [initialIssue?.githubNumber, repoOwner, repoName]
+  );
+
+  useEffect(() => {
+    setDetails(null);
+    setOpenProjectFieldKey(null);
+    setIsDescriptionExpanded(false);
+    setIsEditingDescription(false);
+    setIsEditingTitle(false);
+    if (contentScrollRef.current) {
+      contentScrollRef.current.scrollTop = 0;
+    }
+    const raf = requestAnimationFrame(() => {
+      if (contentScrollRef.current) {
+        contentScrollRef.current.scrollTop = 0;
+      }
+    });
+    if (isOpen) loadDetails();
+    return () => cancelAnimationFrame(raf);
+  }, [isOpen, initialIssue?.id, loadDetails]);
+
+  reloadDetailsRef.current = () => {
+    loadDetails({ silent: true });
+  };
+
+  // Aplica os dados frescos do GitHub sobre a issue em cache (que pode estar desatualizada).
+  useEffect(() => {
+    if (!details) return;
+    const d = details.issue;
+    setCurrentIssue((prev) => {
+      const base = prev || initialIssue;
+      if (!base) return prev;
+      const closed = d.state === 'CLOSED';
+      return {
+        ...base,
+        title: d.title,
+        description: (d.body && d.body.trim()) ? d.body : (base.description || ''),
+        rawState: closed ? 'closed' : 'open',
+        status: closed ? 'Concluído' : base.status === 'Concluído' ? 'A Fazer' : base.status,
+        htmlUrl: d.url || base.htmlUrl,
+        nodeId: d.id,
+        author: d.author?.login || base.author,
+        authorAvatarUrl: d.author?.avatarUrl || base.authorAvatarUrl,
+        rawLabels: d.labels ? d.labels.map((l) => l.name) : base.rawLabels,
+        assignees: d.assignees
+          ? d.assignees.map((a) => ({
+              name: a.login,
+              avatarUrl: a.avatarUrl,
+              initial: a.login.charAt(0).toUpperCase(),
+              avatarBg: base.assignees?.find((x) => x.name === a.login)?.avatarBg || '#6366f1',
+            }))
+          : base.assignees,
+        milestoneNumber: d.milestone?.number ?? base.milestoneNumber,
+        milestoneTitle: d.milestone?.title ?? base.milestoneTitle,
+        subIssuesSummary: d.subIssuesSummary
+          ? { total: d.subIssuesSummary.total, completed: d.subIssuesSummary.completed, percent_completed: d.subIssuesSummary.percentCompleted }
+          : base.subIssuesSummary,
+      };
+    });
+    if (!isEditingTitle) setEditedTitle(d.title);
+    if (!isEditingDescription) setEditedDescription((d.body && d.body.trim()) ? d.body : (initialIssue?.description || ''));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [details, initialIssue]);
+
+  const findField = (item: GithubProjectItemDetails, predicate: (f: GithubProjectFieldDef) => boolean) =>
+    item.fields.find(predicate);
+
+  const statusFieldOf = (item: GithubProjectItemDetails) =>
+    findField(item, (f) => f.dataType === 'SINGLE_SELECT' && f.name.toLowerCase() === 'status');
+
+  // Resume os valores do Projects V2 no formato que o resto do app usa (aba Sprints, quadro).
+  const buildProjectPatch = (d: GithubIssueDetails): Partial<ProjectIssue> => {
+    const patch: Partial<ProjectIssue> = { iterationId: undefined, iterationTitle: undefined };
+    for (const item of d.projectItems) {
+      const iterField = findField(item, (f) => f.dataType === 'ITERATION');
+      const iterVal = iterField ? item.values[iterField.id] : undefined;
+      if (iterVal?.iterationId && !patch.iterationId) {
+        patch.iterationId = iterVal.iterationId;
+        patch.iterationTitle = iterVal.title;
+      }
+      const statusField = statusFieldOf(item);
+      const statusVal = statusField ? item.values[statusField.id] : undefined;
+      if (statusVal?.name && !patch.projectV2Status) {
+        patch.projectV2Status = statusVal.name;
+        patch.projectV2StatusOptionId = statusVal.optionId;
+        patch.projectV2ItemId = item.itemId;
+      }
+      const estimateField = findField(item, (f) => f.dataType === 'NUMBER');
+      const estimateVal = estimateField ? item.values[estimateField.id] : undefined;
+      if (typeof estimateVal?.number === 'number' && patch.projectV2Estimate == null) {
+        patch.projectV2Estimate = estimateVal.number;
+      }
+    }
+    return patch;
+  };
+
+  const handleSetProjectField = async (
+    item: GithubProjectItemDetails,
+    field: GithubProjectFieldDef,
+    value: Record<string, any> | null
+  ) => {
+    const gh = window.electronAPI?.github;
+    if (!gh?.updateProjectItemField || !gh.clearProjectItemField) return;
+    const key = `${item.itemId}:${field.id}`;
+    setSavingFieldKey(key);
+    setOpenProjectFieldKey(null);
+    try {
+      const res = value
+        ? await gh.updateProjectItemField(item.project.id, item.itemId, field.id, value)
+        : await gh.clearProjectItemField(item.project.id, item.itemId, field.id);
+      if (!res?.success) throw new Error(res?.error || 'Falha ao salvar o campo no GitHub.');
+      const fresh = await loadDetails({ silent: true });
+      if (fresh && issue) onIssuePatched?.(issue, buildProjectPatch(fresh));
+    } catch (err: any) {
+      showToast(err?.message || 'Falha ao salvar o campo no GitHub.');
+    } finally {
+      setSavingFieldKey(null);
+    }
+  };
+
+  const handleToggleProject = async (project: { id: string; title: string }) => {
+    const gh = window.electronAPI?.github;
+    if (!details || !gh?.addIssueToProject || !gh.removeProjectItem) return;
+    const existing = details.projectItems.find((pi) => pi.project.id === project.id);
+    try {
+      const res = existing
+        ? await gh.removeProjectItem(project.id, existing.itemId)
+        : await gh.addIssueToProject(project.id, details.issue.id);
+      if (!res?.success) throw new Error(res?.error || 'Falha ao atualizar o Project no GitHub.');
+      showToast(existing ? `Removida de "${project.title}".` : `Adicionada a "${project.title}".`);
+      const fresh = await loadDetails({ silent: true });
+      if (fresh && issue) onIssuePatched?.(issue, buildProjectPatch(fresh));
+    } catch (err: any) {
+      showToast(err?.message || 'Falha ao atualizar o Project no GitHub.');
+    }
+  };
+
+  const handleSetIssueType = async (issueTypeId: string | null) => {
+    const gh = window.electronAPI?.github;
+    if (!details || !gh?.setIssueType) return;
+    setActiveSidebarPopup(null);
+    try {
+      const res = await gh.setIssueType(details.issue.id, issueTypeId);
+      if (!res?.success) throw new Error(res?.error || 'Falha ao atualizar o tipo no GitHub.');
+      setDetails((prev) => (prev ? { ...prev, issue: { ...prev.issue, issueType: res.issueType || null } } : prev));
+    } catch (err: any) {
+      showToast(err?.message || 'Falha ao atualizar o tipo no GitHub.');
+    }
+  };
 
   // Reset local state when issue changes
   useEffect(() => {
@@ -436,7 +896,6 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
       setIsLocalClosing(false);
       setIsMoreMenuOpen(false);
       setIsTypeDropdownOpen(false);
-      setIsSizeDropdownOpen(false);
       setActiveSidebarPopup(null);
       setAssigneeSearch('');
       setLabelSearch('');
@@ -495,16 +954,30 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
           isTypeDropdownOpen ||
           isPriorityDropdownOpen ||
           isStatusDropdownOpen ||
-          isSprintDropdownOpen ||
-          isSizeDropdownOpen
+          openProjectFieldKey
         ) {
           setIsAssigneeDropdownOpen(false);
           setIsLabelDropdownOpen(false);
           setIsTypeDropdownOpen(false);
           setIsPriorityDropdownOpen(false);
           setIsStatusDropdownOpen(false);
-          setIsSprintDropdownOpen(false);
-          setIsSizeDropdownOpen(false);
+          setOpenProjectFieldKey(null);
+          return;
+        }
+        if (subIssueToDelete != null) {
+          setSubIssueToDelete(null);
+          return;
+        }
+        if (commentToDelete != null) {
+          setCommentToDelete(null);
+          return;
+        }
+        if (commentMenuId != null) {
+          setCommentMenuId(null);
+          return;
+        }
+        if (editingCommentId != null) {
+          setEditingCommentId(null);
           return;
         }
         if (isEditingTitle) {
@@ -533,8 +1006,9 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
     isTypeDropdownOpen,
     isPriorityDropdownOpen,
     isStatusDropdownOpen,
-    isSprintDropdownOpen,
-    isSizeDropdownOpen,
+    openProjectFieldKey,
+    commentMenuId,
+    editingCommentId,
     isEditingTitle,
     isEditingDescription,
     handleClose,
@@ -592,6 +1066,22 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   const isClosed = issue ? (issue.rawState === 'closed' || issue.status === 'Concluído') : false;
 
   // Sub-issues parser
+  const rawDescription = useMemo(() => {
+    const fromDetails = details?.issue?.body;
+    const fromCurrentDesc = currentIssue?.description;
+    const fromInitialDesc = initialIssue?.description;
+    const fromIssueDesc = issue?.description;
+    const fromBody = (issue as any)?.body;
+    return (
+      (fromDetails && fromDetails.trim()) ||
+      (fromCurrentDesc && fromCurrentDesc.trim()) ||
+      (fromInitialDesc && fromInitialDesc.trim()) ||
+      (fromIssueDesc && fromIssueDesc.trim()) ||
+      (fromBody && fromBody.trim()) ||
+      ''
+    );
+  }, [details?.issue?.body, currentIssue?.description, initialIssue?.description, issue?.description, (issue as any)?.body]);
+
   const subIssuesList = useMemo(() => {
     const items: Array<{
       index: number;
@@ -604,9 +1094,9 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
     const seenNumbers = new Set<number>();
     const seenTitles = new Set<string>();
 
-    if (issue?.description) {
+    if (rawDescription) {
       try {
-        const lines = String(issue.description).split('\n');
+        const lines = String(rawDescription).split('\n');
         lines.forEach((line, idx) => {
           const match = line.match(/^(\s*[-*]\s*\[([ xX])\]\s+)(.+)$/);
           if (match) {
@@ -667,7 +1157,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
     }
 
     return items;
-  }, [issue?.description, issue?.githubNumber, allProjectIssues]);
+  }, [rawDescription, issue?.githubNumber, allProjectIssues]);
 
   const handleSelectSubIssue = (item: {
     text: string;
@@ -758,15 +1248,17 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   }, [subIssuesList, subIssuesFilter]);
 
   const displayDescription = useMemo(() => {
-    if (!issue?.description) return '';
-    // Se a issue possui sub-tarefas na descrição, remove a seção para exibi-la exclusivamente no card dedicado de Sub-issues abaixo
+    const raw = rawDescription;
+    if (!raw) return '';
+    // Se a issue possui sub-tarefas na descrição, remove apenas a seção duplicada se sobrar texto
     if (subIssuesList.length > 0) {
-      return issue.description
+      const stripped = raw
         .replace(/(?:^|\n)#{1,4}\s+Sub-issues[\s\S]*?(?=(?:\n#{1,4}\s+)|$)/i, '')
         .trim();
+      return stripped || raw;
     }
-    return issue.description;
-  }, [issue?.description, subIssuesList]);
+    return raw;
+  }, [rawDescription, subIssuesList]);
 
   const handleToggleSubIssue = async (subIssue: { lineIndex: number; completed: boolean }) => {
     const lines = (issue.description || '').split('\n');
@@ -786,6 +1278,9 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
     }
   };
 
+  const [subIssueToDelete, setSubIssueToDelete] = useState<{ lineIndex: number; text: string } | null>(null);
+  const [isDeletingSubIssue, setIsDeletingSubIssue] = useState(false);
+
   const handleRemoveSubIssue = async (subIssue: { lineIndex: number }) => {
     const lines = (issue.description || '').split('\n');
     lines.splice(subIssue.lineIndex, 1);
@@ -796,6 +1291,17 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
       showToast('Sub-issue removida.');
     } catch (err: any) {
       showToast(err?.message || 'Erro ao remover sub-issue.');
+    }
+  };
+
+  const handleConfirmRemoveSubIssue = async () => {
+    if (!subIssueToDelete) return;
+    setIsDeletingSubIssue(true);
+    try {
+      await handleRemoveSubIssue(subIssueToDelete);
+      setSubIssueToDelete(null);
+    } finally {
+      setIsDeletingSubIssue(false);
     }
   };
 
@@ -880,11 +1386,11 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
     setIsSavingStatus(true);
     setCloseReason(reason);
     try {
-      if (reason === 'duplicate' && selectedDuplicateIssue && (issue.githubNumber || issue.number) && repoFullName) {
+      if (reason === 'duplicate' && selectedDuplicateIssue && (issue.githubNumber || (issue as any).number) && repoFullName) {
         const parts = repoFullName.split('/');
         if (parts.length === 2) {
           const [owner, repo] = parts;
-          const targetNum = issue.githubNumber || issue.number;
+          const targetNum = issue.githubNumber || (issue as any).number;
           const dupComment = `Duplicate of #${selectedDuplicateIssue.number || selectedDuplicateIssue.githubNumber}`;
           await window.electronAPI?.github?.addIssueComment?.(owner, repo, targetNum, dupComment);
         }
@@ -893,7 +1399,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
         rawState: 'closed',
         state: 'closed',
         status: 'Concluído',
-        state_reason: reason === 'completed' ? 'completed' : 'not_planned',
+        ...({ state_reason: reason === 'completed' ? 'completed' : 'not_planned' } as any),
       });
       if (reason === 'completed') showToast('Issue fechada como concluída!');
       else if (reason === 'not_planned') showToast('Issue fechada como não planejada.');
@@ -938,8 +1444,31 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
     const name = file.name;
-    handleInsertCommentMarkdown(`![${name}](${name})`);
-    showToast(`Arquivo "${name}" inserido no comentário!`);
+    const isImage = file.type.startsWith('image/');
+    const reader = new FileReader();
+
+    if (isImage) {
+      reader.onload = () => {
+        const base64Data = reader.result as string;
+        handleInsertCommentMarkdown(`\n![${name}](${base64Data})\n`);
+        showToast(`Imagem "${name}" anexada com sucesso!`);
+      };
+      reader.onerror = () => {
+        showToast(`Erro ao ler imagem "${name}".`);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      reader.onload = () => {
+        const content = reader.result as string;
+        const ext = name.split('.').pop() || '';
+        handleInsertCommentMarkdown(`\n\`\`\`${ext}\n// ${name}\n${content}\n\`\`\`\n`);
+        showToast(`Arquivo "${name}" inserido com sucesso!`);
+      };
+      reader.onerror = () => {
+        showToast(`Erro ao ler arquivo "${name}".`);
+      };
+      reader.readAsText(file);
+    }
     e.target.value = '';
   };
 
@@ -1033,7 +1562,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
     }, 100);
   };
 
-  const safeRenderMarkdown = (content: string) => {
+  const safeRenderMarkdown = (content: string, customFontSize = 12.5) => {
     try {
       return renderMarkdownPreview(content, {
         textPrimary: sysTextPrimary,
@@ -1042,12 +1571,14 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
         border: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : '#e2e8f0',
         accentColor: accentColor || '#a855f7',
         isEffectiveDark: Boolean(isEffectiveDark),
+        fontSize: customFontSize,
+        regularFont: true,
         onToggleTask: (lineIndex, completed) => handleToggleSubIssue({ lineIndex, completed }),
       });
     } catch (err) {
       console.error('Erro ao renderizar markdown:', err);
       return (
-        <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 13, color: sysTextPrimary }}>
+        <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: customFontSize, fontWeight: 400, color: sysTextPrimary }}>
           {content}
         </div>
       );
@@ -1797,8 +2328,9 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
               border: 'none',
               borderRight: `1px solid ${sysBorder}`,
               minHeight: 0,
+              scrollbarWidth: 'thin',
+              scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.16) transparent' : 'rgba(0, 0, 0, 0.16) transparent',
             }}
-            className="no-scrollbar"
           >
             {/* 3.1 Card de Descrição Principal (Padrão DevFlow - sem borda, fundo levemente mais claro que a sidesheet) */}
             <div
@@ -1808,6 +2340,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 background: sysCardBg,
                 position: 'relative',
                 overflow: 'hidden',
+                flexShrink: 0,
               }}
             >
               {/* Header da Descrição */}
@@ -1832,7 +2365,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       background: accentColor,
                       color: accentContrastText,
                       fontSize: 10.5,
-                      fontWeight: 600,
+                      fontWeight: 500,
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -1846,10 +2379,10 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       issue.author ? issue.author.charAt(0).toUpperCase() : 'W'
                     )}
                   </div>
-                  <span style={{ fontSize: 14, fontWeight: 600, color: sysTextPrimary, whiteSpace: 'nowrap' }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 500, color: sysTextPrimary, whiteSpace: 'nowrap' }}>
                     {issue.author || 'Walancy'}
                   </span>
-                  <span style={{ fontSize: 13.5, fontWeight: 400, color: sysTextSecondary, whiteSpace: 'nowrap' }}>
+                  <span style={{ fontSize: 12, fontWeight: 400, color: sysTextSecondary, whiteSpace: 'nowrap' }}>
                     opened {formatGitHubTimeAgo(issue.createdAtIso)}
                   </span>
                 </div>
@@ -1868,8 +2401,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         border: 'none',
                         borderRadius: 6,
                         padding: '3px 8px',
-                        fontSize: 12.5,
-                        fontWeight: 500,
+                        fontSize: 12,
+                        fontWeight: 400,
                         color: isEditHistoryOpen
                           ? accentColor
                           : sysTextSecondary,
@@ -1892,7 +2425,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           e.currentTarget.style.color = sysTextSecondary;
                         }
                       }}
-                      title={issue.updatedAtIso ? `Última edição: ${new Date(issue.updatedAtIso).toLocaleString()}` : 'Última edição'}
+                      title={(issue as any).updatedAtIso ? `Última edição: ${new Date((issue as any).updatedAtIso).toLocaleString()}` : 'Última edição'}
                     >
                       <span>Last edited by {issue.author || 'Walancy'}</span>
                       <ChevronDown size={12} style={{ opacity: 0.8 }} />
@@ -1977,7 +2510,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                               color: sysTextSecondary,
                             }}
                           >
-                            {formatGitHubTimeAgoFull(issue.updatedAtIso || issue.createdAtIso)}
+                            {formatGitHubTimeAgoFull((issue as any).updatedAtIso || issue.createdAtIso)}
                           </span>
                           <span
                             style={{
@@ -2305,9 +2838,10 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
 
                   {descTab === 'write' ? (
                     <textarea
-                      rows={11}
+                      rows={12}
                       value={editedDescription}
                       onChange={(e) => setEditedDescription(e.target.value)}
+                      onWheel={handleInternalScrollWheel}
                       placeholder="Descreva esta tarefa detalhadamente usando Markdown..."
                       style={{
                         width: '100%',
@@ -2317,23 +2851,31 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         borderRadius: 8,
                         padding: 12,
                         color: sysTextPrimary,
-                        fontSize: 13,
-                        lineHeight: 1.5,
+                        fontSize: 12.5,
+                        fontWeight: 400,
+                        lineHeight: 1.55,
                         fontFamily: 'inherit',
                         outline: 'none',
                         resize: 'vertical',
-                        minHeight: 220,
+                        minHeight: 260,
+                        overscrollBehavior: 'auto',
+                        scrollbarWidth: 'thin',
+                        scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
                       }}
                     />
                   ) : (
                     <div
+                      onWheel={handleInternalScrollWheel}
                       style={{
                         padding: '8px 4px',
-                        minHeight: 220,
-                        maxHeight: 400,
+                        minHeight: 260,
+                        maxHeight: 480,
                         overflowY: 'auto',
+                        overscrollBehavior: 'auto',
+                        fontSize: 12.5,
+                        fontWeight: 400,
                         scrollbarWidth: 'thin',
-                        scrollbarColor: isEffectiveDark ? 'rgba(255,255,255,0.18) transparent' : 'rgba(0,0,0,0.18) transparent',
+                        scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
                       }}
                     >
                       {safeRenderMarkdown(editedDescription)}
@@ -2351,6 +2893,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         borderRadius: 6,
                         color: theme?.textSecondary || '#a1a1aa',
                         fontSize: 12,
+                        fontWeight: 400,
                         cursor: 'pointer',
                       }}
                     >
@@ -2378,34 +2921,107 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 <div
                   style={{
                     padding: '16px 18px 14px 18px',
-                    fontSize: 14,
+                    fontSize: 12.5,
+                    fontWeight: 400,
                     lineHeight: 1.6,
                     color: sysTextPrimary,
                     display: 'flex',
                     flexDirection: 'column',
-                    minHeight: 240,
+                    minHeight: 180,
+                    boxSizing: 'border-box',
                   }}
                 >
-                  {/* Container de descrição com rolagem vertical e altura maior */}
+                  {/* Container de descrição com rolagem vertical dedicada e estilizada (mínimo 8 linhas) */}
                   <div
+                    className="issue-description-body-scrollable"
+                    onWheel={handleInternalScrollWheel}
                     style={{
-                      flex: 1,
-                      minHeight: 160,
-                      maxHeight: 380,
-                      overflowY: 'auto',
-                      paddingRight: 6,
-                      scrollbarWidth: 'thin',
-                      scrollbarColor: isEffectiveDark ? 'rgba(255,255,255,0.18) transparent' : 'rgba(0,0,0,0.18) transparent',
+                      width: '100%',
+                      minHeight: 180,
+                      maxHeight: isDescriptionExpanded ? 'none' : 500,
+                      overflowY: isDescriptionExpanded ? 'visible' : 'auto',
+                      overflowX: 'hidden',
+                      paddingRight: 8,
+                      paddingBottom: 6,
+                      overscrollBehavior: 'auto',
+                      boxSizing: 'border-box',
                     }}
                   >
-                    {displayDescription ? (
+                    {isLoadingDetails && !displayDescription ? (
+                      <div style={{ color: theme?.textSecondary || '#a1a1aa', fontStyle: 'italic', fontSize: 12.5, fontWeight: 400, padding: '8px 0', display: 'flex', alignItems: 'center', gap: 8, minHeight: 160 }}>
+                        <Loader2 size={14} className="animate-spin" style={{ animation: 'spin 1s linear infinite' }} />
+                        <span>Carregando descrição do GitHub...</span>
+                      </div>
+                    ) : displayDescription ? (
                       safeRenderMarkdown(displayDescription)
                     ) : (
-                      <div style={{ color: theme?.textSecondary || '#a1a1aa', fontStyle: 'italic', fontSize: 13 }}>
-                        Nenhuma descrição fornecida para esta tarefa.
+                      <div style={{ color: theme?.textSecondary || '#a1a1aa', fontStyle: 'italic', fontSize: 12.5, fontWeight: 400, padding: '8px 0', minHeight: 160, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                        <span>Nenhuma descrição fornecida para esta tarefa.</span>
+                        <div style={{ marginTop: 10 }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditedDescription('');
+                              setIsEditingDescription(true);
+                              setDescTab('write');
+                            }}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              padding: '5px 12px',
+                              borderRadius: 6,
+                              border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#d0d7de'}`,
+                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f6f8fa',
+                              color: theme?.textSecondary || '#a1a1aa',
+                              fontSize: 12,
+                              fontWeight: 500,
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease',
+                            }}
+                          >
+                            <Pencil size={13} />
+                            <span>Adicionar descrição</span>
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
+
+                  {/* Botão de Expandir / Recolher descrição se for longa */}
+                  {Boolean(displayDescription && (displayDescription.length > 250 || displayDescription.split('\n').length > 7)) && (
+                    <div style={{ display: 'flex', alignItems: 'center', marginTop: 10 }}>
+                      <button
+                        type="button"
+                        onClick={() => setIsDescriptionExpanded((v) => !v)}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          padding: '3px 9px',
+                          borderRadius: 6,
+                          border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#d0d7de'}`,
+                          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f6f8fa',
+                          color: theme?.textSecondary || '#a1a1aa',
+                          fontSize: 11.5,
+                          fontWeight: 500,
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.color = theme?.textPrimary || '#fff';
+                          e.currentTarget.style.borderColor = accentColor;
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.color = theme?.textSecondary || '#a1a1aa';
+                          e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#d0d7de';
+                        }}
+                      >
+                        <ChevronDown size={13} style={{ transform: isDescriptionExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
+                        <span>{isDescriptionExpanded ? 'Recolher descrição' : 'Expandir descrição'}</span>
+                      </button>
+                    </div>
+                  )}
 
                   {/* Barra inferior de reações com botão de Smile estilo GitHub */}
                   <div
@@ -2545,6 +3161,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 background: sysCardBg,
                 position: 'relative',
                 zIndex: isSubIssueSplitOpen ? 50 : 1,
+                flexShrink: 0,
               }}
             >
               {/* Header de Sub-issues */}
@@ -2584,7 +3201,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         color: sysTextSecondary,
                       }}
                     />
-                    <span style={{ fontSize: 13.5, fontWeight: 600, color: sysTextPrimary }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 400, color: sysTextPrimary }}>
                       Sub-issues
                     </span>
                   </button>
@@ -2598,7 +3215,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       padding: '2px 8px',
                       borderRadius: 12,
                       background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f4f4f5',
-                      fontSize: 12,
+                      fontSize: 11,
                       color: sysTextSecondary,
                     }}
                   >
@@ -2623,7 +3240,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         strokeLinecap="round"
                       />
                     </svg>
-                    <span style={{ fontSize: 11.5, fontWeight: 500 }}>
+                    <span style={{ fontSize: 11, fontWeight: 400 }}>
                       {completedSubIssuesCount} of {totalSubIssuesCount}
                     </span>
                   </div>
@@ -2754,13 +3371,26 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
 
               {/* Lista de Sub-issues (quando não colapsado) */}
               {!isSubIssuesCollapsed && (
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <div
+                  className="issue-description-scrollable"
+                  onWheel={handleInternalScrollWheel}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    maxHeight: 380,
+                    overflowY: 'auto',
+                    overscrollBehavior: 'auto',
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
+                  }}
+                >
                   {displayedSubIssues.length === 0 ? (
                     <div
                       style={{
                         padding: '14px 16px',
                         borderBottom: `1px solid ${sysBorder}`,
-                        fontSize: 13,
+                        fontSize: 12.5,
+                        fontWeight: 400,
                         color: sysTextSecondary,
                         textAlign: 'center',
                       }}
@@ -2787,7 +3417,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             alignItems: 'center',
                             justifyContent: 'space-between',
                             gap: 12,
-                            padding: '9px 16px',
+                            padding: '12px 16px',
                             borderBottom: `1px solid ${sysBorder}`,
                             transition: 'background 0.12s ease',
                             position: 'relative',
@@ -2827,8 +3457,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             {/* Título da sub-issue */}
                             <div
                               style={{
-                                fontSize: 13.5,
-                                fontWeight: 500,
+                                fontSize: 12.5,
+                                fontWeight: 400,
                                 color: isEffectiveDark ? '#e6edf3' : '#1f2328',
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
@@ -2848,6 +3478,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                   style={{
                                     color: isEffectiveDark ? '#8b949e' : '#656d76',
                                     fontWeight: 400,
+                                    fontSize: 11.5,
                                     flexShrink: 0,
                                   }}
                                 >
@@ -2862,22 +3493,70 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}
                             onClick={(e) => e.stopPropagation()}
                           >
-                            {/* Avatar placeholder de responsável */}
-                            <div
-                              title="Sem responsável atribuído"
-                              style={{
-                                width: 20,
-                                height: 20,
-                                borderRadius: '50%',
-                                border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#d0d7de'}`,
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyCenter: 'center',
-                                color: sysTextSecondary,
-                              }}
-                            >
-                              <User size={12} strokeWidth={1.8} />
-                            </div>
+                            {/* Responsáveis: da issue vinculada ou, para item de checklist, herdados da issue pai */}
+                            {(() => {
+                              const own = item.linkedIssue?.assignees || [];
+                              const inherited = !item.linkedIssue;
+                              const people = inherited ? issue.assignees || [] : own;
+                              if (people.length === 0) {
+                                return (
+                                  <div
+                                    title="Sem responsável atribuído"
+                                    style={{
+                                      width: 20,
+                                      height: 20,
+                                      borderRadius: '50%',
+                                      border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#d0d7de'}`,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      color: sysTextSecondary,
+                                    }}
+                                  >
+                                    <User size={12} strokeWidth={1.8} />
+                                  </div>
+                                );
+                              }
+                              const names = people.map((p) => p.name).join(', ');
+                              return (
+                                <div
+                                  title={inherited ? `Responsável (da issue pai): ${names}` : `Responsável: ${names}`}
+                                  style={{ display: 'flex', alignItems: 'center' }}
+                                >
+                                  {people.slice(0, 3).map((p, idx) => (
+                                    <div
+                                      key={p.name}
+                                      style={{
+                                        width: 20,
+                                        height: 20,
+                                        borderRadius: '50%',
+                                        overflow: 'hidden',
+                                        marginLeft: idx === 0 ? 0 : -6,
+                                        boxShadow: `0 0 0 2px ${sysCardBg}`,
+                                        background: p.avatarBg || '#6366f1',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        color: '#fff',
+                                        fontSize: 10,
+                                        fontWeight: 600,
+                                        opacity: inherited ? 0.75 : 1,
+                                        flexShrink: 0,
+                                      }}
+                                    >
+                                      {p.avatarUrl ? (
+                                        <img src={p.avatarUrl} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                      ) : (
+                                        p.initial || p.name.charAt(0).toUpperCase()
+                                      )}
+                                    </div>
+                                  ))}
+                                  {people.length > 3 && (
+                                    <span style={{ fontSize: 11, color: sysTextSecondary, marginLeft: 4 }}>+{people.length - 3}</span>
+                                  )}
+                                </div>
+                              );
+                            })()}
 
                             {/* Botão de mais opções (...) */}
                             <div style={{ position: 'relative' }}>
@@ -2993,7 +3672,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                     type="button"
                                     onClick={() => {
                                       setActiveSubIssueMenuIdx(null);
-                                      handleRemoveSubIssue(item);
+                                      setSubIssueToDelete({ lineIndex: item.lineIndex, text: item.text });
                                     }}
                                     style={{
                                       padding: '6px 12px',
@@ -3021,7 +3700,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   {/* Footer com Botão "Create sub-issue" Split Button */}
                   <div
                     style={{
-                      padding: '8px 16px',
+                      padding: '10px 16px',
                       borderTop: `1px solid ${sysBorder}`,
                       background: sysCardHeaderBg,
                       borderRadius: '0 0 8px 8px',
@@ -3046,7 +3725,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             border: `1px solid ${sysBorder}`,
                             background: sysInputBg,
                             color: sysTextPrimary,
-                            fontSize: 13,
+                            fontSize: 12.5,
+                            fontWeight: 400,
                             outline: 'none',
                           }}
                           onFocus={(e) => (e.currentTarget.style.borderColor = accentColor)}
@@ -3062,7 +3742,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             borderRadius: 6,
                             color: accentContrastText,
                             fontSize: 12,
-                            fontWeight: 600,
+                            fontWeight: 500,
                             cursor: 'pointer',
                           }}
                         >
@@ -3078,6 +3758,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             borderRadius: 6,
                             color: sysTextSecondary,
                             fontSize: 12,
+                            fontWeight: 400,
                             cursor: 'pointer',
                           }}
                         >
@@ -3090,7 +3771,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           style={{
                             display: 'inline-flex',
                             alignItems: 'stretch',
-                            height: 28,
+                            height: 30,
                             borderRadius: 6,
                             overflow: 'hidden',
                             border: `1px solid ${sysBorder}`,
@@ -3110,7 +3791,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                               border: 'none',
                               color: sysTextPrimary,
                               fontSize: 12,
-                              fontWeight: 500,
+                              fontWeight: 400,
                               cursor: 'pointer',
                               transition: 'background 0.12s ease',
                             }}
@@ -3298,18 +3979,18 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
 
             {/* 3.3 Timeline & Comentários */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: theme?.textPrimary || '#fff' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 500, color: theme?.textPrimary || '#fff' }}>
                 <MessageSquare size={15} color={theme?.textSecondary || '#a1a1aa'} />
                 <span>Atividade e Comentários ({comments.length})</span>
               </div>
 
               {isLoadingComments ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 14, color: theme?.textSecondary || '#a1a1aa', fontSize: 12.5 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 14, color: theme?.textSecondary || '#a1a1aa', fontSize: 12 }}>
                   <Loader2 size={14} className="animate-spin" style={{ animation: 'spin 1s linear infinite' }} />
                   <span>Carregando comentários do GitHub...</span>
                 </div>
               ) : comments.length === 0 ? (
-                <div style={{ padding: '14px 16px', borderRadius: 8, border: 'none', background: sysCardBg, fontSize: 12.5, color: sysTextSecondary }}>
+                <div style={{ padding: '16px 18px', borderRadius: 8, border: 'none', background: sysCardBg, fontSize: 12.5, fontWeight: 400, color: sysTextSecondary }}>
                   Nenhum comentário adicionado ainda. Deixe um comentário abaixo para iniciar a discussão.
                 </div>
               ) : (
@@ -3320,12 +4001,14 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       borderRadius: 8,
                       border: 'none',
                       background: sysCardBg,
-                      overflow: 'hidden',
+                      position: 'relative',
+                      zIndex: commentMenuId === c.id ? 20 : 'auto',
                     }}
                   >
                     <div
                       style={{
                         padding: '9px 16px',
+                        borderRadius: '8px 8px 0 0',
                         background: sysCardHeaderBg,
                         borderBottom: `1px solid ${sysBorder}`,
                         display: 'flex',
@@ -3337,17 +4020,202 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         <div style={{ width: 20, height: 20, borderRadius: '50%', overflow: 'hidden', background: accentColor }}>
                           {c.user?.avatar_url && <img src={c.user.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
                         </div>
-                        <span style={{ fontSize: 12.5, fontWeight: 600, color: sysTextPrimary }}>
+                        <span style={{ fontSize: 12, fontWeight: 500, color: sysTextPrimary }}>
                           {c.user?.login || 'comentador'}
                         </span>
-                        <span style={{ fontSize: 12, color: sysTextSecondary }}>
+                        <span style={{ fontSize: 11.5, fontWeight: 400, color: sysTextSecondary }}>
                           comentou {formatTimeAgo(c.created_at)}
+                          {c.updated_at && c.created_at && c.updated_at !== c.created_at ? ' · editado' : ''}
                         </span>
                       </div>
+                      <div data-comment-menu style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {busyCommentId === c.id && <Loader2 size={13} className="animate-spin" color={sysTextSecondary} />}
+                        <button
+                          type="button"
+                          title="Opções do comentário"
+                          onClick={() => {
+                            setCommentMenuId((prev) => (prev === c.id ? null : c.id));
+                          }}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            width: 24,
+                            height: 24,
+                            borderRadius: 4,
+                            background: commentMenuId === c.id ? sysHoverBg : 'transparent',
+                            border: 'none',
+                            color: sysTextSecondary,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <MoreHorizontal size={15} />
+                        </button>
+                        {commentMenuId === c.id && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              top: 'calc(100% + 4px)',
+                              right: 0,
+                              minWidth: 170,
+                              background: sysPopupBg,
+                              border: `1px solid ${sysPopupBorder}`,
+                              borderRadius: 8,
+                              boxShadow: sysPopupShadow,
+                              padding: 4,
+                              zIndex: 60,
+                            }}
+                          >
+                            {[
+                              {
+                                label: 'Editar',
+                                icon: <Pencil size={13} />,
+                                onClick: () => {
+                                  setEditingCommentId(c.id);
+                                  setEditingCommentText(c.body || '');
+                                  setCommentMenuId(null);
+                                },
+                              },
+                              {
+                                label: 'Copiar texto',
+                                icon: <Copy size={13} />,
+                                onClick: () => {
+                                  navigator.clipboard?.writeText(c.body || '');
+                                  setCommentMenuId(null);
+                                  showToast('Texto copiado.');
+                                },
+                              },
+                              ...(c.html_url
+                                ? [
+                                    {
+                                      label: 'Abrir no GitHub',
+                                      icon: <ExternalLink size={13} />,
+                                      onClick: () => {
+                                        window.electronAPI?.shell?.openExternal?.(c.html_url!);
+                                        setCommentMenuId(null);
+                                      },
+                                    },
+                                  ]
+                                : []),
+                              {
+                                label: 'Excluir',
+                                icon: <Trash2 size={13} />,
+                                danger: true,
+                                onClick: () => {
+                                  setCommentToDelete({ id: c.id, snippet: c.body?.slice(0, 80) });
+                                  setCommentMenuId(null);
+                                },
+                              },
+                            ].map((opt) => (
+                              <div
+                                key={opt.label}
+                                onClick={opt.onClick}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 8,
+                                  padding: '6px 8px',
+                                  borderRadius: 6,
+                                  fontSize: 12,
+                                  fontWeight: 400,
+                                  cursor: 'pointer',
+                                  color: (opt as any).danger ? '#f85149' : sysTextPrimary,
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = sysHoverBg; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                              >
+                                {opt.icon}
+                                <span>{opt.label}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <div style={{ padding: '14px 16px', fontSize: 13.5, lineHeight: 1.55, color: sysTextPrimary }}>
-                      {safeRenderMarkdown(c.body || '')}
-                    </div>
+                    {editingCommentId === c.id ? (
+                      <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <textarea
+                          autoFocus
+                          value={editingCommentText}
+                          onChange={(e) => setEditingCommentText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') {
+                              e.stopPropagation();
+                              setEditingCommentId(null);
+                            }
+                            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSaveCommentEdit(c.id);
+                          }}
+                          onWheel={handleInternalScrollWheel}
+                          style={{
+                            width: '100%',
+                            minHeight: 140,
+                            maxHeight: 340,
+                            overflowY: 'auto',
+                            overscrollBehavior: 'auto',
+                            scrollbarWidth: 'thin',
+                            scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
+                            resize: 'vertical',
+                            background: sysInputBg,
+                            border: `1px solid ${sysBorder}`,
+                            borderRadius: 6,
+                            padding: '8px 10px',
+                            color: sysTextPrimary,
+                            fontSize: 12.5,
+                            fontWeight: 400,
+                            fontFamily: 'inherit',
+                            outline: 'none',
+                            boxSizing: 'border-box',
+                          }}
+                        />
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                          <button
+                            type="button"
+                            onClick={() => setEditingCommentId(null)}
+                            style={{ padding: '6px 12px', borderRadius: 6, border: 'none', background: sysHoverBg, color: sysTextPrimary, fontSize: 12, fontWeight: 400, cursor: 'pointer' }}
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!editingCommentText.trim() || busyCommentId === c.id}
+                            onClick={() => handleSaveCommentEdit(c.id)}
+                            style={{
+                              padding: '6px 12px',
+                              borderRadius: 6,
+                              border: 'none',
+                              background: accentColor,
+                              color: accentContrastText,
+                              fontSize: 12,
+                              fontWeight: 500,
+                              cursor: 'pointer',
+                              opacity: !editingCommentText.trim() || busyCommentId === c.id ? 0.6 : 1,
+                            }}
+                          >
+                            {busyCommentId === c.id ? 'Salvando…' : 'Salvar'}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        className="issue-description-scrollable"
+                        onWheel={handleInternalScrollWheel}
+                        style={{
+                          padding: '16px 18px',
+                          fontSize: 12.5,
+                          fontWeight: 400,
+                          lineHeight: 1.55,
+                          color: sysTextPrimary,
+                          minHeight: 100,
+                          maxHeight: 360,
+                          overflowY: 'auto',
+                          overscrollBehavior: 'auto',
+                          scrollbarWidth: 'thin',
+                          scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
+                        }}
+                      >
+                        {safeRenderMarkdown(c.body || '')}
+                      </div>
+                    )}
                   </div>
                 ))
               )}
@@ -3356,8 +4224,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
               <div style={{ marginTop: 20 }}>
                 <div
                   style={{
-                    fontSize: 16,
-                    fontWeight: 600,
+                    fontSize: 13,
+                    fontWeight: 500,
                     color: sysTextPrimary,
                     marginBottom: 8,
                   }}
@@ -3373,6 +4241,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     background: sysCardBg,
                     position: 'relative',
                     zIndex: isCloseSplitOpen ? 50 : 1,
+                    flexShrink: 0,
                   }}
                 >
                   {/* Tabs & Toolbar Header */}
@@ -3401,8 +4270,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           marginBottom: -1,
                           background: 'transparent',
                           color: commentTab === 'write' ? sysTextPrimary : sysTextSecondary,
-                          fontSize: 13.5,
-                          fontWeight: commentTab === 'write' ? 600 : 400,
+                          fontSize: 12.5,
+                          fontWeight: commentTab === 'write' ? 500 : 400,
                           cursor: 'pointer',
                           transition: 'color 0.15s ease',
                         }}
@@ -3419,8 +4288,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           marginBottom: -1,
                           background: 'transparent',
                           color: commentTab === 'preview' ? sysTextPrimary : sysTextSecondary,
-                          fontSize: 13.5,
-                          fontWeight: commentTab === 'preview' ? 600 : 400,
+                          fontSize: 12.5,
+                          fontWeight: commentTab === 'preview' ? 500 : 400,
                           cursor: 'pointer',
                           transition: 'color 0.15s ease',
                         }}
@@ -3736,9 +4605,10 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         }}
                       >
                         <textarea
-                          rows={5}
+                          rows={7}
                           value={newCommentText}
                           onChange={(e) => setNewCommentText(e.target.value)}
+                          onWheel={handleInternalScrollWheel}
                           placeholder="Use Markdown to format your comment"
                           style={{
                             width: '100%',
@@ -3747,12 +4617,18 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             background: 'transparent',
                             border: 'none',
                             color: sysTextPrimary,
-                            fontSize: 13.5,
-                            lineHeight: 1.5,
+                            fontSize: 12.5,
+                            fontWeight: 400,
+                            lineHeight: 1.55,
                             fontFamily: 'inherit',
                             outline: 'none',
                             resize: 'vertical',
-                            minHeight: 100,
+                            minHeight: 170,
+                            maxHeight: 400,
+                            overflowY: 'auto',
+                            overscrollBehavior: 'auto',
+                            scrollbarWidth: 'thin',
+                            scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
                           }}
                           onFocus={(e) => {
                             const p = e.currentTarget.parentElement;
@@ -3772,18 +4648,26 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       </div>
                     ) : (
                       <div
+                        onWheel={handleInternalScrollWheel}
                         style={{
                           borderRadius: 6,
                           border: `1px solid ${sysBorder}`,
                           background: sysInputBg,
                           padding: '12px 14px',
-                          minHeight: 100,
+                          minHeight: 170,
+                          maxHeight: 400,
+                          overflowY: 'auto',
+                          overscrollBehavior: 'auto',
+                          fontSize: 12.5,
+                          fontWeight: 400,
+                          scrollbarWidth: 'thin',
+                          scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
                         }}
                       >
                         {newCommentText.trim() ? (
                           safeRenderMarkdown(newCommentText)
                         ) : (
-                          <span style={{ color: sysTextSecondary, fontStyle: 'italic', fontSize: 13 }}>
+                          <span style={{ color: sysTextSecondary, fontStyle: 'italic', fontSize: 12.5, fontWeight: 400 }}>
                             Nothing to preview.
                           </span>
                         )}
@@ -3821,7 +4705,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         background: 'transparent',
                         border: 'none',
                         color: isEffectiveDark ? '#848d97' : '#656d76',
-                        fontSize: 13,
+                        fontSize: 12,
+                        fontWeight: 400,
                         cursor: 'pointer',
                         padding: '4px 6px',
                         borderRadius: 6,
@@ -3869,8 +4754,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             background: 'transparent',
                             border: 'none',
                             color: sysTextPrimary,
-                            fontSize: 13,
-                            fontWeight: 500,
+                            fontSize: 12.5,
+                            fontWeight: 400,
                             cursor: isSavingStatus ? 'wait' : 'pointer',
                             transition: 'background 0.15s ease',
                           }}
@@ -4041,7 +4926,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                 ) : (() => {
                                   const filtered = repoIssues.filter((i) => {
                                     const num = i.number || i.githubNumber;
-                                    const currentNum = issue.githubNumber || issue.number;
+                                    const currentNum = issue.githubNumber || (issue as any).number;
                                     if (num && currentNum && num === currentNum) return false;
                                     if (!duplicateSearchQuery.trim()) return true;
                                     const q = duplicateSearchQuery.toLowerCase();
@@ -4317,8 +5202,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         border: 'none',
                         borderRadius: 6,
                         color: accentContrastText,
-                        fontSize: 13,
-                        fontWeight: 600,
+                        fontSize: 12.5,
+                        fontWeight: 500,
                         cursor: !newCommentText.trim() || isSubmittingComment ? 'not-allowed' : 'pointer',
                         opacity: !newCommentText.trim() || isSubmittingComment ? 0.6 : 1,
                         transition: 'all 0.15s ease',
@@ -4358,8 +5243,9 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
               flexDirection: 'column',
               gap: 0,
               minHeight: 0,
+              scrollbarWidth: 'thin',
+              scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.15) transparent' : 'rgba(0, 0, 0, 0.15) transparent',
             }}
-            className="no-scrollbar"
           >
             {/* 1. Assignees */}
             <div
@@ -4524,11 +5410,11 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     {(() => {
                       const list: Array<{ login: string; name?: string; avatarUrl?: string }> = [];
                       if (currentUser?.login) {
-                        list.push({ login: currentUser.login, name: currentUser.name || currentUser.login, avatarUrl: currentUser.avatarUrl });
+                        list.push({ login: currentUser.login, name: (currentUser as any).name || currentUser.login, avatarUrl: currentUser.avatarUrl });
                       }
                       collaborators.forEach((c) => {
                         if (!list.some((item) => item.login === c.login)) {
-                          list.push({ login: c.login, name: c.name || c.login, avatarUrl: c.avatarUrl });
+                          list.push({ login: c.login, name: (c as any).name || c.login, avatarUrl: c.avatarUrl });
                         }
                       });
 
@@ -5053,10 +5939,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: selectedType !== 'No type' ? (theme?.textPrimary || '#fff') : (theme?.textSecondary || '#8b949e'), padding: '0 6px' }}>
-                {selectedType === 'Bug' && <div style={{ width: 10, height: 10, borderRadius: '50%', border: '2px solid #f85149' }} />}
-                {selectedType === 'Feature' && <div style={{ width: 10, height: 10, borderRadius: '50%', border: '2px solid #388bfd' }} />}
-                {selectedType === 'Task' && <div style={{ width: 10, height: 10, borderRadius: '50%', border: '2px solid #d29922' }} />}
-                <span>{selectedType}</span>
+                {selectedTypeColor && <div style={{ width: 10, height: 10, borderRadius: '50%', border: `2px solid ${selectedTypeColor}` }} />}
+                <span>{isLoadingDetails && !details ? 'Carregando…' : selectedType}</span>
               </div>
 
               {/* Popup Select Issue Type */}
@@ -5125,21 +6009,34 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   <div style={{ borderBottom: `1px solid ${sysBorder}` }} />
 
                   <div>
-                    {[
-                      { key: 'Bug', title: 'Bug', description: 'An unexpected problem or behavior', color: '#f85149' },
-                      { key: 'Feature', title: 'Feature', description: 'A request, idea, or new functionality', color: '#388bfd' },
-                      { key: 'Task', title: 'Task', description: 'A specific piece of work', color: '#d29922' },
-                    ]
-                      .filter((t) => t.title.toLowerCase().includes(typeSearch.toLowerCase()) || t.description.toLowerCase().includes(typeSearch.toLowerCase()))
-                      .map((t) => {
-                        const isSelected = selectedType === t.key;
+                    {(() => {
+                      const types = details?.issueTypes || [];
+                      if (!details) {
+                        return (
+                          <div style={{ padding: '12px 14px', fontSize: 12, color: sysTextSecondary }}>
+                            {isLoadingDetails ? 'Carregando tipos do GitHub…' : detailsError || 'Tipos indisponíveis.'}
+                          </div>
+                        );
+                      }
+                      if (types.length === 0) {
+                        return (
+                          <div style={{ padding: '12px 14px', fontSize: 12, color: sysTextSecondary }}>
+                            Este repositório não tem tipos de issue configurados no GitHub.
+                          </div>
+                        );
+                      }
+                      const q = typeSearch.toLowerCase();
+                      const options = [
+                        ...(details.issue.issueType ? [{ id: '', name: 'Clear type', color: undefined as string | undefined, description: 'Remove o tipo da issue' }] : []),
+                        ...types,
+                      ].filter((t) => t.name.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q));
+                      return options.map((t) => {
+                        const isSelected = Boolean(t.id) && details.issue.issueType?.id === t.id;
+                        const color = t.id ? githubColorToHex(t.color) : sysTextSecondary;
                         return (
                           <div
-                            key={t.key}
-                            onClick={() => {
-                              setSelectedType(t.key);
-                              setActiveSidebarPopup(null);
-                            }}
+                            key={t.id || 'clear'}
+                            onClick={() => handleSetIssueType(t.id || null)}
                             style={{
                               position: 'relative',
                               display: 'flex',
@@ -5174,7 +6071,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                 width: 14,
                                 height: 14,
                                 borderRadius: '50%',
-                                border: `2px solid ${t.color}`,
+                                border: `2px solid ${color}`,
                                 flexShrink: 0,
                                 marginTop: 3,
                               }}
@@ -5182,15 +6079,18 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
 
                             <div style={{ flex: 1 }}>
                               <div style={{ fontSize: 13.5, fontWeight: 600, color: sysTextPrimary }}>
-                                {t.title}
+                                {t.name}
                               </div>
-                              <div style={{ fontSize: 12, color: sysTextSecondary, marginTop: 2 }}>
-                                {t.description}
-                              </div>
+                              {t.description && (
+                                <div style={{ fontSize: 12, color: sysTextSecondary, marginTop: 2 }}>
+                                  {t.description}
+                                </div>
+                              )}
                             </div>
                           </div>
                         );
-                      })}
+                      });
+                    })()}
                   </div>
                 </div>
               )}
@@ -5520,401 +6420,393 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   <div style={{ borderBottom: `1px solid ${sysBorder}` }} />
 
                   <div style={{ maxHeight: 250, overflowY: 'auto' }}>
-                    {/* Section: Group selected */}
                     {(() => {
-                      const activeProject = repoFullName?.split('/')[1] || issue.projectTitle || 'Estância Bahia';
-                      const recentProjects = ['AgroBravo', 'Aura Dev', 'Click Fan', 'Calcfarm'].filter((p) => p !== activeProject);
-                      const orgProjects = ['Sanspray'].filter((p) => p !== activeProject);
-
-                      const matchesSearch = (title: string) => title.toLowerCase().includes(projectSearch.toLowerCase());
-
-                      return (
-                        <>
-                          {matchesSearch(activeProject) && (
-                            <div>
-                              <div
-                                style={{
-                                  padding: '6px 12px',
-                                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
-                                  fontSize: 11.5,
-                                  fontWeight: 600,
-                                  color: sysTextSecondary,
-                                  borderBottom: `1px solid ${sysBorder}`,
-                                }}
-                              >
-                                Group selected
-                              </div>
-                              <div
-                                onClick={() => {
-                                  showToast(`Projeto "${activeProject}" ativo!`);
-                                }}
-                                style={{
-                                  position: 'relative',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 10,
-                                  padding: '8px 12px',
-                                  cursor: 'pointer',
-                                  background: hexToRgba(accentColor, 0.08),
-                                  borderBottom: `1px solid ${sysBorder}`,
-                                }}
-                                onMouseEnter={(e) => { e.currentTarget.style.background = sysHoverBg; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.background = hexToRgba(accentColor, 0.08); }}
-                              >
-                                <div
-                                  style={{
-                                    position: 'absolute',
-                                    left: 0,
-                                    top: 0,
-                                    bottom: 0,
-                                    width: 3,
-                                    background: accentColor,
-                                    borderRadius: '0 2px 2px 0',
-                                  }}
-                                />
-                                <div
-                                  style={{
-                                    width: 16,
-                                    height: 16,
-                                    borderRadius: 3,
-                                    background: accentColor,
-                                    border: `1px solid ${accentColor}`,
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    flexShrink: 0,
-                                  }}
-                                >
-                                  <Check size={11} color={accentContrastText} strokeWidth={3} />
-                                </div>
-                                <Columns3 size={15} color={sysTextSecondary} />
-                                <span style={{ fontSize: 13, fontWeight: 600, color: sysTextPrimary }}>
-                                  {activeProject}
-                                </span>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Section: Recent */}
-                          {recentProjects.some(matchesSearch) && (
-                            <div>
-                              <div
-                                style={{
-                                  padding: '6px 12px',
-                                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
-                                  fontSize: 11.5,
-                                  fontWeight: 600,
-                                  color: sysTextSecondary,
-                                  borderTop: `1px solid ${sysBorder}`,
-                                  borderBottom: `1px solid ${sysBorder}`,
-                                }}
-                              >
-                                Recent
-                              </div>
-                              {recentProjects.filter(matchesSearch).map((proj) => (
-                                <div
-                                  key={proj}
-                                  onClick={() => {
-                                    onUpdateIssue?.({ projectTitle: proj });
-                                    showToast(`Projeto alterado para "${proj}"!`);
-                                    setActiveSidebarPopup(null);
-                                  }}
-                                  style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 10,
-                                    padding: '8px 12px',
-                                    cursor: 'pointer',
-                                    borderBottom: `1px solid ${sysBorder}`,
-                                    transition: 'background 0.1s ease',
-                                  }}
-                                  onMouseEnter={(e) => { e.currentTarget.style.background = sysHoverBg; }}
-                                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                                >
-                                  <div
-                                    style={{
-                                      width: 16,
-                                      height: 16,
-                                      borderRadius: 3,
-                                      background: 'transparent',
-                                      border: `1px solid ${sysBorder}`,
-                                      flexShrink: 0,
-                                    }}
-                                  />
-                                  <Columns3 size={15} color={sysTextSecondary} />
-                                  <span style={{ fontSize: 13, fontWeight: 500, color: sysTextPrimary }}>
-                                    {proj}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-
-                          {/* Section: Repository */}
-                          <div
-                            style={{
-                              padding: '6px 12px',
-                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
-                              fontSize: 11.5,
-                              fontWeight: 600,
-                              color: sysTextSecondary,
-                              borderTop: `1px solid ${sysBorder}`,
-                            }}
-                          >
-                            Repository
+                      if (!details) {
+                        return (
+                          <div style={{ padding: '12px 14px', fontSize: 12, color: sysTextSecondary }}>
+                            {isLoadingDetails ? 'Carregando projects do GitHub…' : detailsError || 'Projects indisponíveis.'}
                           </div>
-
-                          {/* Section: Organization */}
-                          <div>
+                        );
+                      }
+                      const inProjects = details.projectItems.map((pi) => ({ id: pi.project.id, title: pi.project.title }));
+                      const all = [...inProjects];
+                      details.repoProjects.forEach((p) => {
+                        if (!all.some((x) => x.id === p.id)) all.push({ id: p.id, title: p.title });
+                      });
+                      const q = projectSearch.toLowerCase();
+                      const filtered = all.filter((p) => p.title.toLowerCase().includes(q));
+                      if (filtered.length === 0) {
+                        return (
+                          <div style={{ padding: '12px 14px', fontSize: 12, color: sysTextSecondary }}>
+                            Nenhum project vinculado a este repositório.
+                          </div>
+                        );
+                      }
+                      return filtered.map((proj) => {
+                        const isIn = inProjects.some((p) => p.id === proj.id);
+                        return (
+                          <div
+                            key={proj.id}
+                            onClick={() => handleToggleProject(proj)}
+                            style={{
+                              position: 'relative',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              padding: '8px 12px',
+                              cursor: 'pointer',
+                              background: isIn ? hexToRgba(accentColor, 0.08) : 'transparent',
+                              borderBottom: `1px solid ${sysBorder}`,
+                              transition: 'background 0.1s ease',
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = sysHoverBg; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = isIn ? hexToRgba(accentColor, 0.08) : 'transparent'; }}
+                          >
                             <div
                               style={{
-                                padding: '6px 12px',
-                                background: isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
-                                fontSize: 11.5,
-                                fontWeight: 600,
-                                color: sysTextSecondary,
-                                borderTop: `1px solid ${sysBorder}`,
-                                borderBottom: `1px solid ${sysBorder}`,
+                                width: 16,
+                                height: 16,
+                                borderRadius: 3,
+                                background: isIn ? accentColor : 'transparent',
+                                border: `1px solid ${isIn ? accentColor : sysBorder}`,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                flexShrink: 0,
                               }}
                             >
-                              Organization
+                              {isIn && <Check size={11} color={accentContrastText} strokeWidth={3} />}
                             </div>
-                            {orgProjects.filter(matchesSearch).map((proj) => (
-                              <div
-                                key={proj}
-                                onClick={() => {
-                                  onUpdateIssue?.({ projectTitle: proj });
-                                  showToast(`Projeto alterado para "${proj}"!`);
-                                  setActiveSidebarPopup(null);
-                                }}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 10,
-                                  padding: '8px 12px',
-                                  cursor: 'pointer',
-                                  borderBottom: `1px solid ${sysBorder}`,
-                                  transition: 'background 0.1s ease',
-                                }}
-                                onMouseEnter={(e) => { e.currentTarget.style.background = sysHoverBg; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                              >
-                                <div
-                                  style={{
-                                    width: 16,
-                                    height: 16,
-                                    borderRadius: 3,
-                                    background: 'transparent',
-                                    border: `1px solid ${sysBorder}`,
-                                    flexShrink: 0,
-                                  }}
-                                />
-                                <Columns3 size={15} color={sysTextSecondary} />
-                                <span style={{ fontSize: 13, fontWeight: 500, color: sysTextPrimary }}>
-                                  {proj}
-                                </span>
-                              </div>
-                            ))}
+                            <Columns3 size={15} color={sysTextSecondary} />
+                            <span style={{ fontSize: 13, fontWeight: isIn ? 600 : 500, color: sysTextPrimary }}>{proj.title}</span>
                           </div>
-                        </>
-                      );
+                        );
+                      });
                     })()}
                   </div>
                 </div>
               )}
 
-              {/* Project Card */}
-              <div
-                style={{
-                  borderRadius: 8,
-                  border: 'none',
-                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f6f8fa',
-                  padding: '10px 12px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 8,
-                }}
-              >
-                {/* Card Title */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Columns3 size={14} color={theme?.textSecondary || '#8b949e'} />
-                  <span style={{ fontSize: 12.5, fontWeight: 600, color: theme?.textPrimary || '#fff' }}>
-                    {repoFullName?.split('/')[1] || issue.projectTitle || 'Estância Bahia'}
-                  </span>
+              {!details && (
+                <div style={{ fontSize: 12, color: theme?.textSecondary || '#8b949e', padding: '0 6px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {isLoadingDetails ? (
+                    <>
+                      <Loader2 size={12} className="animate-spin" /> Carregando do GitHub…
+                    </>
+                  ) : detailsError ? (
+                    <span>
+                      {detailsError}{' '}
+                      <span style={{ color: accentColor, cursor: 'pointer' }} onClick={() => loadDetails()}>
+                        Tentar novamente
+                      </span>
+                    </span>
+                  ) : (
+                    'None yet'
+                  )}
                 </div>
+              )}
 
-                {/* Status Row */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: 12, color: theme?.textSecondary || '#8b949e' }}>Status</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <button
-                      type="button"
-                      onClick={() => setIsStatusDropdownOpen((prev) => !prev)}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 4,
-                        padding: '2px 8px',
-                        borderRadius: 12,
-                        background: 'rgba(35, 134, 54, 0.2)',
-                        border: '1px solid rgba(35, 134, 54, 0.4)',
-                        color: '#3fb950',
-                        fontSize: 11.5,
-                        fontWeight: 500,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <span>{issue.status || 'Backlog'}</span>
-                      <ChevronDown size={11} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsProjectCardExpanded((prev) => !prev)}
-                      style={{
-                        width: 22,
-                        height: 22,
-                        borderRadius: 4,
-                        background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
-                        border: 'none',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        cursor: 'pointer',
-                        color: theme?.textSecondary || '#8b949e',
-                      }}
-                    >
-                      {isProjectCardExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                    </button>
-                  </div>
-                </div>
+              {details && details.projectItems.length === 0 && (
+                <div style={{ fontSize: 12, color: theme?.textSecondary || '#8b949e', padding: '0 6px' }}>None yet</div>
+              )}
 
-                {/* Expanded Fields */}
-                {isProjectCardExpanded && (
-                  <div
-                    style={{
-                      borderTop: 'none',
-                      paddingTop: 4,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 8,
-                      fontSize: 12,
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
-                      <span style={{ color: theme?.textSecondary || '#8b949e' }}>Size</span>
-                      <button
-                        type="button"
-                        onClick={() => setIsSizeDropdownOpen((prev) => !prev)}
-                        style={{ background: 'transparent', border: 'none', color: selectedSize ? (theme?.textPrimary || '#fff') : (theme?.textSecondary || '#8b949e'), fontSize: 12, cursor: 'pointer' }}
-                      >
-                        {selectedSize || 'Choose an option'}
-                      </button>
-                      {isSizeDropdownOpen && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            top: 'calc(100% + 4px)',
-                            right: 0,
-                            background: dropdownSurfaceBg,
-                            border: 'none',
-                            borderRadius: 8,
-                            padding: 4,
-                            boxShadow: isEffectiveDark ? '0 8px 24px rgba(0,0,0,0.7)' : '0 4px 16px rgba(0,0,0,0.1)',
-                            zIndex: 100,
-                            minWidth: 100,
-                          }}
-                        >
-                          {['XS', 'S', 'M', 'L', 'XL'].map((s) => (
-                            <div
-                              key={s}
-                              onClick={() => {
-                                setSelectedSize(s);
-                                setIsSizeDropdownOpen(false);
-                              }}
-                              style={{ padding: '4px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 11.5, color: selectedSize === s ? accentColor : (theme?.textPrimary || '#fff') }}
-                            >
-                              {s}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ color: theme?.textSecondary || '#8b949e' }}>Estimate</span>
-                      <input
-                        type="text"
-                        value={estimateValue}
-                        placeholder="Enter number..."
-                        onChange={(e) => setEstimateValue(e.target.value)}
-                        style={{
-                          width: 100,
-                          background: 'transparent',
-                          border: 'none',
-                          textAlign: 'right',
-                          color: theme?.textPrimary || '#fff',
-                          fontSize: 12,
-                          outline: 'none',
-                        }}
-                      />
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ color: theme?.textSecondary || '#8b949e' }}>Sprint</span>
-                      <button
-                        type="button"
-                        onClick={() => setIsSprintDropdownOpen((prev) => !prev)}
-                        style={{ background: 'transparent', border: 'none', color: issue.milestoneTitle ? (theme?.textPrimary || '#fff') : (theme?.textSecondary || '#8b949e'), fontSize: 12, cursor: 'pointer', maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                      >
-                        {issue.milestoneTitle || 'Choose an iteration'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+              {details?.projectItems.map((item) => {
+                const statusField = statusFieldOf(item);
+                const statusVal = statusField ? item.values[statusField.id] : undefined;
+                const statusOpt = statusField?.options?.find((o) => o.id === statusVal?.optionId);
+                const statusColor = githubColorToHex(statusOpt?.color || 'GRAY');
+                const otherFields = item.fields.filter(
+                  (f) => EDITABLE_PROJECT_FIELD_TYPES.has(f.dataType) && f.id !== statusField?.id
+                );
+                const isCollapsed = collapsedProjectItems.has(item.itemId);
+                const statusKey = statusField ? `${item.itemId}:${statusField.id}` : '';
 
-              {/* Status Dropdown */}
-              {isStatusDropdownOpen && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: 'calc(100% + 4px)',
-                    left: 0,
-                    right: 0,
-                    background: dropdownSurfaceBg,
-                    border: 'none',
-                    borderRadius: 10,
-                    padding: 6,
-                    boxShadow: isEffectiveDark ? '0 12px 36px rgba(0,0,0,0.7)' : '0 8px 24px rgba(0,0,0,0.12)',
-                    zIndex: 100,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 2,
-                  }}
-                >
-                  {statusOptions.map((st) => (
+                const renderFieldValue = (f: GithubProjectFieldDef) => {
+                  const v = item.values[f.id];
+                  if (f.dataType === 'SINGLE_SELECT') {
+                    const opt = f.options?.find((o) => o.id === v?.optionId);
+                    return opt ? (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: githubColorToHex(opt.color) }} />
+                        {opt.name}
+                      </span>
+                    ) : null;
+                  }
+                  if (f.dataType === 'ITERATION') return v?.title || null;
+                  if (f.dataType === 'NUMBER') return typeof v?.number === 'number' ? String(v.number) : null;
+                  if (f.dataType === 'DATE') return v?.date ? new Date(`${v.date.slice(0, 10)}T00:00:00`).toLocaleDateString('pt-BR') : null;
+                  if (f.dataType === 'TEXT') return v?.text || null;
+                  return null;
+                };
+
+                const renderFieldEditor = (f: GithubProjectFieldDef) => {
+                  const v = item.values[f.id];
+                  const optionRow = (key: string, label: React.ReactNode, selected: boolean, onPick: () => void) => (
                     <div
-                      key={st}
-                      onClick={() => {
-                        const rawState = st === 'Concluído' ? 'closed' : 'open';
-                        onUpdateIssue?.({ status: st, rawState, state: rawState });
-                        setIsStatusDropdownOpen(false);
-                      }}
+                      key={key}
+                      onClick={onPick}
                       style={{
                         padding: '6px 8px',
                         borderRadius: 6,
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
+                        gap: 8,
                         cursor: 'pointer',
                         fontSize: 12,
-                        color: issue.status === st ? accentColor : (theme?.textPrimary || '#fff'),
+                        color: selected ? accentColor : (theme?.textPrimary || '#fff'),
                       }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = sysHoverBg; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                     >
-                      <span>{st}</span>
-                      {issue.status === st && <Check size={12} color={accentColor} />}
+                      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+                      {selected && <Check size={12} color={accentColor} />}
                     </div>
-                  ))}
-                </div>
-              )}
+                  );
+                  const clearRow = v
+                    ? optionRow('__clear', <span style={{ color: theme?.textSecondary || '#8b949e' }}>Limpar</span>, false, () => handleSetProjectField(item, f, null))
+                    : null;
+
+                  if (f.dataType === 'SINGLE_SELECT') {
+                    return (
+                      <>
+                        {(f.options || []).map((o) =>
+                          optionRow(
+                            o.id,
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                              <span style={{ width: 8, height: 8, borderRadius: '50%', background: githubColorToHex(o.color) }} />
+                              {o.name}
+                            </span>,
+                            v?.optionId === o.id,
+                            () => handleSetProjectField(item, f, { singleSelectOptionId: o.id })
+                          )
+                        )}
+                        {clearRow}
+                      </>
+                    );
+                  }
+                  if (f.dataType === 'ITERATION') {
+                    const iterations = f.iterations || [];
+                    const active = iterations.filter((it) => !it.completed);
+                    const completed = iterations.filter((it) => it.completed);
+                    const renderIt = (it: (typeof iterations)[number]) =>
+                      optionRow(
+                        it.id,
+                        <span style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span>{it.title}</span>
+                          <span style={{ fontSize: 10.5, color: theme?.textSecondary || '#8b949e' }}>{formatIterationRange(it.startDate, it.duration)}</span>
+                        </span>,
+                        v?.iterationId === it.id,
+                        () => handleSetProjectField(item, f, { iterationId: it.id })
+                      );
+                    return (
+                      <>
+                        {active.map(renderIt)}
+                        {completed.length > 0 && (
+                          <div style={{ padding: '6px 8px 2px', fontSize: 10.5, fontWeight: 600, color: theme?.textSecondary || '#8b949e' }}>Concluídas</div>
+                        )}
+                        {completed.map(renderIt)}
+                        {iterations.length === 0 && (
+                          <div style={{ padding: '6px 8px', fontSize: 12, color: theme?.textSecondary || '#8b949e' }}>Nenhuma iteração configurada.</div>
+                        )}
+                        {clearRow}
+                      </>
+                    );
+                  }
+                  const inputType = f.dataType === 'NUMBER' ? 'number' : f.dataType === 'DATE' ? 'date' : 'text';
+                  const initial =
+                    f.dataType === 'NUMBER' ? (typeof v?.number === 'number' ? String(v.number) : '') : f.dataType === 'DATE' ? (v?.date || '').slice(0, 10) : v?.text || '';
+                  const commit = (raw: string) => {
+                    const trimmed = raw.trim();
+                    if (trimmed === initial) {
+                      setOpenProjectFieldKey(null);
+                      return;
+                    }
+                    if (!trimmed) {
+                      handleSetProjectField(item, f, null);
+                      return;
+                    }
+                    if (f.dataType === 'NUMBER') {
+                      const n = Number(trimmed.replace(',', '.'));
+                      if (!Number.isFinite(n)) {
+                        showToast('Informe um número válido.');
+                        return;
+                      }
+                      handleSetProjectField(item, f, { number: n });
+                    } else if (f.dataType === 'DATE') {
+                      handleSetProjectField(item, f, { date: trimmed });
+                    } else {
+                      handleSetProjectField(item, f, { text: trimmed });
+                    }
+                  };
+                  return (
+                    <div style={{ padding: 4 }}>
+                      <input
+                        autoFocus
+                        type={inputType}
+                        defaultValue={initial}
+                        placeholder={f.dataType === 'NUMBER' ? 'Digite um número…' : ''}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') commit((e.target as HTMLInputElement).value);
+                          if (e.key === 'Escape') {
+                            e.stopPropagation();
+                            setOpenProjectFieldKey(null);
+                          }
+                        }}
+                        onBlur={(e) => commit(e.target.value)}
+                        style={{
+                          width: '100%',
+                          background: sysInputBg,
+                          border: `1px solid ${sysBorder}`,
+                          borderRadius: 6,
+                          padding: '5px 8px',
+                          color: sysTextPrimary,
+                          fontSize: 12,
+                          outline: 'none',
+                          colorScheme: isEffectiveDark ? 'dark' : 'light',
+                        }}
+                      />
+                    </div>
+                  );
+                };
+
+                const dropdownStyle: React.CSSProperties = {
+                  position: 'absolute',
+                  top: 'calc(100% + 4px)',
+                  right: 0,
+                  background: dropdownSurfaceBg,
+                  border: 'none',
+                  borderRadius: 8,
+                  padding: 4,
+                  boxShadow: isEffectiveDark ? '0 8px 24px rgba(0,0,0,0.7)' : '0 4px 16px rgba(0,0,0,0.1)',
+                  zIndex: 100,
+                  minWidth: 180,
+                  maxHeight: 260,
+                  overflowY: 'auto',
+                };
+
+                return (
+                  <div
+                    key={item.itemId}
+                    style={{
+                      borderRadius: 8,
+                      border: 'none',
+                      background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f6f8fa',
+                      padding: '10px 12px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 8,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Columns3 size={14} color={theme?.textSecondary || '#8b949e'} />
+                      <span
+                        onClick={() => item.project.url && window.electronAPI?.shell?.openExternal?.(item.project.url)}
+                        style={{ fontSize: 12.5, fontWeight: 600, color: theme?.textPrimary || '#fff', cursor: item.project.url ? 'pointer' : 'default' }}
+                      >
+                        {item.project.title}
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
+                      <span style={{ fontSize: 12, color: theme?.textSecondary || '#8b949e' }}>Status</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {statusField ? (
+                          <button
+                            type="button"
+                            disabled={savingFieldKey === statusKey}
+                            onClick={() => setOpenProjectFieldKey((prev) => (prev === statusKey ? null : statusKey))}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              padding: '2px 8px',
+                              borderRadius: 12,
+                              background: statusOpt ? hexToRgba(statusColor, 0.2) : 'transparent',
+                              border: `1px solid ${statusOpt ? hexToRgba(statusColor, 0.4) : sysBorder}`,
+                              color: statusOpt ? statusColor : (theme?.textSecondary || '#8b949e'),
+                              fontSize: 11.5,
+                              fontWeight: 500,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {savingFieldKey === statusKey && <Loader2 size={11} className="animate-spin" />}
+                            <span>{statusOpt?.name || 'Sem status'}</span>
+                            <ChevronDown size={11} />
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: 12, color: theme?.textSecondary || '#8b949e' }}>—</span>
+                        )}
+                        {otherFields.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCollapsedProjectItems((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(item.itemId)) next.delete(item.itemId);
+                                else next.add(item.itemId);
+                                return next;
+                              })
+                            }
+                            style={{
+                              width: 22,
+                              height: 22,
+                              borderRadius: 4,
+                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+                              border: 'none',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              cursor: 'pointer',
+                              color: theme?.textSecondary || '#8b949e',
+                            }}
+                          >
+                            {isCollapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+                          </button>
+                        )}
+                      </div>
+                      {statusField && openProjectFieldKey === statusKey && <div style={dropdownStyle}>{renderFieldEditor(statusField)}</div>}
+                    </div>
+
+                    {!isCollapsed && otherFields.length > 0 && (
+                      <div style={{ paddingTop: 4, display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12 }}>
+                        {otherFields.map((f) => {
+                          const key = `${item.itemId}:${f.id}`;
+                          const display = renderFieldValue(f);
+                          return (
+                            <div key={f.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative', gap: 8 }}>
+                              <span style={{ color: theme?.textSecondary || '#8b949e', flexShrink: 0 }}>{f.name}</span>
+                              <button
+                                type="button"
+                                disabled={savingFieldKey === key}
+                                onClick={() => setOpenProjectFieldKey((prev) => (prev === key ? null : key))}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  background: 'transparent',
+                                  border: 'none',
+                                  color: display ? (theme?.textPrimary || '#fff') : (theme?.textSecondary || '#8b949e'),
+                                  fontSize: 12,
+                                  cursor: 'pointer',
+                                  maxWidth: 160,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {savingFieldKey === key && <Loader2 size={11} className="animate-spin" />}
+                                {display || (f.dataType === 'ITERATION' ? 'Choose an iteration' : f.dataType === 'SINGLE_SELECT' ? 'Choose an option' : 'Enter value…')}
+                              </button>
+                              {openProjectFieldKey === key && <div style={dropdownStyle}>{renderFieldEditor(f)}</div>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
             {/* 6. Milestone */}
@@ -5968,7 +6860,10 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     </span>
                   </div>
                   <span style={{ fontSize: 11, color: theme?.textSecondary || '#8b949e', paddingLeft: 21 }}>
-                    {issue.dueDateIso ? `Due ${issue.dueDateIso}` : 'No due date'}
+                    {(() => {
+                      const due = details?.issue.milestone?.dueOn;
+                      return due ? `Due ${new Date(due).toLocaleDateString('pt-BR')}` : 'No due date';
+                    })()}
                   </span>
                 </div>
               ) : (
@@ -6042,27 +6937,23 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
 
                   <div style={{ maxHeight: 250, overflowY: 'auto' }}>
                     {(() => {
-                      const allMilestones: Array<{ number: number; title: string; dueDate?: string }> =
-                        availableSprints && availableSprints.length > 0
-                          ? availableSprints.map((sp) => ({
-                              number: sp.number ?? 1,
-                              title: sp.title || `Sprint ${sp.number}`,
-                              dueDate: 'No due date',
-                            }))
-                          : [
-                              { number: 1, title: 'Redesign Home - Sprint 1', dueDate: 'No due date' },
-                              { number: 2, title: 'Sprint 2 - Backend & Auth', dueDate: 'No due date' },
-                            ];
+                      // Só milestones reais do repositório. Sprints do Projects V2 (iterations) são
+                      // outro campo e ficam no card do Project acima.
+                      const fmtDue = (d?: string | null) => (d ? `Due ${new Date(d).toLocaleDateString('pt-BR')}` : 'No due date');
+                      const allMilestones: Array<{ number: number; title: string; dueDate?: string; closed?: boolean }> = details
+                        ? [...details.milestones]
+                            .sort((a, b) => (a.state === b.state ? 0 : a.state === 'OPEN' ? -1 : 1))
+                            .map((m) => ({ number: m.number, title: m.title, dueDate: fmtDue(m.dueOn), closed: m.state === 'CLOSED' }))
+                        : availableSprints
+                            .filter((sp) => !sp.isProjectIteration && !sp.iterationId && !sp.isVirtual && sp.number > 0)
+                            .map((sp) => ({ number: sp.number, title: sp.title, dueDate: fmtDue(sp.dueDateIso), closed: sp.state === 'closed' }));
 
-                      if (
-                        issue.milestoneTitle &&
-                        !allMilestones.some((m) => m.title.toLowerCase() === issue.milestoneTitle?.toLowerCase())
-                      ) {
-                        allMilestones.unshift({
-                          number: issue.milestoneNumber ?? 1,
-                          title: issue.milestoneTitle,
-                          dueDate: issue.dueDateIso ? `Due ${issue.dueDateIso}` : 'No due date',
-                        });
+                      if (!details && isLoadingDetails && allMilestones.length === 0) {
+                        return (
+                          <div style={{ padding: '14px 12px', fontSize: 12.5, color: sysTextSecondary, textAlign: 'center' }}>
+                            Carregando milestones do GitHub…
+                          </div>
+                        );
                       }
 
                       const filtered = allMilestones.filter((m) =>
@@ -6101,9 +6992,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           )}
 
                           {filtered.map((m) => {
-                            const isSelected =
-                              issue.milestoneNumber === m.number ||
-                              issue.milestoneTitle?.toLowerCase() === m.title.toLowerCase();
+                            const isSelected = issue.milestoneNumber === m.number;
 
                             return (
                               <div
@@ -6154,7 +7043,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                     {m.title}
                                   </div>
                                   <div style={{ fontSize: 11.5, color: sysTextSecondary, marginTop: 2 }}>
-                                    {m.dueDate || 'No due date'}
+                                    {m.closed ? 'Closed · ' : ''}{m.dueDate || 'No due date'}
                                   </div>
                                 </div>
                               </div>
@@ -6538,16 +7427,93 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 borderBottom: `1px solid ${sysBorder}`,
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <span style={{ fontSize: 12, fontWeight: 600, color: isEffectiveDark ? '#c9d1d9' : '#24292f' }}>Notifications</span>
-                <span style={{ fontSize: 11.5, color: '#58a6ff', cursor: 'pointer' }}>Customize</span>
+                <span
+                  onClick={() => setShowCustomizeNotifyMenu((prev) => !prev)}
+                  style={{ fontSize: 11.5, color: '#58a6ff', cursor: 'pointer', fontWeight: 500 }}
+                >
+                  Customize
+                </span>
+                {showCustomizeNotifyMenu && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      right: 0,
+                      top: 22,
+                      background: sysPopupBg,
+                      border: `1px solid ${sysPopupBorder}`,
+                      borderRadius: 6,
+                      boxShadow: sysPopupShadow,
+                      padding: 4,
+                      zIndex: 100,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 2,
+                      minWidth: 170,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSubscription(true)}
+                      style={{
+                        padding: '6px 8px',
+                        fontSize: 11.5,
+                        color: sysTextPrimary,
+                        background: 'transparent',
+                        border: 'none',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        borderRadius: 4,
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      ✓ Toda Atividade (All)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSubscription(true)}
+                      style={{
+                        padding: '6px 8px',
+                        fontSize: 11.5,
+                        color: sysTextPrimary,
+                        background: 'transparent',
+                        border: 'none',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        borderRadius: 4,
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      Menções e participação
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSubscription(false)}
+                      style={{
+                        padding: '6px 8px',
+                        fontSize: 11.5,
+                        color: '#f85149',
+                        background: 'transparent',
+                        border: 'none',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                        borderRadius: 4,
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      Ignorar notificações
+                    </button>
+                  </div>
+                )}
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setIsSubscribed((prev) => !prev);
-                  showToast(isSubscribed ? 'Notificações desativadas para esta issue.' : 'Notificações ativadas para esta issue.');
-                }}
+                disabled={isTogglingSubscription}
+                onClick={() => handleToggleSubscription()}
                 style={{
                   width: '100%',
                   padding: '6px 12px',
@@ -6557,7 +7523,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   color: theme?.textPrimary || '#fff',
                   fontSize: 12,
                   fontWeight: 500,
-                  cursor: 'pointer',
+                  cursor: isTogglingSubscription ? 'wait' : 'pointer',
+                  opacity: isTogglingSubscription ? 0.7 : 1,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -6566,7 +7533,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 }}
               >
                 {isSubscribed ? <BellOff size={13} /> : <Bell size={13} />}
-                <span>{isSubscribed ? 'Unsubscribe' : 'Subscribe'}</span>
+                <span>{isTogglingSubscription ? 'Salvando...' : isSubscribed ? 'Unsubscribe' : 'Subscribe'}</span>
               </button>
               <span style={{ fontSize: 11, color: theme?.textSecondary || '#8b949e', lineHeight: 1.35 }}>
                 {isSubscribed
@@ -6668,7 +7635,10 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
               {/* Transfer issue */}
               <button
                 type="button"
-                onClick={() => showToast('Transferência de issue em breve')}
+                onClick={() => {
+                  setTransferTargetRepo('');
+                  setIsTransferModalOpen(true);
+                }}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -6694,10 +7664,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
               {/* Clone issue */}
               <button
                 type="button"
-                onClick={() => {
-                  navigator.clipboard?.writeText?.(`${issue.title}\n\n${issue.description || ''}`);
-                  showToast('Conteúdo da issue clonado para área de transferência!');
-                }}
+                disabled={isCloningIssue}
+                onClick={handleCloneIssue}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -6709,7 +7677,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   color: theme?.textPrimary || '#fff',
                   fontSize: 12,
                   fontWeight: 400,
-                  cursor: 'pointer',
+                  cursor: isCloningIssue ? 'wait' : 'pointer',
+                  opacity: isCloningIssue ? 0.7 : 1,
                   textAlign: 'left',
                   transition: 'background 0.12s ease',
                 }}
@@ -6717,16 +7686,14 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
               >
                 <Copy size={14} color={theme?.textSecondary || '#8b949e'} />
-                <span>Clone issue</span>
+                <span>{isCloningIssue ? 'Clonando issue...' : 'Clone issue'}</span>
               </button>
 
               {/* Lock conversation */}
               <button
                 type="button"
-                onClick={() => {
-                  setIsConversationLocked((prev) => !prev);
-                  showToast(isConversationLocked ? 'Conversa desbloqueada.' : 'Conversa bloqueada.');
-                }}
+                disabled={isTogglingLock}
+                onClick={handleToggleLockIssue}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -6738,7 +7705,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   color: theme?.textPrimary || '#fff',
                   fontSize: 12,
                   fontWeight: 400,
-                  cursor: 'pointer',
+                  cursor: isTogglingLock ? 'wait' : 'pointer',
+                  opacity: isTogglingLock ? 0.7 : 1,
                   textAlign: 'left',
                   transition: 'background 0.12s ease',
                 }}
@@ -6746,19 +7714,14 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
               >
                 <Lock size={14} color={isConversationLocked ? '#e3b341' : (theme?.textSecondary || '#8b949e')} />
-                <span>{isConversationLocked ? 'Unlock conversation' : 'Lock conversation'}</span>
+                <span>{isTogglingLock ? 'Alterando...' : isConversationLocked ? 'Unlock conversation' : 'Lock conversation'}</span>
               </button>
 
               {/* Pin issue */}
               <button
                 type="button"
-                onClick={() => {
-                  setIsPinned((prev) => {
-                    const next = !prev;
-                    showToast(next ? 'Issue fixada!' : 'Issue desafixada.');
-                    return next;
-                  });
-                }}
+                disabled={isTogglingPin}
+                onClick={handleTogglePinIssue}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -6770,7 +7733,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   color: theme?.textPrimary || '#fff',
                   fontSize: 12,
                   fontWeight: 400,
-                  cursor: 'pointer',
+                  cursor: isTogglingPin ? 'wait' : 'pointer',
+                  opacity: isTogglingPin ? 0.7 : 1,
                   textAlign: 'left',
                   transition: 'background 0.12s ease',
                 }}
@@ -6778,7 +7742,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
               >
                 <Pin size={14} color={isPinned ? accentColor : (theme?.textSecondary || '#8b949e')} />
-                <span>{isPinned ? 'Unpin issue' : 'Pin issue'}</span>
+                <span>{isTogglingPin ? 'Salvando...' : isPinned ? 'Unpin issue' : 'Pin issue'}</span>
               </button>
 
               {/* Delete issue (abre ConfirmDeleteModal obrigatoriamente) */}
@@ -6840,6 +7804,162 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Modal de Confirmação para Remoção de Sub-issue */}
+      <ConfirmDeleteModal
+        isOpen={Boolean(subIssueToDelete)}
+        title="Excluir Sub-issue"
+        message={`Tem certeza que deseja remover a sub-issue "${subIssueToDelete?.text || ''}"?`}
+        itemDescription="Esta linha será excluída permanentemente do corpo da issue no GitHub."
+        confirmLabel="Excluir Sub-issue"
+        cancelLabel="Cancelar"
+        isDeleting={isDeletingSubIssue}
+        iconType="trash"
+        themeTokens={theme}
+        accentColor={accentColor}
+        onConfirm={handleConfirmRemoveSubIssue}
+        onClose={() => setSubIssueToDelete(null)}
+      />
+
+      {/* Modal de Confirmação para Remoção de Comentário */}
+      <ConfirmDeleteModal
+        isOpen={Boolean(commentToDelete)}
+        title="Excluir Comentário"
+        message={commentToDelete?.snippet ? `Tem certeza que deseja remover este comentário? "${commentToDelete.snippet}"` : 'Tem certeza que deseja remover este comentário?'}
+        itemDescription="Esta ação não pode ser desfeita. O comentário será excluído permanentemente do GitHub."
+        confirmLabel="Excluir Comentário"
+        cancelLabel="Cancelar"
+        isDeleting={isDeletingComment}
+        iconType="trash"
+        themeTokens={theme}
+        accentColor={accentColor}
+        onConfirm={handleConfirmDeleteComment}
+        onClose={() => setCommentToDelete(null)}
+      />
+
+      {isTransferModalOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.65)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 99999,
+            padding: 16,
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !isTransferringIssue) setIsTransferModalOpen(false);
+          }}
+        >
+          <div
+            style={{
+              width: '100%',
+              maxWidth: 440,
+              background: isEffectiveDark ? '#161b22' : '#ffffff',
+              border: isEffectiveDark ? '1px solid #30363d' : '1px solid #d0d7de',
+              borderRadius: 12,
+              padding: 20,
+              boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5), 0 8px 10px -6px rgba(0,0,0,0.5)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 16,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 8,
+                  background: 'rgba(56, 139, 253, 0.15)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#58a6ff',
+                }}
+              >
+                <ArrowRight size={18} />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: sysTextPrimary }}>
+                  Transferir Issue
+                </h3>
+                <p style={{ margin: 0, fontSize: 12, color: sysTextSecondary, marginTop: 2 }}>
+                  Mova a issue #{issue?.githubNumber} para outro repositório
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ fontSize: 12, fontWeight: 500, color: sysTextPrimary }}>
+                Repositório de Destino (owner/repo)
+              </label>
+              <input
+                type="text"
+                autoFocus
+                placeholder="ex: organizacao/meu-outro-repo"
+                value={transferTargetRepo}
+                onChange={(e) => setTransferTargetRepo(e.target.value)}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: 6,
+                  border: isEffectiveDark ? '1px solid #30363d' : '1px solid #d0d7de',
+                  background: isEffectiveDark ? '#0d1117' : '#f6f8fa',
+                  color: sysTextPrimary,
+                  fontSize: 13,
+                  outline: 'none',
+                }}
+              />
+              <span style={{ fontSize: 11, color: sysTextSecondary }}>
+                A issue será transferida mantendo comentários e histórico.
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+              <button
+                type="button"
+                disabled={isTransferringIssue}
+                onClick={() => setIsTransferModalOpen(false)}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: 6,
+                  border: isEffectiveDark ? '1px solid #30363d' : '1px solid #d0d7de',
+                  background: 'transparent',
+                  color: sysTextPrimary,
+                  fontSize: 12,
+                  fontWeight: 500,
+                  cursor: isTransferringIssue ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isTransferringIssue || !transferTargetRepo.trim()}
+                onClick={handleExecuteTransferIssue}
+                style={{
+                  padding: '7px 16px',
+                  borderRadius: 6,
+                  border: 'none',
+                  background: accentColor || '#238636',
+                  color: accentContrastText || '#fff',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: isTransferringIssue || !transferTargetRepo.trim() ? 'not-allowed' : 'pointer',
+                  opacity: isTransferringIssue || !transferTargetRepo.trim() ? 0.6 : 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                {isTransferringIssue ? 'Transferindo...' : 'Confirmar Transferência'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

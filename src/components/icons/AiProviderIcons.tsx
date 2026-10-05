@@ -4,6 +4,28 @@ import antigravityLogo from '../../assets/logos/google-antigravity-icon.svg';
 import codexLogo from '../../assets/logos/codex-color.svg';
 import geminiLogo from '../../assets/logos/gemini-icon-seeklogo.svg';
 import ollamaLogo from '../../assets/logos/ollama-icon.svg';
+import auraDevLogo from '../../assets/logos/app-logo.svg';
+
+// Aura Dev Official App SVG Icon
+export const AuraDevIcon: React.FC<{ size?: number; style?: React.CSSProperties }> = ({ size = 16, style }) => (
+  <img
+    src={auraDevLogo}
+    alt="Aura Dev"
+    draggable={false}
+    onDragStart={(e) => e.preventDefault()}
+    style={{
+      width: size,
+      height: size,
+      objectFit: 'contain',
+      borderRadius: Math.max(2, Math.round(size * 0.18)),
+      flex: 'none',
+      display: 'inline-block',
+      userSelect: 'none',
+      pointerEvents: 'none',
+      ...style,
+    }}
+  />
+);
 
 // Claude Color Official SVG Icon
 export const ClaudeIcon: React.FC<{ size?: number; style?: React.CSSProperties }> = ({ size = 16, style }) => (
@@ -119,6 +141,11 @@ export const renderAiIcon = (providerId: string, size = 16, style?: React.CSSPro
       return <GeminiIcon size={size} style={style} />;
     case 'ollama':
       return <OllamaIcon size={size} style={style} />;
+    case 'aura':
+    case 'auradev':
+    case 'aura-dev':
+    case 'maestro':
+      return <AuraDevIcon size={size} style={style} />;
     default:
       return <ClaudeIcon size={size} style={style} />;
   }

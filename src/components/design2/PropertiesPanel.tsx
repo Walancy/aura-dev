@@ -25,8 +25,9 @@ import {
   RotateCw,
   SlidersHorizontal,
   MoreHorizontal,
+  Type as TypeIcon,
 } from 'lucide-react';
-import type { Shape, FillItem, StrokeItem, EffectItem, ExportItem, EffectType } from './types';
+import type { Shape, FillItem, StrokeItem, EffectItem, ExportItem, EffectType, DesignStyle, DesignVariable, DesignMode } from './types';
 import FigmaColorPicker from './FigmaColorPicker';
 import FigmaEffectSettingsModal, {
   getEffectIcon,
@@ -516,6 +517,32 @@ interface PropertiesPanelProps {
   isEffectiveDark?: boolean;
   onChange: (patch: Partial<Shape>) => void;
   onAlign?: (alignment: 'left' | 'center-x' | 'right' | 'top' | 'center-y' | 'bottom') => void;
+  onDistribute?: (axis: 'x' | 'y') => void;
+  selectionCount?: number;
+  onBoolean?: (op: 'union' | 'subtract' | 'intersect' | 'exclude' | 'flatten') => void;
+  onFitSelection?: () => void;
+  onCreateInstance?: (shape: Shape) => void;
+  variantOptions?: Array<{ id: string; name: string }>;
+  onSwitchVariant?: (instance: Shape, componentId: string) => void;
+  onShowCode?: (shape: Shape) => void;
+  /** Frames da página (destinos de protótipo) e ação de apresentar */
+  prototypeFrames?: Array<{ id: string; name: string }>;
+  onPresent?: (frameId: string) => void;
+  variables?: DesignVariable[];
+  modes?: DesignMode[];
+  activeModeId?: string;
+  onCreateVariable?: () => void;
+  onBindVariable?: (variableId: string | undefined) => void;
+  onUpdateVariable?: (variableId: string, patch: { name?: string; modeId?: string; value?: string }) => void;
+  onDeleteVariable?: (variableId: string) => void;
+  onSetMode?: (modeId: string) => void;
+  styles?: DesignStyle[];
+  onCreateStyle?: (kind: 'color' | 'text') => void;
+  onApplyStyle?: (style: DesignStyle) => void;
+  onUpdateStyle?: (styleId: string) => void;
+  onRenameStyle?: (styleId: string, name: string) => void;
+  onDeleteStyle?: (styleId: string) => void;
+  onDetachInstance?: (shape: Shape) => void;
   onFocusSelection?: () => void;
   activeColorPicker?: ActiveColorPickerInfo | null;
   onActiveColorPickerChange?: (picker: ActiveColorPickerInfo | null) => void;
@@ -525,6 +552,8 @@ interface PropertiesPanelProps {
   onActiveEffectIdChange?: (id: string | null) => void;
   isTypeSettingsOpen?: boolean;
   onTypeSettingsOpenChange?: (open: boolean) => void;
+  /** Exporta o shape com as configurações de Export (formato/escala) */
+  onExport?: (shape: Shape, items: ExportItem[]) => void;
 }
 
 export default function PropertiesPanel({
@@ -534,6 +563,31 @@ export default function PropertiesPanel({
   isEffectiveDark = true,
   onChange,
   onAlign,
+  onDistribute,
+  selectionCount = 1,
+  onBoolean,
+  onFitSelection,
+  onCreateInstance,
+  variantOptions = [],
+  onSwitchVariant,
+  onShowCode,
+  variables = [],
+  modes = [],
+  activeModeId = 'light',
+  onCreateVariable,
+  onBindVariable,
+  onUpdateVariable,
+  onDeleteVariable,
+  onSetMode,
+  prototypeFrames = [],
+  onPresent,
+  styles = [],
+  onCreateStyle,
+  onApplyStyle,
+  onUpdateStyle,
+  onRenameStyle,
+  onDeleteStyle,
+  onDetachInstance,
   onFocusSelection,
   activeColorPicker: propActiveColorPicker,
   onActiveColorPickerChange,
@@ -543,6 +597,7 @@ export default function PropertiesPanel({
   onActiveEffectIdChange,
   isTypeSettingsOpen: propTypeSettingsOpen,
   onTypeSettingsOpenChange,
+  onExport,
 }: PropertiesPanelProps) {
   // Popovers & Flyouts States
   const [internalColorPicker, setInternalColorPicker] = useState<ActiveColorPickerInfo | null>(null);
@@ -764,13 +819,18 @@ export default function PropertiesPanel({
             <Sparkles size={13} color={shape.isComponent ? accentColor : textSecondary} />
           </button>
 
-          {/* Usar como máscara (ainda não implementado) */}
-          <button type="button" disabled style={{ ...btnStyle, opacity: 0.35, cursor: 'not-allowed' }} title="Usar como máscara (em breve)">
-            <span style={{ fontSize: 13, lineHeight: 1 }}>◑</span>
+          {/* Usar como máscara: recorta os elementos acima dele (mesmo grupo/frame) */}
+          <button
+            type="button"
+            onClick={() => onChange({ isMask: !shape.isMask })}
+            style={{ ...btnStyle, background: shape.isMask ? `${accentColor}22` : 'transparent' }}
+            title={shape.isMask ? 'Remover máscara' : 'Usar como máscara (recorta os elementos acima)'}
+          >
+            <span style={{ fontSize: 13, lineHeight: 1, color: shape.isMask ? accentColor : textSecondary }}>◑</span>
           </button>
 
           {/* Grupos Booleanos (exige seleção múltipla, ainda não suportada) */}
-          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', opacity: 0.35 }} title="Selecione 2 ou mais elementos (em breve)">
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', opacity: selectionCount >= 2 ? 1 : 0.4 }} title={selectionCount >= 2 ? 'Operações booleanas' : 'Selecione 2 ou mais elementos'}>
             <div
               style={{
                 display: 'flex',
@@ -782,21 +842,20 @@ export default function PropertiesPanel({
             >
               <button
                 type="button"
-                disabled
-                style={{ ...btnStyle, padding: '3px 4px', cursor: 'not-allowed' }}
+                onClick={() => setIsBooleanMenuOpen((v) => !v)}
+                style={{ ...btnStyle, padding: '3px 4px' }}
                 title="Operações booleanas (selecione 2+ elementos)"
               >
                 <Maximize2 size={13} color={textSecondary} />
               </button>
               <button
                 type="button"
-                disabled
+                onClick={() => setIsBooleanMenuOpen((v) => !v)}
                 style={{
                   ...btnStyle,
                   padding: '3px 2px',
                   color: textSecondary,
                   borderRadius: 4,
-                  cursor: 'not-allowed',
                 }}
               >
                 <ChevronDown size={10} />
@@ -831,9 +890,7 @@ export default function PropertiesPanel({
                     key={item.id}
                     onClick={() => {
                       setIsBooleanMenuOpen(false);
-                      if (item.id === 'union') {
-                        onChange({ name: `${shape.name || 'Rectangle'} (Union)` });
-                      }
+                      onBoolean?.(item.id as any);
                     }}
                     style={{
                       display: 'flex',
@@ -860,7 +917,12 @@ export default function PropertiesPanel({
             )}
           </div>
 
-          <button type="button" disabled style={{ ...btnStyle, opacity: 0.35, cursor: 'not-allowed' }} title="Ajustar seleção (em breve)">
+          <button
+            type="button"
+            onClick={() => onFitSelection?.()}
+            style={{ ...btnStyle, opacity: shape.type === 'frame' || shape.type === 'section' ? 1 : 0.4 }}
+            title="Ajustar o frame ao conteúdo"
+          >
             <Maximize2 size={13} />
           </button>
         </div>
@@ -936,6 +998,9 @@ export default function PropertiesPanel({
               <SegmentButton isEffectiveDark={isEffectiveDark} onClick={() => onAlign?.('right')} title="Alinhar à direita">
                 <FigmaAlignRightIcon />
               </SegmentButton>
+              <SegmentButton isEffectiveDark={isEffectiveDark} onClick={() => onDistribute?.('x')} title="Distribuir horizontalmente (3+ selecionados)">
+                <span style={{ fontSize: 11, lineHeight: 1 }}>⇹</span>
+              </SegmentButton>
             </div>
 
             {/* Pill 2: Alinhamento Vertical (Top, Center V, Bottom) */}
@@ -962,6 +1027,9 @@ export default function PropertiesPanel({
               </SegmentButton>
               <SegmentButton isEffectiveDark={isEffectiveDark} onClick={() => onAlign?.('bottom')} title="Alinhar à base">
                 <FigmaAlignBottomIcon />
+              </SegmentButton>
+              <SegmentButton isEffectiveDark={isEffectiveDark} onClick={() => onDistribute?.('y')} title="Distribuir verticalmente (3+ selecionados)">
+                <span style={{ fontSize: 11, lineHeight: 1 }}>⥮</span>
               </SegmentButton>
             </div>
           </div>
@@ -3083,6 +3151,266 @@ export default function PropertiesPanel({
         ))}
       </div>
 
+      {(shape.type === 'pen' || shape.type === 'pencil') && (
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: textPrimary, cursor: 'pointer', flex: 1 }}>
+            <input type="checkbox" checked={Boolean(shape.smooth)} onChange={(e) => onChange({ smooth: e.target.checked })} />
+            Suavizar curva
+          </label>
+          <span style={{ fontSize: 10, color: textMuted }}>Arraste os nós • duplo clique adiciona</span>
+        </div>
+      )}
+
+      {shape.type === 'image' && (
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary }}>Imagem</span>
+          <label style={{ display: 'grid', gridTemplateColumns: '70px 1fr', alignItems: 'center', gap: 8, fontSize: 11, color: textSecondary }}>
+            Ajuste
+            <select
+              value={shape.imageFit || 'fill'}
+              onChange={(e) => onChange({ imageFit: e.target.value as any })}
+              style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, height: 26, padding: '0 6px' }}
+            >
+              <option value="fill">Preencher</option>
+              <option value="fit">Ajustar</option>
+              <option value="stretch">Esticar</option>
+            </select>
+          </label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: textSecondary }}>
+            <span style={{ width: 62 }}>Recorte %</span>
+            {(['x', 'y', 'w', 'h'] as const).map((k) => (
+              <input
+                key={k}
+                type="number"
+                min={0}
+                max={100}
+                title={{ x: 'Início X', y: 'Início Y', w: 'Largura', h: 'Altura' }[k]}
+                value={Math.round((shape.imageCrop?.[k] ?? (k === 'w' || k === 'h' ? 1 : 0)) * 100)}
+                onChange={(e) => {
+                  const cur = shape.imageCrop || { x: 0, y: 0, w: 1, h: 1 };
+                  const v = Math.max(0, Math.min(100, Number(e.target.value) || 0)) / 100;
+                  const next = { ...cur, [k]: v };
+                  const isFull = next.x === 0 && next.y === 0 && next.w === 1 && next.h === 1;
+                  onChange({ imageCrop: isFull ? undefined : next });
+                }}
+                style={{ width: 44, height: 24, background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, padding: '0 4px' }}
+              />
+            ))}
+          </div>
+          <label style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 6, color: textPrimary, padding: '6px 12px', fontSize: 11, cursor: 'pointer', textAlign: 'center' }}>
+            Substituir imagem…
+            <input
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = () => typeof reader.result === 'string' && onChange({ imageUrl: reader.result, imageCrop: undefined });
+                reader.readAsDataURL(file);
+                e.target.value = '';
+              }}
+            />
+          </label>
+        </div>
+      )}
+
+      {/* ----------------------------------------------------------------- */}
+      {/* PROTÓTIPO                                                          */}
+      {/* ----------------------------------------------------------------- */}
+      <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary, flex: 1 }}>Protótipo</span>
+          {(shape.type === 'frame' || shape.parentId) && (
+            <button
+              type="button"
+              onClick={() => {
+                // apresenta o frame selecionado (ou o frame que contém o elemento)
+                const frame = shape.type === 'frame' ? shape.id : prototypeFrames.find((f) => f.id === shape.parentId)?.id || shape.parentId!;
+                onPresent?.(frame);
+              }}
+              style={{ background: accentColor, border: 'none', borderRadius: 5, color: '#fff', fontSize: 11, padding: '3px 10px', cursor: 'pointer' }}
+            >
+              ▶ Apresentar
+            </button>
+          )}
+        </div>
+        <label style={{ display: 'grid', gridTemplateColumns: '70px 1fr', alignItems: 'center', gap: 8, fontSize: 11, color: textSecondary }}>
+          Ao clicar
+          <select
+            value={shape.prototypeLink?.targetId || ''}
+            onChange={(e) => onChange({ prototypeLink: e.target.value ? { targetId: e.target.value } : undefined })}
+            style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, height: 26, padding: '0 6px' }}
+          >
+            <option value="">Nada</option>
+            {prototypeFrames.filter((f) => f.id !== shape.id).map((f) => (
+              <option key={f.id} value={f.id}>Ir para: {f.name}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {/* ----------------------------------------------------------------- */}
+      {/* VARIÁVEIS DE COR (modos Claro/Escuro)                              */}
+      {/* ----------------------------------------------------------------- */}
+      <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary, flex: 1 }}>Variáveis</span>
+          <select
+            value={activeModeId}
+            onChange={(e) => onSetMode?.(e.target.value)}
+            title="Modo ativo do design"
+            style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 10.5, height: 22, padding: '0 4px' }}
+          >
+            {modes.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+          <button type="button" onClick={() => onCreateVariable?.()} title="Criar variável a partir do preenchimento" style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 2 }}><Plus size={12} /></button>
+        </div>
+        {variables.map((v) => (
+          <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '2px 4px', borderRadius: 5, background: shape.fillVariableId === v.id ? `${accentColor}22` : 'transparent' }}>
+            <button type="button" onClick={() => onBindVariable?.(shape.fillVariableId === v.id ? undefined : v.id)} title="Ligar/desligar ao preenchimento do elemento" style={{ width: 16, height: 16, borderRadius: 4, border: `1px solid ${inputBorder}`, background: v.values[activeModeId] || Object.values(v.values)[0], cursor: 'pointer', padding: 0, flexShrink: 0 }} />
+            <input
+              defaultValue={v.name}
+              onBlur={(e) => e.target.value.trim() && e.target.value !== v.name && onUpdateVariable?.(v.id, { name: e.target.value.trim() })}
+              style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: textPrimary, fontSize: 11 }}
+            />
+            {modes.map((m) => (
+              <input
+                key={m.id}
+                type="color"
+                title={`Valor no modo ${m.name}`}
+                value={(v.values[m.id] || '#000000').slice(0, 7)}
+                onChange={(e) => onUpdateVariable?.(v.id, { modeId: m.id, value: e.target.value })}
+                style={{ width: 20, height: 18, padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
+              />
+            ))}
+            <button type="button" onClick={() => onDeleteVariable?.(v.id)} title="Excluir variável" style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', fontSize: 11, padding: 2 }}>×</button>
+          </div>
+        ))}
+      </div>
+
+      {/* ----------------------------------------------------------------- */}
+      {/* ESTILOS DO DOCUMENTO (cor e texto)                                 */}
+      {/* ----------------------------------------------------------------- */}
+      <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary, flex: 1 }}>Estilos</span>
+          <button type="button" onClick={() => onCreateStyle?.('color')} title="Criar estilo de cor a partir do preenchimento" style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 2 }}><Plus size={12} /></button>
+          {(shape.type === 'text' || shape.type === 'text-path') && (
+            <button type="button" onClick={() => onCreateStyle?.('text')} title="Criar estilo de texto a partir da tipografia" style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 2 }}><TypeIcon size={12} /><Plus size={9} /></button>
+          )}
+        </div>
+        {styles.map((st) => {
+          const active = shape.fillStyleId === st.id || shape.textStyleId === st.id;
+          return (
+            <div key={st.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 4px', borderRadius: 5, background: active ? `${accentColor}22` : 'transparent' }}>
+              <button
+                type="button"
+                onClick={() => onApplyStyle?.(st)}
+                title="Aplicar ao elemento selecionado"
+                style={{ width: 18, height: 18, borderRadius: 4, border: `1px solid ${inputBorder}`, background: st.kind === 'color' ? st.color : 'transparent', color: textPrimary, cursor: 'pointer', fontSize: 10, padding: 0, flexShrink: 0 }}
+              >
+                {st.kind === 'text' ? 'T' : ''}
+              </button>
+              <input
+                defaultValue={st.name}
+                onBlur={(e) => e.target.value.trim() && e.target.value !== st.name && onRenameStyle?.(st.id, e.target.value.trim())}
+                style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: textPrimary, fontSize: 11 }}
+              />
+              <button type="button" onClick={() => onUpdateStyle?.(st.id)} title="Atualizar o estilo com o valor do elemento selecionado" style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', fontSize: 11, padding: 2 }}>↻</button>
+              <button type="button" onClick={() => onDeleteStyle?.(st.id)} title="Excluir estilo" style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', fontSize: 11, padding: 2 }}>×</button>
+            </div>
+          );
+        })}
+      </div>
+
+      {(shape.isComponent || shape.instanceOf) && (
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary, flex: 1 }}>{shape.isComponent ? 'Componente' : 'Instância'}</span>
+          <button
+            type="button"
+            onClick={() => (shape.isComponent ? onCreateInstance?.(shape) : onDetachInstance?.(shape))}
+            style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, padding: '4px 10px', cursor: 'pointer' }}
+          >
+            {shape.isComponent ? 'Criar instância' : 'Desanexar'}
+          </button>
+        </div>
+      )}
+
+      {(shape.isComponent || (shape.instanceOf && variantOptions.length > 1)) && (
+        <div style={{ padding: '8px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {shape.isComponent ? (
+            <>
+              <label style={{ display: 'grid', gridTemplateColumns: '70px 1fr', alignItems: 'center', gap: 8, fontSize: 11, color: textSecondary }}>
+                Grupo
+                <input value={shape.variantGroup || ''} placeholder="ex.: Botão" onChange={(e) => onChange({ variantGroup: e.target.value || undefined })} style={{ height: 24, background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, padding: '0 6px' }} />
+              </label>
+              <label style={{ display: 'grid', gridTemplateColumns: '70px 1fr', alignItems: 'center', gap: 8, fontSize: 11, color: textSecondary }}>
+                Variante
+                <input value={shape.variantName || ''} placeholder="ex.: Primário" onChange={(e) => onChange({ variantName: e.target.value || undefined })} style={{ height: 24, background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, padding: '0 6px' }} />
+              </label>
+            </>
+          ) : (
+            <label style={{ display: 'grid', gridTemplateColumns: '70px 1fr', alignItems: 'center', gap: 8, fontSize: 11, color: textSecondary }}>
+              Variante
+              <select value={shape.instanceOf} onChange={(e) => onSwitchVariant?.(shape, e.target.value)} style={{ height: 26, background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, padding: '0 6px' }}>
+                {variantOptions.map((o) => (
+                  <option key={o.id} value={o.id}>{o.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+      )}
+
+      {shape.type === 'text-path' && (
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary, flex: 1 }}>Curvatura do texto</span>
+          <ScrubbableNumberInput
+            value={shape.pathCurve ?? 60}
+            onChange={(v: number) => onChange({ pathCurve: Math.round(v) })}
+            min={-300}
+            max={300}
+            style={{ width: 70, height: 26 }}
+          />
+        </div>
+      )}
+
+      {/* ----------------------------------------------------------------- */}
+      {/* RESTRIÇÕES E RECORTE DE CONTEÚDO                                   */}
+      {/* ----------------------------------------------------------------- */}
+      {shape.parentId && (
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {shape.parentId && (
+            <>
+              <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary }}>Restrições</span>
+              {([
+                ['constraintH', 'Horizontal'],
+                ['constraintV', 'Vertical'],
+              ] as const).map(([key, label]) => (
+                <div key={key} style={{ display: 'grid', gridTemplateColumns: '70px 1fr', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 11, color: textSecondary }}>{label}</span>
+                  <select
+                    value={shape[key] || 'start'}
+                    onChange={(e) => onChange({ [key]: e.target.value } as Partial<Shape>)}
+                    style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, height: 26, padding: '0 6px' }}
+                  >
+                    <option value="start">{key === 'constraintH' ? 'Esquerda' : 'Topo'}</option>
+                    <option value="end">{key === 'constraintH' ? 'Direita' : 'Base'}</option>
+                    <option value="center">Centro</option>
+                    <option value="stretch">{key === 'constraintH' ? 'Esquerda e direita' : 'Topo e base'}</option>
+                    <option value="scale">Escala</option>
+                  </select>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+
       {/* ----------------------------------------------------------------- */}
       {/* 8. SEÇÃO: EXPORT                                                  */}
       {/* ----------------------------------------------------------------- */}
@@ -3160,11 +3488,27 @@ export default function PropertiesPanel({
 
         <button
           type="button"
-          onClick={() => {
-            const exp = exportsList[0] || { scale: '1x', format: 'PNG' };
-            const shapeName = shape.name || 'Rectangle 148';
-            alert(`Exportando ${shapeName} (${exp.scale}, ${exp.format})...`);
-          }}
+          onClick={() => onShowCode?.(shape)}
+          style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 6, color: textPrimary, padding: '7px 12px', fontSize: 11, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          Ver código (React, HTML, Flutter)
+        </button>
+        {(shape.type === 'frame' || shape.type === 'section') && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: textSecondary }}>
+            Issue vinculada
+            <input
+              type="number"
+              min={1}
+              value={shape.linkedIssue ?? ''}
+              placeholder="nº"
+              onChange={(e) => onChange({ linkedIssue: e.target.value ? Number(e.target.value) : undefined })}
+              style={{ width: 70, height: 24, background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, padding: '0 6px' }}
+            />
+          </label>
+        )}
+        <button
+          type="button"
+          onClick={() => onExport?.(shape, exportsList)}
           style={{
             background: bgSecondary,
             border: `1px solid ${inputBorder}`,
@@ -3454,6 +3798,21 @@ export default function PropertiesPanel({
           }
           themeTokens={themeTokens}
           accentColor={accentColor}
+          fillType={activeColorPicker.target === 'fill' ? activeFillItem?.type : undefined}
+          gradientStops={activeColorPicker.target === 'fill' ? activeFillItem?.gradientStops : undefined}
+          gradientAngle={activeColorPicker.target === 'fill' ? activeFillItem?.gradientAngle : undefined}
+          onGradientChange={
+            activeColorPicker.target === 'fill'
+              ? (patch) =>
+                  updateFills(
+                    fills.map((f) =>
+                      activeColorPicker.id === 'all' || f.id === activeColorPicker.id
+                        ? { ...f, ...patch, color: patch.gradientStops?.[0]?.color ?? f.color }
+                        : f
+                    )
+                  )
+              : undefined
+          }
           onChange={(newColor, newOpacity) => {
             if (activeColorPicker.target === 'fill') {
               const isAll = activeColorPicker.id === 'all';

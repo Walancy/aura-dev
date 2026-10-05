@@ -29,6 +29,7 @@ export interface PromptEditorProps {
   onAtMentionQuery?: (query: string) => void;
   onAtMentionClose?: () => void;
   onKeyDownExtra?: (e: React.KeyboardEvent<HTMLDivElement>) => boolean | void;
+  hasAttachedTask?: boolean;
   style?: React.CSSProperties;
 }
 
@@ -183,6 +184,7 @@ export const PromptEditor = forwardRef<PromptEditorRef, PromptEditorProps>(
       onAtMentionQuery,
       onAtMentionClose,
       onKeyDownExtra,
+      hasAttachedTask = false,
       style,
     },
     ref
@@ -374,7 +376,7 @@ export const PromptEditor = forwardRef<PromptEditorRef, PromptEditorProps>(
         e.preventDefault();
         if (disabled) return;
         const promptText = editorRef.current ? extractPromptFromDOM(editorRef.current).trim() : '';
-        if (promptText.length > 0 || currentImagesCount > 0) {
+        if (promptText.length > 0 || currentImagesCount > 0 || hasAttachedTask) {
           onSubmit(promptText);
         }
         return;

@@ -28,12 +28,19 @@ import {
   RefreshCw,
   XCircle,
   CheckCircle2,
+  Shield,
+  ShieldCheck,
+  Info,
+  Milestone as MilestoneIcon,
+  Loader2,
+  Bot,
   Radio,
   ExternalLink,
   PanelLeft,
   PanelBottom,
   PanelRight,
   SquareTerminal,
+  ScrollText,
   AtSign,
   Save,
   FileText,
@@ -43,6 +50,7 @@ import {
   Sparkles,
   Download,
   Layers,
+  PlusCircle,
   MessageSquare,
   Wand2,
   Check,
@@ -63,6 +71,9 @@ import {
   GitCompare,
   History,
   Network,
+  Puzzle,
+  Brain,
+  Undo2,
 } from 'lucide-react';
 import avatarImg from './avatar.png';
 import { FileIcon, FolderIcon } from './components/FileIcon';
@@ -71,14 +82,37 @@ import { SidebarPanels } from './components/ide/SidebarPanels';
 import { ExtensionDetailsView } from './components/ide/ExtensionDetailsView';
 import { ProjectsSchedulerView, prefetchProjectsData } from './components/ProjectsSchedulerView';
 import { ProjectWorkspaceSelector } from './components/ide/ProjectWorkspaceSelector';
-import { HeaderProjectSelector, type HeaderActiveProjectInfo, type HeaderProjectItem } from './components/HeaderProjectSelector';
+import { HeaderProjectSelector, type HeaderActiveProjectInfo, type HeaderProjectItem, type ProjectAiStatus } from './components/HeaderProjectSelector';
 import { OrchestrationCanvas } from './components/OrchestrationCanvas';
 import { DailySchedulerView } from './components/daily/DailySchedulerView';
 import DesignStudioView from './components/design2/DesignStudioView';
 import { CliTerminalView } from './components/CliTerminalView';
 import { ProjectTasksDockTab } from './components/dock/ProjectTasksDockTab';
+import { PortsDockTab } from './components/dock/PortsDockTab';
+import { OutputDockTab } from './components/dock/OutputDockTab';
+import { DebugConsoleDockTab } from './components/dock/DebugConsoleDockTab';
 import { IssueDetailSidesheet } from './components/modals/IssueDetailSidesheet';
-import type { ProjectIssue } from './components/ProjectsSchedulerView';
+import { ProblemsPanelView, type IdeProblem } from './components/ide/ProblemsPanelView';
+import {
+  GLOBAL_PROJECTS_CACHE,
+  type ProjectIssue,
+} from './components/ProjectsSchedulerView';
+import { ProjectBrainModal } from './components/brain/ProjectBrainModal';
+import { ConfirmUndoModal } from './components/modals/ConfirmUndoModal';
+import { ConfirmDeleteModal } from './components/modals/ConfirmDeleteModal';
+import { AiChatPermissionsModal, DEFAULT_AI_PERMISSIONS } from './components/ide/chat/AiChatPermissionsModal';
+import { AiChatTimeline, type TerminalExecutionRecord } from './components/ide/chat/AiChatTimeline';
+import { InteractiveQuestionCard, AlertCallout, type InteractiveQuestionData } from './components/ide/chat/AiChatInteractiveCard';
+import { AiChatMessageQueue, type QueuedMessageItem } from './components/ide/chat/AiChatMessageQueue';
+import { MermaidDiagram } from './components/ide/chat/MermaidDiagram';
+import { AiChatMentionsMenu, type MentionItem } from './components/ide/chat/AiChatMentionsMenu';
+import {
+  loadProjectBrain,
+  switchProjectBrainContext,
+  getActiveBrainContextSync,
+  generateBrainAiContext,
+  logSystemActivity,
+} from './utils/brainService';
 import {
   CodiconFiles,
   CodiconSearch,
@@ -111,6 +145,7 @@ import { ChatHistoryModal } from './components/modals/ChatHistoryModal';
 import { BranchModal } from './components/modals/BranchModal';
 import { IssuesModal } from './components/modals/IssuesModal';
 import { SettingsModal } from './components/modals/SettingsModal';
+import { AiGlobalRulesModal } from './components/modals/AiGlobalRulesModal';
 import { GithubLoginScreen } from './components/auth/GithubLoginScreen';
 import type { GithubAuthenticatedUser } from './components/auth/GithubLoginScreen';
 import { renderMarkdownPreview } from './utils/markdown';
@@ -130,6 +165,9 @@ import type {
   ChatSessionItem,
   QuickOpenItemDef,
 } from './types/ide';
+import { ProjectAiNotificationToast, ProjectAiNotificationItem } from './components/notifications/ProjectAiNotificationToast';
+import { useProjectNotifier } from './components/notifications/useProjectNotifier';
+import { SkillsModal } from './components/skills/SkillsModal';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'projetos' | 'orchestration' | 'daily' | 'ide' | 'cli' | 'design'>('projetos');
@@ -147,19 +185,6 @@ export const App: React.FC = () => {
   const [newIssueTitle, setNewIssueTitle] = useState('');
   const [isCreatingIssue, setIsCreatingIssue] = useState(false);
 
-  // Sprints / Milestones dynamically extracted from current project issues
-  const projectMilestones = useMemo(() => {
-    const map = new Map<string, { title: string; number?: number }>();
-    gitIssues.forEach((issue) => {
-      if (issue.milestone?.title) {
-        const title = issue.milestone.title.trim();
-        if (!map.has(title.toLowerCase())) {
-          map.set(title.toLowerCase(), { title, number: issue.milestone.number });
-        }
-      }
-    });
-    return Array.from(map.values());
-  }, [gitIssues]);
 
   // Attached Task for AI Chat prompt
   const [attachedTask, setAttachedTask] = useState<{
@@ -170,6 +195,18 @@ export const App: React.FC = () => {
     labels?: Array<{ name: string; color?: string }>;
     url?: string;
   } | null>(null);
+
+  // Active working issue across conversation turns
+  const [activeWorkingIssue, setActiveWorkingIssue] = useState<{
+    number: number;
+    title: string;
+    body?: string;
+    state?: string;
+    labels?: Array<{ name: string; color?: string }>;
+    url?: string;
+  } | null>(null);
+  const [isFinalizingIssue, setIsFinalizingIssue] = useState(false);
+  const [finalizedIssues, setFinalizedIssues] = useState<Record<number, boolean>>({});
 
   // Git Branches state
   const [currentBranch, setCurrentBranch] = useState('main');
@@ -237,6 +274,8 @@ export const App: React.FC = () => {
   });
   const activeFile = openFiles.find((f) => f.id === activeFileId) || (openFiles.length > 0 ? openFiles[0] : null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  // Notificações de GitHub por projeto (Configurações → Alertas e notificações)
+  useProjectNotifier((msg) => setToastMessage(msg));
 
   // Auto-dismiss toast notification after 3.5 seconds
   useEffect(() => {
@@ -279,6 +318,94 @@ export const App: React.FC = () => {
   useEffect(() => {
     prefetchProjectsData(workspacePath);
   }, [workspacePath]);
+
+  // Sprints / Milestones dynamically extracted from current project issues and Projects cache
+  const projectMilestones = useMemo(() => {
+    const map = new Map<string, { title: string; number?: number; iterationId?: string; isProjectIteration?: boolean }>();
+
+    // 1. Sprints vindas do cache da tela de Projetos (GLOBAL_PROJECTS_CACHE)
+    const cache = GLOBAL_PROJECTS_CACHE?.repoDetailsCache;
+    if (cache) {
+      const candidates = [
+        activeHeaderProject?.fullName,
+        activeHeaderProject?.name,
+        gitRepoName,
+        gitRepoName.toLowerCase(),
+        activeHeaderProject?.localDir ? activeHeaderProject.localDir.split('/').filter(Boolean).pop() : '',
+        workspacePath ? workspacePath.split('/').filter(Boolean).pop() : '',
+      ].filter(Boolean);
+      for (const c of candidates) {
+        for (const [k, v] of Object.entries(cache)) {
+          if (k.toLowerCase() === c!.toLowerCase() || k.toLowerCase().includes(c!.toLowerCase())) {
+            (v.sprints || []).forEach((sp) => {
+              if (sp.title && sp.title.trim()) {
+                const key = sp.title.toLowerCase().trim();
+                if (!map.has(key)) {
+                  map.set(key, {
+                    title: sp.title.trim(),
+                    number: sp.number,
+                    iterationId: sp.iterationId,
+                    isProjectIteration: sp.isProjectIteration,
+                  });
+                }
+              }
+            });
+            break;
+          }
+        }
+      }
+    }
+
+    // 2. Sprints customizadas locais
+    try {
+      const targetRepoKey = activeHeaderProject?.fullName || gitRepoName;
+      const saved = localStorage.getItem(`devflow_custom_sprints_${targetRepoKey}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((sp: any) => {
+            if (sp.title && sp.title.trim()) {
+              const key = sp.title.toLowerCase().trim();
+              if (!map.has(key)) {
+                map.set(key, { title: sp.title.trim(), number: sp.number });
+              }
+            }
+          });
+        }
+      }
+    } catch {}
+
+    // 3. Sprints das issues atuais (iterações V2, marcos, prefixos no título, labels)
+    gitIssues.forEach((issue) => {
+      const itTitle = issue.iterationTitle;
+      if (itTitle && itTitle.trim()) {
+        const key = itTitle.toLowerCase().trim();
+        if (!map.has(key)) {
+          map.set(key, { title: itTitle.trim(), iterationId: issue.iterationId, isProjectIteration: true });
+        }
+      }
+      const msTitle = issue.milestoneTitle || issue.milestone?.title;
+      if (msTitle && msTitle.trim()) {
+        const key = msTitle.toLowerCase().trim();
+        if (!map.has(key)) {
+          map.set(key, { title: msTitle.trim(), number: issue.milestoneNumber || issue.milestone?.number });
+        }
+      }
+      if (issue.title) {
+        const m = issue.title.match(/^sprint\s*([0-9]+(?:-[0-9]+)?)/i);
+        if (m) {
+          const normTitle = `Sprint ${m[1]}`;
+          const key = normTitle.toLowerCase().trim();
+          if (!map.has(key)) {
+            map.set(key, { title: normTitle });
+          }
+        }
+      }
+    });
+
+    return Array.from(map.values());
+  }, [gitIssues, gitRepoName, workspacePath, activeHeaderProject]);
+
   const [fileTree, setFileTree] = useState<ExplorerNode[]>([]);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     new Set([
@@ -421,6 +548,25 @@ export const App: React.FC = () => {
   const [cursorPosition, setCursorPosition] = useState<{ line: number; col: number }>({ line: 1, col: 1 });
   const [editorErrors, setEditorErrors] = useState<number>(0);
   const [editorWarnings, setEditorWarnings] = useState<number>(0);
+  const [projectProblems, setProjectProblems] = useState<IdeProblem[]>([]);
+  const [editorMarkers, setEditorMarkers] = useState<IdeProblem[]>([]);
+  const [isCheckingProject, setIsCheckingProject] = useState<boolean>(false);
+  const [lastProjectCheckTime, setLastProjectCheckTime] = useState<Date | null>(null);
+  const activeFileRef = useRef(activeFile);
+  useEffect(() => {
+    activeFileRef.current = activeFile;
+  }, [activeFile]);
+
+  const allProblems = useMemo(() => {
+    const map = new Map<string, IdeProblem>();
+    for (const p of projectProblems) {
+      map.set(`${p.filePath}:${p.line}:${p.column}:${p.code || ''}`, p);
+    }
+    for (const m of editorMarkers) {
+      map.set(`${m.filePath}:${m.line}:${m.column}:${m.code || ''}`, m);
+    }
+    return Array.from(map.values());
+  }, [projectProblems, editorMarkers]);
   const [indentationSize, setIndentationSize] = useState<number>(2);
   const [lineEnding, setLineEnding] = useState<'LF' | 'CRLF'>('LF');
   const [workspaceGitInfo, setWorkspaceGitInfo] = useState<{
@@ -897,30 +1043,191 @@ export const App: React.FC = () => {
   const quotaTooltipRef = useRef<HTMLDivElement>(null);
   const headerQuotaTooltipRef = useRef<HTMLDivElement>(null);
 
-  // Switch AI Provider and create a new chat session if messages exist
+  // Antigravity Chat System Features State
+  const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState<boolean>(false);
+  const [clearHistoryConfirmOpen, setClearHistoryConfirmOpen] = useState<boolean>(false);
+  const [rejectAllConfirmOpen, setRejectAllConfirmOpen] = useState<boolean>(false);
+  const [rejectAllTargetFiles, setRejectAllTargetFiles] = useState<ChangedFileItem[]>([]);
+  const [queuedAiMessages, setQueuedAiMessages] = useState<QueuedMessageItem[]>([]);
+  const queuedAiMessagesRef = useRef<QueuedMessageItem[]>([]);
+  useEffect(() => {
+    queuedAiMessagesRef.current = queuedAiMessages;
+  }, [queuedAiMessages]);
+
+  const handleRenameChatDirect = (sessionId: string, newTitle: string) => {
+    setChatSessions((prev) =>
+      prev.map((s) => (s.id === sessionId ? { ...s, title: newTitle, updatedAt: Date.now() } : s))
+    );
+    logSystemActivity('ide_ai_chat', 'rename_chat_session', workspacePath ? workspacePath.split('/').pop() || 'Projeto' : 'Projeto', {
+      sessionId,
+      newTitle,
+    });
+  };
+
+  const handleConfirmClearChatHistory = () => {
+    setAiHistory([]);
+    setChatSessions((prev) =>
+      prev.map((s) => (s.id === activeChatSessionId ? { ...s, history: [] } : s))
+    );
+    setClearHistoryConfirmOpen(false);
+    setToastMessage('Histórico da conversa limpo');
+    logSystemActivity('ide_ai_chat', 'clear_chat_history', workspacePath ? workspacePath.split('/').pop() || 'Projeto' : 'Projeto', {
+      sessionId: activeChatSessionId,
+    });
+  };
+
+  const handleAcceptAllDiffs = (files?: ChangedFileItem[]) => {
+    const targetFiles = files || (activeReview ? activeReview.files : []);
+    setActiveReview(null);
+    setToastMessage('Todas as alterações foram aceitas');
+    logSystemActivity('ide_ai_chat', 'accept_all_diffs', workspacePath ? workspacePath.split('/').pop() || 'Projeto' : 'Projeto', {
+      filesCount: targetFiles.length,
+    });
+  };
+
+  const handleRequestRejectAllDiffs = (files?: ChangedFileItem[]) => {
+    const targetFiles = files || (activeReview ? activeReview.files : []);
+    if (!targetFiles || targetFiles.length === 0) return;
+    setRejectAllTargetFiles(targetFiles);
+    setRejectAllConfirmOpen(true);
+  };
+
+  const handleConfirmRejectAllDiffs = async () => {
+    const baseCwd = workspacePath;
+    if (!baseCwd || !window.electronAPI?.shell?.exec) return;
+    try {
+      // Descarta apenas os arquivos alterados pelo agente (rastreados: checkout; novos: clean)
+      for (const f of rejectAllTargetFiles) {
+        const q = `'${f.path.replace(/'/g, `'\\''`)}'`;
+        await window.electronAPI.shell.exec(
+          `git ls-files --error-unmatch -- ${q} >/dev/null 2>&1 && git checkout -- ${q} || git clean -f -- ${q}`,
+          baseCwd
+        );
+      }
+      await loadWorkspaceTree(baseCwd);
+      setActiveReview(null);
+      setToastMessage('Todas as alterações do agente foram descartadas');
+      logSystemActivity('ide_ai_chat', 'reject_all_diffs', baseCwd.split('/').pop() || 'Projeto', {
+        filesCount: rejectAllTargetFiles.length,
+      });
+    } catch (err: any) {
+      setToastMessage(`Erro ao descartar alterações: ${err?.message || ''}`);
+    } finally {
+      setRejectAllConfirmOpen(false);
+    }
+  };
+
+  const handleAnswerInteractiveQuestion = (selected: string[], writeIn?: string) => {
+    const answerParts = [...selected];
+    if (writeIn) answerParts.push(writeIn);
+    if (answerParts.length > 0) {
+      const text = `Resposta: ${answerParts.join(', ')}`;
+      handleAiSubmit(undefined, text);
+    }
+  };
+
+  // Switch AI Provider and always initiate a brand new chat session so contexts are not mixed
   const handleSwitchAiProvider = (newProviderId: string) => {
     if (newProviderId === selectedAiProvider) return;
+    const prevProvider = selectedAiProvider;
     setSelectedAiProvider(newProviderId);
 
-    // Quando o usuário trocar a IA, criar um novo chat
-    if (aiHistory.length > 0) {
-      const newId = 'session-' + Date.now();
-      const newSession: ChatSessionItem = {
-        id: newId,
-        title: 'Nova Conversa',
-        provider: newProviderId,
-        updatedAt: Date.now(),
-        history: [],
-      };
-      setChatSessions((prev) => [newSession, ...prev]);
-      setActiveChatSessionId(newId);
-      setAiHistory([]);
+    // Ao trocar de IA (não de modelo), inicia sempre um novo chat para não misturar os contextos
+    const newSessionId = 'session-' + Date.now();
+    const projectName = workspacePath ? workspacePath.split('/').filter(Boolean).pop() : 'Projeto';
+    const newSession: ChatSessionItem = {
+      id: newSessionId,
+      title: 'Nova Conversa',
+      provider: newProviderId,
+      updatedAt: Date.now(),
+      history: [],
+      workspacePath: workspacePath || undefined,
+      projectName,
+    };
+
+    setChatSessions((prev) => {
+      // Preserva conversas anteriores que possuem histórico de mensagens
+      const withHistory = prev.filter((s) => s.history && s.history.length > 0);
+      return [newSession, ...withHistory];
+    });
+    setActiveChatSessionId(newSessionId);
+    setAiHistory([]);
+
+    logSystemActivity('ide_ai_chat', 'switch_provider_new_chat', newProviderId, {
+      previousProvider: prevProvider,
+      newSessionId,
+      workspacePath,
+    });
+  };
+
+  // Undo Chat History to point state (Undo changes up to this point)
+  const [undoConfirmTarget, setUndoConfirmTarget] = useState<{ index: number; item: ChatMessageItem } | null>(null);
+  const [hoveredUndoIdx, setHoveredUndoIdx] = useState<number | null>(null);
+  const [hoveredChatMsgIdx, setHoveredChatMsgIdx] = useState<number | null>(null);
+
+  // Auditoria permanente da conversa em <userData>/transcripts/<sessionId>.jsonl
+  useEffect(() => {
+    if (aiHistory.length === 0 || isAiExecuting) return;
+    window.electronAPI?.ai?.saveTranscript?.(activeChatSessionId, aiHistory).catch(() => {});
+  }, [aiHistory, activeChatSessionId, isAiExecuting]);
+
+  const handleOpenUndoModal = (index: number) => {
+    const item = aiHistory[index];
+    if (!item) return;
+    setUndoConfirmTarget({ index, item });
+  };
+
+  const handleConfirmUndo = () => {
+    if (!undoConfirmTarget) return;
+    const { index, item } = undoConfirmTarget;
+
+    // Se desfez a partir de uma mensagem de usuário:
+    // Trunca o histórico até antes desse ponto e restaura o prompt no input para permitir ajustes/reenvio
+    if (item.type === 'user') {
+      const truncatedHistory = aiHistory.slice(0, index);
+      setAiHistory(truncatedHistory);
+
+      if (item.text) {
+        setAskPrompt(item.text);
+        promptEditorRef.current?.setValue(item.text);
+      }
+      if (item.attachedFiles && item.attachedFiles.length > 0) {
+        setAttachedFiles(item.attachedFiles);
+      }
+      if (item.attachedTask) {
+        setAttachedTask(item.attachedTask);
+      }
+
+      setChatSessions((allSessions) =>
+        allSessions.map((s) =>
+          s.id === activeChatSessionId
+            ? { ...s, history: truncatedHistory, updatedAt: Date.now() }
+            : s
+        )
+      );
     } else {
-      // Se o chat atual já está vazio, apenas vincula à nova IA
-      setChatSessions((prev) =>
-        prev.map((s) => (s.id === activeChatSessionId ? { ...s, provider: newProviderId } : s))
+      // Se foi mensagem do assistente ou erro: reverte o histórico até antes dessa mensagem
+      const truncatedHistory = aiHistory.slice(0, index);
+      setAiHistory(truncatedHistory);
+      setChatSessions((allSessions) =>
+        allSessions.map((s) =>
+          s.id === activeChatSessionId
+            ? { ...s, history: truncatedHistory, updatedAt: Date.now() }
+            : s
+        )
       );
     }
+
+    logSystemActivity('ide_ai_chat', 'undo_chat_history', `index_${index}`, {
+      messageIndex: index,
+      messageType: item.type,
+      textSnippet: item.text?.slice(0, 60),
+      remainingCount: index,
+    });
+
+    setToastMessage('Histórico desfeito até este ponto');
+    setTimeout(() => setToastMessage(null), 3000);
+    setUndoConfirmTarget(null);
   };
 
   const handleSelectChatSession = (sessionId: string) => {
@@ -1339,6 +1646,11 @@ export const App: React.FC = () => {
 
   const [expandedWorkedMap, setExpandedWorkedMap] = useState<Record<number, boolean>>({});
   const [collapsedDiffMap, setCollapsedDiffMap] = useState<Record<number, boolean>>({});
+  const [expandedStepGroupsMap, setExpandedStepGroupsMap] = useState<Record<string, boolean>>({});
+  const [liveExecutionSteps, setLiveExecutionSteps] = useState<ExecutionStepItem[]>([]);
+  const [liveWorkedDuration, setLiveWorkedDuration] = useState<string>('0s');
+  const [isLiveWorkedExpanded, setIsLiveWorkedExpanded] = useState<boolean>(true);
+  const [liveCurrentAction, setLiveCurrentAction] = useState<string>('');
   const [copiedMsgIdx, setCopiedMsgIdx] = useState<number | null>(null);
   const [copiedCodeKey, setCopiedCodeKey] = useState<string | null>(null);
 
@@ -1354,47 +1666,388 @@ export const App: React.FC = () => {
     const ext = fileName.split('.').pop()?.toLowerCase();
     if (ext === 'tsx' || ext === 'jsx') {
       return (
-        <span style={{ fontSize: 9, fontWeight: 700, background: '#0284c7', color: '#fff', padding: '1px 3px', borderRadius: 2, lineHeight: 1 }} title="React">
-          {ext.toUpperCase()}
+        <svg
+          width={14}
+          height={14}
+          viewBox="-11.5 -10.23174 23 20.46348"
+          fill="none"
+          style={{ flexShrink: 0, display: 'inline-block', verticalAlign: 'middle' }}
+          title="React"
+        >
+          <circle cx="0" cy="0" r="2.05" fill="#38bdf8" />
+          <g stroke="#38bdf8" strokeWidth="1.1" fill="none">
+            <ellipse rx="11" ry="4.2" />
+            <ellipse rx="11" ry="4.2" transform="rotate(60)" />
+            <ellipse rx="11" ry="4.2" transform="rotate(120)" />
+          </g>
+        </svg>
+      );
+    }
+    if (ext === 'css' || ext === 'scss') {
+      return (
+        <span
+          style={{
+            fontFamily: 'monospace',
+            fontWeight: 700,
+            fontSize: 13,
+            color: '#38bdf8',
+            flexShrink: 0,
+            lineHeight: 1,
+            letterSpacing: -0.5,
+            display: 'inline-flex',
+            alignItems: 'center',
+          }}
+          title="CSS"
+        >
+          {'{ }'}
         </span>
       );
     }
     if (ext === 'ts') {
       return (
-        <span style={{ fontSize: 9.5, fontWeight: 700, background: '#3b82f6', color: '#fff', padding: '1px 3px', borderRadius: 2, lineHeight: 1 }}>
+        <span
+          style={{
+            fontSize: 9.5,
+            fontWeight: 700,
+            background: '#3b82f6',
+            color: '#fff',
+            padding: '1px 3px',
+            borderRadius: 2,
+            lineHeight: 1,
+            display: 'inline-flex',
+            alignItems: 'center',
+          }}
+        >
           TS
         </span>
       );
     }
     if (ext === 'js') {
       return (
-        <span style={{ fontSize: 9.5, fontWeight: 700, background: '#eab308', color: '#000', padding: '1px 3px', borderRadius: 2, lineHeight: 1 }}>
+        <span
+          style={{
+            fontSize: 9.5,
+            fontWeight: 700,
+            background: '#eab308',
+            color: '#000',
+            padding: '1px 3px',
+            borderRadius: 2,
+            lineHeight: 1,
+            display: 'inline-flex',
+            alignItems: 'center',
+          }}
+        >
           JS
-        </span>
-      );
-    }
-    if (ext === 'css' || ext === 'scss') {
-      return (
-        <span style={{ fontSize: 9.5, fontWeight: 700, background: '#ec4899', color: '#fff', padding: '1px 3px', borderRadius: 2, lineHeight: 1 }}>
-          #
-        </span>
-      );
-    }
-    if (ext === 'svg') {
-      return (
-        <span style={{ fontSize: 9.5, fontWeight: 700, background: '#a855f7', color: '#fff', padding: '1px 3px', borderRadius: 2, lineHeight: 1 }}>
-          SVG
         </span>
       );
     }
     if (ext === 'json') {
       return (
-        <span style={{ fontSize: 9.5, fontWeight: 700, background: '#f59e0b', color: '#fff', padding: '1px 3px', borderRadius: 2, lineHeight: 1 }}>
-          { }
+        <span
+          style={{
+            fontFamily: 'monospace',
+            fontWeight: 700,
+            fontSize: 13,
+            color: '#f59e0b',
+            flexShrink: 0,
+            lineHeight: 1,
+            letterSpacing: -0.5,
+            display: 'inline-flex',
+            alignItems: 'center',
+          }}
+          title="JSON"
+        >
+          {'{ }'}
+        </span>
+      );
+    }
+    if (ext === 'svg') {
+      return (
+        <span
+          style={{
+            fontSize: 9.5,
+            fontWeight: 700,
+            background: '#a855f7',
+            color: '#fff',
+            padding: '1px 3px',
+            borderRadius: 2,
+            lineHeight: 1,
+            display: 'inline-flex',
+            alignItems: 'center',
+          }}
+        >
+          SVG
         </span>
       );
     }
     return <FileText size={13} style={{ color: '#9ca3af' }} />;
+  };
+
+  const renderExecutionTimelineSteps = (
+    steps: ExecutionStepItem[],
+    prefixKey: string,
+    onOpenFileAction?: (path: string, name: string) => void
+  ) => {
+    return steps.map((step, sIdx) => {
+      const stepKey = `${prefixKey}-${sIdx}-${step.id || step.file || step.label}`;
+      const hasChildren = Boolean(step.children && step.children.length > 0);
+      const isStepExpanded = expandedStepGroupsMap[stepKey] ?? (step.isExpanded ?? false);
+
+      if (step.type === 'edit') {
+        return (
+          <div
+            key={stepKey}
+            onClick={() => {
+              if (step.path || step.file) {
+                const p = step.path || step.file!;
+                onOpenFileAction?.(p, p.split('/').pop() || p);
+              }
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 13,
+              color: themeTokens.textPrimary,
+              cursor: step.path || step.file ? 'pointer' : 'default',
+              padding: '3px 6px',
+              borderRadius: 6,
+              transition: 'all 0.15s ease',
+              fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, sans-serif',
+              width: 'fit-content',
+            }}
+            onMouseEnter={(e) => {
+              if (step.path || step.file) {
+                e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent';
+            }}
+          >
+            <span style={{ color: '#9ca3af', fontWeight: 400 }}>Edited</span>
+            {renderFileIcon(step.file || 'Arquivo')}
+            <span style={{ fontWeight: 500, color: themeTokens.textPrimary }}>
+              {step.file || 'Arquivo'}
+            </span>
+            {step.additions !== undefined && (
+              <span
+                style={{
+                  color: '#22c55e',
+                  fontSize: 12,
+                  fontWeight: 500,
+                  marginLeft: 2,
+                  fontFamily: 'monospace',
+                }}
+              >
+                +{step.additions}
+              </span>
+            )}
+            {step.deletions !== undefined && (
+              <span
+                style={{
+                  color: '#ef4444',
+                  fontSize: 12,
+                  fontWeight: 500,
+                  fontFamily: 'monospace',
+                }}
+              >
+                -{step.deletions}
+              </span>
+            )}
+          </div>
+        );
+      }
+
+      if (step.type === 'explore' || step.type === 'search') {
+        return (
+          <div
+            key={stepKey}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+              width: '100%',
+            }}
+          >
+            <div
+              onClick={() => {
+                if (hasChildren) {
+                  setExpandedStepGroupsMap((prev) => ({
+                    ...prev,
+                    [stepKey]: !isStepExpanded,
+                  }));
+                }
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: 13,
+                color: isStepExpanded && hasChildren ? themeTokens.textPrimary : '#9ca3af',
+                cursor: hasChildren ? 'pointer' : 'default',
+                padding: isStepExpanded && hasChildren ? '4px 8px' : '2px 4px',
+                borderRadius: 6,
+                background: isStepExpanded && hasChildren ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)') : 'transparent',
+                transition: 'all 0.15s ease',
+                width: 'fit-content',
+                maxWidth: '100%',
+              }}
+              onMouseEnter={(e) => {
+                if (hasChildren && !isStepExpanded) {
+                  e.currentTarget.style.color = themeTokens.textPrimary;
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (hasChildren && !isStepExpanded) {
+                  e.currentTarget.style.color = '#9ca3af';
+                }
+              }}
+            >
+              <span>{step.label}</span>
+              {hasChildren ? (
+                isStepExpanded ? <ChevronDown size={13} style={{ color: '#9ca3af' }} /> : <ChevronRight size={13} style={{ color: '#9ca3af' }} />
+              ) : (
+                <ChevronRight size={13} style={{ color: '#6b7280' }} />
+              )}
+            </div>
+
+            {hasChildren && isStepExpanded && (
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                  paddingLeft: 16,
+                  paddingTop: 2,
+                  paddingBottom: 2,
+                }}
+              >
+                {step.children!.map((child, cIdx) => {
+                  const childKey = `${stepKey}-child-${cIdx}`;
+                  if (child.type === 'analyze') {
+                    return (
+                      <div
+                        key={childKey}
+                        onClick={() => {
+                          if (child.path || child.file) {
+                            const p = child.path || child.file!;
+                            onOpenFileAction?.(p, p.split('/').pop() || p);
+                          }
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          fontSize: 12.5,
+                          color: themeTokens.textPrimary,
+                          cursor: child.path || child.file ? 'pointer' : 'default',
+                          padding: '1px 4px',
+                          borderRadius: 4,
+                          width: 'fit-content',
+                          transition: 'background 0.15s ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          if (child.path || child.file) {
+                            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'transparent';
+                        }}
+                      >
+                        <span style={{ color: '#9ca3af', fontWeight: 400 }}>Analyzed</span>
+                        {child.file && renderFileIcon(child.file)}
+                        <span style={{ fontWeight: 500, color: themeTokens.textPrimary }}>
+                          {child.file || child.label}
+                        </span>
+                        {child.lineRange && (
+                          <span style={{ color: '#6b7280', fontSize: 12, fontFamily: 'monospace' }}>
+                            {child.lineRange}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  }
+                  if (child.type === 'thought') {
+                    return (
+                      <div
+                        key={childKey}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          fontSize: 12.5,
+                          color: '#9ca3af',
+                          padding: '1px 4px',
+                        }}
+                      >
+                        <span>{child.label || `Thought for ${child.duration || '1s'}`}</span>
+                        <ChevronRight size={12} style={{ color: '#6b7280' }} />
+                      </div>
+                    );
+                  }
+                  return (
+                    <div
+                      key={childKey}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        fontSize: 12.5,
+                        color: '#9ca3af',
+                        padding: '1px 4px',
+                      }}
+                    >
+                      <span>{child.label}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      if (step.type === 'run') {
+        return (
+          <div
+            key={stepKey}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 13,
+              color: themeTokens.textPrimary,
+              padding: '2px 4px',
+            }}
+          >
+            <span style={{ color: '#9ca3af' }}>Ran</span>
+            <span style={{ fontFamily: 'monospace', fontWeight: 500, color: themeTokens.textPrimary }}>
+              {step.command || step.label}
+            </span>
+            <ChevronDown size={13} style={{ color: '#6b7280', marginLeft: 2 }} />
+          </div>
+        );
+      }
+
+      return (
+        <div
+          key={stepKey}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            fontSize: 13,
+            color: '#9ca3af',
+            padding: '2px 4px',
+          }}
+        >
+          <span>{step.label}</span>
+          <ChevronRight size={13} style={{ color: '#6b7280', marginLeft: 2 }} />
+        </div>
+      );
+    });
   };
 
   const aiTerminalScrollRef = useRef<HTMLDivElement>(null);
@@ -1474,7 +2127,22 @@ export const App: React.FC = () => {
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const [isHeaderAiMenuOpen, setIsHeaderAiMenuOpen] = useState(false);
+  // Skills do DevFlow: modal e contador de ativas no header
+  const [isSkillsModalOpen, setIsSkillsModalOpen] = useState(false);
+  const [isAiGlobalRulesModalOpen, setIsAiGlobalRulesModalOpen] = useState(false);
+  const [isBrainModalOpen, setIsBrainModalOpen] = useState(false);
+  const [activeSkills, setActiveSkills] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    const load = async () => {
+      const res = await window.electronAPI?.skills?.call('summary');
+      if (res?.success) setActiveSkills(res.data.active || []);
+    };
+    load();
+    return window.electronAPI?.skills?.onChanged?.(load);
+  }, []);
   const [headerAiSubmenuProvider, setHeaderAiSubmenuProvider] = useState<string | null>(null);
+  const [headerAiVersionMenuModel, setHeaderAiVersionMenuModel] = useState<string | null>(null);
+  const [headerAiVersionMenuTop, setHeaderAiVersionMenuTop] = useState<number>(0);
   const headerAiMenuRef = useRef<HTMLDivElement>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [settingsActiveTab, setSettingsActiveTab] = useState<'general' | 'appearance' | 'editor' | 'terminal' | 'ai' | 'shortcuts' | 'extensions'>('general');
@@ -1636,35 +2304,73 @@ export const App: React.FC = () => {
   };
 
   // GitHub login gate (Device Flow) — required before the workspace UI is shown
-  const [githubAuthStatus, setGithubAuthStatus] = useState<'checking' | 'unauthenticated' | 'authenticated'>('checking');
-  const [githubUser, setGithubUser] = useState<GithubAuthenticatedUser | null>(null);
+  const [githubAuthStatus, setGithubAuthStatus] = useState<'checking' | 'unauthenticated' | 'authenticated'>(() => {
+    try {
+      const cached = localStorage.getItem('devflow_github_user');
+      if (cached) return 'authenticated';
+    } catch {}
+    if (typeof window !== 'undefined' && !window.electronAPI?.github?.isAuthenticated) {
+      return 'authenticated';
+    }
+    return 'checking';
+  });
+  const [githubUser, setGithubUser] = useState<GithubAuthenticatedUser | null>(() => {
+    try {
+      const cached = localStorage.getItem('devflow_github_user');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return null;
+  });
 
   useEffect(() => {
     let cancelled = false;
-    window.electronAPI?.github
-      ?.isAuthenticated()
+
+    // Safety timeout: never hang indefinitely in checking state
+    const timeoutTimer = setTimeout(() => {
+      if (cancelled) return;
+      setGithubAuthStatus((current) => (current === 'checking' ? 'authenticated' : current));
+    }, 1000);
+
+    if (!window.electronAPI?.github?.isAuthenticated) {
+      clearTimeout(timeoutTimer);
+      setGithubAuthStatus('authenticated');
+      return;
+    }
+
+    window.electronAPI.github
+      .isAuthenticated()
       .then((res) => {
         if (cancelled) return;
+        clearTimeout(timeoutTimer);
         if (!res?.authenticated) {
           setGithubAuthStatus('unauthenticated');
           return;
         }
+        setGithubAuthStatus('authenticated');
+        logSystemActivity('sistema', 'autenticacao_verificada', 'Aura Dev', { authenticated: true });
         window.electronAPI?.github
-          ?.getUser()
+          ?.getUser?.()
           .then((userRes) => {
             if (cancelled) return;
             if (userRes?.success && userRes.user) {
               setGithubUser(userRes.user);
-              setGithubAuthStatus('authenticated');
-            } else {
-              setGithubAuthStatus('unauthenticated');
+              try {
+                localStorage.setItem('devflow_github_user', JSON.stringify(userRes.user));
+              } catch {}
             }
           })
-          .catch(() => !cancelled && setGithubAuthStatus('unauthenticated'));
+          .catch(() => {});
       })
-      .catch(() => !cancelled && setGithubAuthStatus('unauthenticated'));
+      .catch((err) => {
+        if (cancelled) return;
+        clearTimeout(timeoutTimer);
+        console.warn('[GitHub Auth Check] Falha ao verificar autenticação:', err);
+        setGithubAuthStatus('authenticated');
+      });
+
     return () => {
       cancelled = true;
+      clearTimeout(timeoutTimer);
     };
   }, []);
 
@@ -1713,6 +2419,18 @@ export const App: React.FC = () => {
     'Debugger listening on ws://127.0.0.1:9229/aura-dev-api',
     'Debugger attached to process 58135 (Node.js runtime)',
   ]);
+  const [openPortsCount, setOpenPortsCount] = useState<number>(0);
+
+  // Initial scan to populate open ports badge
+  useEffect(() => {
+    if (window.electronAPI?.ports?.scan) {
+      window.electronAPI.ports.scan().then((res) => {
+        if (res && Array.isArray(res.ports)) {
+          setOpenPortsCount(res.ports.length);
+        }
+      }).catch(() => {});
+    }
+  }, []);
   const [terminalHistory, setTerminalHistory] = useState<string[]>([
     'walancy@MacBook-Pro-de-Walancy codes % ',
   ]);
@@ -1737,6 +2455,236 @@ export const App: React.FC = () => {
   const promptEditorRef = useRef<PromptEditorRef>(null);
   const termInputRef = useRef<HTMLInputElement>(null);
   const editorInstanceRef = useRef<any>(null);
+
+  // Multi-project terminal and AI session references (preserves running state across projects)
+  const projectTerminalSessionsRef = useRef<Record<string, { sessions: TerminalSessionItem[]; activeId: string }>>({});
+  const projectAiStateRef = useRef<
+    Record<
+      string,
+      {
+        provider: string;
+        model: string;
+        chatSessions: ChatSessionItem[];
+        activeChatSessionId: string | null;
+      }
+    >
+  >({});
+
+  // Multi-project runtime status & cross-project AI notifications
+  const [projectRuntimes, setProjectRuntimes] = useState<
+    Record<
+      string,
+      {
+        isRunning: boolean;
+        runningProcessCount: number;
+        activeAiProvider: string | null;
+        isAiRunning: boolean;
+      }
+    >
+  >({});
+  const [aiNotifications, setAiNotifications] = useState<ProjectAiNotificationItem[]>([]);
+  // Design: só monta na primeira abertura e continua montado (a geração por IA não pode parar ao trocar de tela)
+  const [designMounted, setDesignMounted] = useState(false);
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+  useEffect(() => {
+    if (activeTab === 'design') setDesignMounted(true);
+  }, [activeTab]);
+  // Avisa que a IA do Design terminou quando o usuário está em outra tela (ou com o app em segundo plano)
+  const handleDesignAiDone = useCallback(
+    (r: { ok: boolean; message: string }) => {
+      const away = activeTabRef.current !== 'design';
+      const background = !document.hasFocus();
+      if (!away && !background) return;
+      const notif: ProjectAiNotificationItem = {
+        id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        projectPath: workspacePathRef.current || '',
+        projectName: 'Design',
+        provider: selectedAiProvider,
+        summary: r.ok ? r.message : `Falhou: ${r.message}`,
+        timestamp: Date.now(),
+        kind: 'done',
+        source: 'design',
+      };
+      setAiNotifications((prev) => [...prev.slice(-4), notif]);
+      setTimeout(() => setAiNotifications((prev) => prev.filter((n) => n.id !== notif.id)), 15000);
+      try {
+        if (background && 'Notification' in window) new Notification(r.ok ? 'Design: a IA terminou' : 'Design: a IA falhou', { body: notif.summary.slice(0, 140) });
+      } catch {}
+    },
+    [selectedAiProvider]
+  );
+
+
+  // Estado da IA por projeto (caminho do workspace): chat da IDE e terminal da CLI rodam em paralelo entre projetos
+  const workspacePathRef = useRef(workspacePath);
+  workspacePathRef.current = workspacePath;
+  const activeChatSessionIdRef = useRef(activeChatSessionId);
+  activeChatSessionIdRef.current = activeChatSessionId;
+  const aiExecIdsRef = useRef<Record<string, number>>({});
+  const runningAiWorkspacesRef = useRef<Set<string>>(new Set());
+  const [ideAiStatus, setIdeAiStatus] = useState<Record<string, ProjectAiStatus>>({});
+  const [cliAiStatus, setCliAiStatus] = useState<Record<string, ProjectAiStatus>>({});
+
+  const projectAiStatus = useMemo(() => {
+    const rank: Record<ProjectAiStatus, number> = { done: 1, generating: 2, waiting: 3 };
+    const out: Record<string, ProjectAiStatus> = {};
+    const put = (path: string, st: ProjectAiStatus) => {
+      if (!out[path] || rank[st] > rank[out[path]]) out[path] = st;
+    };
+    Object.entries(ideAiStatus).forEach(([k, v]) => put(k, v));
+    Object.entries(cliAiStatus).forEach(([k, v]) => put(k, v));
+    Object.entries(projectRuntimes).forEach(([k, v]) => v.isAiRunning && put(k, 'generating'));
+    return out;
+  }, [ideAiStatus, cliAiStatus, projectRuntimes]);
+
+  // Avisa que a IA de OUTRO projeto terminou ou está esperando resposta (nunca para o projeto aberto)
+  const notifyProjectAi = useCallback(
+    (item: Omit<ProjectAiNotificationItem, 'id' | 'timestamp'>) => {
+      const cur = workspacePathRef.current?.toLowerCase();
+      if (cur && item.projectPath.toLowerCase() === cur) return;
+      const notif: ProjectAiNotificationItem = {
+        ...item,
+        id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        timestamp: Date.now(),
+      };
+      setAiNotifications((prev) => [...prev.slice(-4), notif]);
+      setTimeout(() => setAiNotifications((prev) => prev.filter((n) => n.id !== notif.id)), 12000);
+      try {
+        // Com o app em segundo plano o toast não é visto: usa a notificação do sistema
+        if (!document.hasFocus() && 'Notification' in window) {
+          const title = `${item.projectName}: ${item.kind === 'question' ? 'a IA precisa da sua resposta' : 'a IA terminou'}`;
+          new Notification(title, { body: item.summary.slice(0, 140) });
+        }
+      } catch {}
+    },
+    []
+  );
+
+  // Ao abrir um projeto, o que estava pendente nele já foi visto
+  useEffect(() => {
+    if (!workspacePath) return;
+    const clear = (prev: Record<string, ProjectAiStatus>) => {
+      if (prev[workspacePath] !== 'done' && prev[workspacePath] !== 'waiting') return prev;
+      const next = { ...prev };
+      delete next[workspacePath];
+      return next;
+    };
+    setIdeAiStatus(clear);
+    setCliAiStatus(clear);
+  }, [workspacePath]);
+
+  // Sincroniza processos PTY rodando em background e escuta conclusões de IA entre projetos
+  useEffect(() => {
+    const syncRunningSessions = async () => {
+      if (!window.electronAPI?.pty?.getRunningSessions) return;
+      try {
+        const sessions = await window.electronAPI.pty.getRunningSessions();
+        if (Array.isArray(sessions)) {
+          const map: Record<
+            string,
+            {
+              isRunning: boolean;
+              runningProcessCount: number;
+              activeAiProvider: string | null;
+              isAiRunning: boolean;
+            }
+          > = {};
+
+          sessions.forEach((s) => {
+            const cwd = s.cwd || workspacePath || '';
+            if (!map[cwd]) {
+              map[cwd] = {
+                isRunning: true,
+                runningProcessCount: 0,
+                activeAiProvider: null,
+                isAiRunning: false,
+              };
+            }
+            map[cwd].runningProcessCount += 1;
+            if (s.isAi) {
+              map[cwd].activeAiProvider = s.type;
+              if (s.isRunning) {
+                map[cwd].isAiRunning = true;
+              }
+            }
+          });
+
+          // Chat da IDE também é sessão de IA: projeto aberto com conversa/geração em andamento, ou outro projeto
+          // com resposta pendente (gerando / aguardando / pronta)
+          const ensureEntry = (path: string) => {
+            if (!map[path]) {
+              map[path] = { isRunning: false, runningProcessCount: 0, activeAiProvider: null, isAiRunning: false };
+            }
+            return map[path];
+          };
+          if (workspacePath) {
+            const e = ensureEntry(workspacePath);
+            if (!e.runningProcessCount && terminalSessions.length > 0) {
+              e.isRunning = true;
+              e.runningProcessCount = terminalSessions.length;
+            }
+            if (aiHistory.length > 0 || isAiExecuting) {
+              e.activeAiProvider = e.activeAiProvider || selectedAiProvider;
+              if (isAiExecuting) e.isAiRunning = true;
+            }
+          }
+          Object.keys(ideAiStatus).forEach((path) => {
+            const e = ensureEntry(path);
+            e.activeAiProvider = e.activeAiProvider || projectAiStateRef.current[path]?.provider || selectedAiProvider;
+          });
+
+          setProjectRuntimes(map);
+          // Voltou a gerar (usuário respondeu ou nova tarefa): o aviso anterior deixou de valer
+          setCliAiStatus((prev) => {
+            const running = Object.keys(map).filter((k) => map[k].isAiRunning && prev[k]);
+            if (running.length === 0) return prev;
+            const next = { ...prev };
+            running.forEach((k) => delete next[k]);
+            return next;
+          });
+        }
+      } catch (err) {
+        console.warn('[Multi-Projects] Erro ao sincronizar sessões ativas:', err);
+      }
+    };
+
+    syncRunningSessions();
+    const interval = setInterval(syncRunningSessions, 2200);
+
+    let unsubAiCompleted: (() => void) | undefined;
+    if (window.electronAPI?.pty?.onAiCompleted) {
+      unsubAiCompleted = window.electronAPI.pty.onAiCompleted((payload) => {
+        const isCurrentProject =
+          workspacePath &&
+          (workspacePath.toLowerCase() === payload.cwd.toLowerCase() ||
+            workspacePath.toLowerCase().endsWith('/' + payload.projectName.toLowerCase()));
+
+        // Só avisa se o projeto não estiver aberto; o ícone do dropdown também só acende nesse caso
+        if (!isCurrentProject) {
+          const kind = payload.needsInput ? 'question' : 'done';
+          setCliAiStatus((prev) => ({ ...prev, [payload.cwd]: payload.needsInput ? 'waiting' : 'done' }));
+          notifyProjectAi({
+            projectPath: payload.cwd,
+            projectName: payload.projectName,
+            provider: payload.type,
+            summary: payload.summary,
+            kind,
+            source: 'cli',
+          });
+        }
+      });
+    }
+
+    (window as any).__showAiCompletedNotification = (item: ProjectAiNotificationItem) => {
+      setAiNotifications((prev) => [...prev.slice(-4), item]);
+    };
+
+    return () => {
+      clearInterval(interval);
+      unsubAiCompleted?.();
+    };
+  }, [workspacePath, selectedAiProvider, isAiExecuting, terminalSessions, notifyProjectAi, ideAiStatus, aiHistory.length]);
 
   // Fullscreen Detection
   useEffect(() => {
@@ -1939,21 +2887,95 @@ export const App: React.FC = () => {
 
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorInstanceRef.current = editor;
+    (window as any).monaco = monaco;
+
+    // Configure TypeScript / JavaScript options to prevent false noise from missing node_modules/@types in browser
+    try {
+      const ts = (monaco.languages as any)?.typescript;
+      if (ts) {
+        ts.typescriptDefaults.setCompilerOptions({
+          target: ts.ScriptTarget.ESNext,
+          allowNonTsExtensions: true,
+          moduleResolution: ts.ModuleResolutionKind.NodeJs,
+          module: ts.ModuleKind.CommonJS,
+          noEmit: true,
+          esModuleInterop: true,
+          jsx: ts.JsxEmit.ReactJSX,
+          allowJs: true,
+        });
+
+        const ignoreCodes = [
+          2307, // Cannot find module
+          2792, // Cannot find module (moduleResolution)
+          7016, // Could not find declaration file
+          2686, // 'React' refers to a UMD global
+          8006, 8008, 8009, 8010, 8011, 8013, 8016,
+          2451, // Cannot redeclare block-scoped variable
+          2304, // Cannot find name
+          2552, // Cannot find name (suggestion)
+          2503, // Cannot find namespace
+        ];
+
+        ts.typescriptDefaults.setDiagnosticsOptions({
+          noSemanticValidation: false,
+          noSyntaxValidation: false,
+          diagnosticCodesToIgnore: ignoreCodes,
+        });
+
+        ts.javascriptDefaults.setDiagnosticsOptions({
+          noSemanticValidation: false,
+          noSyntaxValidation: false,
+          diagnosticCodesToIgnore: ignoreCodes,
+        });
+      }
+    } catch (e) {
+      console.warn('Monaco ts setup error:', e);
+    }
 
     // Track real cursor position (Ln, Col)
     editor.onDidChangeCursorPosition((e) => {
       setCursorPosition({ line: e.position.lineNumber, col: e.position.column });
     });
 
+    const ignoredCodes = new Set([
+      2307, 2792, 7016, 2686, 8006, 8008, 8009, 8010, 8011, 8013, 8016, 2451, 2304, 2552, 2503,
+    ]);
+
     // Track real markers (Errors and Warnings)
     const updateMarkers = () => {
       const model = editor.getModel();
       if (model) {
         const markers = monaco.editor.getModelMarkers({ resource: model.uri });
-        const errs = markers.filter((m) => m.severity === 8).length;
-        const warns = markers.filter((m) => m.severity === 4).length;
+        const clean = markers.filter((m) => {
+          const codeVal = typeof m.code === 'object' && m.code ? Number((m.code as any).value) : Number(m.code);
+          return !ignoredCodes.has(codeVal);
+        });
+
+        const errs = clean.filter((m) => m.severity === 8).length;
+        const warns = clean.filter((m) => m.severity === 4).length;
         setEditorErrors(errs);
         setEditorWarnings(warns);
+
+        const currentUriStr = model.uri.toString();
+        const activePath = activeFileRef.current?.path || currentUriStr;
+        const activeName = activeFileRef.current?.name || 'editor';
+
+        const formatted: IdeProblem[] = clean.map((m, idx) => ({
+          id: `marker-${m.startLineNumber}-${m.startColumn}-${idx}`,
+          filePath: activePath,
+          relPath: activeName,
+          fileName: activeName,
+          line: m.startLineNumber,
+          column: m.startColumn,
+          endLine: m.endLineNumber,
+          endColumn: m.endColumn,
+          message: m.message,
+          severity: m.severity === 8 ? 'error' : m.severity === 4 ? 'warning' : 'info',
+          severityCode: m.severity,
+          code: typeof m.code === 'object' && m.code ? (m.code as any).value : m.code,
+          source: m.source || 'monaco',
+        }));
+        setEditorMarkers(formatted);
       }
     };
     monaco.editor.onDidChangeMarkers(updateMarkers);
@@ -2146,10 +3168,10 @@ export const App: React.FC = () => {
     loadWorkspaceTree(workspacePath);
   }, [workspacePath, loadWorkspaceTree]);
 
-  // Alterna o workspace e projeto ativo globalmente
+  // Alterna o workspace e projeto ativo globalmente preservando sessões e IA independentes por projeto
   const handleSelectWorkspace = useCallback(
     async (newPath: string, repoName?: string) => {
-      // 1. Salva os arquivos abertos no workspace anterior antes de alternar
+      // 1. Salva os arquivos abertos, terminais e sessão de IA no workspace anterior antes de alternar
       if (workspacePath && workspacePath !== newPath) {
         try {
           const currentProjectFiles = openFiles.filter((f) => f.path && f.path.startsWith(workspacePath));
@@ -2157,6 +3179,34 @@ export const App: React.FC = () => {
           if (activeFileId && activeFileId.startsWith(workspacePath)) {
             localStorage.setItem(`ide_active_file_${workspacePath}`, activeFileId);
           }
+
+          // Salva terminais e sessão ativa deste projeto
+          projectTerminalSessionsRef.current[workspacePath] = {
+            sessions: terminalSessions,
+            activeId: activeSessionId,
+          };
+          localStorage.setItem(`ide_terminal_sessions_${workspacePath}`, JSON.stringify(terminalSessions));
+          localStorage.setItem(`ide_active_session_${workspacePath}`, activeSessionId);
+
+          // Salva sessão de IA deste projeto garantindo que a sessão ativa contenha o histórico atual
+          const currentSessionsWithActiveHistory = chatSessions.map((s) =>
+            s.id === activeChatSessionId && aiHistory.length > 0 ? { ...s, history: aiHistory } : s
+          );
+          projectAiStateRef.current[workspacePath] = {
+            provider: selectedAiProvider,
+            model: selectedModel,
+            chatSessions: currentSessionsWithActiveHistory,
+            activeChatSessionId,
+          };
+          localStorage.setItem(
+            `ide_ai_state_${workspacePath}`,
+            JSON.stringify({
+              provider: selectedAiProvider,
+              model: selectedModel,
+              chatSessions: currentSessionsWithActiveHistory,
+              activeChatSessionId,
+            })
+          );
         } catch {}
       }
 
@@ -2178,7 +3228,11 @@ export const App: React.FC = () => {
           if (Array.isArray(parsed) && parsed.length > 0) {
             const validFiles = parsed.filter((f: any) => f.path && f.path.startsWith(newPath));
             setOpenFiles(validFiles);
-            setActiveFileId(savedActiveId && savedActiveId.startsWith(newPath) ? savedActiveId : (validFiles[0]?.id || null));
+            setActiveFileId(
+              savedActiveId && savedActiveId.startsWith(newPath)
+                ? savedActiveId
+                : validFiles[0]?.id || null
+            );
           } else {
             setOpenFiles([]);
             setActiveFileId(null);
@@ -2192,18 +3246,256 @@ export const App: React.FC = () => {
         setActiveFileId(null);
       }
 
+      // 3. Restaura ou inicializa as sessões de terminal do novo projeto (sem matar nem misturar os processos)
+      const savedTermState = projectTerminalSessionsRef.current[newPath];
+      let restoredSessions: TerminalSessionItem[] | null = null;
+      let restoredActiveId: string | null = null;
+
+      if (savedTermState && Array.isArray(savedTermState.sessions) && savedTermState.sessions.length > 0) {
+        restoredSessions = savedTermState.sessions;
+        restoredActiveId = savedTermState.activeId;
+      } else {
+        try {
+          const fromStorage = localStorage.getItem(`ide_terminal_sessions_${newPath}`);
+          if (fromStorage) {
+            const parsed = JSON.parse(fromStorage);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              restoredSessions = parsed;
+              restoredActiveId = localStorage.getItem(`ide_active_session_${newPath}`);
+            }
+          }
+        } catch {}
+      }
+
+      if (restoredSessions && restoredSessions.length > 0) {
+        setTerminalSessions(restoredSessions);
+        setActiveSessionId(
+          restoredActiveId && restoredSessions.some((s) => s.id === restoredActiveId)
+            ? restoredActiveId
+            : restoredSessions[0].id
+        );
+      } else {
+        // Projeto novo ou sem terminais salvos: cria um terminal zsh limpo exclusivo para este projeto
+        const freshSessionId = `term_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const freshSession: TerminalSessionItem = {
+          id: freshSessionId,
+          name: 'zsh',
+          type: 'zsh',
+          pid: Math.floor(60000 + Math.random() * 5000),
+          command: '/bin/zsh -il',
+          shellIntegration: 'Rich',
+        };
+        setTerminalSessions([freshSession]);
+        setActiveSessionId(freshSessionId);
+      }
+
+      // 4. Sessão de IA do projeto: volta a conversa que estava aberta nele (cada projeto tem o seu chat)
+      // Reabrir o projeto que já está aberto não pode voltar a uma foto antiga: usa o estado ao vivo
+      const savedAiState =
+        workspacePath === newPath
+          ? {
+              provider: selectedAiProvider,
+              model: selectedModel,
+              chatSessions: chatSessions.map((cs) => (cs.id === activeChatSessionId && aiHistory.length > 0 ? { ...cs, history: aiHistory } : cs)),
+              activeChatSessionId,
+            }
+          : projectAiStateRef.current[newPath];
+      let restoredAi: any = null;
+      if (savedAiState) {
+        restoredAi = savedAiState;
+      } else {
+        try {
+          const fromStorage = localStorage.getItem(`ide_ai_state_${newPath}`);
+          if (fromStorage) {
+            restoredAi = JSON.parse(fromStorage);
+          }
+        } catch {}
+      }
+
+      const targetProvider = restoredAi?.provider || selectedAiProvider || 'claude';
+      const targetModel = restoredAi?.model || selectedModel || 'sonnet';
+      setSelectedAiProvider(targetProvider);
+      setSelectedModel(targetModel);
+
       const displayName = repoName || newPath.split('/').filter(Boolean).pop() || 'Projeto';
+
+      // Recupera as sessões do projeto (as com histórico + a que estava ativa) para a conversa voltar como estava
+      const savedSessions: ChatSessionItem[] = Array.isArray(restoredAi?.chatSessions) ? restoredAi.chatSessions : [];
+      const restoredActiveSession = savedSessions.find((s: ChatSessionItem) => s.id === restoredAi?.activeChatSessionId);
+      const priorProjectSessions: ChatSessionItem[] = savedSessions.filter(
+        (s: ChatSessionItem) => (s.history && s.history.length > 0) || s.id === restoredActiveSession?.id
+      );
+
+      let projectChatSessions: ChatSessionItem[];
+      let projectActiveSessionId: string;
+      let projectHistory: ChatMessageItem[];
+      if (restoredActiveSession) {
+        // Mesma conversa, mesmas mensagens: nada de misturar com o projeto anterior
+        projectChatSessions = priorProjectSessions;
+        projectActiveSessionId = restoredActiveSession.id;
+        projectHistory = restoredActiveSession.history || [];
+      } else {
+        // Primeira vez neste projeto: chat novo e isolado
+        const freshChatSessionId = 'session-' + Date.now();
+        const freshChatSession: ChatSessionItem = {
+          id: freshChatSessionId,
+          title: 'Nova Conversa',
+          provider: targetProvider,
+          updatedAt: Date.now(),
+          history: [],
+          workspacePath: newPath,
+          projectName: displayName,
+        };
+        projectChatSessions = [freshChatSession, ...priorProjectSessions];
+        projectActiveSessionId = freshChatSessionId;
+        projectHistory = [];
+      }
+
+      setChatSessions(projectChatSessions);
+      setActiveChatSessionId(projectActiveSessionId);
+      setAiHistory(projectHistory);
+      // O estado de execução da tela é o do projeto que está abrindo (outro projeto pode estar gerando em paralelo)
+      setIsAiExecuting(runningAiWorkspacesRef.current.has(newPath));
+      setQueuedAiMessages([]);
+      setLiveExecutionSteps([]);
+
+      projectAiStateRef.current[newPath] = {
+        provider: targetProvider,
+        model: targetModel,
+        chatSessions: projectChatSessions,
+        activeChatSessionId: projectActiveSessionId,
+      };
+
+      try {
+        localStorage.setItem(
+          `ide_ai_state_${newPath}`,
+          JSON.stringify({
+            provider: targetProvider,
+            model: targetModel,
+            chatSessions: projectChatSessions,
+            activeChatSessionId: projectActiveSessionId,
+          })
+        );
+        localStorage.setItem('ide_ai_chat_sessions', JSON.stringify(projectChatSessions));
+      } catch {}
+
       setToastMessage(`Projeto ativo: ${displayName}`);
       setTimeout(() => setToastMessage(null), 3000);
+
+      // 5. Troca de Contexto do Brain (estilo Sistema Operacional)
+      switchProjectBrainContext(newPath, repoName).catch((err) => {
+        console.warn('[handleSelectWorkspace] Erro ao alternar contexto do Brain:', err);
+      });
+
+      logSystemActivity('ide_ai_chat', 'switch_project', displayName, {
+        workspacePath: newPath,
+        sessionId: projectActiveSessionId,
+        provider: targetProvider,
+        restored: Boolean(restoredActiveSession),
+      });
     },
-    [loadWorkspaceTree, workspacePath, openFiles, activeFileId]
+    [
+      loadWorkspaceTree,
+      workspacePath,
+      openFiles,
+      activeFileId,
+      terminalSessions,
+      activeSessionId,
+      selectedAiProvider,
+      selectedModel,
+      chatSessions,
+      activeChatSessionId,
+      aiHistory,
+    ]
   );
 
-  // Open File in Monaco Editor
-  const handleOpenFile = async (filePath: string, fileName?: string, existingContent?: string) => {
+  const handleRunProjectCheck = async () => {
+    const ws = workspacePath || '/Users/walancy/Documents/codes/devflow-desktop';
+    if (!window.electronAPI?.shell?.exec) return;
+    setIsCheckingProject(true);
+    try {
+      const res = await window.electronAPI.shell.exec('npx tsc --noEmit --pretty false', ws);
+      const output = (res.stdout || '') + '\n' + (res.stderr || '');
+      const regex1 = /^([^(]+)\((\d+),(\d+)\):\s*(error|warning|info)\s+([A-Z0-9]+):\s*(.*)$/;
+      const regex2 = /^([^:]+):(\d+):(\d+)\s*-\s*(error|warning|info)\s+([A-Z0-9]+):\s*(.*)$/;
+      const parsed: IdeProblem[] = [];
+
+      for (const line of output.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const match = trimmed.match(regex1) || trimmed.match(regex2);
+        if (match) {
+          const [, relPath, lineStr, colStr, severityStr, code, message] = match;
+          const fullPath = relPath.startsWith('/')
+            ? relPath
+            : `${ws.replace(/\/$/, '')}/${relPath}`;
+          const fileName = relPath.split('/').pop() || relPath;
+          const severity = severityStr.toLowerCase() === 'error' ? 'error' : (severityStr.toLowerCase() === 'warning' ? 'warning' : 'info');
+
+          parsed.push({
+            id: `tsc-${fullPath}:${lineStr}:${colStr}:${code}`,
+            filePath: fullPath,
+            relPath,
+            fileName,
+            line: parseInt(lineStr, 10),
+            column: parseInt(colStr, 10),
+            severity,
+            severityCode: severity === 'error' ? 8 : (severity === 'warning' ? 4 : 2),
+            code,
+            message: message.trim(),
+            source: 'tsc',
+          });
+        }
+      }
+
+      setProjectProblems(parsed);
+      setLastProjectCheckTime(new Date());
+      const tscErrors = parsed.filter((p) => p.severity === 'error').length;
+      const tscWarnings = parsed.filter((p) => p.severity === 'warning').length;
+      if (tscErrors > 0 || tscWarnings > 0) {
+        setEditorErrors(tscErrors);
+        setEditorWarnings(tscWarnings);
+      }
+    } catch (e) {
+      console.error('Error running project check:', e);
+    } finally {
+      setIsCheckingProject(false);
+    }
+  };
+
+  // Auto-run project check when Problems tab is selected if not yet checked
+  useEffect(() => {
+    if (activeTermTab === 'problems' && projectProblems.length === 0 && !isCheckingProject) {
+      handleRunProjectCheck();
+    }
+  }, [activeTermTab]);
+
+  // Open File in Monaco Editor (with line range / line number precision navigation)
+  const handleOpenFile = async (rawFilePath: string, fileName?: string, existingContent?: string, targetLineRange?: string | number) => {
+    let filePath = rawFilePath;
+    let lineToJump: number | undefined = typeof targetLineRange === 'number' ? targetLineRange : undefined;
+    if (typeof targetLineRange === 'string') {
+      const parsed = parseInt(targetLineRange.replace(/^#?L?/i, '').split('-')[0], 10);
+      if (!isNaN(parsed)) lineToJump = parsed;
+    } else if (filePath.includes('#L')) {
+      const [pathPart, linePart] = filePath.split('#L');
+      filePath = pathPart;
+      const parsed = parseInt(linePart.split('-')[0], 10);
+      if (!isNaN(parsed)) lineToJump = parsed;
+    }
+
     const existing = openFiles.find((f) => f.path === filePath || f.id === filePath);
     if (existing) {
       setActiveFileId(existing.id);
+      if (lineToJump && editorInstanceRef.current) {
+        setTimeout(() => {
+          try {
+            editorInstanceRef.current?.revealLineInCenter(lineToJump);
+            editorInstanceRef.current?.setPosition({ lineNumber: lineToJump, column: 1 });
+            editorInstanceRef.current?.focus();
+          } catch {}
+        }, 120);
+      }
       return;
     }
 
@@ -2229,6 +3521,16 @@ export const App: React.FC = () => {
 
     setOpenFiles((prev) => [...prev, newFile]);
     setActiveFileId(newFile.id);
+
+    if (lineToJump && editorInstanceRef.current) {
+      setTimeout(() => {
+        try {
+          editorInstanceRef.current?.revealLineInCenter(lineToJump);
+          editorInstanceRef.current?.setPosition({ lineNumber: lineToJump, column: 1 });
+          editorInstanceRef.current?.focus();
+        } catch {}
+      }, 200);
+    }
 
     // If opening a file and no workspacePath is set yet, automatically synchronize workspacePath & terminalCwd
     if (!workspacePath && filePath && filePath.startsWith('/')) {
@@ -2385,7 +3687,7 @@ export const App: React.FC = () => {
 
   const handleRevealInExplorer = () => {
     setShowExplorer(true);
-    setActiveSidebarTab('explorer');
+    setActiveActivityTab('explorer');
     setEditorMoreMenuOpen(false);
   };
 
@@ -2524,44 +3826,209 @@ export const App: React.FC = () => {
     }
   };
 
-  // GitHub Issues Integration
-  // GitHub Issues Integration via Official API (with gh CLI fallback)
+  // GitHub Issues Integration unificada com o método e cache da tela de Projetos
   const refreshGitHubIssues = useCallback(async () => {
-    const cwd = workspacePath || process.cwd();
+    const targetProjectFull = activeHeaderProject?.fullName || gitRepoName;
+    const cwd = activeHeaderProject?.localDir || workspacePath || process.cwd();
     setIsLoadingIssues(true);
+
+    let owner = '';
+    let repo = '';
+    if (targetProjectFull && targetProjectFull.includes('/')) {
+      const parts = targetProjectFull.split('/');
+      owner = parts[0];
+      repo = parts[1];
+    } else if (targetProjectFull) {
+      repo = targetProjectFull;
+      owner = activeHeaderProject?.owner || githubUser?.login || 'walancy';
+    }
+
     try {
-      // 1. Try Official GitHub REST API via IPC first
-      if (window.electronAPI?.git?.getIssues) {
-        const issues = await window.electronAPI.git.getIssues(cwd);
-        if (Array.isArray(issues) && issues.length > 0) {
-          const normalized = issues.map((item: any) => ({
-            ...item,
-            author: typeof item.author === 'object' && item.author !== null
-              ? (item.author.login || item.author.name || 'walancy')
-              : String(item.author || 'walancy'),
-          }));
-          setGitIssues(normalized);
+      // 1. Hidratação imediata via cache de Projetos (GLOBAL_PROJECTS_CACHE)
+      const cache = GLOBAL_PROJECTS_CACHE?.repoDetailsCache;
+      if (cache) {
+        const candidates = [
+          targetProjectFull,
+          `${owner}/${repo}`,
+          activeHeaderProject?.name,
+          gitRepoName,
+          repo,
+          activeHeaderProject?.localDir ? activeHeaderProject.localDir.split('/').filter(Boolean).pop() : '',
+          workspacePath ? workspacePath.split('/').filter(Boolean).pop() : '',
+        ].filter(Boolean);
+        for (const c of candidates) {
+          for (const [k, v] of Object.entries(cache)) {
+            if ((k.toLowerCase() === c!.toLowerCase() || k.toLowerCase().includes(c!.toLowerCase())) && v?.issues?.length > 0) {
+              const converted: GitHubIssueItem[] = v.issues.map((pi: any) => ({
+                number: pi.githubNumber || (typeof pi.id === 'string' && pi.id.startsWith('#') ? parseInt(pi.id.slice(1), 10) : Number(pi.id)) || 0,
+                title: pi.title,
+                state: pi.rawState || (pi.status === 'Concluído' ? 'closed' : 'open'),
+                updatedAt: pi.dateStr || pi.createdAtIso || new Date().toISOString(),
+                createdAt: pi.createdAtIso,
+                author: pi.author || 'walancy',
+                authorAvatar: pi.authorAvatarUrl,
+                assignees: pi.assignees?.map((a: any) => ({ login: a.name, avatarUrl: a.avatarUrl })) || [],
+                assignee: pi.assignees?.[0] ? { login: pi.assignees[0].name, avatarUrl: pi.assignees[0].avatarUrl } : null,
+                labels: (pi.rawLabels || (pi.tag ? [pi.tag] : [])).map((name: string) => ({ name })),
+                milestone: pi.milestoneTitle ? { title: pi.milestoneTitle } : (pi.iterationTitle ? { title: pi.iterationTitle } : null),
+                milestoneTitle: pi.milestoneTitle,
+                milestoneNumber: pi.milestoneNumber,
+                iterationId: pi.iterationId,
+                iterationTitle: pi.iterationTitle,
+                projectV2Status: pi.projectV2Status,
+                projectV2ItemId: pi.projectV2ItemId,
+                body: pi.description,
+                url: pi.htmlUrl,
+              }));
+              if (converted.length > 0) {
+                setGitIssues(converted);
+                setIsLoadingIssues(false);
+                return;
+              }
+            }
+          }
+        }
+      }
+
+      // 2. Busca oficial do GitHub via IPC (fetchRepoIssues + fetchRepoProjects + fetchRepoMilestones)
+      if (owner && repo && window.electronAPI?.github?.fetchRepoIssues) {
+        const [issuesRes, milestonesRes, projectsRes] = await Promise.allSettled([
+          window.electronAPI.github.fetchRepoIssues(owner, repo),
+          window.electronAPI.github.fetchRepoMilestones?.(owner, repo),
+          window.electronAPI.github.fetchRepoProjects?.(owner, repo),
+        ]);
+
+        if (issuesRes.status === 'fulfilled' && issuesRes.value?.success && Array.isArray(issuesRes.value.issues)) {
+          const rawIssues = issuesRes.value.issues;
+          const milestonesRaw = milestonesRes.status === 'fulfilled' && milestonesRes.value?.success ? milestonesRes.value.milestones || [] : [];
+          const projectsRaw = projectsRes.status === 'fulfilled' && projectsRes.value?.success ? projectsRes.value.projects || [] : [];
+
+          // Extrai iterações e itens de Project V2
+          const issueIterationsMap = new Map<number, { iterationId?: string; iterationTitle?: string }>();
+          if (projectsRaw.length > 0 && window.electronAPI?.github?.fetchProjectItems) {
+            for (const proj of projectsRaw) {
+              try {
+                const itemsRes = await window.electronAPI.github.fetchProjectItems(proj.number, owner);
+                if (itemsRes?.success && itemsRes.project?.items?.nodes) {
+                  for (const it of itemsRes.project.items.nodes) {
+                    const issNumber = it.content?.number;
+                    if (issNumber) {
+                      const fVals = it.fieldValues?.nodes || [];
+                      for (const fv of fVals) {
+                        if (fv?.iterationId || fv?.title) {
+                          issueIterationsMap.set(issNumber, {
+                            iterationId: fv.iterationId,
+                            iterationTitle: fv.title,
+                          });
+                        }
+                      }
+                    }
+                  }
+                }
+              } catch {}
+            }
+          }
+
+          const mapped: GitHubIssueItem[] = rawIssues.map((item: any) => {
+            const itInfo = issueIterationsMap.get(item.number);
+            const mTitle = typeof item.milestone === 'string' ? item.milestone : item.milestone?.title;
+            const mNum = item.milestone?.number;
+
+            // Extrai sprint por título de issue (ex: "Sprint13 — ...")
+            let titleSprint: string | undefined = undefined;
+            if (item.title) {
+              const tm = item.title.match(/^sprint\s*([0-9]+(?:-[0-9]+)?)/i);
+              if (tm) titleSprint = `Sprint ${tm[1]}`;
+            }
+
+            return {
+              number: item.number,
+              title: item.title,
+              state: item.state || 'open',
+              updatedAt: item.updated_at || item.updatedAt || new Date().toISOString(),
+              createdAt: item.created_at || item.createdAt,
+              author: typeof item.user === 'object' && item.user !== null
+                ? item.user.login || 'walancy'
+                : typeof item.author === 'object' && item.author !== null
+                ? item.author.login || 'walancy'
+                : String(item.user || item.author || 'walancy'),
+              authorAvatar: item.user?.avatar_url || item.authorAvatar,
+              assignees: Array.isArray(item.assignees) && item.assignees.length > 0
+                ? item.assignees.map((a: any) => ({ login: typeof a === 'string' ? a : a.login, avatarUrl: a.avatar_url }))
+                : item.assignee ? [{ login: item.assignee.login, avatarUrl: item.assignee.avatar_url }] : [],
+              assignee: item.assignee ? { login: item.assignee.login, avatarUrl: item.assignee.avatar_url } : null,
+              labels: (item.labels || []).map((l: any) => ({ name: typeof l === 'string' ? l : l.name, color: l.color })),
+              milestone: item.milestone ? { title: mTitle || '', number: mNum } : (itInfo?.iterationTitle ? { title: itInfo.iterationTitle } : titleSprint ? { title: titleSprint } : null),
+              milestoneTitle: mTitle || titleSprint,
+              milestoneNumber: mNum,
+              iterationId: itInfo?.iterationId,
+              iterationTitle: itInfo?.iterationTitle || titleSprint,
+              body: item.body,
+              url: item.html_url || item.url,
+            };
+          });
+
+          setGitIssues(mapped);
+          logSystemActivity('tarefas', 'refresh_issues', targetProjectFull, { count: mapped.length, source: 'github_api' });
           setIsLoadingIssues(false);
           return;
         }
       }
 
-      // 2. Fallback to gh CLI
+      // 3. Fallback Git IPC local (git.getIssues)
+      if (window.electronAPI?.git?.getIssues) {
+        const issues = await window.electronAPI.git.getIssues(cwd);
+        if (Array.isArray(issues) && issues.length > 0) {
+          const normalized = issues.map((item: any) => {
+            const mTitle = typeof item.milestone === 'string' ? item.milestone : item.milestone?.title;
+            let titleSprint: string | undefined = undefined;
+            if (item.title) {
+              const tm = item.title.match(/^sprint\s*([0-9]+(?:-[0-9]+)?)/i);
+              if (tm) titleSprint = `Sprint ${tm[1]}`;
+            }
+            return {
+              ...item,
+              author: typeof item.author === 'object' && item.author !== null
+                ? (item.author.login || item.author.name || 'walancy')
+                : String(item.author || 'walancy'),
+              milestoneTitle: mTitle || titleSprint,
+              iterationTitle: item.iterationTitle || titleSprint,
+            };
+          });
+          setGitIssues(normalized);
+          logSystemActivity('tarefas', 'refresh_issues', targetProjectFull, { count: normalized.length, source: 'git_ipc' });
+          setIsLoadingIssues(false);
+          return;
+        }
+      }
+
+      // 4. Fallback gh CLI
       if (window.electronAPI?.shell?.exec) {
         const res = await window.electronAPI.shell.exec(
-          'export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh issue list --limit 100 --json number,title,author,updatedAt,labels,state,milestone,assignees,body,url',
+          'export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh issue list --limit 100 --state all --json number,title,author,updatedAt,createdAt,closedAt,labels,state,milestone,assignees,body,url',
           cwd
         );
         if (res.exitCode === 0 && res.stdout.trim()) {
           const parsed = JSON.parse(res.stdout.trim());
           if (Array.isArray(parsed)) {
-            const normalized = parsed.map((item: any) => ({
-              ...item,
-              author: typeof item.author === 'object' && item.author !== null
-                ? (item.author.login || item.author.name || 'walancy')
-                : (String(item.author || 'walancy')),
-            }));
+            const normalized = parsed.map((item: any) => {
+              const mTitle = typeof item.milestone === 'string' ? item.milestone : item.milestone?.title;
+              let titleSprint: string | undefined = undefined;
+              if (item.title) {
+                const tm = item.title.match(/^sprint\s*([0-9]+(?:-[0-9]+)?)/i);
+                if (tm) titleSprint = `Sprint ${tm[1]}`;
+              }
+              return {
+                ...item,
+                author: typeof item.author === 'object' && item.author !== null
+                  ? (item.author.login || item.author.name || 'walancy')
+                  : String(item.author || 'walancy'),
+                milestoneTitle: mTitle || titleSprint,
+                iterationTitle: item.iterationTitle || titleSprint,
+              };
+            });
             setGitIssues(normalized);
+            logSystemActivity('tarefas', 'refresh_issues', targetProjectFull, { count: normalized.length, source: 'gh_cli' });
           }
         }
       }
@@ -2570,7 +4037,7 @@ export const App: React.FC = () => {
     } finally {
       setIsLoadingIssues(false);
     }
-  }, [workspacePath]);
+  }, [workspacePath, gitRepoName, activeHeaderProject, githubUser?.login]);
 
   const handleCreateIssue = async (title: string) => {
     if (!title.trim()) return;
@@ -2661,7 +4128,7 @@ export const App: React.FC = () => {
             name: login,
             avatarBg: '#3b82f6',
             initial: login.charAt(0).toUpperCase(),
-            avatarUrl: typeof a === 'object' ? a?.avatar_url : undefined,
+            avatarUrl: typeof a === 'object' ? (a.avatarUrl || a.avatar_url) : undefined,
           };
         })
       : rawIssue.assignee
@@ -2669,7 +4136,7 @@ export const App: React.FC = () => {
           name: typeof rawIssue.assignee === 'object' ? rawIssue.assignee.login : String(rawIssue.assignee),
           avatarBg: '#3b82f6',
           initial: String(typeof rawIssue.assignee === 'object' ? rawIssue.assignee.login : rawIssue.assignee).charAt(0).toUpperCase(),
-          avatarUrl: typeof rawIssue.assignee === 'object' ? rawIssue.assignee.avatar_url : undefined,
+          avatarUrl: typeof rawIssue.assignee === 'object' ? ((rawIssue.assignee as any).avatarUrl || (rawIssue.assignee as any).avatar_url) : undefined,
         }]
       : [];
 
@@ -2684,26 +4151,30 @@ export const App: React.FC = () => {
       }
     })();
 
-    const milestoneTitle = storedSprint || rawIssue.milestone?.title || undefined;
-    const milestoneNumber = rawIssue.milestone?.number;
+    const iterationTitle = rawIssue.iterationTitle;
+    const iterationId = rawIssue.iterationId;
+    const projectV2Status = rawIssue.projectV2Status;
+    const projectV2ItemId = rawIssue.projectV2ItemId;
+    const milestoneTitle = storedSprint || rawIssue.milestoneTitle || rawIssue.milestone?.title || iterationTitle || undefined;
+    const milestoneNumber = rawIssue.milestoneNumber || rawIssue.milestone?.number;
 
     const mapped: ProjectIssue = {
       id: `#${rawIssue.number}`,
       projectId: 0,
       githubNumber: rawIssue.number,
-      nodeId: rawIssue.node_id,
-      htmlUrl: rawIssue.url || rawIssue.html_url,
+      nodeId: (rawIssue as any).node_id,
+      htmlUrl: rawIssue.url || (rawIssue as any).html_url,
       rawLabels: labelNames,
       rawState: isOpen ? 'open' : 'closed',
       author: typeof rawIssue.author === 'object' && rawIssue.author !== null
         ? rawIssue.author.login || 'user'
         : String(rawIssue.author || 'user'),
-      authorAvatarUrl: typeof rawIssue.author === 'object' ? rawIssue.author?.avatar_url : undefined,
-      commentsCount: rawIssue.comments || 0,
+      authorAvatarUrl: rawIssue.authorAvatar || (typeof rawIssue.author === 'object' ? (rawIssue.author as any).avatar_url : undefined),
+      commentsCount: (rawIssue as any).comments || 0,
       title: rawIssue.title,
       description: rawIssue.body || '',
-      dateStr: rawIssue.updatedAt || rawIssue.created_at || 'Hoje',
-      createdAtIso: rawIssue.created_at || new Date().toISOString(),
+      dateStr: rawIssue.updatedAt || rawIssue.createdAt || (rawIssue as any).created_at || 'Hoje',
+      createdAtIso: rawIssue.createdAt || (rawIssue as any).created_at || new Date().toISOString(),
       durationDays: 1,
       tag: labelNames[0] || 'Geral',
       tagColor: { bg: 'rgba(59,130,246,0.15)', text: '#60a5fa' },
@@ -2714,15 +4185,19 @@ export const App: React.FC = () => {
       progress: isOpen ? 0 : 100,
       milestoneNumber,
       milestoneTitle,
+      iterationId,
+      iterationTitle,
+      projectV2Status,
+      projectV2ItemId,
     };
 
     setSidesheetIssue(mapped);
-  }, [gitIssues]);
+  }, [gitIssues, gitRepoName]);
 
   // Git Branches Integration
   const refreshGitBranches = useCallback(async () => {
     if (!window.electronAPI?.shell?.exec) return;
-    const cwd = workspacePath || process.cwd();
+    const cwd = activeHeaderProject?.localDir || workspacePath || process.cwd();
     try {
       const curRes = await window.electronAPI.shell.exec('git branch --show-current', cwd);
       if (curRes.exitCode === 0 && curRes.stdout.trim()) {
@@ -2759,7 +4234,7 @@ export const App: React.FC = () => {
         setBranchesList(items);
       }
     } catch {}
-  }, [workspacePath]);
+  }, [workspacePath, activeHeaderProject?.localDir]);
 
   const handleCheckoutBranch = async (branch: string) => {
     if (!window.electronAPI?.shell?.exec) return;
@@ -2824,6 +4299,13 @@ export const App: React.FC = () => {
     refreshGitBranches();
     refreshGitHubIssues();
   }, [refreshGitBranches, refreshGitHubIssues]);
+
+  // Mantém o gitRepoName alinhado com o projeto ativo selecionado no cabeçalho
+  useEffect(() => {
+    if (activeHeaderProject?.fullName && activeHeaderProject.fullName !== gitRepoName) {
+      setGitRepoName(activeHeaderProject.fullName);
+    }
+  }, [activeHeaderProject?.fullName]);
 
   const handleEditorChange = (value: string | undefined) => {
     if (value === undefined) return;
@@ -3035,6 +4517,8 @@ export const App: React.FC = () => {
   // Rich Markdown, Code Blocks, and Link Formatter for Assistant Responses
   const renderFormattedMessage = (rawText: string, msgIdx: number) => {
     if (!rawText) return null;
+    const cleanText = rawText.replace(/<!--\s*ISSUE_ACTION_PROMPT:#?\d+\s*-->/g, '').trim();
+    if (!cleanText) return null;
 
     // Split by fenced code blocks: ```lang\n...\n```
     const codeBlockRegex = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g;
@@ -3042,9 +4526,9 @@ export const App: React.FC = () => {
     let lastIndex = 0;
     let match: RegExpExecArray | null;
 
-    while ((match = codeBlockRegex.exec(rawText)) !== null) {
+    while ((match = codeBlockRegex.exec(cleanText)) !== null) {
       if (match.index > lastIndex) {
-        parts.push({ type: 'text', content: rawText.slice(lastIndex, match.index) });
+        parts.push({ type: 'text', content: cleanText.slice(lastIndex, match.index) });
       }
       parts.push({
         type: 'code',
@@ -3053,8 +4537,8 @@ export const App: React.FC = () => {
       });
       lastIndex = match.index + match[0].length;
     }
-    if (lastIndex < rawText.length) {
-      parts.push({ type: 'text', content: rawText.slice(lastIndex) });
+    if (lastIndex < cleanText.length) {
+      parts.push({ type: 'text', content: cleanText.slice(lastIndex) });
     }
 
     // Helper to format inline elements: links [label](url), inline code `code`, bold **text**
@@ -3156,6 +4640,9 @@ export const App: React.FC = () => {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
         {parts.map((p, pIdx) => {
+          if (p.type === 'code' && p.lang === 'mermaid') {
+            return <MermaidDiagram key={pIdx} code={p.content} isEffectiveDark={isEffectiveDark} />;
+          }
           if (p.type === 'code') {
             const codeKey = `${msgIdx}-code-${pIdx}`;
             const isCopied = copiedCodeKey === codeKey;
@@ -3231,10 +4718,28 @@ export const App: React.FC = () => {
           }
 
           // Plain text chunk: split by lines to handle list items cleanly
-          const lines = p.content.split('\n');
+          const rawLines = p.content.split('\n');
+          // Agrupa alertas GitHub (> [!NOTE] ...) em um único item
+          const lines: Array<string | { alert: string; content: string }> = [];
+          for (let k = 0; k < rawLines.length; k++) {
+            const head = rawLines[k].trim().match(/^>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*)$/i);
+            if (!head) {
+              lines.push(rawLines[k]);
+              continue;
+            }
+            const body = head[2] ? [head[2]] : [];
+            while (k + 1 < rawLines.length && rawLines[k + 1].trim().startsWith('>')) {
+              body.push(rawLines[++k].trim().replace(/^>\s?/, ''));
+            }
+            lines.push({ alert: head[1].toLowerCase(), content: body.join('\n') });
+          }
           return (
             <div key={pIdx} style={{ display: 'flex', flexDirection: 'column', gap: 4, lineHeight: '20px' }}>
-              {lines.map((line, lIdx) => {
+              {lines.map((entry, lIdx) => {
+                if (typeof entry !== 'string') {
+                  return <AlertCallout key={lIdx} type={entry.alert as any} content={entry.content} isEffectiveDark={isEffectiveDark} themeTokens={themeTokens} />;
+                }
+                const line = entry;
                 const trimmed = line.trim();
                 const isBullet = trimmed.startsWith('•') || trimmed.startsWith('- ') || trimmed.startsWith('* ');
                 const bulletText = isBullet ? trimmed.replace(/^[•\-\*]\s*/, '') : line;
@@ -3415,8 +4920,7 @@ export const App: React.FC = () => {
       id: 'term-clear',
       label: 'Terminal: Clear Terminal',
       action: () => {
-        const term = activeTerminalInstanceRef.current;
-        term?.clear();
+        if (activeSessionId) window.electronAPI?.pty?.write(activeSessionId, 'clear\r');
       },
     },
     {
@@ -3568,10 +5072,10 @@ export const App: React.FC = () => {
           title: lineNum ? `Ir para linha ${lineNum}` : 'Digite o número da linha para navegar...',
           onSelect: () => {
             const num = parseInt(lineNum, 10);
-            if (!isNaN(num) && activeEditorRef.current) {
-              activeEditorRef.current.revealLineInCenter(num);
-              activeEditorRef.current.setPosition({ lineNumber: num, column: 1 });
-              activeEditorRef.current.focus();
+            if (!isNaN(num) && editorInstanceRef.current) {
+              editorInstanceRef.current.revealLineInCenter(num);
+              editorInstanceRef.current.setPosition({ lineNumber: num, column: 1 });
+              editorInstanceRef.current.focus();
             }
             setIsQuickOpenOpen(false);
           },
@@ -4353,6 +5857,11 @@ export const App: React.FC = () => {
         const res = await window.electronAPI.ai.setModel(provId, modelItem.id);
         if (res?.success) {
           setToastMessage(`Modelo: ${modelItem.label}`);
+          logSystemActivity('ai_model', 'select_model', activeHeaderProject?.name || 'Sistema', {
+            providerId: provId,
+            modelId: modelItem.id,
+            modelLabel: modelItem.label,
+          });
         }
       } catch (err) {
         console.error('Failed to set AI model:', err);
@@ -4405,20 +5914,12 @@ export const App: React.FC = () => {
     if (window.electronAPI?.dialog?.openFolder) {
       const res = await window.electronAPI.dialog.openFolder();
       if (res && res.folderPath) {
-        setWorkspacePath(res.folderPath);
-        setTerminalCwd(res.folderPath);
-        localStorage.setItem('ide_workspace_path', res.folderPath);
-        localStorage.setItem('ide_terminal_cwd', res.folderPath);
-        await loadWorkspaceTree(res.folderPath);
-        setToastMessage(`Pasta aberta: ${res.name}`);
-        setTimeout(() => setToastMessage(null), 3000);
+        await handleSelectWorkspace(res.folderPath, res.name);
       }
     } else {
       const folder = prompt('Digite o caminho absoluto da pasta:', workspacePath);
       if (folder && folder.trim()) {
-        setWorkspacePath(folder.trim());
-        setTerminalCwd(folder.trim());
-        await loadWorkspaceTree(folder.trim());
+        await handleSelectWorkspace(folder.trim());
       }
     }
   };
@@ -4885,25 +6386,35 @@ export const App: React.FC = () => {
 
 
 
-  const aiExecutionIdRef = useRef<number>(0);
 
   // Interrompe a execução atual da IA (como um Ctrl+C)
   const handleCancelAiExecution = async () => {
     if (!isAiExecuting) return;
-    aiExecutionIdRef.current = 0;
+    const cancelWs = workspacePath || '';
+    aiExecIdsRef.current[cancelWs] = 0; // invalida só a execução deste projeto
+    runningAiWorkspacesRef.current.delete(cancelWs);
+    setIdeAiStatus((prev) => {
+      const next = { ...prev };
+      delete next[cancelWs];
+      return next;
+    });
     setIsAiExecuting(false);
     try {
       if (window.electronAPI?.ai?.cancel) {
-        await window.electronAPI.ai.cancel();
+        await window.electronAPI.ai.cancel(undefined, cancelWs || undefined);
       }
     } catch (err) {
       console.warn('[handleCancelAiExecution] Erro ao cancelar execução da IA:', err);
     }
-    pushAiMessage({
+    const stopMsg: ChatMessageItem = {
       type: 'system',
       text: 'Geração interrompida pelo usuário (Ctrl+C).',
       timestamp: Date.now(),
-    });
+    };
+    setAiHistory((prev) => [...prev, stopMsg]);
+    setChatSessions((all) =>
+      all.map((s) => (s.id === activeChatSessionId ? { ...s, history: [...s.history, stopMsg], updatedAt: Date.now() } : s))
+    );
     setToastMessage('Geração interrompida');
   };
   handleCancelAiExecutionRef.current = handleCancelAiExecution;
@@ -4912,19 +6423,67 @@ export const App: React.FC = () => {
   const handleAiSubmit = async (e?: React.FormEvent, promptOverride?: string) => {
     if (e) e.preventDefault();
     const prompt = (promptOverride !== undefined ? promptOverride : promptEditorRef.current ? promptEditorRef.current.getValue() : askPrompt).trim();
-    if ((!prompt && attachedFiles.length === 0 && attachedImages.length === 0 && !attachedTask) || isAiExecuting) return;
+    if (isAiExecuting) {
+      if (prompt) {
+        setQueuedAiMessages((prev) => [
+          ...prev,
+          { id: 'queue-' + Date.now(), prompt, timestamp: Date.now() },
+        ]);
+        setAskPrompt('');
+        promptEditorRef.current?.clear();
+        logSystemActivity('ide_ai_chat', 'enqueue_message', workspacePath ? workspacePath.split('/').pop() || 'Projeto' : 'Projeto', {
+          prompt: prompt.slice(0, 60),
+        });
+      }
+      return;
+    }
+    if (!prompt && attachedFiles.length === 0 && attachedImages.length === 0 && !attachedTask) return;
 
-    const thisExecutionId = ++aiExecutionIdRef.current;
+    // Execução presa ao projeto/chat de origem: continua e grava no lugar certo mesmo se o usuário trocar de projeto
+    const runWorkspace = workspacePath || '';
+    const runSessionId = activeChatSessionId;
+    const thisExecutionId = (aiExecIdsRef.current[runWorkspace] = (aiExecIdsRef.current[runWorkspace] || 0) + 1);
+    let runOutcome: 'done' | 'waiting' | null = null;
+    let runSummary = '';
+    const endRun = () => {
+      runningAiWorkspacesRef.current.delete(runWorkspace);
+      const isVisible = workspacePathRef.current === runWorkspace;
+      if (isVisible) endRun();
+      // Projeto aberto: não há o que sinalizar. Em segundo plano: marca pronto/aguardando e avisa
+      setIdeAiStatus((prev) => {
+        const next = { ...prev };
+        if (runOutcome && !isVisible) next[runWorkspace] = runOutcome;
+        else delete next[runWorkspace];
+        return next;
+      });
+      if (runOutcome && !isVisible) {
+        notifyProjectAi({
+          projectPath: runWorkspace,
+          projectName: runWorkspace.split('/').filter(Boolean).pop() || 'Projeto',
+          provider: currentProviderIdForNotice,
+          summary: runSummary,
+          kind: runOutcome === 'waiting' ? 'question' : 'done',
+          source: 'ide',
+        });
+      }
+    };
+    let currentProviderIdForNotice = selectedAiProvider;
 
     // Snapshot attached files, images & task, then clear prompt and attachments
     const currentAttachedFiles = [...attachedFiles];
     const currentAttachedImages = attachedImages.slice(0, MAX_ATTACHED_IMAGES);
     const currentAttachedTask = attachedTask;
+    if (currentAttachedTask) {
+      setActiveWorkingIssue(currentAttachedTask);
+    }
     setAttachedFiles([]);
     setAttachedImages([]);
     setAttachedTask(null);
-    setAskPrompt('');
     promptEditorRef.current?.clear();
+    setLiveExecutionSteps([]);
+    setLiveWorkedDuration('0s');
+    setIsLiveWorkedExpanded(true);
+    setLiveCurrentAction('Analisando workspace...');
 
     // Determine target provider:
     // If orchestrator is active, follow orchestrator configuration (nodes, models, tools, memory from Orchestration screen)
@@ -4973,6 +6532,7 @@ export const App: React.FC = () => {
     }
 
     const cliCmd = currentProvider.cliCommand;
+    currentProviderIdForNotice = currentProvider.id;
 
     // Helper to append message to aiHistory and sync with current chatSession
     const pushAiMessage = (msg: {
@@ -4987,6 +6547,7 @@ export const App: React.FC = () => {
       executionSteps?: ExecutionStepItem[];
       walkthrough?: WalkthroughItem;
       changedFiles?: ChangedFileItem[];
+      interactiveQuestion?: { question: string; options: string[]; isMultiSelect?: boolean };
       attachedFiles?: AttachedFileItem[];
       attachedImages?: AttachedImageItem[];
       attachedTask?: {
@@ -5003,25 +6564,67 @@ export const App: React.FC = () => {
         ...msg,
         providerId: msg.providerId || currentProvider.id || selectedAiProvider,
       };
+      const titleFor = (current: string) =>
+        current === 'Chat Inicial' || current === 'Nova Conversa'
+          ? (prompt || (currentAttachedTask ? `#${currentAttachedTask.number} ${currentAttachedTask.title}` : (currentAttachedFiles[0]?.name || 'Nova Conversa'))).slice(0, 36)
+          : current;
+
+      // Se o usuário trocou de projeto (ou de chat) durante a execução, grava no chat de origem e não no que está na tela
+      const isVisible = workspacePathRef.current === runWorkspace && activeChatSessionIdRef.current === runSessionId;
+      if (!isVisible) {
+        let saved = projectAiStateRef.current[runWorkspace];
+        if (!saved) {
+          try {
+            saved = JSON.parse(localStorage.getItem(`ide_ai_state_${runWorkspace}`) || 'null');
+          } catch {}
+        }
+        const base = saved || { provider: currentProvider.id, model: selectedModel, chatSessions: [], activeChatSessionId: runSessionId };
+        const sessions: ChatSessionItem[] = Array.isArray(base.chatSessions) ? [...base.chatSessions] : [];
+        const idx = sessions.findIndex((x) => x.id === runSessionId);
+        if (idx >= 0) {
+          sessions[idx] = {
+            ...sessions[idx],
+            title: titleFor(sessions[idx].title),
+            updatedAt: Date.now(),
+            history: [...sessions[idx].history, messageWithProvider],
+          };
+        } else {
+          sessions.unshift({
+            id: runSessionId,
+            title: titleFor('Nova Conversa'),
+            provider: currentProvider.id,
+            updatedAt: Date.now(),
+            history: [messageWithProvider],
+            workspacePath: runWorkspace,
+          });
+        }
+        const nextState = { ...base, chatSessions: sessions };
+        projectAiStateRef.current[runWorkspace] = nextState;
+        try {
+          localStorage.setItem(`ide_ai_state_${runWorkspace}`, JSON.stringify(nextState));
+        } catch {}
+        return;
+      }
+
       setAiHistory((prev) => {
         const next = [...prev, messageWithProvider];
         setChatSessions((allSessions) => {
-          const idx = allSessions.findIndex((s) => s.id === activeChatSessionId);
+          const idx = allSessions.findIndex((x) => x.id === runSessionId);
           if (idx >= 0) {
             const updated = [...allSessions];
             const curr = updated[idx];
             updated[idx] = {
               ...curr,
               provider: currentProvider.id,
-              title: curr.title === 'Chat Inicial' || curr.title === 'Nova Conversa' ? (prompt || (currentAttachedTask ? `#${currentAttachedTask.number} ${currentAttachedTask.title}` : (currentAttachedFiles[0]?.name || 'Nova Conversa'))).slice(0, 36) : curr.title,
+              title: titleFor(curr.title),
               updatedAt: Date.now(),
               history: next,
             };
             return updated;
           } else {
             const newSession: ChatSessionItem = {
-              id: activeChatSessionId,
-              title: (prompt || (currentAttachedTask ? `#${currentAttachedTask.number} ${currentAttachedTask.title}` : (currentAttachedFiles[0]?.name || 'Nova Conversa'))).slice(0, 36),
+              id: runSessionId,
+              title: titleFor('Nova Conversa'),
               provider: currentProvider.id,
               updatedAt: Date.now(),
               history: next,
@@ -5034,7 +6637,7 @@ export const App: React.FC = () => {
     };
 
     // Add user message to AI history & session with attached items
-    const userDisplayPrompt = prompt || (currentAttachedTask ? 'Resolver esta tarefa' : currentAttachedFiles.length > 0 ? `Analise o(s) arquivo(s): ${currentAttachedFiles.map((f) => f.name).join(', ')}` : 'Analise a imagem anexada.');
+    const userDisplayPrompt = prompt || (currentAttachedTask ? `Executar tarefa #${currentAttachedTask.number}: ${currentAttachedTask.title}` : currentAttachedFiles.length > 0 ? `Analise o(s) arquivo(s): ${currentAttachedFiles.map((f) => f.name).join(', ')}` : 'Analise a imagem anexada.');
     pushAiMessage({
       type: 'user',
       text: userDisplayPrompt,
@@ -5078,6 +6681,8 @@ export const App: React.FC = () => {
 
     setAskPrompt('');
     setIsAiExecuting(true);
+    runningAiWorkspacesRef.current.add(runWorkspace);
+    setIdeAiStatus((prev) => ({ ...prev, [runWorkspace]: 'generating' }));
     setAiNotInstalledAlert(null);
 
     // 1. Check if the CLI is installed using `which <cli>` via login shell
@@ -5100,7 +6705,7 @@ export const App: React.FC = () => {
             downloadUrl: currentProvider.installUrl,
             command: currentProvider.installGuide,
           });
-          setIsAiExecuting(false);
+          endRun();
           return;
         }
 
@@ -5110,7 +6715,7 @@ export const App: React.FC = () => {
           setChatSessions((prev) =>
             prev.map((s) => (s.id === activeChatSessionId ? { ...s, history: [] } : s))
           );
-          setIsAiExecuting(false);
+          endRun();
           return;
         }
 
@@ -5122,7 +6727,7 @@ export const App: React.FC = () => {
             type: 'assistant',
             text: helpText,
           });
-          setIsAiExecuting(false);
+          endRun();
           return;
         }
 
@@ -5203,7 +6808,9 @@ export const App: React.FC = () => {
           error?: string;
         }> = [];
 
+        const specialMentions = mentions.filter((m) => /^@(git|terminal|rules|mcp)$/.test(m));
         for (const mentionPath of mentions) {
+          if (specialMentions.includes(mentionPath)) continue;
           const resolvedPath = mentionPath.startsWith('/')
             ? mentionPath
             : `${effectiveCwd}/${mentionPath}`;
@@ -5226,6 +6833,30 @@ export const App: React.FC = () => {
         }
 
         let mentionsContextBlock = '';
+        const readShell = async (cmd: string) => {
+          try {
+            const res = await window.electronAPI.shell.exec(cmd, effectiveCwd);
+            return (res.stdout || res.stderr || '').trim().slice(0, 12000);
+          } catch {
+            return '';
+          }
+        };
+        const catFiles = (files: string) =>
+          `for f in ${files}; do [ -f "$f" ] && { echo "--- $f ---"; head -c 8000 "$f"; echo; }; done`;
+        for (const sm of specialMentions) {
+          let body = '';
+          if (sm === '@git') {
+            body = await readShell('echo "Branch: $(git branch --show-current)"; git status --short; git diff --stat; git log -5 --oneline');
+          } else if (sm === '@rules') {
+            body = await readShell(catFiles('CLAUDE.md AGENTS.md GEMINI.md .agents/rules/*.md'));
+          } else if (sm === '@mcp') {
+            body = await readShell(catFiles('.mcp.json mcp_config.json .agents/mcp_config.json'));
+          } else if (sm === '@terminal') {
+            const hist = activeSessionId ? await window.electronAPI.pty?.getHistory?.(activeSessionId) : '';
+            body = (hist || '').replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').slice(-8000);
+          }
+          mentionsContextBlock += `\n\n[Contexto ${sm}]:\n${body || '(vazio ou indisponível)'}\n`;
+        }
         if (mentionedFilesData.length > 0) {
           mentionsContextBlock += `\n\n[Itens Mencionados pelo Usuário via @]:\n`;
           mentionedFilesData.forEach((item) => {
@@ -5263,7 +6894,22 @@ export const App: React.FC = () => {
           attachedContextBlock += `\n\n[Tarefa/Issue Vinculada do Projeto]:
 - Issue #${currentAttachedTask.number}: "${currentAttachedTask.title}"
 ${currentAttachedTask.labels && currentAttachedTask.labels.length > 0 ? `- Labels: ${currentAttachedTask.labels.map((l) => l.name).join(', ')}\n` : ''}${currentAttachedTask.body ? `- Detalhes da Tarefa:\n${currentAttachedTask.body}\n` : ''}
-Por favor, considere as especificações desta tarefa e implemente a solução necessária.`;
+INSTRUÇÕES OBRIGATÓRIAS PARA EXECUÇÃO DA TAREFA:
+1. Implemente a solução completa para os requisitos da tarefa #${currentAttachedTask.number}: "${currentAttachedTask.title}".
+2. Ao finalizar as alterações, apresente um relatório conciso do que foi implementado/modificado.
+3. Ao final da sua resposta, pergunte explicitamente ao usuário se a tarefa está concluída e se deseja finalizar a issue.
+4. OBRIGATÓRIO: Termine sua resposta incluindo exatamente a tag abaixo em uma linha separada:
+<!-- ISSUE_ACTION_PROMPT:#${currentAttachedTask.number} -->`;
+        } else if (activeWorkingIssue && !finalizedIssues[activeWorkingIssue.number]) {
+          attachedContextBlock += `\n\n[Tarefa/Issue em Andamento no Fluxo]:
+- Issue #${activeWorkingIssue.number}: "${activeWorkingIssue.title}"
+O usuário está dando continuidade ou solicitando ajustes nesta tarefa.
+INSTRUÇÕES:
+1. Realize os ajustes solicitados pelo usuário para a tarefa #${activeWorkingIssue.number}.
+2. Ao finalizar, apresente um breve resumo do que foi ajustado.
+3. Pergunte novamente ao usuário se deseja finalizar a issue ou se precisa de mais alguma alteração.
+4. OBRIGATÓRIO: Termine sua resposta incluindo exatamente a tag abaixo em uma linha separada:
+<!-- ISSUE_ACTION_PROMPT:#${activeWorkingIssue.number} -->`;
         }
         if (mentionsContextBlock) {
           attachedContextBlock += mentionsContextBlock;
@@ -5273,6 +6919,38 @@ Por favor, considere as especificações desta tarefa e implemente a solução n
         const projectOpenFiles = openFiles.filter((f) => f.path && f.path.startsWith(effectiveCwd));
         const projectActiveFile = (activeFile?.path && activeFile.path.startsWith(effectiveCwd)) ? activeFile : null;
 
+        // Contexto do Brain do Projeto (Arquitetura, Stack, Regras e Grafo Obsidian)
+        let brainContextBlock = '';
+        try {
+          const projectBrain = getActiveBrainContextSync(effectiveCwd);
+          if (projectBrain) {
+            brainContextBlock = `\n\n${generateBrainAiContext(projectBrain)}`;
+          }
+        } catch {}
+
+        let editorCursorPos = '';
+        let editorSelectionText = '';
+        if (editorInstanceRef.current) {
+          try {
+            const pos = editorInstanceRef.current.getPosition();
+            if (pos) {
+              editorCursorPos = `Linha ${pos.lineNumber}, Coluna ${pos.column}`;
+            }
+            const selection = editorInstanceRef.current.getSelection();
+            if (selection && !selection.isEmpty()) {
+              editorSelectionText = editorInstanceRef.current.getModel()?.getValueInRange(selection) || '';
+            }
+          } catch {}
+        }
+
+        const silentEditorContext = `\n\n[Metadados da Sessão do Editor]:
+- Documento Ativo: ${projectActiveFile?.path || activeFile?.path || 'Nenhum'}
+- Linguagem do Arquivo: ${activeFile?.language || 'desconhecida'}
+- Posição do Cursor: ${editorCursorPos || 'Não informada'}
+${editorSelectionText ? `- Trecho Selecionado no Editor:\n\`\`\`\n${editorSelectionText.slice(0, 4000)}\n\`\`\`\n` : ''}- Abas/Arquivos Abertos: ${openFiles.map((f) => f.name).join(', ') || 'Nenhum'}
+- Sistema Operacional: macOS
+- Horário Local: ${new Date().toLocaleString('pt-BR')}`;
+
         if (!prompt.startsWith('/')) {
           promptWithContext = `[Contexto do Projeto Aberto no DevFlow]:
 ${modeInstruction}
@@ -5281,13 +6959,15 @@ ${modeInstruction}
 - Diretório Raiz do Projeto: ${effectiveCwd}
 ${appSubDir ? `- Módulo/Subaplicação em Edição: ${appSubDir}` : ''}
 ${projectActiveFile?.path ? `- Arquivo Aberto no Editor: ${projectActiveFile.path}` : ''}
-${projectOpenFiles.length > 0 ? `- Arquivos Abertos: ${projectOpenFiles.map((f) => f.path).filter(Boolean).join(', ')}` : ''}${attachedContextBlock}
+${projectOpenFiles.length > 0 ? `- Arquivos Abertos: ${projectOpenFiles.map((f) => f.path).filter(Boolean).join(', ')}` : ''}${brainContextBlock}${attachedContextBlock}${silentEditorContext}
 
 INSTRUÇÕES OBRIGATÓRIAS:
 1. Você está executando DIRETAMENTE no diretório do projeto: "${effectiveCwd}" (${projectName}).
 2. Crie, leia, modifique e organize TODOS os arquivos e pastas SEMPRE dentro deste projeto ("${effectiveCwd}"${appSubDir ? ` ou mais especificamente em "${appSubDir}"` : ''}).
 3. NUNCA assuma outro projeto nem crie arquivos na pasta pessoal do usuário (~ ou /Users/walancy) ou fora da raiz deste projeto.
 4. Ao criar novos componentes, páginas ou utilitários, coloque-os na estrutura de pastas correspondente do projeto atual.
+5. Se for impossível prosseguir sem uma decisão do usuário, encerre a resposta com UMA linha no formato exato (e pare):
+<!-- ASK_QUESTION:{"question":"...","options":["A","B"],"isMultiSelect":false} -->
 
 Instrução do Usuário:
 ${prompt || userDisplayPrompt}`;
@@ -5354,41 +7034,193 @@ ${prompt || userDisplayPrompt}`;
             : []
         );
 
-        const startTime = Date.now();
-        let execRes: { stdout: string; stderr: string; exitCode: number; error?: string | null };
-        if (window.electronAPI?.ai?.runCli) {
-          const additionalDirsList = [
-            ...currentAttachedFiles.filter((f) => f.isDirectory).map((f) => f.path),
-            ...mentionedFilesData
-              .map((f) => {
-                const parts = f.path.split('/');
-                parts.pop();
-                const parentDir = parts.join('/');
-                return parentDir && !parentDir.startsWith(effectiveCwd) ? parentDir : '';
-              })
-              .filter(Boolean),
-          ];
-
-          const targetModel = isOrchestratorActive && orchestratorTargetModel
-            ? orchestratorTargetModel
-            : (activeModelId && !prompt.startsWith('/') ? activeModelId : undefined);
-
-          execRes = await window.electronAPI.ai.runCli({
-            cliCmd,
-            prompt: promptWithContext,
-            model: targetModel,
-            cwd: effectiveCwd,
-            additionalDirs: additionalDirsList,
-            useOrchestrator: isOrchestratorActive,
-            orchestratorConfig: orchestrationConfig,
-          });
-        } else {
-          execRes = await window.electronAPI.shell.exec(fullCommand, effectiveCwd);
+        // Lifecycle hooks (.agents/hooks.json): { "PreInvocation": [{"command": "..."}], "PostInvocation": [...], "Stop": [...] }
+        const runHooks = async (event: 'PreInvocation' | 'PostInvocation' | 'Stop') => {
+          try {
+            const raw = await window.electronAPI.fs.readFile(`${effectiveCwd}/.agents/hooks.json`);
+            const list: Array<{ command: string }> = raw?.content ? JSON.parse(raw.content)?.[event] || [] : [];
+            for (const h of list) {
+              const res = await window.electronAPI.shell.exec(h.command, effectiveCwd);
+              if (res.exitCode !== 0) return `${event}: \`${h.command}\` falhou (${res.exitCode}) ${(res.stderr || res.stdout || '').trim().slice(0, 300)}`;
+            }
+          } catch {}
+          return null;
+        };
+        const preHookError = await runHooks('PreInvocation');
+        if (preHookError) {
+          pushAiMessage({ type: 'error', text: `Hook bloqueou a execução. ${preHookError}`, timestamp: Date.now() });
+          endRun();
+          return;
         }
 
-        if (aiExecutionIdRef.current !== thisExecutionId || (execRes as any)?.cancelled) {
+        const startTime = Date.now();
+        let liveSteps: ExecutionStepItem[] = [];
+        const touchedFiles = new Map<string, { additions: number; deletions: number }>();
+
+        // Real-time git status & diff watcher to capture files as they are being edited live
+        const pollLiveChanges = async () => {
+          if (aiExecIdsRef.current[runWorkspace] !== thisExecutionId) return;
+          try {
+            const currentStatus = await window.electronAPI.shell.exec('git status --porcelain', effectiveCwd);
+            if (currentStatus.exitCode === 0 && currentStatus.stdout) {
+              const currentLines = currentStatus.stdout.trim().split('\n').map((l: string) => l.trim()).filter(Boolean);
+              const newlyModifiedFiles: string[] = [];
+              for (const line of currentLines) {
+                if (!beforeStatusLines.has(line)) {
+                  const relPath = line.slice(2).trim();
+                  if (relPath && !relPath.endsWith('/')) {
+                    newlyModifiedFiles.push(relPath);
+                  }
+                }
+              }
+
+              if (newlyModifiedFiles.length > 0) {
+                const diffRes = await window.electronAPI.shell.exec('git diff --numstat', effectiveCwd);
+                const diffMap = new Map<string, { additions: number; deletions: number }>();
+                if (diffRes.exitCode === 0 && diffRes.stdout) {
+                  const dl = diffRes.stdout.trim().split('\n');
+                  for (const d of dl) {
+                    const parts = d.split(/\t+/);
+                    if (parts.length >= 3) {
+                      diffMap.set(parts[2].trim(), {
+                        additions: parseInt(parts[0], 10) || 0,
+                        deletions: parseInt(parts[1], 10) || 0,
+                      });
+                    }
+                  }
+                }
+
+                let updated = false;
+                for (const rel of newlyModifiedFiles) {
+                  const fileName = rel.split('/').pop() || rel;
+                  const diffInfo = diffMap.get(rel) || { additions: 1, deletions: 0 };
+                  const prev = touchedFiles.get(rel);
+
+                  if (!prev) {
+                    touchedFiles.set(rel, { additions: diffInfo.additions, deletions: diffInfo.deletions });
+                    const exploreStep: ExecutionStepItem = {
+                      id: `explore-${rel}`,
+                      type: 'explore',
+                      label: 'Explored 1 file',
+                      children: [
+                        {
+                          id: `analyzed-${rel}`,
+                          type: 'analyze',
+                          label: `Analyzed ${fileName}`,
+                          file: fileName,
+                          path: `${effectiveCwd}/${rel}`,
+                        },
+                        {
+                          id: `thought-${rel}`,
+                          type: 'thought',
+                          label: 'Thought for 1s',
+                          duration: '1s',
+                        },
+                      ],
+                    };
+
+                    const editStep: ExecutionStepItem = {
+                      id: `edit-${rel}`,
+                      type: 'edit',
+                      label: `Edited ${fileName}`,
+                      file: fileName,
+                      path: `${effectiveCwd}/${rel}`,
+                      additions: diffInfo.additions,
+                      deletions: diffInfo.deletions,
+                    };
+
+                    liveSteps = [...liveSteps, exploreStep, editStep];
+                    updated = true;
+                    setLiveCurrentAction(`Edited ${fileName} +${diffInfo.additions} -${diffInfo.deletions}`);
+                  } else if (prev.additions !== diffInfo.additions || prev.deletions !== diffInfo.deletions) {
+                    prev.additions = diffInfo.additions;
+                    prev.deletions = diffInfo.deletions;
+                    liveSteps = liveSteps.map((st) => {
+                      if (st.type === 'edit' && st.file === fileName) {
+                        return { ...st, additions: diffInfo.additions, deletions: diffInfo.deletions };
+                      }
+                      return st;
+                    });
+                    updated = true;
+                    setLiveCurrentAction(`Edited ${fileName} +${diffInfo.additions} -${diffInfo.deletions}`);
+                  }
+                }
+
+                if (updated) {
+                  setLiveExecutionSteps([...liveSteps]);
+                }
+              }
+            }
+          } catch {}
+        };
+
+        const liveTimer = setInterval(() => {
+          const elapsedSec = Math.max(1, Math.round((Date.now() - startTime) / 1000));
+          const durationStr = elapsedSec >= 60 ? `${Math.floor(elapsedSec / 60)}m ${elapsedSec % 60}s` : `${elapsedSec}s`;
+          setLiveWorkedDuration(durationStr);
+          pollLiveChanges();
+        }, 600);
+
+        const stopAiEventListener = (window.electronAPI as any)?.ai?.onEvent?.((event: any) => {
+          if (event?.kind === 'progress' && event?.payload?.text) {
+            const txt = event.payload.text;
+            const fileMatch = txt.match(/(?:Edited|Editing|Writing|Saving|replace_file_content|write_to_file)\s+([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)/i);
+            if (fileMatch) {
+              const fName = fileMatch[1].split('/').pop() || fileMatch[1];
+              setLiveCurrentAction(`Editing ${fName}...`);
+            }
+          }
+        });
+
+        let execRes: { stdout: string; stderr: string; exitCode: number; error?: string | null };
+        try {
+          if (window.electronAPI?.ai?.runCli) {
+            const additionalDirsList = [
+              ...currentAttachedFiles.filter((f) => f.isDirectory).map((f) => f.path),
+              ...mentionedFilesData
+                .map((f) => {
+                  const parts = f.path.split('/');
+                  parts.pop();
+                  const parentDir = parts.join('/');
+                  return parentDir && !parentDir.startsWith(effectiveCwd) ? parentDir : '';
+                })
+                .filter(Boolean),
+            ];
+
+            const targetModel = isOrchestratorActive && orchestratorTargetModel
+              ? orchestratorTargetModel
+              : (activeModelId && !prompt.startsWith('/') ? activeModelId : undefined);
+
+            execRes = await window.electronAPI.ai.runCli({
+              cliCmd,
+              prompt: promptWithContext,
+              model: targetModel,
+              cwd: effectiveCwd,
+              additionalDirs: additionalDirsList,
+              useOrchestrator: isOrchestratorActive,
+              orchestratorConfig: orchestrationConfig,
+              permissions: (() => {
+                try {
+                  const saved = localStorage.getItem('ide_ai_permissions');
+                  return saved ? { ...DEFAULT_AI_PERMISSIONS, ...JSON.parse(saved) } : undefined;
+                } catch {
+                  return undefined;
+                }
+              })(),
+            });
+          } else {
+            execRes = await window.electronAPI.shell.exec(fullCommand, effectiveCwd);
+          }
+        } finally {
+          clearInterval(liveTimer);
+          stopAiEventListener?.();
+        }
+
+        await pollLiveChanges();
+
+        if (aiExecIdsRef.current[runWorkspace] !== thisExecutionId || (execRes as any)?.cancelled) {
           // A geração foi cancelada pelo usuário! Não renderiza mensagem da IA.
-          setIsAiExecuting(false);
+          endRun();
           return;
         }
 
@@ -5431,7 +7263,7 @@ ${prompt || userDisplayPrompt}`;
             providerId: currentProvider.id,
             timestamp: Date.now(),
           });
-          setIsAiExecuting(false);
+          endRun();
           return;
         }
 
@@ -5494,16 +7326,36 @@ ${prompt || userDisplayPrompt}`;
 
         // Construct Antigravity-style execution steps only if actual files were modified
         const executionSteps: ExecutionStepItem[] = [];
-        if (changedFiles.length > 0) {
-          executionSteps.push({
-            type: 'explore',
-            label: `Explored ${changedFiles.length} file${changedFiles.length > 1 ? 's' : ''}`,
-          });
-          changedFiles.forEach((f) => {
+        if (liveSteps.length > 0) {
+          executionSteps.push(...liveSteps);
+        } else if (changedFiles.length > 0) {
+          changedFiles.forEach((f, cIdx) => {
             executionSteps.push({
+              id: `explore-${f.name}-${cIdx}`,
+              type: 'explore',
+              label: 'Explored 1 file',
+              children: [
+                {
+                  id: `analyzed-${f.name}-${cIdx}`,
+                  type: 'analyze',
+                  label: `Analyzed ${f.name}`,
+                  file: f.name,
+                  path: f.path,
+                },
+                {
+                  id: `thought-${f.name}-${cIdx}`,
+                  type: 'thought',
+                  label: 'Thought for 1s',
+                  duration: '1s',
+                },
+              ],
+            });
+            executionSteps.push({
+              id: `edit-${f.name}-${cIdx}`,
               type: 'edit',
               label: `Edited ${f.name}`,
               file: f.name,
+              path: f.path,
               additions: f.additions,
               deletions: f.deletions,
             });
@@ -5525,58 +7377,249 @@ ${prompt || userDisplayPrompt}`;
           }
         }
 
-        const msgText = cleanOutput || (execRes.exitCode === 0 ? 'Concluído com sucesso.' : `Comando concluído com status ${execRes.exitCode}`);
+        let interactiveQuestion: { question: string; options: string[]; isMultiSelect?: boolean } | undefined;
+        const askMatch = cleanOutput.match(/<!--\s*ASK_QUESTION:(\{[\s\S]*?\})\s*-->/);
+        if (askMatch) {
+          try {
+            const q = JSON.parse(askMatch[1]);
+            if (q?.question && Array.isArray(q.options)) interactiveQuestion = q;
+          } catch {}
+          cleanOutput = cleanOutput.replace(askMatch[0], '').trim();
+        }
+        const postHookError = (await runHooks('PostInvocation')) || (await runHooks('Stop'));
+
+        const msgText = (cleanOutput || (execRes.exitCode === 0 ? 'Concluído com sucesso.' : `Comando concluído com status ${execRes.exitCode}`)) + (postHookError ? `\n\n> [!WARNING]\n> ${postHookError}` : '');
+        const finalWorkedDuration = liveWorkedDuration !== '0s' ? liveWorkedDuration : workedDuration;
 
         pushAiMessage({
           type: 'assistant',
           text: msgText,
           timestamp: Date.now(),
-          workedDuration: changedFiles.length > 0 || durationSec > 2 ? workedDuration : undefined,
+          workedDuration: changedFiles.length > 0 || durationSec > 2 ? finalWorkedDuration : undefined,
           executionSteps: executionSteps.length > 0 ? executionSteps : undefined,
           walkthrough,
           changedFiles: changedFiles.length > 0 ? changedFiles : undefined,
+          interactiveQuestion,
         });
+        runOutcome = interactiveQuestion ? 'waiting' : 'done';
+        runSummary = interactiveQuestion
+          ? interactiveQuestion.question
+          : msgText.replace(/\s+/g, ' ').trim().slice(0, 160);
       } catch (err: any) {
         pushAiMessage({
           type: 'error',
           text: `Erro na execução do terminal de IA: ${err.message}`,
         });
+        runOutcome = 'done';
+        runSummary = `Erro: ${err?.message || 'falha na execução'}`.slice(0, 160);
       } finally {
-        setIsAiExecuting(false);
+        endRun();
         refreshAiQuotas();
         if (prompt.startsWith('/model')) {
           refreshAiModels(currentProvider.id);
         }
+        // Fila é do projeto aberto: só continua se o usuário ainda estiver nele
+        const nextInQueue = workspacePathRef.current === runWorkspace ? queuedAiMessagesRef.current[0] : undefined;
+        if (nextInQueue) {
+          setQueuedAiMessages((prev) => prev.slice(1));
+          setTimeout(() => {
+            handleAiSubmit(undefined, nextInQueue.prompt);
+          }, 150);
+        }
       }
     } else {
-      setTimeout(() => {
-        const sampleChangedFiles: ChangedFileItem[] = [
-          { path: 'src/App.tsx', name: 'App.tsx', dir: '...flow-desktop/src', additions: 144, deletions: 36 },
-        ];
-        const sampleSteps: ExecutionStepItem[] = [
-          { type: 'explore', label: 'Explored 1 file, 1 search' },
-          { type: 'edit', label: 'Edited App.tsx', file: 'App.tsx', additions: 1, deletions: 0 },
-          { type: 'explore', label: 'Explored 1 file' },
-          { type: 'edit', label: 'Edited App.tsx', file: 'App.tsx', additions: 25, deletions: 0 },
-          { type: 'explore', label: 'Explored 1 file' },
-          { type: 'edit', label: 'Edited App.tsx', file: 'App.tsx', additions: 115, deletions: 34 },
-          { type: 'run', label: 'Ran npm run build', command: 'npm run build' },
-        ];
-        pushAiMessage({
-          type: 'assistant',
-          text: `Adicionei as opções e implementei as alterações solicitadas com sucesso.\n\n• Ajustado fluxo de processamento de arquivos\n• Atualizado layout e componentes`,
-          timestamp: Date.now(),
-          workedDuration: '3m',
-          executionSteps: sampleSteps,
-          walkthrough: {
-            title: 'Walkthrough',
-            summary: 'Implementação do resumo de arquivos modificados, card de walkthrough e acompanhamento de etapas de execução exatamente como no Antigravity.',
-          },
-          changedFiles: sampleChangedFiles,
+      pushAiMessage({
+        type: 'error',
+        text: `O provedor "${currentProvider.name || currentProvider.id}" não possui CLI configurado para executar este prompt.`,
+        timestamp: Date.now(),
+      });
+      endRun();
+    }
+  };
+
+  // Action Handlers for Issues: Revisar e Aceitar/Finalizar
+  const handleReviewIssue = (issueNumber: number, issueTitle?: string) => {
+    const targetTitle = issueTitle || activeWorkingIssue?.title || `Issue #${issueNumber}`;
+    const targetProjectName = activeHeaderProject?.name || gitRepoName || 'devflow-desktop';
+    logSystemActivity('tarefas', 'review_issue', targetProjectName, { issueNumber, title: targetTitle });
+
+    const reviewPrompt = `Por favor, faça uma revisão minuciosa e completa de tudo o que foi implementado na tarefa #${issueNumber} ("${targetTitle}").
+
+Verifique criteriosamente:
+1. Conteúdo hardcoded ou textos estáticos que deveriam ser dinâmicos ou parametrizados;
+2. Falhas de segurança, validações ausentes, tratamento de erros ou vulnerabilidades;
+3. Mocks temporários, console.logs residuais ou códigos de teste esquecidos;
+4. Qualidade de código, tipagem TypeScript, integridade com o restante do projeto e boas práticas.
+
+Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste realizado. Caso esteja tudo em ordem, confirme que a revisão foi aprovada com sucesso. Ao final, apresente um relatório conciso da revisão e pergunte novamente se deseja finalizar a issue.`;
+
+    handleAiSubmit(undefined, reviewPrompt);
+  };
+
+  const handleAcceptAndFinalizeIssue = async (
+    issueNumber: number,
+    issueTitle?: string,
+    summaryText?: string
+  ) => {
+    if (isFinalizingIssue) return;
+    setIsFinalizingIssue(true);
+
+    try {
+      const targetTitle = issueTitle || activeWorkingIssue?.title || `Issue #${issueNumber}`;
+      const safeTitle = targetTitle.replace(/"/g, "'").trim();
+      const effectiveCwd = activeHeaderProject?.localDir || workspacePath || terminalCwd || process.cwd();
+      const targetProjectName = activeHeaderProject?.name || gitRepoName || 'devflow-desktop';
+
+      // 1. Git commit with issue linked
+      let commitHash = '';
+      let commitError = '';
+      if (window.electronAPI?.shell?.exec) {
+        try {
+          await window.electronAPI.shell.exec('git add -A', effectiveCwd);
+          const commitMsg = `feat: resolver tarefa #${issueNumber} - ${safeTitle} (resolves #${issueNumber})`;
+          const commitRes = await window.electronAPI.shell.exec(
+            `git commit -m "${commitMsg.replace(/"/g, '\\"')}"`,
+            effectiveCwd
+          );
+          if (commitRes.exitCode === 0) {
+            const revRes = await window.electronAPI.shell.exec('git rev-parse --short HEAD', effectiveCwd);
+            if (revRes.exitCode === 0) {
+              commitHash = revRes.stdout.trim();
+            }
+          } else {
+            const out = (commitRes.stdout || commitRes.stderr || '').toLowerCase();
+            if (out.includes('nothing to commit') || out.includes('working tree clean')) {
+              commitHash = 'clean';
+            } else {
+              commitError = commitRes.stderr || commitRes.stdout || '';
+            }
+          }
+        } catch (err: any) {
+          commitError = err?.message || 'Falha ao executar commit';
+        }
+      }
+
+      // 2. Close GitHub issue via gh CLI
+      let ghClosed = false;
+      let ghError = '';
+      if (window.electronAPI?.shell?.exec) {
+        try {
+          const ghRes = await window.electronAPI.shell.exec(
+            `export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh issue close ${issueNumber} --reason completed -c "Concluído e comitado via DevFlow AI"`,
+            effectiveCwd
+          );
+          if (ghRes.exitCode === 0) {
+            ghClosed = true;
+          } else {
+            ghError = ghRes.stderr || ghRes.stdout || '';
+          }
+        } catch (err: any) {
+          ghError = err?.message || 'Falha ao fechar issue via GitHub CLI';
+        }
+      }
+
+      // Update in-memory gitIssues
+      setGitIssues((prev) =>
+        prev.map((iss) => (iss.number === issueNumber ? { ...iss, state: 'closed', closedAt: new Date().toISOString() } : iss))
+      );
+
+      // 3. Extract short summary text for Daily task card
+      let shortSummary = '';
+      if (summaryText) {
+        const cleaned = summaryText
+          .replace(/<!--[\s\S]*?-->/g, '')
+          .replace(/```[\s\S]*?```/g, '')
+          .replace(/[#*`_]/g, '')
+          .trim();
+        const lines = cleaned.split('\n').map((l) => l.trim()).filter(Boolean);
+        const textJoined = lines.slice(0, 3).join(' ');
+        shortSummary = textJoined.length > 240 ? textJoined.slice(0, 240) + '...' : textJoined;
+      }
+      if (!shortSummary) {
+        shortSummary = `Implementação e resolução da tarefa #${issueNumber} concluída com sucesso.`;
+      }
+
+      // 4. Save completed task into Daily (devflow_daily_items_unified_v2)
+      const storageKey = 'devflow_daily_items_unified_v2';
+      const todayIso = new Date().toISOString().split('T')[0];
+      const newDailyItem: any = {
+        id: `issue-${issueNumber}-${Date.now()}`,
+        title: `Tarefa #${issueNumber}: ${targetTitle}`,
+        description: shortSummary,
+        category: 'today',
+        dateIso: todayIso,
+        tag: 'Concluído',
+        priority: 'Média',
+        completed: true,
+        projectId: targetProjectName,
+        projectName: targetProjectName,
+        cardTheme: 'cyan',
+        assignee: { name: 'Walancy', initials: 'WA' },
+        createdAt: new Date().toISOString(),
+      };
+
+      try {
+        const existing = localStorage.getItem(storageKey);
+        const parsed: any[] = existing ? JSON.parse(existing) : [];
+        const filtered = parsed.filter((it) => it.id !== newDailyItem.id && it.title !== newDailyItem.title);
+        const updated = [newDailyItem, ...filtered];
+        localStorage.setItem(storageKey, JSON.stringify(updated));
+        window.dispatchEvent(new CustomEvent('devflow_daily_updated', { detail: { item: newDailyItem } }));
+        window.dispatchEvent(new Event('storage'));
+      } catch (e) {
+        console.warn('Erro ao salvar tarefa na Daily:', e);
+      }
+
+      // Mark as finalized in state
+      setFinalizedIssues((prev) => ({ ...prev, [issueNumber]: true }));
+      if (activeWorkingIssue?.number === issueNumber) {
+        setActiveWorkingIssue(null);
+      }
+
+      const commitStatusText = commitHash && commitHash !== 'clean'
+        ? `Commit criado com sucesso (\`${commitHash}\`).`
+        : commitHash === 'clean'
+        ? 'Repositório já estava limpo / arquivos já versionados.'
+        : `Aviso no commit: ${commitError || 'não foi possível commitar'}.`;
+
+      const ghStatusText = ghClosed
+        ? `Issue #${issueNumber} fechada no GitHub com status "completed".`
+        : `Aviso no GitHub CLI: ${ghError || 'não foi possível fechar via gh'}.`;
+
+      const systemMsg: ChatMessageItem = {
+        type: 'system',
+        text: `Tarefa #${issueNumber} aceita e concluída com sucesso.\n- ${commitStatusText}\n- ${ghStatusText}\n- Tarefa adicionada à Daily como concluída com o resumo: "${shortSummary}"`,
+        timestamp: Date.now(),
+        providerId: selectedAiProvider,
+      };
+
+      setAiHistory((prev) => {
+        const next = [...prev, systemMsg];
+        setChatSessions((allSessions) => {
+          const idx = allSessions.findIndex((s) => s.id === activeChatSessionId);
+          if (idx >= 0) {
+            const updated = [...allSessions];
+            updated[idx] = { ...updated[idx], updatedAt: Date.now(), history: next };
+            return updated;
+          }
+          return allSessions;
         });
-        setIsAiExecuting(false);
-        refreshAiQuotas();
-      }, 600);
+        return next;
+      });
+
+      logSystemActivity('tarefas', 'accept_and_finalize_issue', targetProjectName, {
+        issueNumber,
+        issueTitle: targetTitle,
+        commitHash,
+        dailyItemId: newDailyItem.id,
+      });
+
+      setToastMessage(`Tarefa #${issueNumber} concluída e vinculada à Daily!`);
+    } catch (err: any) {
+      console.error('Erro ao finalizar tarefa:', err);
+      setToastMessage(`Erro ao finalizar tarefa: ${err?.message || err}`);
+    } finally {
+      setIsFinalizingIssue(false);
     }
   };
 
@@ -5599,7 +7642,47 @@ ${prompt || userDisplayPrompt}`;
   const showTrafficLightSpacer = !isFullscreen;
 
   if (githubAuthStatus === 'checking') {
-    return <div style={{ position: 'fixed', inset: 0, background: '#0a0a0b' }} />;
+    return (
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          background: themeTokens.bgApp,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 12,
+          padding: 12,
+          zIndex: 99999,
+          userSelect: 'none',
+        }}
+      >
+        <div
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: '50%',
+            borderTop: `2px solid ${accentColor}`,
+            borderRight: '2px solid transparent',
+            borderBottom: '2px solid transparent',
+            borderLeft: '2px solid transparent',
+            animation: 'spin 0.8s linear infinite',
+          }}
+        />
+        <div
+          style={{
+            fontSize: 12,
+            color: themeTokens.textSecondary,
+            fontFamily: 'Poppins',
+            fontWeight: 400,
+            letterSpacing: '0.01em',
+          }}
+        >
+          Carregando ambiente...
+        </div>
+      </div>
+    );
   }
 
   if (githubAuthStatus === 'unauthenticated') {
@@ -5751,7 +7834,52 @@ ${prompt || userDisplayPrompt}`;
             }}
             onActiveProjectChange={setActiveHeaderProject}
             onProjectsListChange={setHeaderProjectsList}
+            projectRuntimes={projectRuntimes}
+            projectAiStatus={projectAiStatus}
           />
+
+          {/* Botão Brain do Projeto (Grafo Obsidian & Contexto de IA) */}
+          <button
+            onClick={() => setIsBrainModalOpen(true)}
+            title="DevFlow Brain - Contexto do Projeto e Grafo Obsidian"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              padding: 6,
+              borderRadius: 6,
+              background: isBrainModalOpen
+                ? `${accentColor}18`
+                : 'transparent',
+              border: 'none',
+              boxShadow: 'none',
+              cursor: 'pointer',
+              color: isBrainModalOpen ? accentColor : themeTokens.textSecondary,
+              transition: 'all 0.15s ease',
+              fontWeight: 400,
+              fontFamily: 'Poppins, sans-serif',
+              fontSize: 11.5,
+              outline: 'none',
+              flexShrink: 0,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = accentColor;
+              e.currentTarget.style.background = isEffectiveDark
+                ? 'rgba(255, 255, 255, 0.06)'
+                : 'rgba(0, 0, 0, 0.05)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = isBrainModalOpen
+                ? accentColor
+                : themeTokens.textSecondary;
+              e.currentTarget.style.background = isBrainModalOpen
+                ? `${accentColor}18`
+                : 'transparent';
+            }}
+          >
+            <Brain size={14} strokeWidth={1.8} />
+          </button>
         </div>
 
         {/* Right: Layout Icons, Dividers, Profile */}
@@ -6200,7 +8328,11 @@ ${prompt || userDisplayPrompt}`;
                   e.currentTarget.style.background = 'transparent';
                 }
               }}
-              title={`IA Ativa: ${AI_PROVIDERS.find((p) => p.id === selectedAiProvider)?.name || 'Claude'} · ${selectedModel || 'Padrão'} (Clique para alternar)`}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setIsAiGlobalRulesModalOpen(true);
+              }}
+              title={`IA Ativa: ${AI_PROVIDERS.find((p) => p.id === selectedAiProvider)?.name || 'Claude'} · ${selectedModel || 'Padrão'} (Clique para alternar · Botão direito para Regras Globais)`}
             >
               {renderAiIcon(selectedAiProvider, 17)}
             </div>
@@ -6220,11 +8352,13 @@ ${prompt || userDisplayPrompt}`;
                     e.stopPropagation();
                     setIsHeaderAiMenuOpen(false);
                     setHeaderAiSubmenuProvider(null);
+                    setHeaderAiVersionMenuModel(null);
                   }}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     setIsHeaderAiMenuOpen(false);
                     setHeaderAiSubmenuProvider(null);
+                    setHeaderAiVersionMenuModel(null);
                   }}
                 />
                 <div
@@ -6244,9 +8378,8 @@ ${prompt || userDisplayPrompt}`;
                   zIndex: 999999,
                   minWidth: 265,
                   userSelect: 'none',
-                }}
-              >
-                <div style={{ padding: '4px 8px 6px', fontSize: 10.5, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: `1px solid ${themeTokens.border}`, marginBottom: 2 }}>
+                }}>
+                <div style={{ padding: '6px 8px 6px', fontSize: 10.5, fontWeight: 500, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 }}>
                   Selecionar IA & Modelo
                 </div>
                 {AI_PROVIDERS.map((p) => {
@@ -6417,6 +8550,340 @@ ${prompt || userDisplayPrompt}`;
                   const modelList = dynamicList.length > 0 ? dynamicList : fallbackList;
                   if (modelList.length === 0) return null;
 
+                  const currentId = activeModels[targetProvider.id]?.currentModelId;
+                  const currentLabel = activeModels[targetProvider.id]?.currentModel;
+
+                  if (targetProvider.id === 'antigravity') {
+                    // Agrupa os modelos do Antigravity por modelo base (ex: Gemini 3.8 Flash, Gemini 3.7 Flash, etc.)
+                    const groups: {
+                      baseName: string;
+                      badge?: string;
+                      versions: {
+                        id: string;
+                        versionLabel: string;
+                        rawLabel: string;
+                        tag?: string;
+                        originalItem: { id: string; label: string; tag?: string };
+                      }[];
+                    }[] = [];
+
+                    for (const m of modelList) {
+                      let versionLabel = 'Padrão';
+                      let baseName = m.label;
+
+                      if (m.id.endsWith('-high') || m.label.toLowerCase().includes('(high)')) {
+                        versionLabel = 'High';
+                        baseName = m.label.replace(/\s*\(high\)/i, '').trim();
+                      } else if (m.id.endsWith('-medium') || m.label.toLowerCase().includes('(medium)')) {
+                        versionLabel = 'Medium';
+                        baseName = m.label.replace(/\s*\(medium\)/i, '').trim();
+                      } else if (m.id.endsWith('-low') || m.label.toLowerCase().includes('(low)')) {
+                        versionLabel = 'Low';
+                        baseName = m.label.replace(/\s*\(low\)/i, '').trim();
+                      } else if (m.id.includes('thinking') || m.label.toLowerCase().includes('(thinking)')) {
+                        versionLabel = 'Thinking';
+                        baseName = m.label.replace(/\s*\(thinking\)/i, '').trim();
+                      }
+
+                      let existing = groups.find((g) => g.baseName.toLowerCase() === baseName.toLowerCase());
+                      if (!existing) {
+                        existing = {
+                          baseName,
+                          badge: baseName.toLowerCase().includes('flash') ? 'Fast' : undefined,
+                          versions: [],
+                        };
+                        groups.push(existing);
+                      }
+
+                      existing.versions.push({
+                        id: m.id,
+                        versionLabel,
+                        rawLabel: m.label,
+                        tag: m.tag,
+                        originalItem: m,
+                      });
+                    }
+
+                    // Ordena versões: High -> Medium -> Low -> Thinking
+                    const versionOrder: Record<string, number> = { High: 1, Medium: 2, Low: 3, Thinking: 4 };
+                    for (const g of groups) {
+                      g.versions.sort((a, b) => (versionOrder[a.versionLabel] || 99) - (versionOrder[b.versionLabel] || 99));
+                    }
+
+                    const activeVersionGroup = groups.find((g) => g.baseName === headerAiVersionMenuModel);
+
+                    return (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          right: 'calc(100% + 4px)',
+                          top: 0,
+                          zIndex: 1000000,
+                        }}
+                        onMouseLeave={() => setHeaderAiVersionMenuModel(null)}
+                      >
+                        {/* 3º Popup: Mostra APENAS as versões (High, Medium, Low) do modelo selecionado pela seta */}
+                        {activeVersionGroup && activeVersionGroup.versions.length > 0 && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              right: 'calc(100% + 4px)',
+                              top: Math.min(headerAiVersionMenuTop, 220),
+                              background: isEffectiveDark ? '#1a1a1c' : themeTokens.bgCardSecondary,
+                              borderRadius: 10,
+                              border: `1px solid ${themeTokens.border}`,
+                              boxShadow: '0 12px 32px rgba(0, 0, 0, 0.65)',
+                              padding: 6,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 2,
+                              zIndex: 1000002,
+                              minWidth: 110,
+                              userSelect: 'none',
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {/* Ponte invisível que conecta o popup de versões ao submenu de modelos */}
+                            <div
+                              style={{
+                                position: 'absolute',
+                                top: -10,
+                                bottom: -10,
+                                right: -14,
+                                width: 20,
+                                background: 'transparent',
+                                pointerEvents: 'auto',
+                              }}
+                            />
+                            {activeVersionGroup.versions.map((v) => {
+                              const isCurrent =
+                                targetProvider.id === selectedAiProvider &&
+                                (currentId === v.id ||
+                                  currentLabel === v.rawLabel ||
+                                  selectedModel === v.id ||
+                                  selectedModel === v.rawLabel);
+
+                              return (
+                                <div
+                                  key={v.id}
+                                  onClick={() => {
+                                    handleSelectModel(v.originalItem, targetProvider.id);
+                                    setIsHeaderAiMenuOpen(false);
+                                    setHeaderAiSubmenuProvider(null);
+                                    setHeaderAiVersionMenuModel(null);
+                                  }}
+                                  style={{
+                                    padding: '6px 12px',
+                                    borderRadius: 6,
+                                    cursor: 'pointer',
+                                    background: isCurrent ? hexToRgba(accentColor, 0.16) : 'transparent',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    gap: 12,
+                                    transition: 'background 0.12s ease',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    if (!isCurrent) {
+                                      e.currentTarget.style.background = isEffectiveDark
+                                        ? 'rgba(255, 255, 255, 0.06)'
+                                        : 'rgba(0, 0, 0, 0.05)';
+                                    }
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    if (!isCurrent) e.currentTarget.style.background = 'transparent';
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      fontSize: 12,
+                                      fontFamily: 'Poppins, sans-serif',
+                                      fontWeight: isCurrent ? 600 : 400,
+                                      color: isCurrent ? accentColor : themeTokens.textPrimary,
+                                    }}
+                                  >
+                                    {v.versionLabel}
+                                  </span>
+                                  {isCurrent && <Check size={12} color={accentColor} style={{ flexShrink: 0 }} />}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* 2º Popup: Lista de Modelos Antigravity com Seta e Versão */}
+                        <div
+                          style={{
+                            background: isEffectiveDark ? '#1a1a1c' : themeTokens.bgCardSecondary,
+                            borderRadius: 10,
+                            border: `1px solid ${themeTokens.border}`,
+                            boxShadow: '0 12px 32px rgba(0, 0, 0, 0.65)',
+                            padding: 6,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 2,
+                            minWidth: 265,
+                            maxWidth: 320,
+                            maxHeight: 'min(420px, calc(100vh - 60px))',
+                            overflowY: 'auto',
+                            userSelect: 'none',
+                          }}
+                          className="no-scrollbar"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {/* Ponte invisível que conecta o submenu de modelos ao menu pai */}
+                          <div
+                            style={{
+                              position: 'absolute',
+                              top: -10,
+                              bottom: -10,
+                              right: -14,
+                              width: 20,
+                              background: 'transparent',
+                              pointerEvents: 'auto',
+                            }}
+                          />
+                          <div
+                            style={{
+                              padding: '3px 8px 5px',
+                              fontSize: 10,
+                              fontWeight: 600,
+                              color: themeTokens.textSecondary,
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.5px',
+                              borderBottom: `1px solid ${themeTokens.border}`,
+                              marginBottom: 3,
+                            }}
+                          >
+                            Modelos {targetProvider.name}
+                          </div>
+                          {groups.map((group) => {
+                            const isGroupCurrent =
+                              targetProvider.id === selectedAiProvider &&
+                              group.versions.some(
+                                (v) =>
+                                  currentId === v.id ||
+                                  currentLabel === v.rawLabel ||
+                                  selectedModel === v.id ||
+                                  selectedModel === v.rawLabel
+                              );
+
+                            const activeVersionInGroup = group.versions.find(
+                              (v) =>
+                                currentId === v.id ||
+                                currentLabel === v.rawLabel ||
+                                selectedModel === v.id ||
+                                selectedModel === v.rawLabel
+                            );
+
+                            const displayedVersion =
+                              activeVersionInGroup?.versionLabel ||
+                              (group.baseName.includes('3.1 Pro')
+                                ? 'Low'
+                                : group.versions.find((v) => v.versionLabel === 'Medium')?.versionLabel ||
+                                  group.versions[0]?.versionLabel);
+
+                            const isVersionMenuOpen = headerAiVersionMenuModel === group.baseName;
+
+                            return (
+                              <div
+                                key={group.baseName}
+                                onMouseEnter={(e) => {
+                                  setHeaderAiVersionMenuModel(group.baseName);
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  const parent = e.currentTarget.parentElement?.getBoundingClientRect();
+                                  if (parent) {
+                                    setHeaderAiVersionMenuTop(Math.max(0, rect.top - parent.top));
+                                  }
+                                }}
+                                onClick={() => {
+                                  setHeaderAiVersionMenuModel(group.baseName);
+                                }}
+                                style={{
+                                  padding: '7px 10px',
+                                  borderRadius: 6,
+                                  cursor: 'pointer',
+                                  background: isGroupCurrent
+                                    ? hexToRgba(accentColor, 0.16)
+                                    : isVersionMenuOpen
+                                    ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)')
+                                    : 'transparent',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  gap: 12,
+                                  transition: 'background 0.12s ease',
+                                  whiteSpace: 'nowrap',
+                                }}
+                                onMouseLeave={(e) => {
+                                  if (!isGroupCurrent && !isVersionMenuOpen) {
+                                    e.currentTarget.style.background = 'transparent';
+                                  }
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    fontSize: 12,
+                                    fontFamily: 'Poppins, sans-serif',
+                                    fontWeight: isGroupCurrent ? 600 : 400,
+                                    color: isGroupCurrent ? accentColor : themeTokens.textPrimary,
+                                  }}
+                                >
+                                  {group.baseName}
+                                </span>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                                  <span
+                                    style={{
+                                      fontSize: 11,
+                                      fontFamily: 'Poppins, sans-serif',
+                                      color: isGroupCurrent ? accentColor : themeTokens.textSecondary,
+                                      opacity: isGroupCurrent ? 0.9 : 0.7,
+                                    }}
+                                  >
+                                    {displayedVersion}
+                                  </span>
+
+                                  {group.badge && (
+                                    <div
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: 3,
+                                        padding: '1px 5px',
+                                        borderRadius: 8,
+                                        background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
+                                        color: themeTokens.textSecondary,
+                                        fontSize: 9.5,
+                                        fontFamily: 'Poppins, sans-serif',
+                                      }}
+                                      title="Modelo otimizado para baixa latência"
+                                    >
+                                      <span>{group.badge}</span>
+                                      <Info size={9.5} style={{ opacity: 0.65 }} />
+                                    </div>
+                                  )}
+
+                                  <ChevronRight
+                                    size={13}
+                                    color={isVersionMenuOpen ? themeTokens.textPrimary : themeTokens.textSecondary}
+                                    style={{
+                                      opacity: 0.7,
+                                      transform: isVersionMenuOpen ? 'translateX(2px)' : 'none',
+                                      transition: 'transform 0.15s ease',
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // Default behavior for other providers (flat list)
                   return (
                     <div
                       style={{
@@ -6456,8 +8923,6 @@ ${prompt || userDisplayPrompt}`;
                         Modelos {targetProvider.name}
                       </div>
                       {modelList.map((m) => {
-                        const currentId = activeModels[targetProvider.id]?.currentModelId;
-                        const currentLabel = activeModels[targetProvider.id]?.currentModel;
                         const isCurrent = (targetProvider.id === selectedAiProvider) && (currentId === m.id || currentLabel === m.label || (selectedModel && (selectedModel === m.id || selectedModel === m.label)));
 
                         return (
@@ -6722,7 +9187,137 @@ ${prompt || userDisplayPrompt}`;
                   </div>
 
                   {/* Divider */}
-                  <div style={{ height: 1, background: '#333333', margin: '4px 0' }} />
+                  <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)', margin: '4px 0' }} />
+
+                  {/* Regras Globais da IA */}
+                  {(() => {
+                    const currentProviderObj = AI_PROVIDERS.find((p) => p.id === selectedAiProvider) || AI_PROVIDERS[0];
+                    const providerGlobalFileName =
+                      selectedAiProvider === 'claude'
+                        ? 'CLAUDE.md'
+                        : selectedAiProvider === 'codex'
+                        ? 'AGENTS.md'
+                        : selectedAiProvider === 'ollama'
+                        ? 'rules.md'
+                        : 'GEMINI.md';
+                    return (
+                      <div
+                        onClick={() => {
+                          setIsSettingsMenuOpen(false);
+                          setIsAiGlobalRulesModalOpen(true);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '6px 12px',
+                          cursor: 'pointer',
+                          fontSize: 11,
+                          fontWeight: 400,
+                          color: '#cccccc',
+                          transition: 'background 0.12s ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = '#04395e';
+                          e.currentTarget.style.color = '#ffffff';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'transparent';
+                          e.currentTarget.style.color = '#cccccc';
+                        }}
+                        title={`Regras Globais de ${currentProviderObj.name} (${providerGlobalFileName})`}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <ScrollText size={13} color={accentColor} />
+                          <span>Regras Globais da IA</span>
+                        </div>
+                        <span style={{ fontSize: 9.5, color: '#888888', fontFamily: 'monospace' }}>
+                          {providerGlobalFileName}
+                        </span>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Skills da IA */}
+                  <div
+                    onClick={() => {
+                      setIsSettingsMenuOpen(false);
+                      setIsSkillsModalOpen(true);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '6px 12px',
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      fontWeight: 400,
+                      color: '#cccccc',
+                      transition: 'background 0.12s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = '#04395e';
+                      e.currentTarget.style.color = '#ffffff';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = '#cccccc';
+                    }}
+                    title={activeSkills.length ? `Skills ativas: ${activeSkills.map((sk) => sk.name).join(', ')}` : 'Nenhuma skill ativa'}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Puzzle size={13} color={activeSkills.length ? accentColor : '#888888'} />
+                      <span>Skills da IA</span>
+                    </div>
+                    <span
+                      style={{
+                        fontSize: 9.5,
+                        fontWeight: 400,
+                        padding: '1px 6px',
+                        borderRadius: 10,
+                        background: activeSkills.length ? hexToRgba(accentColor, 0.22) : 'rgba(255, 255, 255, 0.08)',
+                        color: activeSkills.length ? accentColor : '#888888',
+                      }}
+                    >
+                      {activeSkills.length} {activeSkills.length === 1 ? 'ativa' : 'ativas'}
+                    </span>
+                  </div>
+
+                  {/* Configurações de IA */}
+                  <div
+                    onClick={() => {
+                      setSettingsActiveTab('ai');
+                      setIsSettingsModalOpen(true);
+                      setIsSettingsMenuOpen(false);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '6px 12px',
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      fontWeight: 400,
+                      color: '#cccccc',
+                      transition: 'background 0.12s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = '#04395e';
+                      e.currentTarget.style.color = '#ffffff';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = '#cccccc';
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Bot size={13} color="#888888" />
+                      <span>Configurações de IA & Agentes</span>
+                    </div>
+                  </div>
+
+                  {/* Divider */}
+                  <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)', margin: '4px 0' }} />
 
                   {/* Extensions */}
                   <div
@@ -8764,6 +11359,7 @@ ${prompt || userDisplayPrompt}`;
                     <div style={{ flex: '1 1 0', minHeight: 0 }}>
                       <Editor
                         height="100%"
+                        path={activeFile.path || activeFile.name}
                         language={activeFile.language}
                         value={activeFile.content}
                         theme={isEffectiveDark ? 'aura-dev-dark' : 'light'}
@@ -8815,6 +11411,7 @@ ${prompt || userDisplayPrompt}`;
                           <div style={{ flex: '1 1 0', minHeight: 0 }}>
                             <Editor
                               height="100%"
+                              path={secFile.path || secFile.name}
                               language={secFile.language}
                               value={secFile.content}
                               theme={isEffectiveDark ? 'aura-dev-dark' : 'light'}
@@ -8848,6 +11445,7 @@ ${prompt || userDisplayPrompt}`;
                   <div style={{ flex: '0 0 50%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                     <Editor
                       height="100%"
+                      path={activeFile.path || activeFile.name}
                       language={activeFile.language}
                       value={activeFile.content}
                       theme={isEffectiveDark ? 'aura-dev-dark' : 'light'}
@@ -8892,6 +11490,7 @@ ${prompt || userDisplayPrompt}`;
               ) : activeFile ? (
                 <Editor
                   height="100%"
+                  path={activeFile.path || activeFile.name}
                   language={activeFile.language}
                   value={activeFile.content}
                   theme={isEffectiveDark ? 'aura-dev-dark' : 'light'}
@@ -9012,7 +11611,7 @@ ${prompt || userDisplayPrompt}`;
                       }}
                     >
                       {(() => {
-                        const problemsCount = editorErrors + editorWarnings;
+                        const problemsCount = allProblems.length > 0 ? allProblems.length : (editorErrors + editorWarnings);
                         const tasksCount = gitIssues.length > 0 
                           ? gitIssues.length 
                           : (workspaceGitInfo?.issuesCount !== undefined && workspaceGitInfo.issuesCount > 0 
@@ -9624,98 +12223,6 @@ ${prompt || userDisplayPrompt}`;
                         transition: isDraggingTermTabs ? 'none' : 'width 0.15s ease',
                       }}
                     >
-                      {/* VS Code Mini-Toolbar at top of tabs list */}
-                      <div
-                        style={{
-                          height: 28,
-                          padding: '0 8px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'flex-end',
-                          gap: 6,
-                          borderBottom: '1px solid ' + themeTokens.border,
-                          flexShrink: 0,
-                        }}
-                      >
-                        {/* Kill terminal icon */}
-                        <div
-                          onClick={(e) => handleKillTerminalSession(activeSessionId, e)}
-                          title="Kill Terminal"
-                          style={{
-                            cursor: 'pointer',
-                            color: themeTokens.textSecondary,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            padding: 2,
-                            borderRadius: 3,
-                          }}
-                          onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary)}
-                          onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary)}
-                        >
-                          <Trash2 size={13} />
-                        </div>
-
-                        {/* More actions (...) */}
-                        <div
-                          title="More Actions..."
-                          style={{
-                            cursor: 'pointer',
-                            color: themeTokens.textSecondary,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            padding: 2,
-                            borderRadius: 3,
-                          }}
-                          onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary)}
-                          onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary)}
-                        >
-                          <MoreHorizontal size={13} />
-                        </div>
-
-                        {/* Separator */}
-                        <div style={{ width: 1, height: 12, background: themeTokens.border, margin: '0 1px' }} />
-
-                        {/* Maximize/restore panel icon */}
-                        <div
-                          onClick={() => setIsTerminalMaximized((prev) => !prev)}
-                          title={isTerminalMaximized ? 'Restore Terminal Size' : 'Maximize Terminal Panel'}
-                          style={{
-                            cursor: 'pointer',
-                            color: isTerminalMaximized ? accentColor : themeTokens.textSecondary,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            padding: 2,
-                            borderRadius: 3,
-                          }}
-                          onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = isTerminalMaximized ? accentColor : themeTokens.textPrimary)}
-                          onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = isTerminalMaximized ? accentColor : themeTokens.textSecondary)}
-                        >
-                          <Maximize2 size={12} />
-                        </div>
-
-                        {/* Close panel icon */}
-                        <div
-                          onClick={() => setIsTerminalCollapsed(true)}
-                          title="Close Panel"
-                          style={{
-                            cursor: 'pointer',
-                            color: themeTokens.textSecondary,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            padding: 2,
-                            borderRadius: 3,
-                          }}
-                          onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = '#ff5f56')}
-                          onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary)}
-                        >
-                          <X size={13} />
-                        </div>
-                      </div>
-
                       {/* Sessions List */}
                       <div
                         style={{
@@ -10004,27 +12511,27 @@ ${prompt || userDisplayPrompt}`;
 
                 {/* 2. Problems View */}
                 {activeTermTab === 'problems' && (
-                  <div
-                    style={{
-                      flex: '1 1 0',
-                      alignSelf: 'stretch',
-                      padding: 16,
-                      background: themeTokens.bgCard,
-                      borderRadius: 10,
-                      border: '1px solid ' + themeTokens.border,
-                      flexDirection: 'column',
-                      gap: 12,
-                      display: 'flex',
+                  <ProblemsPanelView
+                    problems={allProblems}
+                    activeFile={activeFile}
+                    onOpenFile={handleOpenFile}
+                    onJumpToLocation={(filePath, line, col) => {
+                      if (editorInstanceRef.current) {
+                        editorInstanceRef.current.revealPositionInCenter({ lineNumber: line, column: col });
+                        editorInstanceRef.current.setPosition({ lineNumber: line, column: col });
+                        editorInstanceRef.current.focus();
+                      }
                     }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#3fb950', fontSize: 13, whiteSpace: 'nowrap' }}>
-                      <CheckCircle2 size={16} />
-                      <span style={{ fontWeight: 500 }}>Nenhum problema encontrado no projeto.</span>
-                    </div>
-                    <div style={{ color: themeTokens.textSecondary, fontSize: 12 }}>
-                      0 erros de compilação • 0 alertas de linting • Todos os tipos TypeScript validados com sucesso.
-                    </div>
-                  </div>
+                    onRunProjectCheck={handleRunProjectCheck}
+                    isCheckingProject={isCheckingProject}
+                    lastCheckedTime={lastProjectCheckTime}
+                    themeTokens={themeTokens}
+                    accentColor={accentColor}
+                    isEffectiveDark={isEffectiveDark}
+                    onAskAiAboutProblem={(prob) => {
+                      setActiveTab('cli');
+                    }}
+                  />
                 )}
 
                 {/* 3. Output View */}
@@ -10172,7 +12679,7 @@ ${prompt || userDisplayPrompt}`;
                     onDoWithAi={handleTaskDoWithAi}
                     onOpenIssueDetails={handleOpenIssueSidesheet}
                     currentUserLogin={githubUser?.login || 'walancy'}
-                    repoName={gitRepoName}
+                    repoName={activeHeaderProject?.fullName || gitRepoName}
                     sprints={projectMilestones}
                     themeTokens={themeTokens}
                     isEffectiveDark={isEffectiveDark}
@@ -10230,7 +12737,7 @@ ${prompt || userDisplayPrompt}`;
                       const otherProviders = AI_PROVIDERS.filter((p) => {
                         if (p.id === selectedAiProvider) return false;
                         const isOrchestrated = isOrchestratorActive && orchestratedProviders[p.id];
-                        const hasChat = chatSessions.some((s) => s.provider === p.id && s.history.length > 0);
+                        const hasChat = chatSessions.some((s) => s.provider === p.id && s.history && s.history.length > 0);
                         return isOrchestrated || hasChat;
                       });
 
@@ -10434,7 +12941,7 @@ ${prompt || userDisplayPrompt}`;
                           border: `1px solid ${themeTokens.border}`,
                           borderRadius: 8,
                           padding: 4,
-                          minWidth: 140,
+                          minWidth: 160,
                           zIndex: 100000,
                           boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
                           display: 'flex',
@@ -10473,6 +12980,7 @@ ${prompt || userDisplayPrompt}`;
                           </div>
                           <span style={{ fontSize: 10, color: themeTokens.textSecondary, opacity: 0.7 }}>⌘⇧H</span>
                         </div>
+
                         <div
                           onClick={() => {
                             setChatActionsMenuOpen(false);
@@ -10526,16 +13034,69 @@ ${prompt || userDisplayPrompt}`;
                           }}
                         >
                           <Download size={13} color={themeTokens.textSecondary} />
-                          <span>Exportar</span>
+                          <span>Exportar Markdown</span>
                         </div>
 
                         <div
                           onClick={() => {
                             setChatActionsMenuOpen(false);
-                            setAiHistory([]);
-                            setChatSessions((prev) =>
-                              prev.map((s) => (s.id === activeChatSessionId ? { ...s, history: [] } : s))
-                            );
+                            handleExportChat(undefined, 'json');
+                          }}
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                            fontSize: 12,
+                            fontFamily: 'Poppins, sans-serif',
+                            color: themeTokens.textPrimary,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            transition: 'background 0.15s ease',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'transparent';
+                          }}
+                        >
+                          <Download size={13} color={themeTokens.textSecondary} />
+                          <span>Exportar JSON</span>
+                        </div>
+
+                        <div
+                          onClick={() => {
+                            setChatActionsMenuOpen(false);
+                            setIsPermissionsModalOpen(true);
+                          }}
+                          style={{
+                            padding: '6px 10px',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                            fontSize: 12,
+                            fontFamily: 'Poppins, sans-serif',
+                            color: themeTokens.textPrimary,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            transition: 'background 0.15s ease',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'transparent';
+                          }}
+                        >
+                          <Shield size={13} color={accentColor} />
+                          <span>Permissões da IA</span>
+                        </div>
+
+                        <div
+                          onClick={() => {
+                            setChatActionsMenuOpen(false);
+                            setClearHistoryConfirmOpen(true);
                           }}
                           style={{
                             padding: '6px 10px',
@@ -10557,11 +13118,13 @@ ${prompt || userDisplayPrompt}`;
                           }}
                         >
                           <Trash2 size={13} color="#ef4444" />
-                          <span>Limpar</span>
+                          <span>Limpar Conversa</span>
                         </div>
                       </div>
                     )}
                   </div>
+
+
 
                   {/* Chat History & Sessions Popup */}
                   {chatHistoryPopupOpen && (
@@ -11029,9 +13592,15 @@ ${prompt || userDisplayPrompt}`;
                       return null;
                     }
                     if (item.type === 'user') {
+                      const formattedTime = item.timestamp
+                        ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
                       return (
                         <div
                           key={idx}
+                          onMouseEnter={() => setHoveredChatMsgIdx(idx)}
+                          onMouseLeave={() => setHoveredChatMsgIdx(null)}
                           style={{
                             alignSelf: 'flex-end',
                             display: 'flex',
@@ -11043,6 +13612,7 @@ ${prompt || userDisplayPrompt}`;
                         >
                           <div
                             style={{
+                              position: 'relative',
                               background: hexToRgba(chatAccentColor, 0.15),
                               color: themeTokens.textPrimary,
                               padding: '8px 12px',
@@ -11055,6 +13625,9 @@ ${prompt || userDisplayPrompt}`;
                               display: 'flex',
                               flexDirection: 'column',
                               gap: 6,
+                              minHeight: 34,
+                              minWidth: 130,
+                              boxSizing: 'border-box',
                             }}
                           >
                             {/* Attached Task Tag/Chip on top of user message */}
@@ -11153,6 +13726,135 @@ ${prompt || userDisplayPrompt}`;
                                 ))}
                               </div>
                             )}
+
+                            {/* User Message Floating Options: only on hover, positioned over bubble text, with background blur */}
+                            <div
+                              style={{
+                                position: 'absolute',
+                                bottom: 4,
+                                right: 4,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                padding: 6,
+                                borderRadius: 6,
+                                background: isEffectiveDark ? 'rgba(20, 20, 24, 0.75)' : 'rgba(245, 245, 247, 0.75)',
+                                backdropFilter: 'blur(8px)',
+                                WebkitBackdropFilter: 'blur(8px)',
+                                border: 'none',
+                                boxShadow: 'none',
+                                opacity: hoveredChatMsgIdx === idx ? 1 : 0,
+                                pointerEvents: hoveredChatMsgIdx === idx ? 'auto' : 'none',
+                                transform: hoveredChatMsgIdx === idx ? 'translateY(0)' : 'translateY(2px)',
+                                transition: 'opacity 0.15s ease, transform 0.15s ease',
+                                zIndex: 10,
+                                userSelect: 'none',
+                                width: 'max-content',
+                                whiteSpace: 'nowrap',
+                                flexShrink: 0,
+                              }}
+                            >
+                              <span
+                                style={{
+                                  fontSize: 10.5,
+                                  fontWeight: 400,
+                                  color: isEffectiveDark ? 'rgba(255, 255, 255, 0.65)' : 'rgba(0, 0, 0, 0.65)',
+                                  whiteSpace: 'nowrap',
+                                  flexShrink: 0,
+                                  lineHeight: 1,
+                                }}
+                              >
+                                {formattedTime}
+                              </span>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleCopyMessage(item.text, idx);
+                                }}
+                                title="Copiar prompt"
+                                style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  padding: 0,
+                                  cursor: 'pointer',
+                                  color: copiedMsgIdx === idx ? '#22c55e' : (isEffectiveDark ? 'rgba(255, 255, 255, 0.65)' : 'rgba(0, 0, 0, 0.65)'),
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  flexShrink: 0,
+                                  transition: 'color 0.15s ease',
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.color = themeTokens.textPrimary)}
+                                onMouseLeave={(e) => (e.currentTarget.style.color = copiedMsgIdx === idx ? '#22c55e' : (isEffectiveDark ? 'rgba(255, 255, 255, 0.65)' : 'rgba(0, 0, 0, 0.65)'))}
+                              >
+                                {copiedMsgIdx === idx ? <Check size={12} /> : <Copy size={12} />}
+                              </button>
+
+                              {/* Undo Button with exact tooltip matching Image 1 */}
+                              <div style={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenUndoModal(idx);
+                                  }}
+                                  onMouseEnter={() => setHoveredUndoIdx(idx)}
+                                  onMouseLeave={() => setHoveredUndoIdx(null)}
+                                  title="Undo changes up to this point"
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    padding: 0,
+                                    cursor: 'pointer',
+                                    color: isEffectiveDark ? 'rgba(255, 255, 255, 0.65)' : 'rgba(0, 0, 0, 0.65)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    flexShrink: 0,
+                                    transition: 'color 0.15s ease',
+                                  }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.color = themeTokens.textPrimary)}
+                                  onMouseLeave={(e) => (e.currentTarget.style.color = isEffectiveDark ? 'rgba(255, 255, 255, 0.65)' : 'rgba(0, 0, 0, 0.65)')}
+                                >
+                                  <Undo2 size={12} />
+                                </button>
+                                {hoveredUndoIdx === idx && (
+                                  <div
+                                    style={{
+                                      position: 'absolute',
+                                      bottom: 'calc(100% + 7px)',
+                                      right: -6,
+                                      background: '#262626',
+                                      color: '#f4f4f5',
+                                      padding: '5px 9px',
+                                      borderRadius: 6,
+                                      fontSize: 11,
+                                      fontFamily: 'Poppins, sans-serif',
+                                      fontWeight: 400,
+                                      whiteSpace: 'nowrap',
+                                      boxShadow: 'none',
+                                      border: 'none',
+                                      zIndex: 100,
+                                      pointerEvents: 'none',
+                                    }}
+                                  >
+                                    Undo changes up to this point
+                                    <div
+                                      style={{
+                                        position: 'absolute',
+                                        top: '100%',
+                                        right: 9,
+                                        width: 0,
+                                        height: 0,
+                                        borderLeft: '5px solid transparent',
+                                        borderRight: '5px solid transparent',
+                                        borderTop: '5px solid #262626',
+                                      }}
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            </div>
                           </div>
                           <img
                             src={githubUser?.avatarUrl || avatarImg}
@@ -11467,18 +14169,41 @@ ${prompt || userDisplayPrompt}`;
                         </div>
                       );
                     } else {
-                      const isWorkedExpanded = expandedWorkedMap[idx] ?? false;
+                      const isWorkedExpanded = expandedWorkedMap[idx] ?? true;
                       const isDiffCollapsed = collapsedDiffMap[idx] ?? true;
-                      const steps = item.executionSteps || (item.changedFiles && item.changedFiles.length > 0 ? [
-                        { type: 'explore' as const, label: `Explored ${item.changedFiles.length} file${item.changedFiles.length > 1 ? 's' : ''}` },
-                        ...item.changedFiles.map((f) => ({
-                          type: 'edit' as const,
-                          label: `Edited ${f.name}`,
-                          file: f.name,
-                          additions: f.additions,
-                          deletions: f.deletions,
-                        }))
-                      ] : null);
+                      const steps = item.executionSteps || (item.changedFiles && item.changedFiles.length > 0 ? (
+                        item.changedFiles.flatMap((f, fIdx) => [
+                          {
+                            id: `explore-${f.name}-${fIdx}`,
+                            type: 'explore' as const,
+                            label: 'Explored 1 file',
+                            children: [
+                              {
+                                id: `analyzed-${f.name}-${fIdx}`,
+                                type: 'analyze' as const,
+                                label: `Analyzed ${f.name}`,
+                                file: f.name,
+                                path: f.path,
+                              },
+                              {
+                                id: `thought-${f.name}-${fIdx}`,
+                                type: 'thought' as const,
+                                label: 'Thought for 1s',
+                                duration: '1s',
+                              },
+                            ],
+                          },
+                          {
+                            id: `edit-${f.name}-${fIdx}`,
+                            type: 'edit' as const,
+                            label: `Edited ${f.name}`,
+                            file: f.name,
+                            path: f.path,
+                            additions: f.additions,
+                            deletions: f.deletions,
+                          },
+                        ])
+                      ) : null);
 
                       const changedFiles = item.changedFiles || [];
                       const totalFiles = changedFiles.length;
@@ -11528,108 +14253,36 @@ ${prompt || userDisplayPrompt}`;
                               minWidth: 0,
                             }}
                           >
-                            {/* 1. Worked for X Collapsible Accordion */}
-                            {(steps || item.workedDuration) && (
-                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-                                <button
-                                  onClick={() => setExpandedWorkedMap((prev) => ({ ...prev, [idx]: !isWorkedExpanded }))}
-                                  style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: 6,
-                                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
-                                    border: 'none',
-                                    borderRadius: 6,
-                                    padding: '4px 10px',
-                                    color: isEffectiveDark ? '#9ca3af' : '#4b5563',
-                                    fontSize: 12,
-                                    cursor: 'pointer',
-                                    marginBottom: isWorkedExpanded && steps && steps.length > 0 ? 8 : 0,
-                                    transition: 'background 0.15s ease',
-                                  }}
-                                >
-                                  <span style={{ color: themeTokens.textPrimary, fontWeight: 500 }}>
-                                    Worked for {item.workedDuration || '3m'}
-                                  </span>
-                                  {isWorkedExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                                </button>
+                            {/* 1. Antigravity Execution Timeline (Thought, Steps, Terminal, Diffs) */}
+                            <AiChatTimeline
+                              steps={steps || undefined}
+                              workedDuration={item.workedDuration}
+                              thoughtSnippet={item.thoughtSnippet}
+                              isWorking={isAiExecuting && idx === aiHistory.length - 1}
+                              terminalCommands={item.terminalCommands || undefined}
+                              changedFiles={item.changedFiles || undefined}
+                              onOpenFileAction={(path, name, lineRange) => {
+                                handleOpenFile(path + (lineRange ? lineRange : ''), name);
+                              }}
+                              onReviewDiffAction={(files, fileIdx) => {
+                                handleStartReview(files, fileIdx);
+                              }}
+                              onAcceptAllDiffs={handleAcceptAllDiffs}
+                              onRejectAllDiffs={() => handleRequestRejectAllDiffs(item.changedFiles)}
+                              accentColor={accentColor}
+                              themeTokens={themeTokens}
+                              isEffectiveDark={isEffectiveDark}
+                            />
 
-                                {isWorkedExpanded && steps && steps.length > 0 && (
-                                  <div
-                                    style={{
-                                      display: 'flex',
-                                      flexDirection: 'column',
-                                      gap: 7,
-                                      paddingLeft: 6,
-                                      paddingBottom: 4,
-                                    }}
-                                  >
-                                    {steps.map((step, sIdx) => {
-                                      if (step.type === 'edit') {
-                                        return (
-                                          <div
-                                            key={sIdx}
-                                            style={{
-                                              display: 'flex',
-                                              alignItems: 'center',
-                                              gap: 6,
-                                              fontSize: 12.5,
-                                              color: themeTokens.textPrimary,
-                                            }}
-                                          >
-                                            <span style={{ color: '#9ca3af' }}>Edited</span>
-                                            {renderFileIcon(step.file || 'App.tsx')}
-                                            <span style={{ fontWeight: 600, color: themeTokens.textPrimary }}>
-                                              {step.file || 'App.tsx'}
-                                            </span>
-                                            <span style={{ color: '#22c55e', fontSize: 11.5, fontWeight: 600, marginLeft: 2 }}>
-                                              +{step.additions ?? 1}
-                                            </span>
-                                            <span style={{ color: '#ef4444', fontSize: 11.5, fontWeight: 600 }}>
-                                              -{step.deletions ?? 0}
-                                            </span>
-                                          </div>
-                                        );
-                                      }
-                                      if (step.type === 'run') {
-                                        return (
-                                          <div
-                                            key={sIdx}
-                                            style={{
-                                              display: 'flex',
-                                              alignItems: 'center',
-                                              gap: 6,
-                                              fontSize: 12.5,
-                                              color: themeTokens.textPrimary,
-                                            }}
-                                          >
-                                            <span style={{ color: '#9ca3af' }}>Ran</span>
-                                            <span style={{ fontFamily: 'monospace', fontWeight: 600, color: themeTokens.textPrimary }}>
-                                              {step.command || step.label}
-                                            </span>
-                                            <ChevronDown size={13} style={{ color: '#6b7280', marginLeft: 2 }} />
-                                          </div>
-                                        );
-                                      }
-                                      return (
-                                        <div
-                                          key={sIdx}
-                                          style={{
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: 6,
-                                            fontSize: 12.5,
-                                            color: '#9ca3af',
-                                          }}
-                                        >
-                                          <span>{step.label}</span>
-                                          <ChevronRight size={13} style={{ color: '#6b7280', marginLeft: 2 }} />
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
+                            {/* Antigravity Interactive Question Card (if prompt requires decision) */}
+                            {item.interactiveQuestion && (
+                              <InteractiveQuestionCard
+                                data={item.interactiveQuestion}
+                                onAnswer={(selected, writeIn) => handleAnswerInteractiveQuestion(selected, writeIn)}
+                                accentColor={accentColor}
+                                themeTokens={themeTokens}
+                                isEffectiveDark={isEffectiveDark}
+                              />
                             )}
 
                             {/* 2. Main Assistant Response Text (Rich Markdown & Code Formatted) */}
@@ -11799,7 +14452,197 @@ ${prompt || userDisplayPrompt}`;
                               </div>
                             )}
 
-                            {/* 5. Footer: Timestamp & Copy Button Only */}
+                            {/* Issue Finalization Action Card (DevFlow Task Workflow) */}
+                            {(() => {
+                              const issueActionMatch = item.text?.match(/<!--\s*ISSUE_ACTION_PROMPT:#?(\d+)\s*-->/);
+                              const explicitIssueNumber = issueActionMatch ? parseInt(issueActionMatch[1], 10) : undefined;
+                              
+                              let isLastAssistant = false;
+                              for (let i = aiHistory.length - 1; i >= 0; i--) {
+                                if (aiHistory[i].type === 'assistant') {
+                                  isLastAssistant = (i === idx);
+                                  break;
+                                }
+                              }
+                              
+                              const targetIssueNumber = explicitIssueNumber || (isLastAssistant && activeWorkingIssue ? activeWorkingIssue.number : undefined);
+                              if (!targetIssueNumber) return null;
+
+                              const isIssueFinalized = Boolean(finalizedIssues[targetIssueNumber]);
+                              const targetIssueTitle = (activeWorkingIssue?.number === targetIssueNumber ? activeWorkingIssue.title : undefined) || `Tarefa #${targetIssueNumber}`;
+
+                              if (isIssueFinalized) {
+                                return (
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 10,
+                                      padding: 10,
+                                      background: isEffectiveDark ? 'rgba(34, 197, 94, 0.08)' : 'rgba(34, 197, 94, 0.1)',
+                                      borderRadius: 8,
+                                      border: 'none',
+                                      fontSize: 12,
+                                      fontWeight: 400,
+                                      color: isEffectiveDark ? '#86efac' : '#15803d',
+                                    }}
+                                  >
+                                    <Check size={15} style={{ flexShrink: 0 }} />
+                                    <span>
+                                      Tarefa #{targetIssueNumber} finalizada e comitada com sucesso. Registrada na Daily.
+                                    </span>
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: 12,
+                                    padding: 12,
+                                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.03)',
+                                    borderRadius: 8,
+                                    border: 'none',
+                                    marginTop: 4,
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'space-between',
+                                      gap: 8,
+                                    }}
+                                  >
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                      <MilestoneIcon size={14} style={{ color: chatAccentColor, flexShrink: 0 }} />
+                                      <span
+                                        style={{
+                                          fontSize: 12.5,
+                                          fontWeight: 400,
+                                          color: themeTokens.textPrimary,
+                                        }}
+                                      >
+                                        Finalizar tarefa #{targetIssueNumber}?
+                                      </span>
+                                    </div>
+                                    <span
+                                      style={{
+                                        fontSize: 11,
+                                        fontWeight: 400,
+                                        color: isEffectiveDark ? '#9ca3af' : '#6b7280',
+                                      }}
+                                    >
+                                      {targetIssueTitle}
+                                    </span>
+                                  </div>
+
+                                  <div
+                                    style={{
+                                      fontSize: 12,
+                                      fontWeight: 400,
+                                      lineHeight: '18px',
+                                      color: isEffectiveDark ? '#9ca3af' : '#6b7280',
+                                    }}
+                                  >
+                                    Revise a implementação para assegurar qualidade e ausência de hardcodes/mocks, ou conclua e vincule diretamente à Daily.
+                                  </div>
+
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 8,
+                                      paddingTop: 8,
+                                      borderTop: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.05)' : '1px solid rgba(0, 0, 0, 0.05)',
+                                    }}
+                                  >
+                                    <button
+                                      type="button"
+                                      disabled={isAiExecuting || isFinalizingIssue}
+                                      onClick={() => handleReviewIssue(targetIssueNumber, targetIssueTitle)}
+                                      title="Solicitar à IA revisão de hardcoded, falhas de segurança e mocks"
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: 8,
+                                        padding: 8,
+                                        background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+                                        border: 'none',
+                                        borderRadius: 6,
+                                        color: themeTokens.textPrimary,
+                                        fontSize: 12,
+                                        fontWeight: 400,
+                                        cursor: isAiExecuting || isFinalizingIssue ? 'not-allowed' : 'pointer',
+                                        opacity: isAiExecuting || isFinalizingIssue ? 0.5 : 1,
+                                        transition: 'all 0.15s ease',
+                                      }}
+                                      onMouseEnter={(e) => {
+                                        if (!isAiExecuting && !isFinalizingIssue) {
+                                          e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
+                                          e.currentTarget.style.transform = 'translateY(-1px)';
+                                        }
+                                      }}
+                                      onMouseLeave={(e) => {
+                                        e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)';
+                                        e.currentTarget.style.transform = 'translateY(0)';
+                                      }}
+                                    >
+                                      <ShieldCheck size={14} style={{ color: '#38bdf8' }} />
+                                      <span>Revisar</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      disabled={isAiExecuting || isFinalizingIssue}
+                                      onClick={() => handleAcceptAndFinalizeIssue(targetIssueNumber, targetIssueTitle, item.text)}
+                                      title="Finalizar tarefa no GitHub, fazer commit vinculado e marcar como concluída na Daily"
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: 8,
+                                        padding: 8,
+                                        background: isEffectiveDark ? '#15803d' : '#16a34a',
+                                        border: 'none',
+                                        borderRadius: 6,
+                                        color: '#ffffff',
+                                        fontSize: 12,
+                                        fontWeight: 400,
+                                        cursor: isAiExecuting || isFinalizingIssue ? 'not-allowed' : 'pointer',
+                                        opacity: isAiExecuting || isFinalizingIssue ? 0.7 : 1,
+                                        transition: 'all 0.15s ease',
+                                      }}
+                                      onMouseEnter={(e) => {
+                                        if (!isAiExecuting && !isFinalizingIssue) {
+                                          e.currentTarget.style.background = isEffectiveDark ? '#16a34a' : '#15803d';
+                                          e.currentTarget.style.transform = 'translateY(-1px)';
+                                        }
+                                      }}
+                                      onMouseLeave={(e) => {
+                                        e.currentTarget.style.background = isEffectiveDark ? '#15803d' : '#16a34a';
+                                        e.currentTarget.style.transform = 'translateY(0)';
+                                      }}
+                                    >
+                                      {isFinalizingIssue ? (
+                                        <>
+                                          <Loader2 size={14} className="animate-spin" />
+                                          <span>Finalizando...</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Check size={14} />
+                                          <span>Aceitar</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
+                            {/* 5. Footer: Timestamp, Copy Button & Undo Button */}
                             <div
                               style={{
                                 display: 'flex',
@@ -11813,6 +14656,7 @@ ${prompt || userDisplayPrompt}`;
                             >
                               <span>{formattedTime}</span>
                               <button
+                                type="button"
                                 onClick={() => handleCopyMessage(item.text, idx)}
                                 title="Copiar resposta"
                                 style={{
@@ -11828,6 +14672,66 @@ ${prompt || userDisplayPrompt}`;
                               >
                                 {copiedMsgIdx === idx ? <Check size={13} /> : <Copy size={13} />}
                               </button>
+
+                              <div style={{ position: 'relative', display: 'inline-flex' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenUndoModal(idx)}
+                                  onMouseEnter={() => setHoveredUndoIdx(idx)}
+                                  onMouseLeave={() => setHoveredUndoIdx(null)}
+                                  title="Undo changes up to this point"
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    padding: 0,
+                                    cursor: 'pointer',
+                                    color: '#9ca3af',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    transition: 'color 0.15s ease',
+                                  }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.color = themeTokens.textPrimary)}
+                                  onMouseLeave={(e) => (e.currentTarget.style.color = '#9ca3af')}
+                                >
+                                  <Undo2 size={13} />
+                                </button>
+                                {hoveredUndoIdx === idx && (
+                                  <div
+                                    style={{
+                                      position: 'absolute',
+                                      bottom: 'calc(100% + 7px)',
+                                      left: '50%',
+                                      transform: 'translateX(-50%)',
+                                      background: '#262626',
+                                      color: '#f4f4f5',
+                                      padding: '5px 9px',
+                                      borderRadius: 6,
+                                      fontSize: 11,
+                                      fontFamily: 'Poppins, sans-serif',
+                                      fontWeight: 400,
+                                      whiteSpace: 'nowrap',
+                                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.45)',
+                                      zIndex: 100,
+                                      pointerEvents: 'none',
+                                    }}
+                                  >
+                                    Undo changes up to this point
+                                    <div
+                                      style={{
+                                        position: 'absolute',
+                                        top: '100%',
+                                        left: '50%',
+                                        transform: 'translateX(-50%)',
+                                        width: 0,
+                                        height: 0,
+                                        borderLeft: '5px solid transparent',
+                                        borderRight: '5px solid transparent',
+                                        borderTop: '5px solid #262626',
+                                      }}
+                                    />
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -12040,6 +14944,17 @@ ${prompt || userDisplayPrompt}`;
                           </div>
                         </div>
                       )}
+
+                      {/* Antigravity Message Execution Queue */}
+                      <AiChatMessageQueue
+                        queue={queuedAiMessages}
+                        onRemoveFromQueue={(id) => {
+                          setQueuedAiMessages((prev) => prev.filter((item) => item.id !== id));
+                        }}
+                        accentColor={accentColor}
+                        themeTokens={themeTokens}
+                        isEffectiveDark={isEffectiveDark}
+                      />
 
                       <form
                         onSubmit={handleAiSubmit}
@@ -12289,114 +15204,18 @@ ${prompt || userDisplayPrompt}`;
                         </div>
                       )}
 
-                      {/* Floating @ Mention Autocomplete Menu (Antigravity Style) */}
-                      {atMentionState.isOpen && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            bottom: 'calc(100% + 8px)',
-                            left: 0,
-                            right: 0,
-                            background: isEffectiveDark ? '#181818' : '#ffffff',
-                            borderRadius: 10,
-                            border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(0, 0, 0, 0.1)',
-                            boxShadow: isEffectiveDark ? '0 8px 24px rgba(0, 0, 0, 0.75)' : '0 8px 24px rgba(0, 0, 0, 0.15)',
-                            padding: 6,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 2,
-                            maxHeight: 250,
-                            overflowY: 'auto',
-                            zIndex: 99999,
-                          }}
-                        >
-                          <div
-                            style={{
-                              padding: '4px 8px 6px 8px',
-                              borderBottom: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)',
-                              marginBottom: 4,
-                              fontSize: 11,
-                              fontWeight: 600,
-                              color: themeTokens.textSecondary,
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 6,
-                              fontFamily: 'Poppins, sans-serif',
-                            }}
-                          >
-                            <span style={{ color: '#60a5fa', fontWeight: 700 }}>@</span>
-                            <span>Mencionar Arquivo no Prompt (Contexto Direto)</span>
-                          </div>
-
-                          {filteredAtFiles.length > 0 ? (
-                            filteredAtFiles.map((file, idx) => {
-                              const isSelected = idx === atMentionState.selectedIndex;
-                              const ext = (file.name.split('.').pop() || '').toLowerCase();
-                              const isImg = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'gif'].includes(ext);
-                              return (
-                                <div
-                                  key={file.path}
-                                  onClick={() => handleSelectAtItem(file)}
-                                  onMouseEnter={() => setAtMentionState((prev) => ({ ...prev, selectedIndex: idx }))}
-                                  style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    padding: '6px 10px',
-                                    borderRadius: 6,
-                                    cursor: 'pointer',
-                                    background: isSelected
-                                      ? (isEffectiveDark ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.12)')
-                                      : 'transparent',
-                                    outline: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : 'none',
-                                    transition: 'all 0.12s ease',
-                                  }}
-                                >
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: '1 1 auto' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-                                      {isImg ? (
-                                        <ImageIcon size={13} color="#60a5fa" />
-                                      ) : (
-                                        <FileIcon fileName={file.name} size={13} />
-                                      )}
-                                    </div>
-                                    <span
-                                      style={{
-                                        color: isSelected ? themeTokens.textPrimary : (isEffectiveDark ? '#e0e0e0' : '#222222'),
-                                        fontFamily: 'Poppins, sans-serif',
-                                        fontSize: 12,
-                                        fontWeight: 600,
-                                        whiteSpace: 'nowrap',
-                                      }}
-                                    >
-                                      {file.name}
-                                    </span>
-                                    <span
-                                      style={{
-                                        color: themeTokens.textSecondary,
-                                        fontFamily: 'Poppins, monospace',
-                                        fontSize: 10.5,
-                                        whiteSpace: 'nowrap',
-                                        overflow: 'hidden',
-                                        textOverflow: 'ellipsis',
-                                        opacity: 0.8,
-                                        maxWidth: 240,
-                                      }}
-                                      title={file.path}
-                                    >
-                                      {file.path.replace(workspacePath, '').replace(/^\//, '') || file.path}
-                                    </span>
-                                  </div>
-                                </div>
-                              );
-                            })
-                          ) : (
-                            <div style={{ padding: '8px 10px', color: themeTokens.textSecondary, fontSize: 11.5, fontFamily: 'Poppins, sans-serif' }}>
-                              Nenhum arquivo correspondente para <strong style={{ color: themeTokens.textPrimary }}>@{atMentionState.query}</strong>
-                            </div>
-                          )}
-                        </div>
-                      )}
+                      {/* Floating @ Mention Autocomplete Menu (Antigravity Style: Files, Folders, Git, Terminal, Rules, MCP) */}
+                      <AiChatMentionsMenu
+                        isOpen={atMentionState.isOpen}
+                        query={atMentionState.query}
+                        selectedIndex={atMentionState.selectedIndex}
+                        files={allWorkspaceFiles}
+                        gitBranch={currentBranch}
+                        onSelect={(item) => handleSelectAtItem(item.path ? { name: item.title, path: item.path } : { name: item.title, path: item.title })}
+                        themeTokens={themeTokens}
+                        accentColor={accentColor}
+                        isEffectiveDark={isEffectiveDark}
+                      />
 
                       {/* Larger Typing Area (Multi-line Support with Enter to Send) */}
                       <div style={{ alignSelf: 'stretch', padding: '10px 14px 6px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -12404,6 +15223,7 @@ ${prompt || userDisplayPrompt}`;
                           ref={promptEditorRef}
                           placeholder="Pergunte, mencione arquivos com @ ou arraste para cá..."
                           disabled={isAiExecuting}
+                          hasAttachedTask={Boolean(attachedTask)}
                           isEffectiveDark={isEffectiveDark}
                           maxImages={MAX_ATTACHED_IMAGES}
                           currentImagesCount={attachedImages.length}
@@ -13482,7 +16302,7 @@ ${prompt || userDisplayPrompt}`;
                           );
                         }
 
-                        const canSubmit = (askPrompt.trim().length > 0 || attachedFiles.length > 0 || attachedImages.length > 0) && !isAiExecuting;
+                        const canSubmit = (askPrompt.trim().length > 0 || attachedFiles.length > 0 || attachedImages.length > 0 || Boolean(attachedTask)) && !isAiExecuting;
                         const isSendActive = canSubmit;
                         return (
                           <button
@@ -13549,54 +16369,78 @@ ${prompt || userDisplayPrompt}`;
         />
       </div>
 
-      {/* 2.3 Orchestration Container */}
-      {activeTab === 'orchestration' && (
-        <div style={{ alignSelf: 'stretch', width: '100%', minWidth: 0, minHeight: 0, flex: '1 1 0', display: 'flex', overflow: 'hidden' }}>
-          <OrchestrationCanvas
-            accentColor={accentColor}
-            isEffectiveDark={isEffectiveDark}
-            themeTokens={themeTokens}
-            workspacePath={workspacePath}
-            selectedAiProvider={selectedAiProvider}
-            selectedModel={selectedModel}
-            installedClis={installedClis}
-            activeModels={activeModels}
-            onSelectAiProvider={handleSwitchAiProvider}
-            onSelectModel={handleSelectModel}
-            onSelectWorkspace={handleSelectWorkspace}
-            onToast={(msg) => {
-              setToastMessage(msg);
-              setTimeout(() => setToastMessage(null), 3000);
-            }}
-          />
-        </div>
-      )}
+      {/* 2.3 Orchestration Container (mantido vivo na memória para não derrubar CLIs abertos ao trocar de aba) */}
+      <div
+        style={{
+          alignSelf: 'stretch',
+          width: '100%',
+          minWidth: 0,
+          minHeight: 0,
+          flex: '1 1 0',
+          display: activeTab === 'orchestration' ? 'flex' : 'none',
+          overflow: 'hidden',
+        }}
+      >
+        <OrchestrationCanvas
+          accentColor={accentColor}
+          isEffectiveDark={isEffectiveDark}
+          themeTokens={themeTokens}
+          workspacePath={workspacePath}
+          currentUser={githubUser ? { login: githubUser.login, avatarUrl: githubUser.avatarUrl || avatarImg } : null}
+          selectedAiProvider={selectedAiProvider}
+          selectedModel={selectedModel}
+          installedClis={installedClis}
+          activeModels={activeModels}
+          onSelectAiProvider={handleSwitchAiProvider}
+          onSelectModel={handleSelectModel}
+          onSelectWorkspace={handleSelectWorkspace}
+          isTabActive={activeTab === 'orchestration'}
+          onToast={(msg) => {
+            setToastMessage(msg);
+            setTimeout(() => setToastMessage(null), 3000);
+          }}
+        />
+      </div>
 
-      {/* 2.4 Daily Container */}
-      {activeTab === 'daily' && (
-        <div style={{ alignSelf: 'stretch', width: '100%', minWidth: 0, minHeight: 0, flex: '1 1 0', display: 'flex', overflow: 'hidden' }}>
-          <DailySchedulerView
-            workspacePath={workspacePath}
-            repoName={gitRepoName}
-            accentColor={accentColor}
-            isEffectiveDark={isEffectiveDark}
-            themeTokens={themeTokens}
-            selectedAiProvider={selectedAiProvider}
-            selectedModel={selectedModel}
-            onSelectWorkspace={handleSelectWorkspace}
-            installedClis={installedClis}
-            activeModels={activeModels}
-            onToast={(msg) => {
-              setToastMessage(msg);
-              setTimeout(() => setToastMessage(null), 3000);
-            }}
-          />
-        </div>
-      )}
+      {/* 2.4 Daily Container (mantido vivo na memória para não perder o chat de IA ao trocar de aba) */}
+      <div
+        style={{
+          alignSelf: 'stretch',
+          width: '100%',
+          minWidth: 0,
+          minHeight: 0,
+          flex: '1 1 0',
+          display: activeTab === 'daily' ? 'flex' : 'none',
+          overflow: 'hidden',
+        }}
+      >
+        <DailySchedulerView
+          workspacePath={workspacePath}
+          repoName={gitRepoName}
+          activeProject={activeHeaderProject}
+          availableProjects={headerProjectsList}
+          accentColor={accentColor}
+          isEffectiveDark={isEffectiveDark}
+          themeTokens={themeTokens}
+          selectedAiProvider={selectedAiProvider}
+          selectedModel={selectedModel}
+          onSelectWorkspace={handleSelectWorkspace}
+          installedClis={installedClis}
+          activeModels={activeModels}
+          onToast={(msg) => {
+            setToastMessage(msg);
+            setTimeout(() => setToastMessage(null), 3000);
+          }}
+        />
+      </div>
 
       {/* 2.5 Design Container (editor próprio + sala LAN) */}
-      {activeTab === 'design' && (
+      {/* Fica montado depois da primeira abertura: a IA continua gerando mesmo se o usuário for para outra tela */}
+      {designMounted && (
+      <div style={{ display: activeTab === 'design' ? 'contents' : 'none' }}>
         <DesignStudioView
+          isActive={activeTab === 'design'}
+          onAiTaskDone={handleDesignAiDone}
           workspacePath={workspacePath}
           repoName={gitRepoName}
           activeProject={activeHeaderProject}
@@ -13607,7 +16451,24 @@ ${prompt || userDisplayPrompt}`;
           themeTokens={themeTokens}
           selectedAiProvider={selectedAiProvider}
           selectedModel={selectedModel}
+          onSelectAiProvider={handleSwitchAiProvider}
+          onSelectModel={handleSelectModel}
+          installedClis={installedClis}
+          activeModels={activeModels}
+          onInstallAiCli={handleInstallCliInTerminal}
+          onToast={(msg) => setToastMessage(msg)}
+          onSendToChat={(text) => {
+            // Abre o chat de IA da IDE com o prompt preenchido (o usuário revisa e envia)
+            setActiveTab('ide');
+            setShowAiPanel(true);
+            setTimeout(() => {
+              setAskPrompt(text);
+              promptEditorRef.current?.setValue(text);
+              promptEditorRef.current?.focus();
+            }, 350);
+          }}
         />
+      </div>
       )}
 
       {/* 2.6 CLI Terminal Workspace (Navegação de arquivos + Terminal com abas) */}
@@ -13636,6 +16497,7 @@ ${prompt || userDisplayPrompt}`;
           themeTokens={themeTokens}
           isEffectiveDark={isEffectiveDark}
           accentColor={accentColor}
+          selectedAiProvider={selectedAiProvider}
           terminalSessions={terminalSessions}
           setTerminalSessions={setTerminalSessions}
           activeSessionId={activeSessionId}
@@ -13654,6 +16516,7 @@ ${prompt || userDisplayPrompt}`;
             refreshGitBranches();
             setIsBranchModalOpen(true);
           }}
+          onOpenIssueDetails={handleOpenIssueSidesheet}
           onOpenIssuesModal={() => {
             refreshGitHubIssues();
             setIsIssuesModalOpen(true);
@@ -13902,7 +16765,13 @@ ${prompt || userDisplayPrompt}`;
               >
                 <div style={{ color: themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap' }}>Issues</div>
                 <div style={{ color: accentColor, fontSize: 12, fontFamily: 'Poppins', fontWeight: '500', whiteSpace: 'nowrap' }}>
-                  {workspaceGitInfo?.issuesCount !== undefined && workspaceGitInfo.issuesCount > 0 ? `${workspaceGitInfo.issuesCount} abertas` : gitIssues.length > 0 ? `${gitIssues.length} abertas` : '0 abertas'}
+                  {(() => {
+                    const openCount = gitIssues.filter((i) => (i.state || 'open').toLowerCase() === 'open').length;
+                    if (workspaceGitInfo?.issuesCount !== undefined && workspaceGitInfo.issuesCount > 0) {
+                      return `${workspaceGitInfo.issuesCount} abertas`;
+                    }
+                    return `${openCount} abertas`;
+                  })()}
                 </div>
               </div>
             </div>
@@ -14254,6 +17123,44 @@ ${prompt || userDisplayPrompt}`;
           </div>
         )}
 
+        {/* Gerenciador de skills (botão no header) */}
+        <SkillsModal
+          isOpen={isSkillsModalOpen}
+          onClose={() => setIsSkillsModalOpen(false)}
+          isEffectiveDark={isEffectiveDark}
+          accentColor={accentColor}
+          accentContrastText={accentTextColor}
+          onToast={(msg) => setToastMessage(msg)}
+        />
+
+        {/* Modal de Regras Globais da IA (CLAUDE.md / GEMINI.md / AGENTS.md / rules.md) */}
+        <AiGlobalRulesModal
+          isOpen={isAiGlobalRulesModalOpen}
+          onClose={() => setIsAiGlobalRulesModalOpen(false)}
+          isEffectiveDark={isEffectiveDark}
+          accentColor={accentColor}
+          accentContrastText={accentTextColor}
+          selectedProvider={selectedAiProvider}
+          onToast={(msg) => setToastMessage(msg)}
+          onOpenSettings={() => setIsSettingsModalOpen(true)}
+        />
+
+        {/* Notificações flutuantes de conclusão de IA entre projetos */}
+        <ProjectAiNotificationToast
+          notifications={aiNotifications}
+          onDismiss={(id) => setAiNotifications((prev) => prev.filter((n) => n.id !== id))}
+          onNavigateToProject={(projectPath, repoName, source) => {
+            if (source === 'design') {
+              setActiveTab('design');
+              return;
+            }
+            handleSelectWorkspace(projectPath, repoName);
+            setActiveTab(source === 'ide' ? 'ide' : 'cli');
+          }}
+          accentColor={accentColor}
+          isEffectiveDark={isEffectiveDark}
+        />
+
         {/* Floating Zen Mode Escape Chip */}
         {isZenMode && (
           <div
@@ -14385,13 +17292,22 @@ ${prompt || userDisplayPrompt}`;
             terminalCopyOnSelect={terminalCopyOnSelect}
             setTerminalCopyOnSelect={setTerminalCopyOnSelect}
             selectedAiProvider={selectedAiProvider}
-            setSelectedAiProvider={setSelectedAiProvider}
+            setSelectedAiProvider={handleSwitchAiProvider}
             aiMode={aiMode}
             setAiMode={setAiMode}
             aiAutoApprove={aiAutoApprove}
             setAiAutoApprove={setAiAutoApprove}
             aiConfirmBeforeDelete={aiConfirmBeforeDelete}
             setAiConfirmBeforeDelete={setAiConfirmBeforeDelete}
+            onOpenAiGlobalRules={() => {
+              setIsSettingsModalOpen(false);
+              setIsAiGlobalRulesModalOpen(true);
+            }}
+            onOpenSkills={() => {
+              setIsSettingsModalOpen(false);
+              setIsSkillsModalOpen(true);
+            }}
+            activeSkillsCount={activeSkills.length}
             installedClis={installedClis}
           />
         )}
@@ -14551,6 +17467,81 @@ ${prompt || userDisplayPrompt}`;
             setSidesheetIssue(null);
           }}
           showToast={(msg) => setToastMessage(msg)}
+        />
+
+        {/* ========================================================================= */}
+        {/* DEVFLOW BRAIN MODAL (OBSIDIAN-STYLE GRAPH & AI CONTEXT SYSTEM)            */}
+        {/* ========================================================================= */}
+        <ProjectBrainModal
+          isOpen={isBrainModalOpen}
+          onClose={() => setIsBrainModalOpen(false)}
+          workspacePath={workspacePath || '/Users/walancy/Documents/codes/devflow-desktop'}
+          projectName={gitRepoName}
+          accentColor={accentColor}
+          themeTokens={themeTokens}
+          isEffectiveDark={isEffectiveDark}
+          onOpenFile={(filePath) => {
+            handleOpenFile(filePath, filePath.split('/').pop() || 'Arquivo');
+          }}
+          onToast={(msg) => {
+            setToastMessage(msg);
+            setTimeout(() => setToastMessage(null), 3000);
+          }}
+        />
+
+        {/* ========================================================================= */}
+        {/* CONFIRM UNDO MODAL (AI CHAT HISTORY REVERT TO POINT)                      */}
+        {/* ========================================================================= */}
+        <ConfirmUndoModal
+          isOpen={Boolean(undoConfirmTarget)}
+          onClose={() => setUndoConfirmTarget(null)}
+          onConfirm={handleConfirmUndo}
+          messageText="This undo action will not make any code changes."
+          themeTokens={themeTokens}
+          accentColor={accentColor}
+        />
+
+        {/* ========================================================================= */}
+        {/* ANTIGRAVITY AI CHAT PERMISSIONS MODAL                                     */}
+        {/* ========================================================================= */}
+        <AiChatPermissionsModal
+          isOpen={isPermissionsModalOpen}
+          onClose={() => setIsPermissionsModalOpen(false)}
+          projectName={gitRepoName}
+          themeTokens={themeTokens}
+          accentColor={accentColor}
+          isEffectiveDark={isEffectiveDark}
+        />
+
+        {/* ========================================================================= */}
+        {/* CONFIRM CLEAR CHAT HISTORY MODAL (DEVFLOW RULE: NO NATIVE DIALOGS)         */}
+        {/* ========================================================================= */}
+        <ConfirmDeleteModal
+          isOpen={clearHistoryConfirmOpen}
+          title="Limpar Conversa Atual"
+          message="Tem certeza que deseja apagar todo o histórico de mensagens desta sessão? Esta ação não pode ser desfeita."
+          confirmLabel="Limpar Conversa"
+          cancelLabel="Cancelar"
+          themeTokens={themeTokens}
+          accentColor={accentColor}
+          onConfirm={handleConfirmClearChatHistory}
+          onClose={() => setClearHistoryConfirmOpen(false)}
+        />
+
+        {/* ========================================================================= */}
+        {/* CONFIRM REJECT ALL DIFFS MODAL (DEVFLOW RULE: NO NATIVE DIALOGS)          */}
+        {/* ========================================================================= */}
+        <ConfirmDeleteModal
+          isOpen={rejectAllConfirmOpen}
+          title="Descartar Todas as Alterações"
+          message="Tem certeza que deseja reverter e descartar todas as modificações feitas pelo assistente nos arquivos listados? O código voltará ao estado anterior."
+          itemDescription={rejectAllTargetFiles.length > 0 ? `${rejectAllTargetFiles.length} arquivo(s): ${rejectAllTargetFiles.map((f) => f.name).join(', ')}` : undefined}
+          confirmLabel="Descartar Alterações"
+          cancelLabel="Manter Alterações"
+          themeTokens={themeTokens}
+          accentColor={accentColor}
+          onConfirm={handleConfirmRejectAllDiffs}
+          onClose={() => setRejectAllConfirmOpen(false)}
         />
       </div>
   );
