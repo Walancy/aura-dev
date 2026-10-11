@@ -1,5 +1,5 @@
 import type { Shape } from './types';
-import type { Box } from './snap';
+import { unionBox, type Box } from './snap';
 import { descendantIds } from './constraints';
 
 export type AlignMode = 'left' | 'center-x' | 'right' | 'top' | 'center-y' | 'bottom';
@@ -32,6 +32,19 @@ export function applyDeltas(all: Shape[], deltas: Map<string, { dx: number; dy: 
       ...(s.points ? { points: s.points.map((p) => ({ x: p.x + d.dx, y: p.y + d.dy })) } : {}),
     };
   });
+}
+
+/** Alvo do alinhamento: automático (seleção se vários, senão o pai), a seleção, o frame pai ou a área visível do canvas */
+export type AlignTarget = 'auto' | 'selection' | 'parent' | 'canvas';
+
+/** Caixa de referência e margem do alinhamento para o alvo escolhido */
+export function alignReference(targets: Box[], parent: Box | null, viewport: Box, target: AlignTarget = 'auto'): { ref: Box; margin: number } {
+  const sel = (): Box => unionBox(targets);
+  if (target === 'selection') return { ref: sel(), margin: 0 };
+  if (target === 'parent') return { ref: parent || viewport, margin: 0 };
+  if (target === 'canvas') return { ref: viewport, margin: 0 };
+  // automático: vários → a união deles; um só → o pai (com respiro) ou a área visível
+  return targets.length > 1 ? { ref: sel(), margin: 0 } : { ref: parent || viewport, margin: 20 };
 }
 
 /** Alinha os shapes `ids` à referência (união da seleção, pai ou viewport). */

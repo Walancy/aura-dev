@@ -19,7 +19,13 @@ export interface ThemePopupProps {
   setThemeMode: (mode: 'dark' | 'light' | 'system') => void;
   useAiChatThemeColor: boolean;
   setUseAiChatThemeColor: (value: boolean) => void;
+  /** usa a cor da IA selecionada no cabeçalho como cor de destaque do sistema inteiro */
+  useAiSystemAccent: boolean;
+  setUseAiSystemAccent: (value: boolean) => void;
   selectedAiProvider: string;
+  /** destaque rainbow: troca a cor de destaque em loop entre os pontos de cor */
+  rainbow: { on: boolean; stops: string[]; speed: number };
+  setRainbow: (value: { on: boolean; stops: string[]; speed: number }) => void;
 }
 
 export const ThemePopup: React.FC<ThemePopupProps> = ({
@@ -35,8 +41,16 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
   setThemeMode,
   useAiChatThemeColor,
   setUseAiChatThemeColor,
+  useAiSystemAccent,
+  setUseAiSystemAccent,
   selectedAiProvider,
+  rainbow,
+  setRainbow,
 }) => {
+  const [selStop, setSelStop] = React.useState(0);
+  const stopIdx = Math.min(selStop, rainbow.stops.length - 1);
+  const setStop = (i: number, c: string) => setRainbow({ ...rainbow, stops: rainbow.stops.map((x, k) => (k === i ? c : x)) });
+  const barGradient = `linear-gradient(90deg, ${[...rainbow.stops, rainbow.stops[0]].join(', ')})`;
   return (
     <div
       style={{
@@ -167,7 +181,7 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
         </div>
 
         {/* Section 2: Cor de Destaque (Presets - Apenas Bolinhas Coloridas) */}
-        <div>
+        {!rainbow.on && <div style={useAiSystemAccent ? { opacity: 0.35, pointerEvents: 'none' } : undefined}>
           <div style={{ fontSize: 10, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
             Cor de Destaque
           </div>
@@ -246,10 +260,10 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
               );
             })}
           </div>
-        </div>
+        </div>}
 
         {/* Section 3: Custom Stylized Color Picker */}
-        <div>
+        {!rainbow.on && <div style={useAiSystemAccent ? { opacity: 0.35, pointerEvents: 'none' } : undefined}>
           <div style={{ fontSize: 10, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 7 }}>
             Cor Personalizada
           </div>
@@ -258,6 +272,56 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
             onChange={setAccentColor}
             isDark={isEffectiveDark}
           />
+        </div>}
+
+        {/* Rainbow: destaque que troca de cor em loop */}
+        <div style={{ padding: '9px 10px', borderRadius: 8, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f8fafc', display: 'flex', flexDirection: 'column', gap: 9 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: themeTokens.textPrimary }}>Rainbow (efeito RGB)</span>
+            <MiniSwitch checked={rainbow.on} onChange={() => setRainbow({ ...rainbow, on: !rainbow.on })} accentColor={accentColor} />
+          </div>
+          {rainbow.on && <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+            <div style={{ height: 12, borderRadius: 6, background: barGradient }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              {rainbow.stops.map((c, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setSelStop(i)}
+                  title={`Ponto ${i + 1}`}
+                  style={{ width: 22, height: 22, borderRadius: '50%', background: c, cursor: 'pointer', padding: 0, border: i === stopIdx ? '2px solid #ffffff' : '1px solid rgba(255,255,255,0.2)', boxShadow: i === stopIdx ? `0 0 0 2px ${c}` : 'none' }}
+                />
+              ))}
+              <button
+                type="button"
+                onClick={() => { setRainbow({ ...rainbow, stops: [...rainbow.stops, rainbow.stops[stopIdx]] }); setSelStop(rainbow.stops.length); }}
+                title="Adicionar ponto de cor"
+                style={{ width: 22, height: 22, borderRadius: '50%', border: `1px dashed ${themeTokens.textSecondary}`, background: 'transparent', color: themeTokens.textSecondary, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}
+              >+</button>
+              {rainbow.stops.length > 2 && (
+                <button
+                  type="button"
+                  onClick={() => { setRainbow({ ...rainbow, stops: rainbow.stops.filter((_, k) => k !== stopIdx) }); setSelStop(0); }}
+                  title="Remover ponto selecionado"
+                  style={{ marginLeft: 'auto', fontSize: 10.5, background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer' }}
+                >Remover ponto</button>
+              )}
+            </div>
+            <DevFlowColorPicker color={rainbow.stops[stopIdx]} onChange={(c) => setStop(stopIdx, c)} isDark={isEffectiveDark} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 11, color: themeTokens.textSecondary, flexShrink: 0 }}>Velocidade</span>
+              <input
+                type="range"
+                min={1}
+                max={30}
+                step={1}
+                value={31 - rainbow.speed}
+                onChange={(e) => setRainbow({ ...rainbow, speed: 31 - Number(e.target.value) })}
+                style={{ flex: 1, accentColor }}
+              />
+              <span style={{ fontSize: 10.5, color: themeTokens.textSecondary, width: 34, textAlign: 'right' }}>{rainbow.speed}s</span>
+            </div>
+          </div>}
         </div>
 
         {/* Section 4: Sincronizar Cor do Chat com a IA */}
@@ -292,6 +356,32 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
           <MiniSwitch
             checked={useAiChatThemeColor}
             onChange={() => setUseAiChatThemeColor(!useAiChatThemeColor)}
+            accentColor={AI_BRAND_COLORS[selectedAiProvider] || accentColor}
+          />
+        </div>
+
+        {/* Cor da IA selecionada como destaque de todo o sistema */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '9px 10px',
+            borderRadius: 8,
+            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f8fafc',
+            border: 'none',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: themeTokens.textPrimary }}>Cor da IA como destaque</span>
+            <span
+              style={{ width: 8, height: 8, borderRadius: '50%', background: AI_BRAND_COLORS[selectedAiProvider] || accentColor, boxShadow: `0 0 6px ${AI_BRAND_COLORS[selectedAiProvider] || accentColor}` }}
+              title="A cor de destaque do sistema acompanha a IA selecionada no cabeçalho"
+            />
+          </div>
+          <MiniSwitch
+            checked={useAiSystemAccent}
+            onChange={() => setUseAiSystemAccent(!useAiSystemAccent)}
             accentColor={AI_BRAND_COLORS[selectedAiProvider] || accentColor}
           />
         </div>

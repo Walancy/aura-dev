@@ -18,7 +18,7 @@ export interface FigmaContextMenuProps {
   onCopy: (shape: Shape) => void;
   onPaste: (coords?: { x: number; y: number }) => void;
   onPasteToReplace: (targetShape: Shape) => void;
-  onCopyAs: (format: 'svg' | 'png' | 'css') => void;
+  onCopyAs: (format: 'svg' | 'png' | 'css' | 'code') => void;
   onCopyProperties: (shape: Shape) => void;
   onPasteProperties: (shape: Shape) => void;
   onBringToFront: (shape: Shape) => void;
@@ -38,6 +38,7 @@ export interface FigmaContextMenuProps {
   onSelectAll: () => void;
   onSelectChildren?: (shape: Shape) => void;
   onSelectParent?: (shape: Shape) => void;
+  onSelectSimilar?: (shape: Shape, kind: 'fill' | 'stroke' | 'font' | 'type') => void;
   onRequestDelete: (shape: Shape) => void;
 }
 
@@ -77,6 +78,7 @@ export default function FigmaContextMenu({
   onSelectAll,
   onSelectChildren,
   onSelectParent,
+  onSelectSimilar,
   onRequestDelete,
 }: FigmaContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -254,6 +256,7 @@ export default function FigmaContextMenu({
           {renderItem('Copy as SVG', undefined, () => onCopyAs('svg'), !targetShape)}
           {renderItem('Copy as PNG', undefined, () => onCopyAs('png'), !targetShape)}
           {renderItem('Copy as CSS', undefined, () => onCopyAs('css'), !targetShape)}
+          {renderItem('Copy as code (React)', undefined, () => onCopyAs('code'), !targetShape)}
           {renderDivider('div-copy-props')}
           {renderItem(
             'Copy properties',
@@ -267,25 +270,6 @@ export default function FigmaContextMenu({
             () => targetShape && onPasteProperties(targetShape),
             !targetShape || !copiedProperties
           )}
-        </>
-      )}
-
-      {renderItem('Send to Figma Make', undefined, () => {})}
-      {renderItem('Find similar designs', undefined, () => {})}
-
-      {/* Add motion > */}
-      {renderItem(
-        'Add motion',
-        undefined,
-        undefined,
-        !targetShape,
-        'add-motion',
-        <>
-          {renderItem('Smart animate', undefined, () => {})}
-          {renderItem('Dissolve', undefined, () => {})}
-          {renderItem('Instant', undefined, () => {})}
-          {renderItem('Push', undefined, () => {})}
-          {renderItem('Slide in', undefined, () => {})}
         </>
       )}
 
@@ -305,6 +289,11 @@ export default function FigmaContextMenu({
           {renderItem('Select all', '⌘A', onSelectAll)}
           {targetShape && targetShape.parentId && renderItem('Select parent', undefined, () => onSelectParent?.(targetShape))}
           {targetShape && targetShape.type === 'group' && renderItem('Select children', undefined, () => onSelectChildren?.(targetShape))}
+          {targetShape && renderDivider('div-similar')}
+          {targetShape && renderItem('Select all with same fill', undefined, () => onSelectSimilar?.(targetShape, 'fill'))}
+          {targetShape && renderItem('Select all with same stroke', undefined, () => onSelectSimilar?.(targetShape, 'stroke'))}
+          {targetShape && (targetShape.type === 'text' || targetShape.type === 'text-path') && renderItem('Select all with same font', undefined, () => onSelectSimilar?.(targetShape, 'font'))}
+          {targetShape && renderItem('Select all of same type', undefined, () => onSelectSimilar?.(targetShape, 'type'))}
         </>
       )}
 
@@ -376,36 +365,6 @@ export default function FigmaContextMenu({
         '⌥⌘K',
         () => targetShape && onCreateComponent(targetShape),
         !targetShape
-      )}
-
-      {/* Plugins > */}
-      {renderItem(
-        'Plugins',
-        undefined,
-        undefined,
-        false,
-        'plugins',
-        <>
-          {renderItem('Gerador de Paleta IA', undefined, () => {})}
-          {renderItem('Auto Ícones & Vetores', undefined, () => {})}
-          {renderDivider('div-plugins')}
-          {renderItem('Gerenciar plugins...', undefined, () => {})}
-        </>
-      )}
-
-      {/* Widgets > */}
-      {renderItem(
-        'Widgets',
-        undefined,
-        undefined,
-        false,
-        'widgets',
-        <>
-          {renderItem('Post-it & Anotações', undefined, () => {})}
-          {renderItem('Checklist de Sprint', undefined, () => {})}
-          {renderDivider('div-widgets')}
-          {renderItem('Explorar widgets...', undefined, () => {})}
-        </>
       )}
 
       {renderDivider('div-4')}

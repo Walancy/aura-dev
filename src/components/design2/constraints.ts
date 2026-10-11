@@ -90,3 +90,33 @@ export function descendantIds(all: Shape[], id: string): string[] {
   }
   return out;
 }
+
+/**
+ * Ao soltar (criar ou mover) camadas: cada uma passa a ser filha do frame MAIS INTERNO que contém o seu centro, como no
+ * Figma — assim "Cores da seleção", auto layout e exportação enxergam a estrutura. Fora de qualquer frame, deixa de ter pai
+ * (só se já tinha). Frames de topo movidos continuam de topo (arrastar uma tela por cima de outra não aninha).
+ */
+export function reparentDropped(all: Shape[], ids: string[], mode: 'create' | 'move'): Shape[] {
+  const byId = new Map(all.map((s) => [s.id, s]));
+  let next = all;
+  for (const id of ids) {
+    const s = byId.get(id);
+    if (!s || s.deviceChrome || s.isMask || s.layoutAbsolute) continue;
+    if (mode === 'move' && s.type === 'frame' && !s.parentId) continue;
+    const mine = new Set([id, ...descendantIds(all, id)]);
+    const cx = s.x + s.width / 2, cy = s.y + s.height / 2;
+    let best: Shape | null = null;
+    for (const f of all) {
+      if (f.type !== 'frame' || f.visible === false || f.deviceChrome || mine.has(f.id)) continue;
+      if (cx < f.x || cx > f.x + f.width || cy < f.y || cy > f.y + f.height) continue;
+      // o shape não pode ser pai de um frame que o contém (evita ciclos) nem maior que o frame-alvo ao ser um frame de topo
+      if (s.type === 'frame' && !s.parentId && f.width * f.height <= s.width * s.height) continue;
+      if (!best || f.width * f.height < best.width * best.height || (f.width * f.height === best.width * best.height && (f.zIndex ?? 0) > (best.zIndex ?? 0))) best = f;
+    }
+    const parentId = best ? best.id : undefined;
+    if ((s.parentId || undefined) === parentId) continue;
+    if (!best && !s.parentId) continue;
+    next = next.map((x) => (x.id === id ? { ...x, parentId } : x));
+  }
+  return next;
+}

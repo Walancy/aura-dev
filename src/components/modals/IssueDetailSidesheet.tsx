@@ -122,6 +122,8 @@ export interface IssueDetailSidesheetProps {
   onDeleteIssue?: (issue: ProjectIssue) => void;
   onCreateBranchForIssue?: (issue: ProjectIssue) => void;
   onAskAiAboutIssue?: (issue: ProjectIssue) => void;
+  /** aberta a partir da lista de issues: mostra o botão Voltar à esquerda do título para retornar a ela */
+  onBackToList?: () => void;
   // Notifica o pai quando dados do Projects V2 (sprint/iteration, status, estimate) mudam no GitHub,
   // para as listas (aba Sprints, quadro) refletirem sem esperar o próximo refetch.
   onIssuePatched?: (issue: ProjectIssue, patch: Partial<ProjectIssue>) => void;
@@ -284,6 +286,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   onDeleteIssue,
   onCreateBranchForIssue,
   onAskAiAboutIssue,
+  onBackToList,
   onIssuePatched,
   showToast = (msg: string) => console.log(msg),
 }) => {
@@ -1767,6 +1770,33 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     gap: '8px 12px',
                   }}
                 >
+                  {/* Voltar para a listagem de issues (quando aberta a partir dela) */}
+                  {onBackToList && !parentFromIssue && (
+                    <button
+                      type="button"
+                      onClick={onBackToList}
+                      title="Voltar para a lista de issues"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        width: 36,
+                        height: 36,
+                        background: isEffectiveDark ? '#1e1e1e' : '#f1f5f9',
+                        border: 'none',
+                        borderRadius: 8,
+                        color: theme?.textSecondary || '#a1a1aa',
+                        cursor: 'pointer',
+                        flexShrink: 0,
+                        transition: 'background 0.12s ease, color 0.12s ease',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = isEffectiveDark ? '#262626' : '#e2e8f0'; e.currentTarget.style.color = theme?.textPrimary || '#fff'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = isEffectiveDark ? '#1e1e1e' : '#f1f5f9'; e.currentTarget.style.color = theme?.textSecondary || '#a1a1aa'; }}
+                    >
+                      <ArrowLeft size={18} />
+                    </button>
+                  )}
+
                   {/* Botão de Voltar para a issue pai se estiver em uma sub-issue */}
                   {Boolean(parentFromIssue) && (
                     <button

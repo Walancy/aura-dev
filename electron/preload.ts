@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('pty:exit', handler);
       return () => ipcRenderer.removeListener('pty:exit', handler);
     },
+    foreground: () => ipcRenderer.invoke('pty:foreground'),
     getRunningSessions: () =>
       ipcRenderer.invoke('pty:getRunningSessions'),
     onAiCompleted: (callback: (payload: { id: string; type: string; cwd: string; projectName: string; summary: string; needsInput?: boolean; timestamp: number }) => void) => {
@@ -116,12 +117,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('fs:readFile', { filePath }),
     writeFile: (filePath: string, content: string) =>
       ipcRenderer.invoke('fs:writeFile', { filePath, content }),
+    getCapabilities: () => ipcRenderer.invoke('app:capabilities'),
     stockImage: (payload: { query: string; width: number; height: number; key?: string; index?: number }) => ipcRenderer.invoke('unsplash:image', payload),
     exportPdf: (html: string, defaultName: string) => ipcRenderer.invoke('design:exportPdf', { html, defaultName }),
     figmaFetch: (token: string, apiPath: string) => ipcRenderer.invoke('figma:fetch', { token, apiPath }),
     figmaDownloadImages: (urls: Record<string, string>) => ipcRenderer.invoke('figma:downloadImages', { urls }),
     saveTempImage: (base64: string, ext?: string) =>
       ipcRenderer.invoke('fs:saveTempImage', { base64, ext }),
+    readFileDataUrl: (filePath: string, maxBytes?: number) =>
+      ipcRenderer.invoke('fs:readFileDataUrl', { filePath, maxBytes }),
     createItem: (itemPath: string, isDirectory: boolean) =>
       ipcRenderer.invoke('fs:createItem', { itemPath, isDirectory }),
     deleteItem: (itemPath: string) =>
@@ -149,6 +153,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Ports Methods
   ports: {
     scan: () => ipcRenderer.invoke('ports:scan'),
+    scanProject: (workspacePath: string) => ipcRenderer.invoke('ports:scanProject', workspacePath),
     kill: (pid: string | number) => ipcRenderer.invoke('ports:kill', pid),
   },
 
@@ -160,22 +165,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     update: (id: string, patch: Partial<{ name: string; color: string; instructions: string }>) =>
       ipcRenderer.invoke('roles:update', { id, patch }),
     delete: (id: string) => ipcRenderer.invoke('roles:delete', id),
-  },
-
-  // Extensions Methods
-  extensions: {
-    search: (query = '', size = 35, category = '') =>
-      ipcRenderer.invoke('extensions:search', { query, size, category }),
-    getDetails: (namespace: string, name: string) =>
-      ipcRenderer.invoke('extensions:getDetails', { namespace, name }),
-    install: (namespace: string, name: string, version?: string) =>
-      ipcRenderer.invoke('extensions:install', { namespace, name, version }),
-    uninstall: (namespace: string, name: string) =>
-      ipcRenderer.invoke('extensions:uninstall', { namespace, name }),
-    toggleEnabled: (namespace: string, name: string) =>
-      ipcRenderer.invoke('extensions:toggleEnabled', { namespace, name }),
-    getInstalled: () =>
-      ipcRenderer.invoke('extensions:getInstalled'),
   },
 
   // Skills do DevFlow (ativas em todos os CLIs de IA)
@@ -223,10 +212,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('ai:deleteSavedChat', sessionId),
     saveTranscript: (sessionId: string, history: any[]) =>
       ipcRenderer.invoke('ai:saveTranscript', { sessionId, history }),
-    runCli: (payload: { cliCmd: string; prompt: string; model?: string; cwd?: string; additionalDirs?: string[]; useOrchestrator?: boolean; orchestratorConfig?: any; permissions?: any; streamText?: boolean }) =>
+    runCli: (payload: { cliCmd: string; prompt: string; model?: string; cwd?: string; additionalDirs?: string[]; useOrchestrator?: boolean; orchestratorConfig?: any; permissions?: any; streamText?: boolean; streamId?: string }) =>
       ipcRenderer.invoke('ai:runCli', payload),
-    cancel: (runId?: string, cwd?: string) =>
-      ipcRenderer.invoke('ai:cancel', runId, cwd),
+    cancel: (runId?: string, cwd?: string, streamId?: string) =>
+      ipcRenderer.invoke('ai:cancel', runId, cwd, streamId),
     onEvent: (callback: (event: any) => void) => {
       const handler = (_event: any, payload: any) => callback(payload);
       ipcRenderer.on('ai:orchestrator-event', handler);

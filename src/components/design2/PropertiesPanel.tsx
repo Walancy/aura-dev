@@ -1,3 +1,5 @@
+import SelectionColorsSection from './SelectionColorsSection';
+import type { SelectionColor } from './selectionColors';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   AlignLeft,
@@ -34,6 +36,15 @@ import FigmaEffectSettingsModal, {
   getEffectLabel,
 } from './FigmaEffectSettingsModal';
 import ScrubbableNumberInput from './ScrubbableNumberInput';
+import LayoutGridSection from './LayoutGridSection';
+import { ADJUST_FIELDS, hasAdjust } from './imageFilter';
+import PrototypeSection from './PrototypeSection';
+import { TEXT_RESIZE_LABEL, type TextResize } from './textResize';
+import { PATTERN_LABEL, type PatternKind } from './pattern';
+import { CAP_LABEL, type CapKind } from './caps';
+import { BINDABLE } from './variables';
+import type { ComponentProp } from './componentProps';
+import type { AlignTarget } from './align';
 
 export interface ActiveColorPickerInfo {
   target: 'fill' | 'stroke';
@@ -517,27 +528,47 @@ interface PropertiesPanelProps {
   isEffectiveDark?: boolean;
   onChange: (patch: Partial<Shape>) => void;
   onAlign?: (alignment: 'left' | 'center-x' | 'right' | 'top' | 'center-y' | 'bottom') => void;
+  alignTarget?: AlignTarget;
+  onAlignTargetChange?: (t: AlignTarget) => void;
   onDistribute?: (axis: 'x' | 'y') => void;
+  onTidy?: () => void;
+  /** chaves com valores diferentes na seleção múltipla: o campo mostra "Misto" */
+  mixed?: Set<string>;
   selectionCount?: number;
   onBoolean?: (op: 'union' | 'subtract' | 'intersect' | 'exclude' | 'flatten') => void;
   onFitSelection?: () => void;
   onCreateInstance?: (shape: Shape) => void;
   variantOptions?: Array<{ id: string; name: string }>;
+  onOpenVariantMatrix?: () => void;
+  onRemoveBackground?: (shape: Shape) => void;
+  onToastMessage?: (msg: string) => void;
+  /** text-path: shapes cujo contorno pode servir de caminho */
+  pathTargets?: Array<{ id: string; name: string }>;
+  /** instância: outros componentes pelos quais ela pode ser trocada */
+  swapOptions?: Array<{ id: string; name: string }>;
+  /** componente principal: camadas internas que podem virar propriedade */
+  propTargets?: Array<{ id: string; name: string; type: string }>;
+  /** instância: propriedades do componente com o valor padrão do principal */
+  instanceProps?: Array<{ prop: ComponentProp; fallback: boolean | string }>;
   onSwitchVariant?: (instance: Shape, componentId: string) => void;
   onShowCode?: (shape: Shape) => void;
   /** Frames da página (destinos de protótipo) e ação de apresentar */
   prototypeFrames?: Array<{ id: string; name: string }>;
   onPresent?: (frameId: string) => void;
   variables?: DesignVariable[];
+  /** Cores de todas as camadas da seleção (Selection colors) e a troca em massa */
+  selectionColors?: SelectionColor[];
+  onReplaceSelectionColor?: (from: SelectionColor, to: { hex: string; opacity: number }) => void;
   modes?: DesignMode[];
   activeModeId?: string;
-  onCreateVariable?: () => void;
+  onCreateVariable?: (kind?: 'color' | 'number' | 'text' | 'boolean') => void;
+  onBindTypedVariable?: (variableId: string, prop: string | undefined) => void;
   onBindVariable?: (variableId: string | undefined) => void;
   onUpdateVariable?: (variableId: string, patch: { name?: string; modeId?: string; value?: string }) => void;
   onDeleteVariable?: (variableId: string) => void;
   onSetMode?: (modeId: string) => void;
   styles?: DesignStyle[];
-  onCreateStyle?: (kind: 'color' | 'text') => void;
+  onCreateStyle?: (kind: 'color' | 'text' | 'effect' | 'grid') => void;
   onApplyStyle?: (style: DesignStyle) => void;
   onUpdateStyle?: (styleId: string) => void;
   onRenameStyle?: (styleId: string, name: string) => void;
@@ -556,6 +587,8 @@ interface PropertiesPanelProps {
   onExport?: (shape: Shape, items: ExportItem[]) => void;
 }
 
+const BLEND_OPTIONS = ["normal", "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn", "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity"];
+
 export default function PropertiesPanel({
   shape,
   themeTokens,
@@ -563,18 +596,32 @@ export default function PropertiesPanel({
   isEffectiveDark = true,
   onChange,
   onAlign,
+  alignTarget = 'auto',
+  onAlignTargetChange,
   onDistribute,
+  onTidy,
+  mixed,
   selectionCount = 1,
   onBoolean,
   onFitSelection,
   onCreateInstance,
   variantOptions = [],
+  swapOptions = [],
+  pathTargets = [],
+  onOpenVariantMatrix,
+  onRemoveBackground,
+  onToastMessage,
+  propTargets = [],
+  instanceProps = [],
   onSwitchVariant,
   onShowCode,
   variables = [],
   modes = [],
   activeModeId = 'light',
   onCreateVariable,
+  onBindTypedVariable,
+  selectionColors = [],
+  onReplaceSelectionColor,
   onBindVariable,
   onUpdateVariable,
   onDeleteVariable,
@@ -660,7 +707,7 @@ export default function PropertiesPanel({
   // campo de raio de canto numa linha, auto layout num texto, etc.)
   const hasFill = !['line', 'arrow', 'pen', 'pencil', 'comment', 'annotation', 'measurement', 'slice'].includes(shape.type);
   const hasStroke = !['comment', 'annotation', 'measurement', 'group', 'text', 'text-path'].includes(shape.type);
-  const hasCornerRadius = ['rect', 'frame', 'section', 'image'].includes(shape.type);
+  const hasCornerRadius = ['rect', 'frame', 'section', 'image', 'polygon', 'star'].includes(shape.type);
   // Capacidade de Auto layout (frames e seções)
   const isAutoLayoutCapable = shape.type === 'frame' || shape.type === 'section';
   const isTextShape = shape.type === 'text' || shape.type === 'text-path';
@@ -969,9 +1016,30 @@ export default function PropertiesPanel({
 
         {/* 1. Alignment */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <span style={{ fontSize: 10.5, fontWeight: 500, color: textSecondary, letterSpacing: '0.01em' }}>
-            Alignment
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 30 }}>
+            <span style={{ fontSize: 10.5, fontWeight: 500, color: textSecondary, letterSpacing: '0.01em' }}>
+              Alignment
+            </span>
+            <button
+              type="button"
+              onClick={() => onTidy?.()}
+              title="Organizar a seleção em linhas/colunas com vão igual (Ctrl+Alt+T)"
+              style={{ marginLeft: 'auto', marginRight: 8, background: 'transparent', border: 'none', color: textSecondary, fontSize: 10.5, cursor: 'pointer', padding: 0 }}
+            >
+              Organizar
+            </button>
+            <select
+              value={alignTarget}
+              onChange={(e) => onAlignTargetChange?.(e.target.value as AlignTarget)}
+              title="Referência do alinhamento"
+              style={{ background: 'transparent', border: 'none', color: textSecondary, fontSize: 10.5, cursor: 'pointer', outline: 'none' }}
+            >
+              <option value="auto" style={{ background: bgCard }}>Automático</option>
+              <option value="selection" style={{ background: bgCard }}>Seleção</option>
+              <option value="parent" style={{ background: bgCard }}>Frame pai</option>
+              <option value="canvas" style={{ background: bgCard }}>Canvas</option>
+            </select>
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, alignItems: 'center', paddingRight: 30 }}>
             {/* Pill 1: Alinhamento Horizontal (Left, Center H, Right) */}
             <div
@@ -1043,7 +1111,7 @@ export default function PropertiesPanel({
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, paddingRight: 30 }}>
             <ScrubbableNumberInput
               label="X"
-              value={shape.x}
+              value={mixed?.has('x') ? 'Misto' : shape.x}
               onChange={(x) => onChange({ x })}
               themeTokens={themeTokens}
               accentColor={accentColor}
@@ -1051,7 +1119,7 @@ export default function PropertiesPanel({
             />
             <ScrubbableNumberInput
               label="Y"
-              value={shape.y}
+              value={mixed?.has('y') ? 'Misto' : shape.y}
               onChange={(y) => onChange({ y })}
               themeTokens={themeTokens}
               accentColor={accentColor}
@@ -1079,15 +1147,15 @@ export default function PropertiesPanel({
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <ScrubbableNumberInput
                     label="W"
-                    value={shape.width}
+                    value={mixed?.has('width') ? 'Misto' : shape.width}
                     min={1}
                     onChange={(newW) => {
                       const safeW = Math.max(1, newW);
                       if (shape.constrainProportions && shape.width > 0) {
                         const ratio = shape.height / shape.width;
-                        onChange({ width: safeW, height: Math.max(1, Math.round(safeW * ratio)) });
+                        onChange({ width: safeW, height: Math.max(1, Math.round(safeW * ratio)), widthMode: 'fixed', heightMode: 'fixed' });
                       } else {
-                        onChange({ width: safeW });
+                        onChange({ width: safeW, widthMode: 'fixed' });
                       }
                     }}
                     themeTokens={themeTokens}
@@ -1139,15 +1207,15 @@ export default function PropertiesPanel({
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <ScrubbableNumberInput
                     label="H"
-                    value={shape.height}
+                    value={mixed?.has('height') ? 'Misto' : shape.height}
                     min={1}
                     onChange={(newH) => {
                       const safeH = Math.max(1, newH);
                       if (shape.constrainProportions && shape.height > 0) {
                         const ratio = shape.width / shape.height;
-                        onChange({ height: safeH, width: Math.max(1, Math.round(safeH * ratio)) });
+                        onChange({ height: safeH, width: Math.max(1, Math.round(safeH * ratio)), widthMode: 'fixed', heightMode: 'fixed' });
                       } else {
-                        onChange({ height: safeH });
+                        onChange({ height: safeH, heightMode: 'fixed' });
                       }
                     }}
                     themeTokens={themeTokens}
@@ -1197,7 +1265,7 @@ export default function PropertiesPanel({
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, alignItems: 'center', paddingRight: 30 }}>
             <ScrubbableNumberInput
               label={<FigmaAngleIcon />}
-              value={shape.rotation || 0}
+              value={mixed?.has('rotation') ? 'Misto' : shape.rotation || 0}
               suffix="°"
               onChange={(newRot) => {
                 let rot = Math.round(newRot);
@@ -1745,7 +1813,7 @@ export default function PropertiesPanel({
                     label="W"
                     value={Math.round(shape.width || 0)}
                     min={1}
-                    onChange={(width) => onChange({ width: Math.max(1, width) })}
+                    onChange={(width) => onChange({ width: Math.max(1, width), widthMode: 'fixed' })}
                     themeTokens={themeTokens}
                     accentColor={accentColor}
                     isEffectiveDark={isEffectiveDark}
@@ -1778,7 +1846,7 @@ export default function PropertiesPanel({
                     label="H"
                     value={Math.round(shape.height || 0)}
                     min={1}
-                    onChange={(height) => onChange({ height: Math.max(1, height) })}
+                    onChange={(height) => onChange({ height: Math.max(1, height), heightMode: 'fixed' })}
                     themeTokens={themeTokens}
                     accentColor={accentColor}
                     isEffectiveDark={isEffectiveDark}
@@ -1789,7 +1857,7 @@ export default function PropertiesPanel({
                           {shape.heightMode === 'hug' ? 'Hug' : shape.heightMode === 'fill' ? 'Fill' : ''}
                         </span>
                         <select
-                          value={shape.heightMode || 'hug'}
+                          value={shape.heightMode || 'fixed'}
                           onChange={(e) => onChange({ heightMode: e.target.value as any })}
                           style={{
                             position: 'absolute',
@@ -1853,12 +1921,16 @@ export default function PropertiesPanel({
                       'top-left', 'top-center', 'top-right',
                       'left', 'center', 'right',
                       'bottom-left', 'bottom-center', 'bottom-right',
-                    ].map((pos) => {
-                      const isCurrent = layoutAlign === pos;
+                    ].map((pos, pi, all) => {
+                      // "space between" (duplo clique, como no Figma): o indicador se espalha pela linha (fluxo horizontal) ou coluna (vertical) toda
+                      const ci = all.indexOf(layoutAlign);
+                      const spread = !!shape.layoutGapAuto && ci >= 0 && (shape.layoutFlow === 'vertical' ? pi % 3 === ci % 3 : Math.floor(pi / 3) === Math.floor(ci / 3));
+                      const isCurrent = layoutAlign === pos || spread;
                       return (
                         <div
                           key={pos}
                           onClick={() => onChange({ layoutAlign: pos as any })}
+                          onDoubleClick={() => onChange({ layoutAlign: pos as any, layoutGapAuto: !shape.layoutGapAuto })}
                           style={{
                             display: 'flex',
                             alignItems: 'center',
@@ -1927,17 +1999,19 @@ export default function PropertiesPanel({
                       label={<FigmaGapIcon />}
                       value={gap}
                       min={0}
-                      onChange={(layoutGap) => onChange({ layoutGap })}
+                      onChange={(layoutGap) => onChange({ layoutGap, layoutGapAuto: false })}
                       themeTokens={themeTokens}
                       accentColor={accentColor}
                       isEffectiveDark={isEffectiveDark}
                       style={{ height: 28, borderRadius: 6, border: `1px solid ${inputBorder}`, flex: 1 }}
                       rightElement={
-                        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 2 }}>
+                          {shape.layoutGapAuto && <span style={{ fontSize: 10, color: accentColor, pointerEvents: 'none' }}>Auto</span>}
                           <select
                             value=""
                             onChange={(e) => {
-                              if (e.target.value) onChange({ layoutGap: Number(e.target.value) });
+                              if (e.target.value === 'auto') onChange({ layoutGapAuto: true });
+                              else if (e.target.value) onChange({ layoutGap: Number(e.target.value), layoutGapAuto: false });
                             }}
                             style={{
                               position: 'absolute',
@@ -1949,6 +2023,7 @@ export default function PropertiesPanel({
                             }}
                           >
                             <option value="" disabled>Presets</option>
+                            <option value="auto" style={{ background: bgElevated, color: textPrimary }}>Auto (space between)</option>
                             {[0, 4, 8, 10, 12, 16, 20, 24, 32, 48].map((g) => (
                               <option key={g} value={g} style={{ background: bgElevated, color: textPrimary }}>
                                 {g}
@@ -1981,6 +2056,38 @@ export default function PropertiesPanel({
                   </div>
                 </div>
               </div>
+
+              {/* Wrap e Grid: espaço entre linhas e colunas; todos: ordem de empilhamento */}
+              {(flow === 'freeform' || flow === 'grid') && (
+                <div style={{ display: 'grid', gridTemplateColumns: flow === 'grid' ? '1fr 1fr' : '1fr', gap: 6 }}>
+                  {flow === 'grid' && (
+                    <ScrubbableNumberInput
+                      label="Cols"
+                      value={shape.gridCols ?? 3}
+                      min={1}
+                      onChange={(gridCols) => onChange({ gridCols: Math.max(1, Math.round(gridCols)) })}
+                      themeTokens={themeTokens}
+                      accentColor={accentColor}
+                      isEffectiveDark={isEffectiveDark}
+                      style={{ height: 28, borderRadius: 6, border: `1px solid ${inputBorder}` }}
+                    />
+                  )}
+                  <ScrubbableNumberInput
+                    label="Linhas"
+                    value={shape.layoutCounterGap ?? gap}
+                    min={0}
+                    onChange={(layoutCounterGap) => onChange({ layoutCounterGap: Math.max(0, layoutCounterGap) })}
+                    themeTokens={themeTokens}
+                    accentColor={accentColor}
+                    isEffectiveDark={isEffectiveDark}
+                    style={{ height: 28, borderRadius: 6, border: `1px solid ${inputBorder}` }}
+                  />
+                </div>
+              )}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: textSecondary, cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!shape.layoutStackFirstOnTop} onChange={(e) => onChange({ layoutStackFirstOnTop: e.target.checked })} />
+                Primeiro item por cima
+              </label>
 
               {/* Padding */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -2214,7 +2321,7 @@ export default function PropertiesPanel({
         <div style={{ display: 'grid', gridTemplateColumns: hasCornerRadius ? '1fr 1fr 26px' : '1fr', gap: 6, alignItems: 'center' }}>
           <ScrubbableNumberInput
             label={<FigmaOpacityIcon />}
-            value={Math.round((shape.opacity ?? 1) * 100)}
+            value={mixed?.has('opacity') ? 'Misto' : Math.round((shape.opacity ?? 1) * 100)}
             min={0}
             max={100}
             suffix="%"
@@ -2229,7 +2336,7 @@ export default function PropertiesPanel({
             <>
               <ScrubbableNumberInput
                 label={<FigmaCornerRadiusIcon />}
-                value={Math.round(radius)}
+                value={mixed?.has('cornerRadius') ? 'Misto' : Math.round(radius)}
                 min={0}
                 onChange={(newRadius) => {
                   const r = Math.max(0, newRadius);
@@ -2401,6 +2508,21 @@ export default function PropertiesPanel({
               >
                 <FigmaColorStylesIcon />
               </button>
+              <span style={{ position: 'relative', width: 24, height: 24, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: textSecondary }} title="Adicionar preenchimento por padrão (linhas, pontos, grade, xadrez, ruído)">
+                ▦
+                <select
+                  value=""
+                  onChange={(e) => {
+                    if (!e.target.value) return;
+                    const pf: FillItem = { id: `fill-${Date.now()}`, color: '#000000', opacity: 0.3, visible: true, type: 'pattern', patternKind: e.target.value as PatternKind, patternScale: 12, patternAngle: 0 };
+                    updateFills([pf, ...fills]);
+                  }}
+                  style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%' }}
+                >
+                  <option value="">Padrão…</option>
+                  {(Object.keys(PATTERN_LABEL) as PatternKind[]).map((k) => <option key={k} value={k}>{PATTERN_LABEL[k]}</option>)}
+                </select>
+              </span>
               <button
                 type="button"
                 onClick={() => {
@@ -2426,7 +2548,8 @@ export default function PropertiesPanel({
               const hexClean = fillItem.color.replace('#', '').toUpperCase();
               const isSwatchActive = activeColorPicker?.target === 'fill' && (activeColorPicker.id === fillItem.id || activeColorPicker.id === 'all');
               return (
-                <div key={fillItem.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div key={fillItem.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <div
                     style={{
                       display: 'flex',
@@ -2526,6 +2649,11 @@ export default function PropertiesPanel({
                     />
                   </div>
 
+                  <span style={{ position: 'relative', width: 22, height: 26, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: fillItem.blendMode && fillItem.blendMode !== 'normal' ? accentColor : textSecondary }} title={'Modo de mesclagem: ' + (fillItem.blendMode || 'normal')}>
+◐<select value={fillItem.blendMode || 'normal'} onChange={(e) => updateFills(fills.map((f) => (f.id === fillItem.id ? { ...f, blendMode: e.target.value === 'normal' ? undefined : e.target.value } : f)))} style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%' }}>
+                  {BLEND_OPTIONS.map((m) => <option key={m} value={m} style={{ background: bgElevated, color: textPrimary }}>{m}</option>)}
+</select></span>
+
                   <button
                     type="button"
                     onClick={() =>
@@ -2559,6 +2687,20 @@ export default function PropertiesPanel({
                   >
                     <Minus size={13} strokeWidth={1.5} />
                   </button>
+                </div>
+                {fillItem.type === 'pattern' && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4, paddingLeft: 2 }}>
+                    <select
+                      value={fillItem.patternKind || 'lines'}
+                      onChange={(e) => updateFills(fills.map((f) => (f.id === fillItem.id ? { ...f, patternKind: e.target.value as PatternKind } : f)))}
+                      style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 10.5, height: 24, minWidth: 0 }}
+                    >
+                      {(Object.keys(PATTERN_LABEL) as PatternKind[]).map((k) => <option key={k} value={k}>{PATTERN_LABEL[k]}</option>)}
+                    </select>
+                    <ScrubbableNumberInput label="Esc" value={fillItem.patternScale ?? 12} min={2} onChange={(v) => updateFills(fills.map((f) => (f.id === fillItem.id ? { ...f, patternScale: Math.max(2, v) } : f)))} themeTokens={themeTokens} accentColor={accentColor} isEffectiveDark={isEffectiveDark} style={{ height: 24 }} />
+                    <ScrubbableNumberInput label="Âng" value={fillItem.patternAngle ?? 0} suffix="°" onChange={(v) => updateFills(fills.map((f) => (f.id === fillItem.id ? { ...f, patternAngle: Math.round(v) } : f)))} themeTokens={themeTokens} accentColor={accentColor} isEffectiveDark={isEffectiveDark} style={{ height: 24 }} />
+                  </div>
+                )}
                 </div>
               );
             })}
@@ -2745,6 +2887,11 @@ export default function PropertiesPanel({
                 >
                   {strokeItem.visible ? <Eye size={13} strokeWidth={1.5} /> : <EyeOff size={13} strokeWidth={1.5} />}
                 </button>
+
+                <span style={{ position: 'relative', width: 22, height: 26, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: strokeItem.blendMode && strokeItem.blendMode !== 'normal' ? accentColor : textSecondary }} title={'Modo de mesclagem: ' + (strokeItem.blendMode || 'normal')}>
+◐<select value={strokeItem.blendMode || 'normal'} onChange={(e) => updateStrokes(strokes.map((st) => (st.id === strokeItem.id ? { ...st, blendMode: e.target.value === 'normal' ? undefined : e.target.value } : st)))} style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer', width: '100%' }}>
+                  {BLEND_OPTIONS.map((m) => <option key={m} value={m} style={{ background: bgElevated, color: textPrimary }}>{m}</option>)}
+</select></span>
 
                 <button
                   type="button"
@@ -3151,19 +3298,170 @@ export default function PropertiesPanel({
         ))}
       </div>
 
-      {(shape.type === 'pen' || shape.type === 'pencil') && (
-        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: textPrimary, cursor: 'pointer', flex: 1 }}>
-            <input type="checkbox" checked={Boolean(shape.smooth)} onChange={(e) => onChange({ smooth: e.target.checked })} />
-            Suavizar curva
-          </label>
-          <span style={{ fontSize: 10, color: textMuted }}>Arraste os nós • duplo clique adiciona</span>
+      {(shape.type === 'text' || shape.type === 'text-path') && (
+        <div style={{ padding: '8px 12px', borderBottom: `1px solid ${divider}`, display: 'grid', gridTemplateColumns: '70px 1fr', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11, color: textSecondary }}>Caixa</span>
+          <select
+            value={shape.textResize || 'fixed'}
+            onChange={(e) => onChange({ textResize: e.target.value as TextResize })}
+            title="Largura automática: a caixa acompanha a maior linha. Altura automática: quebra pela largura e ajusta a altura."
+            style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, height: 26, padding: '0 6px' }}
+          >
+            {(Object.keys(TEXT_RESIZE_LABEL) as TextResize[]).map((k) => <option key={k} value={k}>{TEXT_RESIZE_LABEL[k]}</option>)}
+          </select>
+          <span style={{ fontSize: 11, color: textSecondary }}>Corte</span>
+          <select
+            value={shape.textVerticalTrim || 'standard'}
+            onChange={(e) => onChange({ textVerticalTrim: e.target.value === 'standard' ? undefined : (e.target.value as Shape['textVerticalTrim']) })}
+            title="Corte vertical: a caixa vai do topo das maiúsculas à linha de base, sem o respiro da entrelinha"
+            style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, height: 26, padding: '0 6px' }}
+          >
+            <option value="standard">Padrão</option>
+            <option value="cap-height">Altura das maiúsculas</option>
+          </select>
         </div>
       )}
 
-      {shape.type === 'image' && (
+      {shape.isMask && (
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'grid', gridTemplateColumns: '70px 1fr', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11, color: textSecondary }}>Tipo de máscara</span>
+          <select
+            value={shape.maskType || 'outline'}
+            onChange={(e) => onChange({ maskType: e.target.value === 'outline' ? undefined : (e.target.value as Shape['maskType']) })}
+            title="Contorno recorta pela forma; Alfa usa a opacidade do preenchimento; Luminância usa também a cor (claro mostra, escuro esconde)"
+            style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, height: 26, padding: '0 6px' }}
+          >
+            <option value="outline">Contorno</option>
+            <option value="alpha">Alfa</option>
+            <option value="luminance">Luminância</option>
+          </select>
+        </div>
+      )}
+
+      {shape.type === 'ellipse' && (
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary }}>Arco</span>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+            <ScrubbableNumberInput label="Início" value={shape.arcStart ?? 0} suffix="°" onChange={(v) => onChange({ arcStart: Math.round(v) })} themeTokens={themeTokens} accentColor={accentColor} isEffectiveDark={isEffectiveDark} style={{ height: 26 }} />
+            <ScrubbableNumberInput label="Fim" value={shape.arcEnd ?? 360} suffix="°" onChange={(v) => onChange({ arcEnd: Math.round(v) })} themeTokens={themeTokens} accentColor={accentColor} isEffectiveDark={isEffectiveDark} style={{ height: 26 }} />
+            <ScrubbableNumberInput label="Anel" value={Math.round((shape.arcInner ?? 0) * 100)} suffix="%" min={0} max={99} onChange={(v) => onChange({ arcInner: Math.max(0, Math.min(99, v)) / 100 })} themeTokens={themeTokens} accentColor={accentColor} isEffectiveDark={isEffectiveDark} style={{ height: 26 }} />
+          </div>
+        </div>
+      )}
+
+      {(shape.type === 'pen' || shape.type === 'pencil') && (
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: textPrimary, cursor: 'pointer', flex: 1 }}>
+              <input type="checkbox" checked={Boolean(shape.smooth)} onChange={(e) => onChange({ smooth: e.target.checked })} />
+              Suavizar curva
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: textPrimary, cursor: 'pointer', flex: 1 }}>
+              <input type="checkbox" checked={Boolean(shape.closed)} onChange={(e) => onChange({ closed: e.target.checked })} />
+              Fechar caminho
+            </label>
+          </div>
+          <span style={{ fontSize: 10, color: textMuted }}>Arraste nós e alças (Alt = independente) • duplo clique no traço adiciona nó, no nó alterna canto/suave • Delete apaga o nó</span>
+        </div>
+      )}
+
+      {(shape.type === 'pen' || shape.type === 'pencil' || shape.type === 'line') && (
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, alignItems: 'center' }}>
+          {([['startCap', 'Início'], ['endCap', 'Fim']] as const).map(([key, label]) => (
+            <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 10.5, color: textSecondary }}>
+              {label}
+              <select
+                value={shape[key] || 'none'}
+                onChange={(e) => onChange({ [key]: e.target.value === 'none' ? undefined : e.target.value } as Partial<Shape>)}
+                style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, height: 26, padding: '0 6px' }}
+              >
+                {(Object.keys(CAP_LABEL) as CapKind[]).map((k) => <option key={k} value={k}>{CAP_LABEL[k]}</option>)}
+              </select>
+            </label>
+          ))}
+        </div>
+      )}
+
+      {shape.type !== 'image' && ['rect', 'frame', 'ellipse', 'polygon', 'star'].includes(shape.type) && !shape.imageUrl && !shape.videoUrl && (
+        <div style={{ padding: '8px 12px', borderBottom: `1px solid ${divider}` }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, color: textSecondary, cursor: 'pointer' }} title="Usa uma imagem como preenchimento desta forma (recortada pelo contorno)">
+            <input
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = () => typeof reader.result === 'string' && onChange({ imageUrl: reader.result, imageFit: 'fill' });
+                reader.readAsDataURL(file);
+                e.target.value = '';
+              }}
+            />
+            ▦ Preencher com imagem…
+          </label>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, color: textSecondary, cursor: 'pointer', marginLeft: 12 }} title="Vídeo curto (até 6 MB) em laço, mudo, recortado pelo contorno">
+            <input
+              type="file"
+              accept="video/*"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (!file) return;
+                if (file.size > 6 * 1024 * 1024) { onToastMessage?.('Vídeo maior que 6 MB: use um arquivo menor'); return; }
+                const reader = new FileReader();
+                reader.onload = () => typeof reader.result === 'string' && onChange({ videoUrl: reader.result });
+                reader.readAsDataURL(file);
+              }}
+            />
+            ▶ Vídeo…
+          </label>
+        </div>
+      )}
+
+      {(shape.type === 'image' || !!shape.imageUrl || !!shape.videoUrl) && (
         <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary }}>Imagem</span>
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary, flex: 1 }}>Imagem</span>
+            {shape.type !== 'image' && (
+              <button type="button" onClick={() => onChange({ imageUrl: undefined, imageCrop: undefined, imageAdjust: undefined })} style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', fontSize: 10.5 }}>Remover imagem</button>
+            )}
+          </div>
+          {ADJUST_FIELDS.map((f) => (
+            <div key={f.key} style={{ display: 'grid', gridTemplateColumns: '78px 1fr 34px', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 10.5, color: textSecondary }}>{f.label}</span>
+              <input type="range" min={f.min} max={f.max} step={f.step} value={shape.imageAdjust?.[f.key] ?? 0} style={{ accentColor }} onChange={(e) => {
+                const next = { ...(shape.imageAdjust || {}), [f.key]: Number(e.target.value) };
+                onChange({ imageAdjust: hasAdjust(next) ? next : undefined });
+              }} />
+              <span style={{ fontSize: 10, color: textSecondary, textAlign: 'right' }}>{f.key === 'hue' ? Math.round(shape.imageAdjust?.[f.key] ?? 0) : (shape.imageAdjust?.[f.key] ?? 0).toFixed(2)}</span>
+            </div>
+          ))}
+          <label style={{ display: 'inline-flex', alignSelf: 'flex-start', alignItems: 'center', gap: 6, fontSize: 10.5, color: textSecondary, cursor: 'pointer' }} title="Vídeo curto (até 6 MB) que toca em laço, mudo, dentro desta forma. GIF funciona como imagem.">
+            <input
+              type="file"
+              accept="video/*"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (!file) return;
+                if (file.size > 6 * 1024 * 1024) { onToastMessage?.('Vídeo maior que 6 MB: use um arquivo menor'); return; }
+                const reader = new FileReader();
+                reader.onload = () => typeof reader.result === 'string' && onChange({ videoUrl: reader.result });
+                reader.readAsDataURL(file);
+              }}
+            />
+            {shape.videoUrl ? '▶ Trocar vídeo…' : '▶ Vídeo de fundo…'}
+          </label>
+          {shape.videoUrl && <button type="button" onClick={() => onChange({ videoUrl: undefined })} style={{ alignSelf: 'flex-start', background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', fontSize: 10.5 }}>Remover vídeo</button>}
+          {shape.imageUrl && (
+            <button type="button" onClick={() => onRemoveBackground?.(shape)} title="Remove o fundo com a ferramenta rembg instalada na máquina" style={{ alignSelf: 'flex-start', background: 'transparent', border: `1px solid ${inputBorder}`, borderRadius: 5, color: textSecondary, fontSize: 10.5, padding: '2px 8px', cursor: 'pointer' }}>Remover fundo</button>
+          )}
+          {hasAdjust(shape.imageAdjust) && (
+            <button type="button" onClick={() => onChange({ imageAdjust: undefined })} style={{ alignSelf: 'flex-start', background: 'transparent', border: `1px solid ${inputBorder}`, borderRadius: 5, color: textSecondary, fontSize: 10.5, padding: '2px 8px', cursor: 'pointer' }}>Redefinir ajustes</button>
+          )}
           <label style={{ display: 'grid', gridTemplateColumns: '70px 1fr', alignItems: 'center', gap: 8, fontSize: 11, color: textSecondary }}>
             Ajuste
             <select
@@ -3219,37 +3517,24 @@ export default function PropertiesPanel({
       {/* ----------------------------------------------------------------- */}
       {/* PROTÓTIPO                                                          */}
       {/* ----------------------------------------------------------------- */}
-      <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary, flex: 1 }}>Protótipo</span>
-          {(shape.type === 'frame' || shape.parentId) && (
-            <button
-              type="button"
-              onClick={() => {
-                // apresenta o frame selecionado (ou o frame que contém o elemento)
-                const frame = shape.type === 'frame' ? shape.id : prototypeFrames.find((f) => f.id === shape.parentId)?.id || shape.parentId!;
-                onPresent?.(frame);
-              }}
-              style={{ background: accentColor, border: 'none', borderRadius: 5, color: '#fff', fontSize: 11, padding: '3px 10px', cursor: 'pointer' }}
-            >
-              ▶ Apresentar
-            </button>
-          )}
-        </div>
-        <label style={{ display: 'grid', gridTemplateColumns: '70px 1fr', alignItems: 'center', gap: 8, fontSize: 11, color: textSecondary }}>
-          Ao clicar
-          <select
-            value={shape.prototypeLink?.targetId || ''}
-            onChange={(e) => onChange({ prototypeLink: e.target.value ? { targetId: e.target.value } : undefined })}
-            style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, height: 26, padding: '0 6px' }}
-          >
-            <option value="">Nada</option>
-            {prototypeFrames.filter((f) => f.id !== shape.id).map((f) => (
-              <option key={f.id} value={f.id}>Ir para: {f.name}</option>
-            ))}
-          </select>
-        </label>
-      </div>
+      <PrototypeSection
+        shape={shape}
+        frames={prototypeFrames}
+        onChange={onChange}
+        onPresent={onPresent}
+        presentFrameId={shape.type === 'frame' ? shape.id : shape.parentId ? prototypeFrames.find((f) => f.id === shape.parentId)?.id || shape.parentId : undefined}
+        themeTokens={themeTokens}
+        accentColor={accentColor}
+        divider={divider}
+        textPrimary={textPrimary}
+        textSecondary={textSecondary}
+        bgSecondary={bgSecondary}
+        inputBorder={inputBorder}
+      />
+
+      {selectionColors.length > 0 && onReplaceSelectionColor && (
+        <SelectionColorsSection colors={selectionColors} onReplace={onReplaceSelectionColor} themeTokens={themeTokens} accentColor={accentColor} isEffectiveDark={isEffectiveDark} divider={divider} textPrimary={textPrimary} textSecondary={textSecondary} bgSecondary={bgSecondary} inputBorder={inputBorder} />
+      )}
 
       {/* ----------------------------------------------------------------- */}
       {/* VARIÁVEIS DE COR (modos Claro/Escuro)                              */}
@@ -3267,9 +3552,61 @@ export default function PropertiesPanel({
               <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </select>
-          <button type="button" onClick={() => onCreateVariable?.()} title="Criar variável a partir do preenchimento" style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 2 }}><Plus size={12} /></button>
+          <select
+            value=""
+            onChange={(e) => e.target.value && onCreateVariable?.(e.target.value as 'color' | 'number' | 'text' | 'boolean')}
+            title="Criar variável"
+            style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textSecondary, fontSize: 10.5, height: 22, padding: '0 2px', width: 30, cursor: 'pointer' }}
+          >
+            <option value="" disabled>+</option>
+            <option value="color">Cor (do preenchimento)</option>
+            <option value="number">Número</option>
+            <option value="text">Texto</option>
+            <option value="boolean">Booleana</option>
+          </select>
         </div>
-        {variables.map((v) => (
+        {variables.filter((v) => v.kind !== 'color').map((v) => {
+          const boundProp = Object.entries(shape.variableBindings || {}).find(([, id]) => id === v.id)?.[0] || '';
+          const options = BINDABLE[v.kind as 'number' | 'text' | 'boolean'] || [];
+          return (
+            <div key={v.id} style={{ display: 'flex', flexDirection: 'column', gap: 3, padding: '4px', borderRadius: 5, background: boundProp ? `${accentColor}22` : 'transparent' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <span style={{ fontSize: 9.5, color: textSecondary, width: 22, flexShrink: 0 }}>{v.kind === 'number' ? '#' : v.kind === 'text' ? 'Aa' : '◐'}</span>
+                <input defaultValue={v.name} onBlur={(e) => e.target.value.trim() && e.target.value !== v.name && onUpdateVariable?.(v.id, { name: e.target.value.trim() })} style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: textPrimary, fontSize: 11 }} />
+                <button type="button" onClick={() => onDeleteVariable?.(v.id)} title="Excluir variável" style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', fontSize: 11, padding: 2 }}>×</button>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                {modes.map((m) =>
+                  v.kind === 'boolean' ? (
+                    <label key={m.id} style={{ fontSize: 10, color: textSecondary, display: 'flex', alignItems: 'center', gap: 3 }}>
+                      {m.name}
+                      <input type="checkbox" checked={v.values[m.id] === 'true'} onChange={(e) => onUpdateVariable?.(v.id, { modeId: m.id, value: String(e.target.checked) })} />
+                    </label>
+                  ) : (
+                    <input
+                      key={m.id}
+                      defaultValue={v.values[m.id] ?? ''}
+                      title={`Valor no modo ${m.name}`}
+                      placeholder={m.name}
+                      onBlur={(e) => e.target.value !== (v.values[m.id] ?? '') && onUpdateVariable?.(v.id, { modeId: m.id, value: e.target.value })}
+                      style={{ width: v.kind === 'text' ? 80 : 46, background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 4, color: textPrimary, fontSize: 10.5, height: 20, padding: '0 4px' }}
+                    />
+                  )
+                )}
+                <select
+                  value={boundProp}
+                  onChange={(e) => onBindTypedVariable?.(v.id, e.target.value || undefined)}
+                  title="Propriedade do elemento selecionado controlada por esta variável"
+                  style={{ marginLeft: 'auto', background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 4, color: textSecondary, fontSize: 10, height: 20, maxWidth: 110 }}
+                >
+                  <option value="">Sem ligação</option>
+                  {options.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+                </select>
+              </div>
+            </div>
+          );
+        })}
+        {variables.filter((v) => v.kind === 'color').map((v) => (
           <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '2px 4px', borderRadius: 5, background: shape.fillVariableId === v.id ? `${accentColor}22` : 'transparent' }}>
             <button type="button" onClick={() => onBindVariable?.(shape.fillVariableId === v.id ? undefined : v.id)} title="Ligar/desligar ao preenchimento do elemento" style={{ width: 16, height: 16, borderRadius: 4, border: `1px solid ${inputBorder}`, background: v.values[activeModeId] || Object.values(v.values)[0], cursor: 'pointer', padding: 0, flexShrink: 0 }} />
             <input
@@ -3299,12 +3636,18 @@ export default function PropertiesPanel({
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary, flex: 1 }}>Estilos</span>
           <button type="button" onClick={() => onCreateStyle?.('color')} title="Criar estilo de cor a partir do preenchimento" style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 2 }}><Plus size={12} /></button>
+          {(shape.effects?.length ?? 0) > 0 && (
+            <button type="button" onClick={() => onCreateStyle?.('effect')} title="Criar estilo de efeito a partir dos efeitos" style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 2, fontSize: 10 }}>fx<Plus size={9} /></button>
+          )}
+          {(shape.layoutGrids?.length ?? 0) > 0 && (
+            <button type="button" onClick={() => onCreateStyle?.('grid')} title="Criar estilo de grade a partir das grades de layout" style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 2, fontSize: 10 }}>#<Plus size={9} /></button>
+          )}
           {(shape.type === 'text' || shape.type === 'text-path') && (
             <button type="button" onClick={() => onCreateStyle?.('text')} title="Criar estilo de texto a partir da tipografia" style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', display: 'flex', alignItems: 'center', padding: 2 }}><TypeIcon size={12} /><Plus size={9} /></button>
           )}
         </div>
         {styles.map((st) => {
-          const active = shape.fillStyleId === st.id || shape.textStyleId === st.id;
+          const active = shape.fillStyleId === st.id || shape.textStyleId === st.id || shape.effectStyleId === st.id || shape.gridStyleId === st.id;
           return (
             <div key={st.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 4px', borderRadius: 5, background: active ? `${accentColor}22` : 'transparent' }}>
               <button
@@ -3313,7 +3656,7 @@ export default function PropertiesPanel({
                 title="Aplicar ao elemento selecionado"
                 style={{ width: 18, height: 18, borderRadius: 4, border: `1px solid ${inputBorder}`, background: st.kind === 'color' ? st.color : 'transparent', color: textPrimary, cursor: 'pointer', fontSize: 10, padding: 0, flexShrink: 0 }}
               >
-                {st.kind === 'text' ? 'T' : ''}
+                {st.kind === 'text' ? 'T' : st.kind === 'effect' ? 'fx' : st.kind === 'grid' ? '#' : ''}
               </button>
               <input
                 defaultValue={st.name}
@@ -3348,6 +3691,9 @@ export default function PropertiesPanel({
                 Grupo
                 <input value={shape.variantGroup || ''} placeholder="ex.: Botão" onChange={(e) => onChange({ variantGroup: e.target.value || undefined })} style={{ height: 24, background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, padding: '0 6px' }} />
               </label>
+              <button type="button" onClick={() => onOpenVariantMatrix?.()} style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, padding: '4px 10px', cursor: 'pointer' }}>
+                Matriz de variantes…
+              </button>
               <label style={{ display: 'grid', gridTemplateColumns: '70px 1fr', alignItems: 'center', gap: 8, fontSize: 11, color: textSecondary }}>
                 Variante
                 <input value={shape.variantName || ''} placeholder="ex.: Primário" onChange={(e) => onChange({ variantName: e.target.value || undefined })} style={{ height: 24, background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, padding: '0 6px' }} />
@@ -3366,7 +3712,93 @@ export default function PropertiesPanel({
         </div>
       )}
 
+      {shape.isComponent && (
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary }}>Propriedades do componente</span>
+            <button
+              type="button"
+              disabled={propTargets.length === 0}
+              title={propTargets.length ? 'Expor uma camada interna como propriedade' : 'O componente não tem camadas internas'}
+              onClick={() => {
+                const t = propTargets[0];
+                const np: ComponentProp = { id: `prop-${Date.now().toString(36)}`, name: t.name, type: t.type === 'text' ? 'text' : 'boolean', targetId: t.id };
+                onChange({ componentProps: [...(shape.componentProps || []), np] });
+              }}
+              style={btnStyle}
+            >
+              <Plus size={12} />
+            </button>
+          </div>
+          {(shape.componentProps || []).map((p) => {
+            const patch = (x: Partial<ComponentProp>) => onChange({ componentProps: (shape.componentProps || []).map((q) => (q.id === p.id ? { ...q, ...x } : q)) });
+            const target = propTargets.find((t) => t.id === p.targetId);
+            return (
+              <div key={p.id} style={{ display: 'grid', gridTemplateColumns: '1fr 82px 1fr 20px', gap: 4, alignItems: 'center' }}>
+                <input value={p.name} onChange={(e) => patch({ name: e.target.value })} title="Nome da propriedade" style={{ height: 24, minWidth: 0, background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, padding: '0 6px' }} />
+                <select value={p.type} onChange={(e) => patch({ type: e.target.value as ComponentProp['type'] })} style={{ height: 24, background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11 }}>
+                  <option value="boolean">Mostrar</option>
+                  <option value="text" disabled={target ? target.type !== 'text' : false}>Texto</option>
+                </select>
+                <select value={p.targetId} onChange={(e) => patch({ targetId: e.target.value })} title="Camada controlada" style={{ height: 24, minWidth: 0, background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11 }}>
+                  {propTargets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+                <button type="button" style={btnStyle} title="Remover propriedade" onClick={() => onChange({ componentProps: (shape.componentProps || []).filter((q) => q.id !== p.id) })}><X size={12} /></button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {shape.instanceOf && swapOptions.length > 0 && (
+        <div style={{ padding: '8px 12px', borderBottom: `1px solid ${divider}` }}>
+          <label style={{ display: 'grid', gridTemplateColumns: '70px 1fr', alignItems: 'center', gap: 8, fontSize: 11, color: textSecondary }}>
+            Trocar por
+            <select value="" onChange={(e) => e.target.value && onSwitchVariant?.(shape, e.target.value)} style={{ height: 26, background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, padding: '0 6px' }}>
+              <option value="">Outro componente…</option>
+              {swapOptions.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+          </label>
+        </div>
+      )}
+
+      {shape.instanceOf && instanceProps.length > 0 && (
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary }}>Propriedades</span>
+          {instanceProps.map(({ prop, fallback }) => {
+            const value = shape.propValues?.[prop.id] ?? fallback;
+            const set = (v: boolean | string) => onChange({ propValues: { ...(shape.propValues || {}), [prop.id]: v } });
+            return prop.type === 'boolean' ? (
+              <label key={prop.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: textSecondary, cursor: 'pointer' }}>
+                <input type="checkbox" checked={Boolean(value)} onChange={(e) => set(e.target.checked)} />
+                {prop.name}
+              </label>
+            ) : (
+              <label key={prop.id} style={{ display: 'grid', gridTemplateColumns: '80px 1fr', alignItems: 'center', gap: 8, fontSize: 11, color: textSecondary }}>
+                {prop.name}
+                <input value={String(value)} onChange={(e) => set(e.target.value)} style={{ height: 24, background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, padding: '0 6px' }} />
+              </label>
+            );
+          })}
+        </div>
+      )}
+
       {shape.type === 'text-path' && (
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'grid', gridTemplateColumns: '70px 1fr', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11, color: textSecondary }}>Caminho</span>
+          <select
+            value={shape.pathTargetId || ''}
+            onChange={(e) => onChange({ pathTargetId: e.target.value || undefined })}
+            title="Faz o texto seguir o contorno de outro elemento (caneta, linha, elipse ou retângulo)"
+            style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, height: 26, padding: '0 6px' }}
+          >
+            <option value="">Arco (curvatura)</option>
+            {pathTargets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        </div>
+      )}
+
+      {shape.type === 'text-path' && !shape.pathTargetId && (
         <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary, flex: 1 }}>Curvatura do texto</span>
           <ScrubbableNumberInput
@@ -3407,6 +3839,79 @@ export default function PropertiesPanel({
                 </div>
               ))}
             </>
+          )}
+        </div>
+      )}
+
+      {shape.type === 'frame' && !shape.parentId && (
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary }}>Responsivo</span>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {[['Mobile', 390], ['Tablet', 768], ['Notebook', 1280], ['Desktop', 1440]].map(([label, w]) => (
+              <button
+                key={label}
+                type="button"
+                title={`Largura ${w}px: os filhos respondem pelas restrições e pelo auto layout`}
+                onClick={() => onChange({ width: w as number, widthMode: 'fixed' })}
+                style={{ background: shape.width === w ? accentColor : bgSecondary, border: 'none', borderRadius: 5, color: shape.width === w ? '#fff' : textSecondary, fontSize: 10.5, padding: '3px 8px', cursor: 'pointer' }}
+              >
+                {label} {w}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '70px 1fr', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 11, color: textSecondary }}>Rolagem</span>
+            <select
+              value={shape.scrollMode || 'none'}
+              onChange={(e) => onChange({ scrollMode: e.target.value as Shape['scrollMode'] })}
+              title="Como o conteúdo rola no modo apresentação"
+              style={{ background: bgSecondary, border: `1px solid ${inputBorder}`, borderRadius: 5, color: textPrimary, fontSize: 11, height: 26, padding: '0 6px' }}
+            >
+              <option value="none">Sem rolagem</option>
+              <option value="vertical">Vertical</option>
+              <option value="horizontal">Horizontal</option>
+              <option value="both">Os dois</option>
+            </select>
+          </div>
+        </div>
+      )}
+
+      {shape.type === 'frame' && (
+        <LayoutGridSection
+          grids={shape.layoutGrids || []}
+          onChange={(layoutGrids) => onChange({ layoutGrids })}
+          themeTokens={themeTokens}
+          accentColor={accentColor}
+          isEffectiveDark={isEffectiveDark}
+          divider={divider}
+        />
+      )}
+
+      {/* Mínimo/máximo (filhos de auto layout e frames com auto layout) e posição absoluta */}
+      {(shape.parentId || hasAutoLayout) && (
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: textPrimary }}>Mín / Máx</span>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+            {([['minW', 'Min W'], ['maxW', 'Max W'], ['minH', 'Min H'], ['maxH', 'Max H']] as const).map(([key, label]) => (
+              <ScrubbableNumberInput
+                key={key}
+                label={label}
+                value={shape[key] ? shape[key]! : '—'}
+                min={0}
+                title="0 ou vazio = sem limite"
+                onChange={(v) => onChange({ [key]: v > 0 ? Math.round(v) : undefined } as Partial<Shape>)}
+                themeTokens={themeTokens}
+                accentColor={accentColor}
+                isEffectiveDark={isEffectiveDark}
+                style={{ height: 26 }}
+              />
+            ))}
+          </div>
+          {shape.parentId && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: textSecondary, cursor: 'pointer' }} title="Fora do fluxo do auto layout do pai; posição pelas restrições">
+              <input type="checkbox" checked={!!shape.layoutAbsolute} onChange={(e) => onChange({ layoutAbsolute: e.target.checked })} />
+              Posição absoluta (ignora o auto layout do pai)
+            </label>
           )}
         </div>
       )}
@@ -3467,6 +3972,8 @@ export default function PropertiesPanel({
               >
                 <option value="PNG" style={{ background: bgCard }}>PNG</option>
                 <option value="JPG" style={{ background: bgCard }}>JPG</option>
+                <option value="WEBP" style={{ background: bgCard }}>WEBP</option>
+                <option value="AVIF" style={{ background: bgCard }}>AVIF</option>
                 <option value="SVG" style={{ background: bgCard }}>SVG</option>
                 <option value="PDF" style={{ background: bgCard }}>PDF</option>
               </select>
@@ -3798,9 +4305,9 @@ export default function PropertiesPanel({
           }
           themeTokens={themeTokens}
           accentColor={accentColor}
-          fillType={activeColorPicker.target === 'fill' ? activeFillItem?.type : undefined}
-          gradientStops={activeColorPicker.target === 'fill' ? activeFillItem?.gradientStops : undefined}
-          gradientAngle={activeColorPicker.target === 'fill' ? activeFillItem?.gradientAngle : undefined}
+          fillType={activeColorPicker.target === 'fill' ? activeFillItem?.type : (activeStrokeItem?.type as any)}
+          gradientStops={activeColorPicker.target === 'fill' ? activeFillItem?.gradientStops : activeStrokeItem?.gradientStops}
+          gradientAngle={activeColorPicker.target === 'fill' ? activeFillItem?.gradientAngle : activeStrokeItem?.gradientAngle}
           onGradientChange={
             activeColorPicker.target === 'fill'
               ? (patch) =>
@@ -3811,7 +4318,14 @@ export default function PropertiesPanel({
                         : f
                     )
                   )
-              : undefined
+              : (patch) =>
+                  updateStrokes(
+                    strokes.map((st) =>
+                      activeColorPicker.id === 'all' || st.id === activeColorPicker.id
+                        ? { ...st, ...(patch as any), color: patch.gradientStops?.[0]?.color ?? st.color }
+                        : st
+                    )
+                  )
           }
           onChange={(newColor, newOpacity) => {
             if (activeColorPicker.target === 'fill') {

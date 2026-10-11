@@ -20,7 +20,6 @@ import {
   Eye,
   Download,
   Star,
-  ExternalLink,
   X,
   MoreHorizontal,
   ChevronDown,
@@ -29,7 +28,10 @@ import {
 import { FileIcon } from '../FileIcon';
 
 export interface SidebarPanelsProps {
-  activeTab: 'search' | 'git' | 'debug' | 'preview' | 'extensions' | 'testing';
+  previewUrl: string | null;
+  projects?: Array<{ name: string; localDir?: string }>;
+  onOpenPreview: (url: string) => void;
+  activeTab: 'search' | 'git' | 'debug' | 'preview' | 'testing';
   workspacePath: string;
   themeTokens: {
     bgCard: string;
@@ -51,15 +53,13 @@ export interface SidebarPanelsProps {
   onOpenBranchModal?: () => void;
   currentBranch?: string;
   onGenerateCommitMessage?: (repoDir: string) => Promise<string>;
-  onSelectExtension?: (ext: any) => void;
-  installedExtensions: any[];
-  onInstallExtension: (ext: any) => Promise<void>;
-  onUninstallExtension: (ext: any) => Promise<void>;
-  onToggleExtensionEnabled: (ext: any) => Promise<void>;
 }
 
 export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
   activeTab,
+  previewUrl,
+  projects = [],
+  onOpenPreview,
   workspacePath,
   themeTokens,
   isEffectiveDark,
@@ -74,11 +74,6 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
   onOpenBranchModal,
   currentBranch = 'main',
   onGenerateCommitMessage,
-  onSelectExtension,
-  installedExtensions,
-  onInstallExtension,
-  onUninstallExtension,
-  onToggleExtensionEnabled,
 }) => {
   const hexToRgba = (hex: string, alpha: number) => {
     const cleanHex = hex.replace('#', '');
@@ -413,12 +408,33 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
   // -------------------------------------------------------------------------
   // 4. Web Preview & Ports State & Logic
   // -------------------------------------------------------------------------
-  const [activePortsList, setActivePortsList] = useState<Array<{ port: number; process: string; pid?: number }>>([]);
+  const [activePortsList, setActivePortsList] = useState<Array<{ port: number; process?: string; command?: string; cwd?: string; pid?: number | string }>>([]);
   const [isScanningPorts, setIsScanningPorts] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState('http://localhost:5173');
-  const [inputPreviewUrl, setInputPreviewUrl] = useState('http://localhost:5173');
-  const [previewViewport, setPreviewViewport] = useState<'responsive' | 'mobile'>('responsive');
-  const [previewIframeKey, setPreviewIframeKey] = useState(0);
+
+  // Nome do projeto (o mesmo do seletor da header) dono do processo, pelo diretório de trabalho.
+  const projectLabel = (p: { cwd?: string; command?: string }) => {
+    if (!p.cwd) return p.command || '';
+    const hit = projects
+      .filter((x) => x.localDir && (p.cwd === x.localDir || p.cwd!.startsWith(x.localDir.replace(/\/$/, '') + '/')))
+      .sort((a, b) => b.localDir!.length - a.localDir!.length)[0];
+    return hit?.name || p.cwd.split('/').filter(Boolean).pop() || p.command || '';
+  };
+
+  const [selectedPorts, setSelectedPorts] = useState<Set<number>>(new Set());
+  const [closeConfirm, setCloseConfirm] = useState<typeof activePortsList | null>(null);
+  const [isClosingPorts, setIsClosingPorts] = useState(false);
+
+  const closePorts = async (list: typeof activePortsList) => {
+    setIsClosingPorts(true);
+    const pids = [...new Set(list.map((p) => p.pid).filter(Boolean))] as Array<number | string>;
+    const results = await Promise.all(pids.map((pid) => window.electronAPI!.ports.kill(pid)));
+    const failed = results.filter((r) => !r?.success).length;
+    onToast(failed ? `${failed} processo(s) não puderam ser encerrados` : `${list.length} porta(s) fechada(s)`);
+    setSelectedPorts(new Set());
+    setCloseConfirm(null);
+    setIsClosingPorts(false);
+    setTimeout(scanActivePorts, 400);
+  };
 
   const scanActivePorts = useCallback(async () => {
     setIsScanningPorts(true);
@@ -426,15 +442,11 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
       if (window.electronAPI?.ports?.scan) {
         const res = await window.electronAPI.ports.scan();
         setActivePortsList(res?.ports || []);
-        if (res?.ports && res.ports.length > 0 && previewUrl === 'http://localhost:5173') {
-          setPreviewUrl(`http://localhost:${res.ports[0].port}`);
-          setInputPreviewUrl(`http://localhost:${res.ports[0].port}`);
-        }
       } else {
         const res = await window.electronAPI?.shell?.exec('lsof -iTCP -sTCP:LISTEN -n -P');
         if (res?.stdout) {
           const lines = res.stdout.split('\n').slice(1).filter(Boolean);
-          const found: Array<{ port: number; process: string; pid?: number }> = [];
+          const found: Array<{ port: number; process?: string; command?: string; cwd?: string; pid?: number | string }> = [];
           const seen = new Set<number>();
           for (const l of lines) {
             const parts = l.split(/\s+/);
@@ -458,38 +470,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
     } finally {
       setIsScanningPorts(false);
     }
-  }, [previewUrl]);
-
-  // -------------------------------------------------------------------------
-  // 5. Extensions Marketplace State & Logic
-  // -------------------------------------------------------------------------
-  const [extensionTab, setExtensionTab] = useState<'marketplace' | 'installed'>('marketplace');
-  const [extensionSearchQuery, setExtensionSearchQuery] = useState('');
-  const [selectedExtensionCategory, setSelectedExtensionCategory] = useState<string>('');
-  const [marketplaceExtensions, setMarketplaceExtensions] = useState<any[]>([]);
-  const [isExtensionsLoading, setIsExtensionsLoading] = useState(false);
-
-  const searchMarketplace = useCallback(
-    async (query = extensionSearchQuery, category = selectedExtensionCategory) => {
-      setIsExtensionsLoading(true);
-      try {
-        if (window.electronAPI?.extensions?.search) {
-          const res = await window.electronAPI.extensions.search(query, 35, category);
-          if (res?.success && res.extensions) {
-            setMarketplaceExtensions(res.extensions);
-          } else {
-            setMarketplaceExtensions([]);
-          }
-        }
-      } catch (err) {
-        console.warn('Search extensions failed:', err);
-        setMarketplaceExtensions([]);
-      } finally {
-        setIsExtensionsLoading(false);
-      }
-    },
-    [extensionSearchQuery, selectedExtensionCategory]
-  );
+  }, []);
 
 
   // Trigger data load when tabs switch
@@ -502,12 +483,8 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
       loadPackageScripts();
     } else if (activeTab === 'preview') {
       scanActivePorts();
-    } else if (activeTab === 'extensions') {
-      if (marketplaceExtensions.length === 0) {
-        searchMarketplace('');
-      }
     }
-  }, [activeTab, discoverAndRefreshRepos, loadPackageScripts, scanActivePorts, searchMarketplace, marketplaceExtensions.length]);
+  }, [activeTab, discoverAndRefreshRepos, loadPackageScripts, scanActivePorts]);
 
   return (
     <>
@@ -846,55 +823,20 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
           style={{
             width: '100%',
             flex: '1 1 0',
-            padding: 10,
+            padding: '8px 10px',
             background: themeTokens.bgCard,
             borderRadius: 10,
             border: 'none',
             flexDirection: 'column',
             justifyContent: 'flex-start',
             alignItems: 'flex-start',
-            gap: 8,
+            gap: 6,
             display: 'flex',
             overflowY: 'auto',
             overflowX: 'hidden',
             boxSizing: 'border-box',
           }}
         >
-          {/* Header */}
-          <div style={{ alignSelf: 'stretch', justifyContent: 'space-between', alignItems: 'center', display: 'inline-flex' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <GitBranch size={13} color={accentColor} />
-              <span
-                style={{
-                  color: themeTokens.textPrimary,
-                  fontSize: 11,
-                  fontFamily: 'Poppins',
-                  fontWeight: 600,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.5px',
-                }}
-              >
-                Controle de Versão
-              </span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <button
-                onClick={() => discoverAndRefreshRepos()}
-                title="Atualizar status do Git"
-                style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 2 }}
-              >
-                <RefreshCw size={13} className={isGitLoading ? 'spin-animate' : ''} />
-              </button>
-              <button
-                onClick={() => gitRepos.forEach((r) => handleGitSync(r.dir, r.name))}
-                title="Sincronizar todos os repositórios (Pull & Push)"
-                style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 2 }}
-              >
-                <RotateCcw size={13} />
-              </button>
-            </div>
-          </div>
-
           {/* Changes Group (wraps every detected repo) */}
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div
@@ -909,6 +851,23 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
               <span style={{ fontSize: 10.5, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase' }}>
                 Alterações
               </span>
+              <div style={{ flex: 1 }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={(e) => e.stopPropagation()}>
+                <button
+                  onClick={() => discoverAndRefreshRepos()}
+                  title="Atualizar status do Git"
+                  style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 2, display: 'flex' }}
+                >
+                  <RefreshCw size={13} className={isGitLoading ? 'spin-animate' : ''} />
+                </button>
+                <button
+                  onClick={() => gitRepos.forEach((r) => handleGitSync(r.dir, r.name))}
+                  title="Sincronizar todos os repositórios (Pull & Push)"
+                  style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 2, display: 'flex' }}
+                >
+                  <RotateCcw size={13} />
+                </button>
+              </div>
             </div>
 
             {!changesGroupCollapsed && (
@@ -1483,23 +1442,27 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
           }}
         >
           {/* Header */}
-          <div style={{ alignSelf: 'stretch', justifyContent: 'space-between', alignItems: 'center', display: 'inline-flex' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Monitor size={13} color={accentColor} />
-              <span
-                style={{
-                  color: themeTokens.textPrimary,
-                  fontSize: 11,
-                  fontFamily: 'Poppins',
-                  fontWeight: 600,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.5px',
-                }}
-              >
-                Portas & Web Preview
-              </span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ alignSelf: 'stretch', justifyContent: 'space-between', alignItems: 'center', display: 'flex', flexWrap: 'wrap', rowGap: 4, columnGap: 6 }}>
+            <span style={{ fontSize: 9.5, fontWeight: 600, color: themeTokens.textSecondary, whiteSpace: 'nowrap' }}>
+              PORTAS EM EXECUÇÃO ({activePortsList.length})
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+              {selectedPorts.size > 0 && (
+                <button
+                  onClick={() => setCloseConfirm(activePortsList.filter((p) => selectedPorts.has(p.port)))}
+                  style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: 'none', borderRadius: 5, padding: '2px 6px', fontSize: 9.5, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  Fechar selecionadas ({selectedPorts.size})
+                </button>
+              )}
+              {activePortsList.length > 0 && (
+                <button
+                  onClick={() => setCloseConfirm(activePortsList)}
+                  style={{ background: 'transparent', color: themeTokens.textSecondary, border: 'none', borderRadius: 5, padding: '2px 5px', fontSize: 9.5, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                >
+                  Fechar todas
+                </button>
+              )}
               <button
                 onClick={scanActivePorts}
                 title="Escanear portas ativas"
@@ -1507,36 +1470,24 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
               >
                 <RefreshCw size={13} className={isScanningPorts ? 'spin-animate' : ''} />
               </button>
-              <button
-                onClick={() => window.electronAPI?.shell?.openExternal(previewUrl)}
-                title="Abrir no navegador do sistema"
-                style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 2 }}
-              >
-                <ExternalLink size={13} />
-              </button>
             </div>
           </div>
 
           {/* Active Ports List */}
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span style={{ fontSize: 10.5, fontWeight: 600, color: themeTokens.textSecondary }}>
-              PORTAS EM EXECUÇÃO ({activePortsList.length})
-            </span>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {activePortsList.length === 0 ? (
                 <div style={{ fontSize: 10.5, color: themeTokens.textMuted, padding: '4px 0' }}>
                   Nenhum servidor local detectado (Inicie seu app com npm run dev)
                 </div>
               ) : (
                 activePortsList.map((p) => {
-                  const isCurrent = previewUrl.includes(`:${p.port}`);
+                  const isCurrent = !!previewUrl && previewUrl.includes(`:${p.port}`);
                   return (
                     <div
                       key={p.port}
                       onClick={() => {
-                        const url = `http://localhost:${p.port}`;
-                        setPreviewUrl(url);
-                        setInputPreviewUrl(url);
+                        onOpenPreview(`http://localhost:${p.port}`);
                       }}
                       style={{
                         display: 'flex',
@@ -1553,540 +1504,92 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                         cursor: 'pointer',
                       }}
                     >
+                      <input
+                        type="checkbox"
+                        checked={selectedPorts.has(p.port)}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={() =>
+                          setSelectedPorts((prev) => {
+                            const n = new Set(prev);
+                            n.has(p.port) ? n.delete(p.port) : n.add(p.port);
+                            return n;
+                          })
+                        }
+                        style={{
+                          appearance: 'none',
+                          WebkitAppearance: 'none',
+                          width: 14,
+                          height: 14,
+                          margin: 0,
+                          flexShrink: 0,
+                          borderRadius: 4,
+                          cursor: 'pointer',
+                          border: `1px solid ${selectedPorts.has(p.port) ? accentColor : isEffectiveDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.25)'}`,
+                          background: selectedPorts.has(p.port)
+                            ? `${accentColor} url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-6.5' fill='none' stroke='${accentTextColor === '#000000' ? '%23000' : '%23fff'}' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/10px no-repeat`
+                            : 'transparent',
+                        }}
+                      />
                       <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981' }} />
                       <span style={{ fontSize: 11, fontWeight: 600, color: themeTokens.textPrimary }}>:{p.port}</span>
-                      <span style={{ fontSize: 9.5, color: themeTokens.textSecondary }}>({p.process})</span>
+                      <span style={{ fontSize: 10.5, color: themeTokens.textSecondary, marginLeft: 'auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{projectLabel(p)}</span>
+                      <button
+                        title="Fechar porta"
+                        onClick={(e) => { e.stopPropagation(); setCloseConfirm([p]); }}
+                        style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 2, display: 'flex' }}
+                      >
+                        <X size={12} />
+                      </button>
                     </div>
                   );
                 })
               )}
             </div>
           </div>
-
-          {/* Embedded Web Browser */}
-          <div
-            style={{
-              width: '100%',
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              borderRadius: 8,
-              border: 'none',
-              overflow: 'hidden',
-              background: isEffectiveDark ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.9)',
-              minHeight: 250,
-            }}
-          >
-            {/* Address bar */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                padding: '6px 8px',
-                border: 'none',
-                background: isEffectiveDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)',
-              }}
-            >
-              <button
-                onClick={() => setPreviewIframeKey((k) => k + 1)}
-                title="Recarregar página"
-                style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 2 }}
-              >
-                <RefreshCw size={12} />
-              </button>
-              <input
-                value={inputPreviewUrl}
-                onChange={(e) => setInputPreviewUrl(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    let url = inputPreviewUrl.trim();
-                    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                      url = 'http://' + url;
-                    }
-                    setPreviewUrl(url);
-                  }
-                }}
-                placeholder="http://localhost:5173"
-                style={{
-                  flex: 1,
-                  background: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-                  border: 'none',
-                  borderRadius: 4,
-                  padding: '4px 7px',
-                  color: themeTokens.textPrimary,
-                  fontSize: 10.5,
-                  fontFamily: 'monospace',
-                  outline: 'none',
-                }}
-              />
-              <button
-                onClick={() => setPreviewViewport(previewViewport === 'responsive' ? 'mobile' : 'responsive')}
-                title={previewViewport === 'responsive' ? 'Mudar para Mobile (375px)' : 'Mudar para Responsivo'}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: previewViewport === 'mobile' ? accentColor : themeTokens.textSecondary,
-                  cursor: 'pointer',
-                  padding: 2,
-                }}
-              >
-                <Monitor size={12} />
-              </button>
-            </div>
-
-            {/* iframe */}
-            <div
-              style={{
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                background: '#ffffff',
-                overflow: 'hidden',
-                position: 'relative',
-              }}
-            >
-              <iframe
-                key={previewIframeKey}
-                src={previewUrl}
-                style={{
-                  width: previewViewport === 'mobile' ? 375 : '100%',
-                  height: '100%',
-                  border: 'none',
-                  boxShadow: previewViewport === 'mobile' ? '0 0 20px rgba(0,0,0,0.3)' : 'none',
-                }}
-                title="Web Preview"
-                sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
-              />
-            </div>
-          </div>
         </div>
       )}
-
-      {/* -------------------------------------------------- */}
-      {/* 5. VS Code Extensions Marketplace Panel (Border-free)*/}
-      {/* -------------------------------------------------- */}
-      {activeTab === 'extensions' && (
+      {closeConfirm && (
         <div
-          style={{
-            width: '100%',
-            flex: '1 1 0',
-            padding: 10,
-            background: themeTokens.bgCard,
-            borderRadius: 10,
-            border: 'none',
-            flexDirection: 'column',
-            justifyContent: 'flex-start',
-            alignItems: 'flex-start',
-            gap: 10,
-            display: 'flex',
-            overflowY: 'auto',
-            overflowX: 'hidden',
-            boxSizing: 'border-box',
-          }}
+          onClick={() => !isClosingPorts && setCloseConfirm(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         >
-          {/* Header */}
-          <div style={{ alignSelf: 'stretch', justifyContent: 'space-between', alignItems: 'center', display: 'inline-flex' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Blocks size={14} color={accentColor} />
-              <span
-                style={{
-                  color: themeTokens.textPrimary,
-                  fontSize: 11,
-                  fontFamily: 'Poppins',
-                  fontWeight: 600,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.5px',
-                }}
-              >
-                Extensões: Open VSX
-              </span>
-            </div>
-            <button
-              onClick={() => searchMarketplace()}
-              title="Atualizar lista"
-              style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 2 }}
-            >
-              <RefreshCw size={13} className={isExtensionsLoading ? 'spin-animate' : ''} />
-            </button>
-          </div>
-
-          {/* Marketplace / Installed Switcher Tabs */}
           <div
-            style={{
-              display: 'flex',
-              width: '100%',
-              background: isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
-              borderRadius: 6,
-              border: 'none',
-              padding: 2,
-              gap: 2,
-              boxSizing: 'border-box',
-            }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: 340, maxHeight: '70vh', display: 'flex', flexDirection: 'column', gap: 10, padding: 16, borderRadius: 12, background: themeTokens.bgCard, border: '1px solid ' + themeTokens.border, color: themeTokens.textPrimary }}
           >
-            <button
-              onClick={() => setExtensionTab('marketplace')}
-              style={{
-                flex: 1,
-                padding: '4px 0',
-                border: 'none',
-                borderRadius: 4,
-                background: extensionTab === 'marketplace' ? hexToRgba(accentColor, 0.25) : 'transparent',
-                color: extensionTab === 'marketplace' ? accentColor : themeTokens.textSecondary,
-                fontWeight: extensionTab === 'marketplace' ? 600 : 400,
-                fontSize: 10.5,
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              Marketplace
-            </button>
-            <button
-              onClick={() => setExtensionTab('installed')}
-              style={{
-                flex: 1,
-                padding: '4px 0',
-                border: 'none',
-                borderRadius: 4,
-                background: extensionTab === 'installed' ? hexToRgba(accentColor, 0.25) : 'transparent',
-                color: extensionTab === 'installed' ? accentColor : themeTokens.textSecondary,
-                fontWeight: extensionTab === 'installed' ? 600 : 400,
-                fontSize: 10.5,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 4,
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <span>Instaladas</span>
-              <span
-                style={{
-                  fontSize: 9,
-                  padding: '0 4px',
-                  borderRadius: 8,
-                  background: accentColor,
-                  color: accentTextColor,
-                  fontWeight: 700,
-                }}
-              >
-                {installedExtensions.length}
-              </span>
-            </button>
-          </div>
-
-          {/* Search Input (Border-free) */}
-          {extensionTab === 'marketplace' && (
-            <div
-              style={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                background: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-                borderRadius: 6,
-                border: 'none',
-                padding: '6px 8px',
-                gap: 6,
-                boxSizing: 'border-box',
-              }}
-            >
-              <Search size={12} color={themeTokens.textSecondary} />
-              <input
-                value={extensionSearchQuery}
-                onChange={(e) => {
-                  setExtensionSearchQuery(e.target.value);
-                  searchMarketplace(e.target.value);
-                }}
-                placeholder="Buscar no Open VSX Registry..."
-                style={{
-                  flex: 1,
-                  background: 'transparent',
-                  border: 'none',
-                  outline: 'none',
-                  color: themeTokens.textPrimary,
-                  fontSize: 11,
-                  fontFamily: 'inherit',
-                  minWidth: 0,
-                }}
-              />
-              {extensionSearchQuery && (
-                <button
-                  onClick={() => {
-                    setExtensionSearchQuery('');
-                    searchMarketplace('');
-                  }}
-                  style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 0 }}
-                >
-                  <X size={12} />
-                </button>
-              )}
+            <div style={{ fontSize: 13, fontWeight: 600 }}>
+              Fechar {closeConfirm.length === 1 ? `a porta :${closeConfirm[0].port}` : `${closeConfirm.length} portas`}?
             </div>
-          )}
-
-          {/* Category Filter Chips (Border-free) */}
-          {extensionTab === 'marketplace' && (
-            <div style={{ display: 'flex', gap: 4, overflowX: 'auto', width: '100%', paddingBottom: 2 }} className="no-scrollbar">
-              {['', 'Themes', 'Linters', 'Formatters', 'Programming Languages', 'Snippets'].map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => {
-                    setSelectedExtensionCategory(cat);
-                    searchMarketplace(extensionSearchQuery, cat);
-                  }}
-                  style={{
-                    padding: '3px 9px',
-                    borderRadius: 12,
-                    fontSize: 9.5,
-                    whiteSpace: 'nowrap',
-                    border: 'none',
-                    background:
-                      selectedExtensionCategory === cat
-                        ? hexToRgba(accentColor, 0.25)
-                        : isEffectiveDark
-                        ? 'rgba(255,255,255,0.06)'
-                        : 'rgba(0,0,0,0.06)',
-                    color: selectedExtensionCategory === cat ? accentColor : themeTokens.textSecondary,
-                    cursor: 'pointer',
-                    fontWeight: selectedExtensionCategory === cat ? 600 : 400,
-                  }}
-                >
-                  {cat === '' ? 'Todos' : cat}
-                </button>
+            <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>
+              Os processos que usam essas portas serão encerrados (kill -9). Trabalho não salvo neles será perdido.
+            </div>
+            <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {closeConfirm.map((p) => (
+                <div key={p.port} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                  <span style={{ fontWeight: 600 }}>:{p.port}</span>
+                  <span style={{ color: themeTokens.textSecondary }}>{projectLabel(p)}</span>
+                </div>
               ))}
             </div>
-          )}
-
-          {/* Extension Cards List (Border-free rows like VS Code) */}
-          <div
-            className="no-scrollbar"
-            style={{ flex: 1, width: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}
-          >
-            {isExtensionsLoading ? (
-              <div
-                style={{
-                  padding: '24px 0',
-                  textAlign: 'center',
-                  color: themeTokens.textSecondary,
-                  fontSize: 11,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                }}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                disabled={isClosingPorts}
+                onClick={() => setCloseConfirm(null)}
+                style={{ background: 'transparent', color: themeTokens.textSecondary, border: 'none', padding: '5px 10px', fontSize: 11, cursor: 'pointer' }}
               >
-                <RefreshCw size={14} className="spin-animate" />
-                <span>Carregando extensões...</span>
-              </div>
-            ) : (
-              (extensionTab === 'marketplace' ? marketplaceExtensions : installedExtensions).map((ext) => {
-                const isInstalled = installedExtensions.some(
-                  (i) => (i.namespace || '') === (ext.namespace || '') && i.name === ext.name
-                );
-                const installedItem = installedExtensions.find(
-                  (i) => (i.namespace || '') === (ext.namespace || '') && i.name === ext.name
-                );
-                const iconUrl = ext.files?.icon || ext.iconUrl;
-                const dCount = ext.downloadCount
-                  ? ext.downloadCount > 1000000
-                    ? `${(ext.downloadCount / 1000000).toFixed(1)}M`
-                    : ext.downloadCount > 1000
-                    ? `${(ext.downloadCount / 1000).toFixed(0)}k`
-                    : String(ext.downloadCount)
-                  : null;
-
-                return (
-                  <div
-                    key={(ext.namespace || '') + '.' + ext.name}
-                    onClick={() => onSelectExtension?.(ext)}
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 6,
-                      padding: '8px 10px',
-                      borderRadius: 8,
-                      background: 'transparent',
-                      border: 'none',
-                      transition: 'background 0.15s ease',
-                      cursor: 'pointer',
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)')}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                      {iconUrl ? (
-                        <img
-                          src={iconUrl}
-                          alt={ext.name}
-                          style={{ width: 36, height: 36, borderRadius: 6, objectFit: 'contain', flexShrink: 0 }}
-                          onError={(e) => {
-                            (e.currentTarget as HTMLElement).style.display = 'none';
-                          }}
-                        />
-                      ) : (
-                        <div
-                          style={{
-                            width: 36,
-                            height: 36,
-                            borderRadius: 6,
-                            background: hexToRgba(accentColor, 0.15),
-                            color: accentColor,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: 12,
-                            fontWeight: 700,
-                            flexShrink: 0,
-                          }}
-                        >
-                          {ext.name.substring(0, 2).toUpperCase()}
-                        </div>
-                      )}
-
-                      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
-                        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 4 }}>
-                          <span
-                            style={{
-                              fontSize: 12,
-                              fontWeight: 600,
-                              color: themeTokens.textPrimary,
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                            }}
-                          >
-                            {ext.displayName || ext.name}
-                          </span>
-                          {ext.version && (
-                            <span style={{ fontSize: 9.5, color: themeTokens.textMuted, flexShrink: 0 }}>
-                              v{ext.version}
-                            </span>
-                          )}
-                        </div>
-                        <span style={{ fontSize: 10.5, color: themeTokens.textSecondary, fontWeight: 500 }}>
-                          {ext.namespace || 'Community'}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: 10,
-                            color: themeTokens.textMuted,
-                            marginTop: 3,
-                            display: '-webkit-box',
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: 'vertical',
-                            overflow: 'hidden',
-                            lineHeight: 1.35,
-                          }}
-                        >
-                          {ext.description || 'Nenhuma descrição disponível'}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Footer (Border-free) */}
-                    <div
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        marginTop: 2,
-                        paddingTop: 2,
-                        border: 'none',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {dCount && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 9.5, color: themeTokens.textSecondary }}>
-                            <Download size={10} />
-                            <span>{dCount}</span>
-                          </div>
-                        )}
-                        {ext.averageRating ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 2, fontSize: 9.5, color: '#f59e0b' }}>
-                            <Star size={10} fill="#f59e0b" />
-                            <span>{ext.averageRating.toFixed(1)}</span>
-                          </div>
-                        ) : null}
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        {isInstalled ? (
-                          <>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onToggleExtensionEnabled(ext);
-                              }}
-                              title={installedItem?.enabled ? 'Desativar extensão' : 'Ativar extensão'}
-                              style={{
-                                background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
-                                border: 'none',
-                                borderRadius: 4,
-                                padding: '3px 7px',
-                                color: installedItem?.enabled ? '#10b981' : themeTokens.textMuted,
-                                fontSize: 9.5,
-                                fontWeight: 500,
-                                cursor: 'pointer',
-                              }}
-                            >
-                              {installedItem?.enabled ? 'Ativado' : 'Desativado'}
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onUninstallExtension(ext);
-                              }}
-                              title="Desinstalar extensão"
-                              style={{
-                                background: 'transparent',
-                                border: 'none',
-                                borderRadius: 4,
-                                padding: '3px 7px',
-                                color: '#ef4444',
-                                fontSize: 9.5,
-                                fontWeight: 500,
-                                cursor: 'pointer',
-                              }}
-                            >
-                              Desinstalar
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onInstallExtension(ext);
-                            }}
-                            style={{
-                              background: accentColor,
-                              color: accentTextColor,
-                              border: 'none',
-                              borderRadius: 4,
-                              padding: '4px 10px',
-                              fontSize: 10.5,
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 4,
-                              boxShadow: 'none',
-                            }}
-                          >
-                            <Download size={10} />
-                            <span>Instalar</span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
+                Cancelar
+              </button>
+              <button
+                disabled={isClosingPorts}
+                onClick={() => closePorts(closeConfirm)}
+                style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+              >
+                {isClosingPorts ? 'Fechando...' : 'Fechar'}
+              </button>
+            </div>
           </div>
         </div>
       )}
-
       {/* -------------------------------------------------- */}
       {/* 6. Testing Panel (VS Code & Antigravity Beaker)     */}
       {/* -------------------------------------------------- */}

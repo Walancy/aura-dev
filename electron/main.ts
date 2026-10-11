@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, nativeImage, desktopCapturer, session } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, nativeImage, desktopCapturer, session, Menu } from 'electron';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -12,7 +12,6 @@ import { NativeCommandsService } from './commands-service';
 import { quotaService } from './quota-service';
 import { modelService } from './model-service';
 import { gitService } from './git-service';
-import { extensionsService } from './extensions-service';
 import { chatHistoryService } from './chat-history-service';
 import { githubAuthService } from './github-auth-service';
 import { skillsService } from './skills-service';
@@ -64,6 +63,9 @@ let mainWindow: BrowserWindow | null = null;
 const ptyService = new NativePtyService();
 const fsService = new NativeFileSystemService();
 const projectsService = new NativeProjectsService();
+// stdout/stderr podem fechar (o app foi iniciado por um terminal que depois foi fechado): sem isto, um console.log vira "write EIO" e derruba o processo principal
+for (const stream of [process.stdout, process.stderr]) stream?.on?.('error', () => {});
+
 const portsService = new NativePortsService();
 const commandsService = new NativeCommandsService();
 const designRoomService = new DesignRoomService();
@@ -85,7 +87,26 @@ function createWindow() {
       sandbox: false,
       webSecurity: false,
       webviewTag: true,
+      // gerações de IA e terminais continuam em ritmo normal com a janela em segundo plano/minimizada
+      backgroundThrottling: false,
     },
+  });
+
+  // Corretor ortográfico: pt-BR e inglês; em campos editáveis, palavra errada ganha menu com sugestões
+  try {
+    mainWindow.webContents.session.setSpellCheckerLanguages(['pt-BR', 'en-US']);
+  } catch {}
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    if (!params.isEditable || !params.misspelledWord) return;
+    const wc = mainWindow?.webContents;
+    if (!wc) return;
+    const items: Electron.MenuItemConstructorOptions[] = params.dictionarySuggestions.slice(0, 6).map((suggestion) => ({
+      label: suggestion,
+      click: () => wc.replaceMisspelling(suggestion),
+    }));
+    if (items.length) items.push({ type: 'separator' });
+    items.push({ label: 'Adicionar ao dicionário', click: () => wc.session.addWordToSpellCheckerDictionary(params.misspelledWord) });
+    Menu.buildFromTemplate(items).popup();
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -268,6 +289,8 @@ ipcMain.handle('pty:setAllCwd', (_event, { cwd }) => {
   return { success: true };
 });
 
+ipcMain.handle('pty:foreground', () => ptyService.getForegroundProcesses());
+
 ipcMain.handle('pty:getRunningSessions', () => {
   return ptyService.getRunningSessions();
 });
@@ -303,7 +326,24 @@ ipcMain.handle('unsplash:image', async (_e, { query, width, height, key, index }
         }
       }
     }
-    const source = url ? 'unsplash' : 'picsum';
+    let wiki = false;
+    if (!url) {
+      // sem chave do Unsplash: busca no Wikimedia Commons (sem chave) pela descrição, em vez de uma foto aleatória
+      try {
+        const r = await fetch(`https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(`filetype:bitmap ${query}`)}&gsrnamespace=6&gsrlimit=20&prop=imageinfo&iiprop=url|size|mime&iiurlwidth=${w}&format=json`, { headers: { 'User-Agent': 'DevFlowDesktop/1.0 (design tool)' } });
+        if (r.ok) {
+          const j: any = await r.json();
+          const want = width / Math.max(1, height);
+          const hits = (Object.values(j.query?.pages || {}) as any[])
+            .map((p) => p.imageinfo?.[0])
+            .filter((x) => x?.thumburl && /jpeg/.test(x.mime || '') && x.width >= w / 2)
+            .sort((a, b) => Math.abs(Math.log(a.width / a.height / want)) - Math.abs(Math.log(b.width / b.height / want)));
+          const pick = hits[i % (hits.length || 1)];
+          if (pick) { url = pick.thumburl; wiki = true; }
+        }
+      } catch {}
+    }
+    const source = wiki ? 'wikimedia' : url ? 'unsplash' : 'picsum';
     if (!url) url = `https://picsum.photos/seed/${encodeURIComponent(`${query}-${i}`)}/${w}/${h}`;
     const res = await fetch(url, { redirect: 'follow' });
     if (!res.ok) return { error: `HTTP ${res.status}` };
@@ -332,6 +372,9 @@ ipcMain.handle('design:exportPdf', async (_e, { html, defaultName }: { html: str
     win.destroy();
   }
 });
+
+// Versão das funções do processo principal usadas pelo Design: o renderer detecta quando o app não foi reiniciado
+ipcMain.handle('app:capabilities', () => ({ designAi: 3, stockImage: true, tempImages: true, exportPdf: true }));
 
 // Figma: a API não aceita CORS no renderer, então as chamadas passam pelo main
 ipcMain.handle('figma:fetch', async (_e, { token, apiPath }: { token: string; apiPath: string }) => {
@@ -366,7 +409,8 @@ ipcMain.handle('figma:downloadImages', async (_e, { urls }: { urls: Record<strin
 // Imagem colada no terminal (Cmd+V): grava num temporário e devolve o caminho para a CLI de IA ler
 ipcMain.handle('fs:saveTempImage', (_event, { base64, ext }: { base64: string; ext?: string }) => {
   const os = require('node:os');
-  const dir = path.join(os.tmpdir(), 'devflow-pasted-images');
+  // caminho CURTO (ex.: /tmp/df/1.png): no terminal ele é exibido como [Imagem #N] e o texto seguinte não fica longe
+  const dir = process.platform === 'win32' ? path.join(os.tmpdir(), 'df') : '/tmp/df';
   fs.mkdirSync(dir, { recursive: true });
   // limpa imagens coladas há mais de 1 dia
   try {
@@ -376,9 +420,26 @@ ipcMain.handle('fs:saveTempImage', (_event, { base64, ext }: { base64: string; e
     }
   } catch {}
   const safeExt = (ext || 'png').replace(/[^a-z0-9]/gi, '').slice(0, 5) || 'png';
-  const filePath = path.join(dir, `pasted-${Date.now()}.${safeExt}`);
+  const used = new Set(fs.readdirSync(dir).map((f) => f.replace(/\.[^.]*$/, '')));
+  let n = 1;
+  while (used.has(String(n))) n++;
+  const filePath = path.join(dir, `${n}.${safeExt}`);
   fs.writeFileSync(filePath, Buffer.from(base64, 'base64'));
   return { path: filePath };
+});
+
+// Imagem/SVG do projeto como data URL (logos e ícones que a IA do Design usa nas telas). Limite de tamanho para não pesar o design.
+ipcMain.handle('fs:readFileDataUrl', (_event, { filePath, maxBytes }: { filePath: string; maxBytes?: number }) => {
+  try {
+    const st = fs.statSync(filePath);
+    if (!st.isFile() || st.size > (maxBytes || 900000)) return { error: 'arquivo grande demais' };
+    const ext = path.extname(filePath).slice(1).toLowerCase();
+    const mime: Record<string, string> = { svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', ico: 'image/x-icon' };
+    if (!mime[ext]) return { error: 'tipo não suportado' };
+    return { dataUrl: `data:${mime[ext]};base64,${fs.readFileSync(filePath).toString('base64')}` };
+  } catch (err: any) {
+    return { error: err?.message || 'falha ao ler' };
+  }
 });
 
 ipcMain.handle('fs:readFile', (_event, { filePath }) => {
@@ -500,7 +561,12 @@ ipcMain.handle('ports:scan', async () => {
   return { ports };
 });
 
+ipcMain.handle('ports:scanProject', async (_, workspacePath: string) => {
+  return { ports: await portsService.scanForWorkspace(workspacePath) };
+});
+
 ipcMain.handle('ports:kill', async (_, pid: string | number) => {
+  if (String(pid) === String(process.pid)) return { success: false, error: 'Este é o próprio app' };
   return await portsService.kill(pid);
 });
 
@@ -544,33 +610,9 @@ ipcMain.on('design-room:broadcast-state', (_event, { shapes }: { shapes: unknown
   designRoomService.broadcastState(shapes);
 });
 
-// Extensions Management via Open VSX Registry & Local Engine
-ipcMain.handle('extensions:search', async (_event, { query = '', size = 35, category = '' }) => {
-  return extensionsService.search(query, size, category);
-});
-
-ipcMain.handle('extensions:getDetails', async (_event, { namespace, name }: { namespace: string; name: string }) => {
-  return extensionsService.getDetails(namespace, name);
-});
-
-ipcMain.handle('extensions:install', async (_event, { namespace, name, version }: { namespace: string; name: string; version?: string }) => {
-  return extensionsService.install(namespace, name, version);
-});
-
-ipcMain.handle('extensions:uninstall', async (_event, { namespace, name }: { namespace: string; name: string }) => {
-  return extensionsService.uninstall(namespace, name);
-});
-
-ipcMain.handle('extensions:toggleEnabled', async (_event, { namespace, name }: { namespace: string; name: string }) => {
-  return extensionsService.toggleEnabled(namespace, name);
-});
-
-ipcMain.handle('extensions:getInstalled', async () => {
-  return extensionsService.getInstalled();
-});
 
 // Execuções diretas de CLI em andamento, por diretório de projeto (vários projetos podem gerar ao mesmo tempo)
-const activeDirectCliRuns = new Map<string, { child: any; cancel: () => void }>();
+const activeDirectCliRuns = new Map<string, { child: any; cancel: () => void; streamId?: string }>();
 let directRunSeq = 0;
 
 interface ActivePromptEntry {
@@ -938,7 +980,7 @@ ipcMain.handle('ai:checkClis', async () => {
   };
 });
 
-ipcMain.handle('ai:cancel', async (_event, runId?: string, cwd?: string) => {
+ipcMain.handle('ai:cancel', async (_event, runId?: string, cwd?: string, streamId?: string) => {
   let cancelled = false;
   if (runId) {
     cancelled = orchestratorService.cancel(runId);
@@ -976,6 +1018,7 @@ ipcMain.handle('ai:cancel', async (_event, runId?: string, cwd?: string) => {
     // Com cwd cancela só a execução daquele projeto; sem cwd, todas (comportamento anterior)
     for (const [key, run] of Array.from(activeDirectCliRuns.entries())) {
       if (cwd && key.split('\u0000')[0] !== cwd) continue;
+      if (streamId && run.streamId !== streamId) continue; // cancela só aquela execução (gerações em paralelo no mesmo projeto)
       run.cancel();
       cancelled = true;
     }
@@ -1061,12 +1104,14 @@ ipcMain.handle('ai:runCli', async (_event, {
   orchestratorConfig,
   permissions,
   streamText,
+  streamId,
 }: {
   cliCmd: string;
   prompt: string;
   model?: string;
   cwd?: string;
   streamText?: boolean;
+  streamId?: string;
   additionalDirs?: string[];
   useOrchestrator?: boolean;
   orchestratorConfig?: any;
@@ -1225,6 +1270,7 @@ ipcMain.handle('ai:runCli', async (_event, {
     const runKey = `${targetCwd}\u0000${++directRunSeq}`;
     activeDirectCliRuns.set(runKey, {
       child,
+      streamId,
       cancel: () => {
         isCancelled = true;
         activeDirectCliRuns.delete(runKey);
@@ -1240,7 +1286,7 @@ ipcMain.handle('ai:runCli', async (_event, {
         provider: cliCmd,
         kind: 'progress',
         message: 'stdout',
-        payload: { text },
+        payload: { text, streamId },
         timestamp_ms: Date.now(),
       });
     const jsonStream = (cliCmd === 'claude' || cliCmd === 'agy') && !!streamText;

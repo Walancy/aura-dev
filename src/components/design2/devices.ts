@@ -23,7 +23,7 @@ export const DEVICE_PRESETS: DevicePreset[] = [
 ];
 
 /** Margens seguras de telas com ilha/notch (topo: barra de status; base: indicador home). */
-export const MOBILE_SAFE = { top: 54, bottom: 34 };
+export const MOBILE_SAFE = { top: 56, bottom: 36 };
 
 export interface DeviceOptions {
   idGen: () => string;
@@ -83,7 +83,7 @@ export function buildDevice(spec: { name: string; width: number; height: number;
     ({ rotation: 0, fill: '#000000', stroke: 'none', strokeWidth: 0, opacity: 1, visible: true, pageId: o.pageId, ...e }) as Shape;
 
   if (kind === 'plain') {
-    const frame = base({ id: screenId, type: 'frame', name: o.name || spec.name, x: o.x, y: o.y, width: w, height: h, zIndex: o.z, fill: bg, cornerRadius: spec.radius || undefined, clipContent: spec.radius ? true : undefined });
+    const frame = base({ id: screenId, type: 'frame', name: o.name || spec.name, x: o.x, y: o.y, width: w, height: h, zIndex: o.z, fill: bg, cornerRadius: spec.radius || undefined, clipContent: true }); // sombras, brilhos e blur dos filhos não vazam da tela
     return { shapes: [frame], rootId: screenId, screenId, screenX: o.x, screenY: o.y, rootWidth: w, rootHeight: h, zNext: o.z + 1 };
   }
 

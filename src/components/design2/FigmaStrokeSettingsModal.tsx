@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, FlipHorizontal, GripVertical } from 'lucide-react';
 import { Shape } from './types';
+import { WIDTH_PROFILE_LABEL, type WidthProfile } from './widthProfile';
 import ScrubbableNumberInput from './ScrubbableNumberInput';
 
 interface FigmaStrokeSettingsModalProps {
@@ -248,21 +249,41 @@ export default function FigmaStrokeSettingsModal({
             </div>
           )}
 
-          {/* Width profile */}
+          {shape.strokeStyle === 'dashed' && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <span style={{ fontSize: 11, color: textSecondary }}>Padrão</span>
+              <input
+                defaultValue={shape.strokeDashArray || ''}
+                placeholder="ex.: 8 4 2 4"
+                title="Números separados por espaço: traço, vão, traço, vão… (vazio usa Dash / Gap)"
+                onKeyDown={(e) => e.stopPropagation()}
+                onBlur={(e) => onChange({ strokeDashArray: e.target.value.trim() || undefined })}
+                style={{ ...inputStyle, width: 140, color: textPrimary, fontSize: 11, border: 'none', outline: 'none' }}
+              />
+            </div>
+          )}
+
+          {/* Width profile: vale para caminhos (caneta/lápis) */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 11, color: textSecondary }}>Width profile</span>
             <div style={{ ...inputStyle, width: 140, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ height: 4, width: 85, background: textPrimary, borderRadius: 2 }} />
+              <select
+                value={shape.widthProfile || 'uniform'}
+                disabled={shape.type !== 'pen' && shape.type !== 'pencil'}
+                title={shape.type === 'pen' || shape.type === 'pencil' ? 'Perfil de largura do traço' : 'Só para caminhos (caneta/lápis)'}
+                onChange={(e) => onChange({ widthProfile: e.target.value === 'uniform' ? undefined : (e.target.value as WidthProfile) })}
+                style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', color: textPrimary, fontSize: 11, cursor: 'pointer', outline: 'none' }}
+              >
+                {(Object.keys(WIDTH_PROFILE_LABEL) as WidthProfile[]).map((k) => <option key={k} value={k} style={{ background: bgCard, color: textPrimary }}>{WIDTH_PROFILE_LABEL[k]}</option>)}
+              </select>
               <button
                 type="button"
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: textSecondary,
-                  cursor: 'pointer',
-                  padding: 2,
-                  display: 'flex',
+                onClick={() => {
+                  const flip: Record<string, WidthProfile | undefined> = { 'taper-end': 'taper-start', 'taper-start': 'taper-end' };
+                  const next = flip[shape.widthProfile || ''];
+                  if (next) onChange({ widthProfile: next });
                 }}
+                style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', padding: 2, display: 'flex' }}
                 title="Inverter perfil"
               >
                 <FlipHorizontal size={12} />

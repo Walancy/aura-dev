@@ -1,5 +1,7 @@
 import type { FillItem, Shape } from './types';
 import { descendantIds } from './constraints';
+import { lineSegments } from './richText';
+import { featureSettings, variationSettings } from './fontCss';
 import { cssGradient, hexWithAlpha, isGradientFill } from './gradient';
 
 type Style = Record<string, string | number>;
@@ -9,6 +11,8 @@ interface CodeNode {
   name: string;
   style: Style;
   text?: string;
+  /** texto com estilo por trecho: linhas de segmentos, cada um com o seu estilo */
+  rich?: Array<Array<{ text: string; style: Style; href?: string }>>;
   src?: string;
   svg?: string; // conteúdo interno do <svg>
   viewBox?: string;
@@ -52,16 +56,21 @@ function alignCss(frame: Shape): Style {
     'bottom-right': ['flex-end', 'flex-end'],
   };
   const [h, v] = map[frame.layoutAlign || 'top-left'] || map['top-left'];
-  const horizontal = frame.layoutFlow === 'horizontal';
+  const horizontal = frame.layoutFlow !== 'vertical';
   return { justifyContent: horizontal ? h : v, alignItems: horizontal ? v : h };
 }
 
+/** Auto layout em qualquer fluxo: horizontal, vertical, wrap ('freeform') ou grid */
+const isFlow = (s?: Shape | null) => Boolean(s?.hasAutoLayout && (s.layoutFlow === 'horizontal' || s.layoutFlow === 'vertical' || s.layoutFlow === 'freeform' || s.layoutFlow === 'grid'));
+
 function toNode(all: Shape[], s: Shape, parent: Shape | null): CodeNode {
-  const autoParent = Boolean(parent?.hasAutoLayout && (parent.layoutFlow === 'horizontal' || parent.layoutFlow === 'vertical'));
+  const autoParent = isFlow(parent);
   const style: Style = {};
   if (autoParent) {
     style.flexShrink = 0;
-    if ((parent!.layoutFlow === 'horizontal' ? s.widthMode : s.heightMode) === 'fill') style.flex = 1;
+    if (parent!.layoutFlow === 'horizontal' || parent!.layoutFlow === 'vertical') {
+      if ((parent!.layoutFlow === 'horizontal' ? s.widthMode : s.heightMode) === 'fill') style.flex = 1;
+    }
   } else {
     style.position = 'absolute';
     style.left = px(s.x - (parent?.x ?? 0));
@@ -69,6 +78,12 @@ function toNode(all: Shape[], s: Shape, parent: Shape | null): CodeNode {
   }
   style.width = px(s.width);
   style.height = px(s.height);
+  if (autoParent) {
+    if (s.minW) style.minWidth = px(s.minW);
+    if (s.maxW) style.maxWidth = px(s.maxW);
+    if (s.minH) style.minHeight = px(s.minH);
+    if (s.maxH) style.maxHeight = px(s.maxH);
+  }
   if (s.opacity !== undefined && s.opacity < 1) style.opacity = num(s.opacity);
   if (s.rotation) style.transform = `rotate(${num(s.rotation)}deg)`;
   Object.assign(style, effectsCss(s));
@@ -91,9 +106,26 @@ function toNode(all: Shape[], s: Shape, parent: Shape | null): CodeNode {
         lineHeight: 1.25,
         whiteSpace: 'pre-wrap',
       };
+      const fvs = variationSettings(s.fontVariations);
+      const ffs = featureSettings(s.fontFeatures);
+      if (fvs) node.style.fontVariationSettings = fvs;
+      if (ffs) node.style.fontFeatureSettings = ffs;
       if (s.letterSpacing) node.style.letterSpacing = typeof s.letterSpacing === 'number' ? px(s.letterSpacing) : String(s.letterSpacing);
       delete node.style.height;
       delete node.style.border;
+      if (s.runs?.length && !s.listStyle && s.type === 'text') {
+        node.rich = lineSegments(s.text || '', s.runs).map((segs) =>
+          segs.map((seg) => {
+            const st: Style = {};
+            if (seg.style.fontWeight !== undefined) st.fontWeight = seg.style.fontWeight as string | number;
+            if (seg.style.fontStyle) st.fontStyle = seg.style.fontStyle;
+            if (seg.style.fill) st.color = seg.style.fill;
+            if (seg.style.fontSize) st.fontSize = px(seg.style.fontSize);
+            if (seg.style.textDecoration || seg.style.href) st.textDecoration = seg.style.textDecoration || 'underline';
+            return { text: seg.text, style: st, ...(seg.style.href ? { href: seg.style.href } : {}) };
+          })
+        );
+      }
       return node;
     }
     case 'ellipse':
@@ -142,8 +174,16 @@ function toNode(all: Shape[], s: Shape, parent: Shape | null): CodeNode {
 
   const bg = fillCss(s);
   if (bg && s.type !== 'group') style.background = bg;
-  if (s.hasAutoLayout && (s.layoutFlow === 'horizontal' || s.layoutFlow === 'vertical')) {
-    Object.assign(style, { display: 'flex', flexDirection: s.layoutFlow === 'horizontal' ? 'row' : 'column', gap: px(s.layoutGap ?? 0), boxSizing: 'border-box', ...alignCss(s) });
+  if (isFlow(s)) {
+    const gap = s.layoutGap ?? 0;
+    const rowGap = s.layoutCounterGap ?? gap;
+    if (s.layoutFlow === 'grid') {
+      Object.assign(style, { display: 'grid', gridTemplateColumns: `repeat(${Math.max(1, s.gridCols || 3)}, ${s.widthMode === 'hug' ? 'auto' : '1fr'})`, gap: `${px(rowGap)} ${px(gap)}`, boxSizing: 'border-box', ...alignCss(s) });
+    } else if (s.layoutFlow === 'freeform') {
+      Object.assign(style, { display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: `${px(rowGap)} ${px(gap)}`, boxSizing: 'border-box', ...alignCss(s) });
+    } else {
+      Object.assign(style, { display: 'flex', flexDirection: s.layoutFlow === 'horizontal' ? 'row' : 'column', gap: px(gap), boxSizing: 'border-box', ...alignCss(s) });
+    }
     const pt = s.independentPadding ? s.paddingTop ?? 0 : s.paddingVertical ?? 0;
     const pr = s.independentPadding ? s.paddingRight ?? 0 : s.paddingHorizontal ?? 0;
     const pb = s.independentPadding ? s.paddingBottom ?? 0 : s.paddingVertical ?? 0;
@@ -184,6 +224,7 @@ export function generateReact(all: Shape[], root: Shape): string {
     const style = `{{ ${Object.entries(n.style).map(([k, v]) => `${k}: ${typeof v === 'number' ? v : JSON.stringify(v)}`).join(', ')} }}`;
     if (n.tag === 'img') return `${pad}<img src=${JSON.stringify(n.src)} alt=${JSON.stringify(n.name)} style=${style} />`;
     if (n.tag === 'svg') return `${pad}<svg viewBox="${n.viewBox}" style=${style} dangerouslySetInnerHTML={{ __html: ${JSON.stringify(n.svg)} }} />`;
+    if (n.rich) return `${pad}<div style=${style}>${n.rich.map((line) => line.map((g) => (Object.keys(g.style).length ? `<${g.href ? `a href=${JSON.stringify(g.href)}` : 'span'} style={{ ${Object.entries(g.style).map(([k, v]) => `${k}: ${typeof v === 'number' ? v : JSON.stringify(v)}`).join(', ')} }}>${jsx(g.text)}</${g.href ? 'a' : 'span'}>` : jsx(g.text))).join('')).join('<br />')}</div>`;
     if (n.text !== undefined) return `${pad}<div style=${style}>${jsx(n.text).split('\n').join('<br />')}</div>`;
     if (n.children.length === 0) return `${pad}<div style=${style} />`;
     return `${pad}<div style=${style}>\n${n.children.map((c) => render(c, depth + 1)).join('\n')}\n${pad}</div>`;
@@ -197,6 +238,7 @@ export function generateHtml(all: Shape[], root: Shape): string {
     const style = Object.entries(n.style).map(([k, v]) => `${kebab(k)}: ${v}`).join('; ');
     if (n.tag === 'img') return `${pad}<img src="${esc(n.src || '')}" alt="${esc(n.name)}" style="${style}">`;
     if (n.tag === 'svg') return `${pad}<svg viewBox="${n.viewBox}" style="${style}">${n.svg}</svg>`;
+    if (n.rich) return `${pad}<div style="${style}">${n.rich.map((line) => line.map((g) => (Object.keys(g.style).length ? `<${g.href ? `a href="${esc(g.href)}"` : 'span'} style="${Object.entries(g.style).map(([k, v]) => `${kebab(k)}: ${v}`).join('; ')}">${esc(g.text)}</${g.href ? 'a' : 'span'}>` : esc(g.text))).join('')).join('<br>')}</div>`;
     if (n.text !== undefined) return `${pad}<div style="${style}">${esc(n.text).split('\n').join('<br>')}</div>`;
     if (n.children.length === 0) return `${pad}<div style="${style}"></div>`;
     return `${pad}<div style="${style}">\n${n.children.map((c) => render(c, depth + 1)).join('\n')}\n${pad}</div>`;
@@ -248,8 +290,8 @@ export function generateFlutter(all: Shape[], root: Shape): string {
   const render = (s: Shape, parent: Shape | null, depth: number): string => {
     const pad = '  '.repeat(depth);
     const kids = all.filter((c) => c.parentId === s.id && c.visible !== false).sort((a, b) => a.zIndex - b.zIndex);
-    const auto = Boolean(s.hasAutoLayout && (s.layoutFlow === 'horizontal' || s.layoutFlow === 'vertical'));
-    const autoParent = Boolean(parent?.hasAutoLayout && (parent.layoutFlow === 'horizontal' || parent.layoutFlow === 'vertical'));
+    const auto = isFlow(s);
+    const autoParent = isFlow(parent);
     let body: string;
     if (s.type === 'text' || s.type === 'text-path') {
       const weight = Number(s.fontWeight) >= 100 ? `FontWeight.w${Math.round(Number(s.fontWeight) / 100) * 100}` : 'FontWeight.w400';
@@ -260,15 +302,18 @@ export function generateFlutter(all: Shape[], root: Shape): string {
       let child = '';
       if (kids.length > 0) {
         if (auto) {
-          const dir = s.layoutFlow === 'horizontal' ? 'Row' : 'Column';
+          const dir = s.layoutFlow === 'horizontal' ? 'Row' : s.layoutFlow === 'vertical' ? 'Column' : s.layoutFlow === 'grid' ? 'GridView.count' : 'Wrap';
           const gap = num(s.layoutGap ?? 0);
           const items = kids.map((k) => render(k, s, depth + 2));
-          const spaced = gap ? items.flatMap((it, i) => (i === 0 ? [it] : [`${pad}      SizedBox(${s.layoutFlow === 'horizontal' ? 'width' : 'height'}: ${gap}),`, it])) : items;
+          const rows = s.layoutFlow === 'freeform' || s.layoutFlow === 'grid';
+          const rowGapNum = num(s.layoutCounterGap ?? s.layoutGap ?? 0);
+          const extra = !rows ? '' : s.layoutFlow === 'grid' ? `${pad}      crossAxisCount: ${Math.max(1, s.gridCols || 3)},\n${pad}      shrinkWrap: true,\n${pad}      crossAxisSpacing: ${gap},\n${pad}      mainAxisSpacing: ${rowGapNum},\n` : `${pad}      spacing: ${gap},\n${pad}      runSpacing: ${rowGapNum},\n`;
+          const spaced = gap && !rows ? items.flatMap((it, i) => (i === 0 ? [it] : [`${pad}      SizedBox(${s.layoutFlow === 'horizontal' ? 'width' : 'height'}: ${gap}),`, it])) : items;
           const pt = s.independentPadding ? s.paddingTop ?? 0 : s.paddingVertical ?? 0;
           const pr = s.independentPadding ? s.paddingRight ?? 0 : s.paddingHorizontal ?? 0;
           const pb = s.independentPadding ? s.paddingBottom ?? 0 : s.paddingVertical ?? 0;
           const pl = s.independentPadding ? s.paddingLeft ?? 0 : s.paddingHorizontal ?? 0;
-          child = `${pad}  child: Padding(\n${pad}    padding: EdgeInsets.fromLTRB(${num(pl)}, ${num(pt)}, ${num(pr)}, ${num(pb)}),\n${pad}    child: ${dir}(\n${pad}      children: [\n${spaced.join('\n')}\n${pad}      ],\n${pad}    ),\n${pad}  ),\n`;
+          child = `${pad}  child: Padding(\n${pad}    padding: EdgeInsets.fromLTRB(${num(pl)}, ${num(pt)}, ${num(pr)}, ${num(pb)}),\n${pad}    child: ${dir}(\n${extra}${pad}      children: [\n${spaced.join('\n')}\n${pad}      ],\n${pad}    ),\n${pad}  ),\n`;
         } else {
           child = `${pad}  child: Stack(\n${pad}    clipBehavior: Clip.${s.clipContent ? 'hardEdge' : 'none'},\n${pad}    children: [\n${kids.map((k) => render(k, s, depth + 3)).join('\n')}\n${pad}    ],\n${pad}  ),\n`;
         }
@@ -283,6 +328,7 @@ export function generateFlutter(all: Shape[], root: Shape): string {
   return `import 'package:flutter/material.dart';\n\nclass ${componentName(root.name || 'Tela')} extends StatelessWidget {\n  const ${componentName(root.name || 'Tela')}({super.key});\n\n  @override\n  Widget build(BuildContext context) {\n    return ${render(root, null, 2).trimStart()};\n  }\n}\n`;
 }
 
-export type CodeTarget = 'react' | 'html' | 'flutter';
-export const generateCode = (target: CodeTarget, all: Shape[], root: Shape) => (target === 'react' ? generateReact(all, root) : target === 'html' ? generateHtml(all, root) : generateFlutter(all, root));
+export type CodeTarget = 'react' | 'html' | 'flutter' | 'swiftui' | 'compose';
+// SwiftUI e Compose ficam em codegenNative.ts (importa daqui `componentName`); o seletor de código usa generateCodeAny
+export const generateCode = (target: 'react' | 'html' | 'flutter', all: Shape[], root: Shape) => (target === 'react' ? generateReact(all, root) : target === 'html' ? generateHtml(all, root) : generateFlutter(all, root));
 export { descendantIds };

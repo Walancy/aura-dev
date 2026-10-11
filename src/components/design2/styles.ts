@@ -1,8 +1,14 @@
 import type { DesignStyle, Shape } from './types';
 
+/** Campo do shape que guarda o estilo aplicado, por tipo de estilo */
+export const STYLE_FIELD = { color: 'fillStyleId', text: 'textStyleId', effect: 'effectStyleId', grid: 'gridStyleId' } as const;
+export type StyleKind = keyof typeof STYLE_FIELD;
+
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
 /** Propaga os estilos do documento para os shapes que os usam (cor do preenchimento e tipografia). */
 export function applyStyles(shapes: Shape[], styles: DesignStyle[]): Shape[] {
-  if (styles.length === 0 || !shapes.some((s) => s.fillStyleId || s.textStyleId)) return shapes;
+  if (styles.length === 0 || !shapes.some((s) => s.fillStyleId || s.textStyleId || s.effectStyleId || s.gridStyleId)) return shapes;
   const byId = new Map(styles.map((st) => [st.id, st]));
   let changed = false;
   const out = shapes.map((s) => {
@@ -29,6 +35,10 @@ export function applyStyles(shapes: Shape[], styles: DesignStyle[]): Shape[] {
       if (textStyle.lineHeight !== undefined && s.lineHeight !== textStyle.lineHeight) patch.lineHeight = textStyle.lineHeight;
       if (Object.keys(patch).length) next = { ...next, ...patch };
     }
+    const effectStyle = s.effectStyleId ? byId.get(s.effectStyleId) : undefined;
+    if (effectStyle?.kind === 'effect' && !sameJson(s.effects || [], effectStyle.effects)) next = { ...next, effects: effectStyle.effects.map((e) => ({ ...e })) };
+    const gridStyle = s.gridStyleId ? byId.get(s.gridStyleId) : undefined;
+    if (gridStyle?.kind === 'grid' && !sameJson(s.layoutGrids || [], gridStyle.grids)) next = { ...next, layoutGrids: gridStyle.grids.map((g) => ({ ...g })) };
     if (next !== s) changed = true;
     return next;
   });
@@ -51,4 +61,17 @@ export function textStyleFromShape(shape: Shape, id: string, name: string): Desi
     letterSpacing: shape.letterSpacing,
     lineHeight: shape.lineHeight,
   };
+}
+
+export function effectStyleFromShape(shape: Shape, id: string, name: string): DesignStyle {
+  return { id, name, kind: 'effect', effects: (shape.effects || []).map((e) => ({ ...e })) };
+}
+
+export function gridStyleFromShape(shape: Shape, id: string, name: string): DesignStyle {
+  return { id, name, kind: 'grid', grids: (shape.layoutGrids || []).map((g) => ({ ...g })) };
+}
+
+/** Cria o estilo do tipo pedido a partir do shape. */
+export function styleFromShape(kind: StyleKind, shape: Shape, id: string, name: string): DesignStyle {
+  return kind === 'color' ? colorStyleFromShape(shape, id, name) : kind === 'text' ? textStyleFromShape(shape, id, name) : kind === 'effect' ? effectStyleFromShape(shape, id, name) : gridStyleFromShape(shape, id, name);
 }

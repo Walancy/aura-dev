@@ -193,6 +193,25 @@ export const ProjectHeaderIcon: React.FC<ProjectHeaderIconProps> = ({
   return <FolderGit2 size={size - 2.5} color={accentColor} style={{ flexShrink: 0 }} />;
 };
 
+/** Bolinha verde de "projeto em execução" com tooltip imediato ao passar o mouse */
+const RunningDot: React.FC<{ tip: string; isDark: boolean }> = ({ tip, isDark }) => {
+  const [hover, setHover] = useState(false);
+  return (
+    <span
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 14, flexShrink: 0 }}
+    >
+      <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 6px rgba(34, 197, 94, 0.7)' }} />
+      {hover && (
+        <span style={{ position: 'absolute', right: 'calc(100% + 6px)', top: '50%', transform: 'translateY(-50%)', background: isDark ? '#0b0b0c' : '#1f1f1f', color: '#f5f5f5', fontSize: 11, fontWeight: 500, padding: '5px 9px', borderRadius: 6, boxShadow: '0 6px 18px rgba(0,0,0,0.45)', whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 50 }}>
+          {tip}
+        </span>
+      )}
+    </span>
+  );
+};
+
 export interface HeaderProjectSelectorProps {
   workspacePath: string;
   onSelectWorkspace: (dirPath: string, repoName?: string) => Promise<void> | void;
@@ -213,6 +232,8 @@ export interface HeaderProjectSelectorProps {
   projectRuntimes?: Record<string, ProjectRuntimeInfo>;
   /** Status da IA por caminho de projeto (IDE + CLI) */
   projectAiStatus?: Record<string, ProjectAiStatus>;
+  /** na tela do CLI cada terminal já mostra sua IA: esconde o ícone da IA do projeto */
+  hideAiProvider?: boolean;
 }
 
 export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
@@ -226,6 +247,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
   onProjectsListChange,
   projectRuntimes,
   projectAiStatus,
+  hideAiProvider,
 }) => {
   // Dropdown visibility states
   const [isOrgOpen, setIsOrgOpen] = useState(false);
@@ -681,12 +703,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
   const renderProjectIndicator = (status: ProjectAiStatus | null, runtime: ProjectRuntimeInfo | null, size = 13) => {
     if (status) return renderAiStatusBadge(status, size);
     if (!runtime?.isRunning) return null;
-    return (
-      <span
-        title={`Projeto em execução: ${runtime.runningProcessCount || 1} processo(s) rodando (terminal ou servidor)`}
-        style={{ width: 7, height: 7, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 6px rgba(34, 197, 94, 0.7)', flexShrink: 0 }}
-      />
-    );
+    return <RunningDot tip={`Projeto em execução: ${runtime.runningProcessCount || 1} processo(s) rodando (terminal ou servidor)`} isDark={isEffectiveDark} />;
   };
 
   const activeProjectRuntime = useMemo(() => {
@@ -1064,7 +1081,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
           {/* IA do projeto atual + UM único indicador: estado da IA ou, se não houver, processo rodando */}
           {(activeProjectRuntime?.activeAiProvider || activeProjectRuntime?.isRunning || (workspacePath && getProjectAiStatus(workspacePath))) && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 2 }}>
-              {activeProjectRuntime?.activeAiProvider && (
+              {!hideAiProvider && activeProjectRuntime?.activeAiProvider && (
                 <span title={`IA do projeto: ${activeProjectRuntime.activeAiProvider}`} style={{ display: 'flex' }}>
                   {renderAiIcon(activeProjectRuntime.activeAiProvider, 13)}
                 </span>
@@ -1307,7 +1324,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
                           padding: '7px 10px',
                           borderRadius: 6,
                           background: isActive ? `${accentColor}18` : 'transparent',
-                          border: isActive ? `1px solid ${accentColor}44` : '1px solid transparent',
+                          border: '1px solid transparent',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
@@ -1374,7 +1391,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
                             const pAiStatus = getProjectAiStatus(project);
                             return (
                               <>
-                                {pRuntime?.activeAiProvider && (
+                                {!hideAiProvider && pRuntime?.activeAiProvider && (
                                   <div
                                     title={`IA ativa: ${pRuntime.activeAiProvider}${pRuntime.isAiRunning ? ' (executando agora)' : ''}`}
                                     style={{

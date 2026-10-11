@@ -36,3 +36,25 @@ describe('exportDesign', () => {
     expect(text.slice(off1, off1 + 7)).toBe('1 0 obj');
   });
 });
+
+it('raio maior que a metade do lado vira pílula (sem elipse)', async () => {
+  const { buildExportSvg: build } = await import('../src/components/design2/exportDesign');
+  const mk = (o: any) => ({ rotation: 0, fill: '#111', stroke: 'none', strokeWidth: 0, opacity: 1, zIndex: 1, visible: true, pageId: 'p', ...o });
+  const shapes = [mk({ id: 'f', type: 'frame', x: 0, y: 0, width: 200, height: 100 }), mk({ id: 'p', type: 'frame', parentId: 'f', x: 10, y: 10, width: 100, height: 40, cornerRadius: 999 })] as any[];
+  const { svg } = build(shapes, shapes[0], 1);
+  expect(svg).toContain('rx="20"'); // min(999, 100/2, 40/2)
+  expect(svg).not.toContain('rx="999"');
+});
+
+describe('ids únicos no SVG', () => {
+  it('prefixa ids, url(#) e href="#" juntos', async () => {
+    const { uniquifySvgIds } = await import('../src/components/design2/exportDesign');
+    const svg = '<svg><defs><clipPath id="c1"/><linearGradient id="g"/></defs><rect clip-path="url(#c1)" fill="url(#g)"/><use href="#g"/></svg>';
+    const out = uniquifySvgIds(svg, 'p1');
+    expect(out).toContain('id="p1-c1"');
+    expect(out).toContain('clip-path="url(#p1-c1)"');
+    expect(out).toContain('fill="url(#p1-g)"');
+    expect(out).toContain('href="#p1-g"');
+    expect(out).not.toContain('id="c1"');
+  });
+});

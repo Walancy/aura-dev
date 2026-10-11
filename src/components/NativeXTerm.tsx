@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Terminal as XTerm } from '@xterm/xterm';
+import { Terminal as XTerm, type IDecoration, type IMarker } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
@@ -8,6 +8,25 @@ import { hexToRgba } from '../utils/color';
 const TERMINAL_FONT_FAMILY = '"JetBrains Mono", Menlo, Monaco, "Courier New", monospace';
 
 // Real Native XTerm.js Terminal connected to node-pty
+const liveTerms = new Map<string, XTerm>();
+
+/** Rola o terminal até a primeira vez que o texto aparece e o destaca por instantes. Devolve false se não achar. */
+export function scrollTerminalToText(sessionId: string, pattern: RegExp): boolean {
+  const term = liveTerms.get(sessionId);
+  if (!term) return false;
+  const buf = term.buffer.active;
+  for (let row = 0; row < buf.length; row++) {
+    const text = buf.getLine(row)?.translateToString(true) ?? '';
+    const m = pattern.exec(text);
+    if (!m) continue;
+    term.scrollToLine(Math.max(0, row - 2));
+    term.select(m.index, row, m[0].length);
+    setTimeout(() => term.clearSelection(), 1800);
+    return true;
+  }
+  return false;
+}
+
 export interface NativeXTermProps {
   sessionId: string;
   sessionType?: string;
@@ -26,6 +45,8 @@ export interface NativeXTermProps {
   alwaysVisible?: boolean;
   onOpenUrl?: (url: string) => void;
   onServerUrlDetected?: (url: string) => void;
+  /** fundo transparente: deixa aparecer o degradê/logo atrás do terminal */
+  transparent?: boolean;
 }
 
 export const NativeXTerm: React.FC<NativeXTermProps> = ({
@@ -33,6 +54,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
   sessionType = 'zsh',
   cwd,
   isActive,
+  transparent = false,
   initialCommand,
   accentColor = '#FF6A00',
   isDark = true,
@@ -108,7 +130,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
       scrollback,
       fontFamily: TERMINAL_FONT_FAMILY,
       theme: {
-        background: isDark ? '#101010' : '#ffffff',
+        background: transparent ? 'rgba(0, 0, 0, 0)' : isDark ? '#101010' : '#ffffff',
         foreground: isDark ? '#dcdcdc' : '#1f1f1f',
         cursor: accentColor,
         selectionBackground: hexToRgba(accentColor, 0.35),
@@ -132,6 +154,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
       // Sem convertEol: o PTY já entrega \r\n. Converter \n quebrava CLIs de tela cheia (Ink/TUI),
       // que usam \n para mover o cursor e ficavam com texto deslocado e restos na tela.
       allowProposedApi: true,
+      allowTransparency: transparent,
     });
 
     const fitAddon = new FitAddon();
@@ -160,6 +183,9 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
     term.focus();
 
     // Garante que Backspace, Delete e atalhos de apagar funcionem com precisão no CLI
+    // apagar seleção: segura a saída por instantes e escreve de uma vez, para o cursor não "andar" até a seleção
+    const hold = { until: 0, buf: '', timer: 0 as any };
+    const flushHold = () => { hold.timer = 0; if (hold.buf) { const d = hold.buf; hold.buf = ''; term.write(d); } };
     term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       // Deixar Cmd+C / Ctrl+C copiar seleção nativa quando houver texto selecionado
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'c' || e.key === 'C')) {
@@ -170,6 +196,24 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
       // Deixar Cmd+V / Ctrl+V colar nativamente
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'v' || e.key === 'V')) {
         return false;
+      }
+
+      // Backspace/Delete com texto selecionado na linha de comando: apaga a seleção (vai até o fim dela com as setas e apaga N caracteres)
+      if (e.type === 'keydown' && (e.key === 'Backspace' || e.key === 'Delete') && !e.metaKey && !e.altKey && !e.ctrlKey && term.hasSelection()) {
+        const sel = term.getSelectionPosition();
+        const buf = term.buffer.active;
+        const pty = window.electronAPI?.pty;
+        if (pty && sel && sel.start.y === sel.end.y && sel.start.y === buf.baseY + buf.cursorY) {
+          const len = sel.end.x - sel.start.x;
+          const move = sel.end.x - buf.cursorX;
+          if (len > 0) {
+            hold.until = Date.now() + 120;
+            pty.write(sessionId, (move >= 0 ? '\x1b[C' : '\x1b[D').repeat(Math.abs(move)) + '\x7f'.repeat(len));
+            term.clearSelection();
+            e.preventDefault();
+            return false;
+          }
+        }
       }
 
       // Atalhos de apagar:
@@ -224,6 +268,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
     });
 
     termRef.current = term;
+    liveTerms.set(sessionId, term);
     fitAddonRef.current = fitAddon;
 
     const syncSize = () => {
@@ -252,7 +297,11 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
       // Spawn native PTY session with current accentColor for prompt highlighting
       pty.create(sessionId, sessionType, cwd, term.cols || 80, term.rows || 24, accentColor).then((res) => {
         // If initialCommand is provided (e.g. automatic CLI installation or slash command), send it once prompt is ready and session is fresh
-        if (initialCommand && !res?.reused) {
+        // Sessões de IA já abrem direto na CLI (claude, agy...): digitar o nome dela de novo mandava um Enter para o primeiro
+        // diálogo (ex.: "Bypass Permissions"), que escolhia "No, exit" e encerrava a CLI na hora.
+        const AI_CLI = /^(claude|agy|antigravity|codex|gemini|ollama)$/;
+        const typesItself = AI_CLI.test(sessionType) && AI_CLI.test((initialCommand || '').trim());
+        if (initialCommand && !res?.reused && !typesItself) {
           const delay = sessionType === 'zsh' || sessionType === 'bash' ? 500 : 1200;
           setTimeout(() => {
             pty.write(sessionId, `${initialCommand}\r`);
@@ -267,7 +316,16 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
 
       cleanupDataListener = pty.onData((payload) => {
         if (payload.id === sessionId) {
-          term.write(payload.data);
+          if (Date.now() < hold.until) {
+            hold.buf += payload.data;
+            if (!hold.timer) hold.timer = setTimeout(flushHold, Math.max(0, hold.until - Date.now()) + 10);
+          } else if (hold.buf) {
+            hold.buf += payload.data;
+            clearTimeout(hold.timer);
+            flushHold();
+          } else {
+            term.write(payload.data);
+          }
 
           // Detect dev servers starting up (e.g. Vite, Next, React, Nest, Fastify)
           if (onServerUrlDetectedRef.current) {
@@ -324,6 +382,37 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
       };
       // Imagem na área de transferência (print, cópia de imagem): salva num arquivo e cola o caminho,
       // que as CLIs de IA (Claude Code, etc.) entendem como anexo, como no Warp
+      const pastedImages: Array<{ path: string; label: string }> = [];
+      const imageDecos: Array<{ deco: IDecoration; marker: IMarker; path: string; x: number }> = [];
+      // troca o caminho do arquivo por um rótulo na tela: um chip cobre as células do caminho (o texto real continua no buffer/CLI)
+      const labelPastedImages = () => {
+        if (!pastedImages.length) return;
+        const buf = term.buffer.active;
+        for (let i = imageDecos.length - 1; i >= 0; i--) {
+          const d = imageDecos[i];
+          const line = d.marker.isDisposed ? undefined : buf.getLine(d.marker.line)?.translateToString(false);
+          if (line === undefined || line.substr(d.x, d.path.length) !== d.path) { d.deco.dispose(); imageDecos.splice(i, 1); }
+        }
+        for (let row = buf.viewportY; row < buf.viewportY + term.rows; row++) {
+          const line = buf.getLine(row)?.translateToString(false);
+          if (!line) continue;
+          for (const p of pastedImages) {
+            const x = line.indexOf(p.path);
+            if (x < 0 || imageDecos.some((d) => d.marker.line === row && d.x === x)) continue;
+            const marker = term.registerMarker(row - (buf.baseY + buf.cursorY));
+            const deco = marker && term.registerDecoration({ marker, x, width: p.path.length });
+            if (!marker || !deco) continue;
+            deco.onRender((el) => {
+              // mesmo texto do terminal (fonte, tamanho, cor), cobrindo exatamente as células do caminho
+              const h = el.getBoundingClientRect().height;
+              el.style.cssText += `;background:${isDark ? '#101010' : '#ffffff'};color:${isDark ? '#dcdcdc' : '#1f1f1f'};overflow:hidden;white-space:pre;font-family:${term.options.fontFamily};font-size:${term.options.fontSize}px;line-height:${h}px`;
+              el.textContent = p.label.padEnd(p.path.length);
+            });
+            imageDecos.push({ deco, marker, path: p.path, x });
+          }
+        }
+      };
+      const writeParsedDisp = term.onWriteParsed(() => requestAnimationFrame(labelPastedImages));
       const handleImagePaste = async (e: ClipboardEvent) => {
         const imageItem = Array.from(e.clipboardData?.items || []).find((i) => i.kind === 'file' && i.type.startsWith('image/'));
         const file = imageItem?.getAsFile();
@@ -335,7 +424,10 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
           let bin = '';
           for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
           const res = await window.electronAPI.fs.saveTempImage(btoa(bin), file.type.split('/')[1]?.replace('jpeg', 'jpg'));
-          if (res?.path) term.paste(res.path);
+          if (res?.path) {
+            pastedImages.push({ path: res.path, label: `[Imagem #${pastedImages.length + 1}]` });
+            term.paste(res.path); // a CLI recebe o caminho; na tela ele aparece como [Imagem #N]
+          }
         } catch (err) {
           console.warn('[NativeXTerm] Falha ao colar imagem:', err);
         }
@@ -359,9 +451,11 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         onTitleDisp.dispose();
         oscDisp.dispose();
         onDataDisp.dispose();
+        writeParsedDisp.dispose();
         onSelectionDisp.dispose();
         webLinksAddon.dispose();
         if (cleanupDataListener) cleanupDataListener();
+        liveTerms.delete(sessionId);
         term.dispose();
       };
     } else {
@@ -391,7 +485,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
   useEffect(() => {
     if (termRef.current) {
       termRef.current.options.theme = {
-        background: isDark ? '#101010' : '#ffffff',
+        background: transparent ? 'rgba(0, 0, 0, 0)' : isDark ? '#101010' : '#ffffff',
         foreground: isDark ? '#dcdcdc' : '#1f1f1f',
         cursor: accentColor,
         cursorAccent: isDark ? '#101010' : '#ffffff',
@@ -414,7 +508,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         brightWhite: isDark ? '#ffffff' : '#000000',
       };
     }
-  }, [accentColor, isDark]);
+  }, [accentColor, isDark, transparent]);
 
   // Dynamically apply font size, cursor style/blink and scrollback settings changes
   // without tearing down the PTY-backed session (which would lose scroll position).
@@ -469,12 +563,13 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
       ref={containerRef}
       data-session-id={sessionId}
       data-terminal="true"
+      data-transparent={transparent ? 'true' : undefined}
       style={{
         width: '100%',
         height: '100%',
         flex: 1,
         overflow: 'hidden',
-        background: isDark ? '#101010' : '#ffffff',
+        background: transparent ? 'rgba(0, 0, 0, 0)' : isDark ? '#101010' : '#ffffff',
         display: (alwaysVisible || isActive) ? 'block' : 'none',
       }}
       onClick={() => termRef.current?.focus()}

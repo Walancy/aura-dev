@@ -19,6 +19,8 @@ export interface ScrubbableNumberInputProps {
   allowDecimals?: boolean;
   className?: string;
   title?: string;
+  /** quantos pixels de arrasto valem 1 "step" (padrão 1; maior = menos sensível) */
+  pixelsPerStep?: number;
 }
 
 export const ScrubbableNumberInput: React.FC<ScrubbableNumberInputProps> = ({
@@ -40,6 +42,7 @@ export const ScrubbableNumberInput: React.FC<ScrubbableNumberInputProps> = ({
   allowDecimals = false,
   className,
   title,
+  pixelsPerStep = 1,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState('');
@@ -85,7 +88,7 @@ export const ScrubbableNumberInput: React.FC<ScrubbableNumberInputProps> = ({
         if (moveEvent.shiftKey) mult = step * 10;
         else if (moveEvent.altKey || moveEvent.metaKey) mult = step < 1 ? step * 0.1 : 0.1;
 
-        let next = startVal + deltaX * mult;
+        let next = startVal + (deltaX / Math.max(0.1, pixelsPerStep)) * mult;
         if (allowDecimals || step < 1 || mult < 1) {
           next = Math.round(next * 100) / 100;
         } else {

@@ -25,7 +25,6 @@ export const ShortcutsSettingsTab: React.FC<ShortcutsSettingsTabProps> = ({ them
           { action: 'Buscar nos Arquivos', keys: ['⇧', '⌘', 'F'] },
           { action: 'Controle de Versão (Git)', keys: ['⇧', '⌘', 'G'] },
           { action: 'Executar e Depurar', keys: ['⇧', '⌘', 'D'] },
-          { action: 'Gerenciador de Extensões', keys: ['⇧', '⌘', 'X'] },
           { action: 'Alternar Painel Inferior (Terminal)', keys: ['⌘', 'J'] },
           { action: 'Alternar Painel Lateral de IA', keys: ['⇧', '⌘', 'A'] },
           { action: 'Histórico de Conversas com IA', keys: ['⇧', '⌘', 'H'] },

@@ -2,6 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown,
   PanelLeft,
+  PanelRight,
+  Palette,
+  Share2,
   X,
   Edit2,
   Copy,
@@ -13,10 +16,10 @@ import {
 import DesignCanvas from './DesignCanvas';
 import type { CanvasViewport } from './DesignCanvas';
 import type { Shape, Page, ToolId, ExportItem, FillItem, DesignStyle, DesignVariable, DesignMode } from './types';
-import { applyVariables, createColorVariable, DEFAULT_MODES } from './variables';
+import { applyVariables, createColorVariable, createTypedVariable, DEFAULT_MODES } from './variables';
 
 type VariablesList = DesignVariable[];
-import { applyStyles, colorStyleFromShape, textStyleFromShape } from './styles';
+import { applyStyles, STYLE_FIELD, styleFromShape, type StyleKind } from './styles';
 import LayersPanel from './LayersPanel';
 import PropertiesPanel, { type ActiveColorPickerInfo } from './PropertiesPanel';
 import FigmaColorPicker from './FigmaColorPicker';
@@ -30,28 +33,70 @@ import { usePersistedDesign } from './usePersistedDesign';
 import FigmaContextMenu from './FigmaContextMenu';
 import FigmaImportModal from './FigmaImportModal';
 import IconPickerModal from './IconPickerModal';
-import { descendantIds } from './constraints';
+import { descendantIds, resizeDescendants } from './constraints';
 import { iconShape, loadIcons } from './icons';
 import { applyAiEdits, buildAiEditPrompt, editScope } from './aiEdit';
 import { AiJsonStream, type AiStreamEvent } from './aiJsonStream';
 import { buildProjectDigest } from './projectDigest';
 import { fetchStockImage } from './stockImage';
 import { findFreeSpot } from './freeSpot';
+import { lowEffortModel, resolveCliModel, visionModel } from './aiModel';
+import { analyzeReferenceImages } from './referenceAnalysis';
+import { describeScreenStyle } from './screenStyle';
+import { fixLayout } from './layoutFix';
+import { reorderLayers } from './layersOrder';
+import { collectSelectionColors, replaceSelectionColor } from './selectionColors';
+import { STYLE_MODE_MARK, wantsNewScreens } from './screenFlow';
+import { listProjectAssets } from './projectAssets';
+import { applyModeScope, applyTokensSection, buildTokensGenPrompt, buildTokensSectionPrompt, type TokenSection, normalizeTokens, parseTokens, tokensFromShapes, type DesignTokens } from './designTokens';
+import { ensureGoogleFont } from './fonts';
+import { setMeasureFamily } from './textFit';
+import DesignTokensPanel, { DesignTokensComposer } from './DesignTokensPanel';
+import DesignSettingsPanel, { type ViewPrefKey, type ViewPrefs } from './DesignSettingsPanel';
+import { buildPlanPrompt, looksMultiScreen, parsePlan, screenPrompt } from './appPlan';
+import { restorePrevious, reviewAfterUndo, withPrevious, type AiReviewEntry } from './aiReviewUndo';
+import { readProjectShapes, readProjectTokens, updateProjectShapes } from './projectDoc';
 import FramesPopup from './FramesPopup';
 import ProposalPopup from './ProposalPopup';
 import { buildProposalHtml, buildProposalPrompt, collectFrameContext, parseProposal } from './proposal';
 import UnsplashKeyPopup from './UnsplashKeyPopup';
-import { buildDevicePreset } from './devices';
+import RenamePopup from './RenamePopup';
+import AssetsPopup from './AssetsPopup';
+import AuditPopup from './AuditPopup';
+import DevPanel from './DevPanel';
+import { COLOR_BLIND } from './colorBlind';
+import { cssOf, specsOf } from './devSpecs';
+import DiffPopup from './DiffPopup';
+import { diffShapes, type ShapesDiff } from './diffShapes';
+import { applyAuditFix } from './audit';
+import VariantMatrixPopup from './VariantMatrixPopup';
+import { arrangeVariants, createVariantMatrix } from './variantMatrix';
+import { buildDevice, buildDevicePreset } from './devices';
 import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
 import { getActiveBrainContextSync, generateBrainAiContext } from '../../utils/brainService';
-import { buildAiScreenPrompt, parseAiScreenResponse, requestAiScreenRaw, ScreenBuilder } from './aiScreenFromLlm';
-import { downloadBlob, exportShape } from './exportDesign';
-import { alignDeltas, applyDeltas, distributeDeltas, type AlignMode } from './align';
+import { buildAiScreenPrompt, parseAiScreenResponse, requestAiScreenRaw, ScreenBuilder, guessScreenFormat } from './aiScreenFromLlm';
+import { buildExportSvg, downloadBlob, exportShape, rasterize } from './exportDesign';
+import { tidyShapes } from './tidy';
+import { outlineStroke } from './outlineStroke';
+import { removeBackground } from './removeBg';
+import { fixContrast } from './audit';
+import { listRefs, matchRefs, readRef, saveRefs } from './references';
+import { importSvg } from './svgImport';
+import { pseudoLocalizeShapes, restoreLocalized } from './pseudoLoc';
+import { PATH_TARGET_TYPES } from './textOnPath';
+import { applyTextResize } from './textResize';
+import { applyPatchToSelection, mixedKeys } from './multiEdit';
+import { selectSimilar } from './selectSimilar';
+import { opacityFromKey, type OpacityKeyState } from './opacityKeys';
+import { copySubtree, pasteClip, replaceWithClip, type Clip } from './clipboard';
+import { alignDeltas, alignReference, applyDeltas, distributeDeltas, type AlignMode, type AlignTarget } from './align';
 import { unionBox } from './snap';
 import { addAutoLayout, relayoutAll } from './autoLayout';
+import { defaultPropValue, propTargets } from './componentProps';
 import { createInstance, detachInstance, switchVariant, syncInstances, variantsOf } from './components';
 import { duplicateShapes } from './duplicate';
-import { generateCode, componentName, type CodeTarget } from './codegen';
+import { componentName, type CodeTarget } from './codegen';
+import { generateCodeAny } from './codegenNative';
 import PrototypePlayer from './PrototypePlayer';
 import type { RulerGuide } from './rulers';
 import { deleteVersion, listVersions, loadVersion, saveVersion, type VersionEntry } from './versions';
@@ -61,7 +106,7 @@ interface DesignStudioViewProps {
   /** false quando a aba de Design está escondida (continua montada para a IA terminar de gerar) */
   isActive?: boolean;
   /** A IA terminou (ou falhou): o App avisa se o usuário estiver em outra tela */
-  onAiTaskDone?: (r: { ok: boolean; message: string }) => void;
+  onAiTaskDone?: (r: { ok: boolean; message: string; workspace: string }) => void;
   workspacePath: string;
   repoName?: string;
   selectedAiProvider?: string;
@@ -609,6 +654,20 @@ export default function DesignStudioView({
   const [zoom, setZoom] = useState<number>(0.21);
   const [viewport, setViewport] = useState<CanvasViewport>({ x: 0, y: 0, width: 1000, height: 700 });
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [outlineMode, setOutlineMode] = useState(false);
+  const [colorBlind, setColorBlind] = useState('');
+  // painel de propriedades (coluna da direita): pode ser ocultado para ganhar área de canvas
+  const [isRightPanelOpen, setIsRightPanelOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem('design_right_panel_open') !== '0'; } catch { return true; }
+  });
+  const toggleRightPanel = useCallback((v: boolean) => {
+    setIsRightPanelOpen(v);
+    try { localStorage.setItem('design_right_panel_open', v ? '1' : '0'); } catch {}
+  }, []);
+  const openTokensPanel = useCallback(() => {
+    setRightPanelMode('tokens');
+    toggleRightPanel(true);
+  }, [toggleRightPanel]);
   const [isZoomMenuOpen, setIsZoomMenuOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [pages, setPages] = useState<Page[]>(DEFAULT_PAGES);
@@ -633,6 +692,11 @@ export default function DesignStudioView({
   const [isIconPickerOpen, setIsIconPickerOpen] = useState(false);
   const [isFramesOpen, setIsFramesOpen] = useState(false);
   const [isUnsplashOpen, setIsUnsplashOpen] = useState(false);
+  const [isRenameOpen, setIsRenameOpen] = useState(false);
+  const svgInputRef = useRef<HTMLInputElement>(null);
+  const [isAssetsOpen, setIsAssetsOpen] = useState(false);
+  const [isAuditOpen, setIsAuditOpen] = useState(false);
+  const [isVariantMatrixOpen, setIsVariantMatrixOpen] = useState(false);
   const [isProposalOpen, setIsProposalOpen] = useState(false);
   const [versions, setVersions] = useState<VersionEntry[]>([]);
   // Variáveis de cor com modos (Claro/Escuro), salvas junto com o design
@@ -649,13 +713,13 @@ export default function DesignStudioView({
   const lastCursorSendRef = useRef(0);
   const myCursorName = useMemo(() => (workspacePath ? workspacePath.split('/').filter(Boolean).pop() || 'Você' : 'Você').slice(0, 14), [workspacePath]);
   // Visualização: grade, réguas e encaixe inteligente (preferências salvas)
-  const [viewPrefs, setViewPrefs] = useState<{ grid: boolean; rulers: boolean; snap: boolean; guides: boolean; rulerRelative: boolean }>(() => {
-    const base = { grid: false, rulers: false, snap: true, guides: true, rulerRelative: true };
+  const [viewPrefs, setViewPrefs] = useState<ViewPrefs>(() => {
+    const base: ViewPrefs = { grid: false, rulers: false, snap: true, guides: true, rulerRelative: true, pixelSnap: false, pixelGrid: true };
     try { return { ...base, ...JSON.parse(localStorage.getItem('design_view_prefs') || '{}') }; } catch { return base; }
   });
   // Guias arrastadas das réguas, por página (salvas no documento)
   const [guidesByPage, setGuidesByPage] = useState<Record<string, RulerGuide[]>>({});
-  const toggleViewPref = useCallback((key: 'grid' | 'rulers' | 'snap' | 'guides' | 'rulerRelative') => {
+  const toggleViewPref = useCallback((key: ViewPrefKey) => {
     setViewPrefs((prev) => {
       const next = { ...prev, [key]: !prev[key] };
       try { localStorage.setItem('design_view_prefs', JSON.stringify(next)); } catch {}
@@ -675,7 +739,9 @@ export default function DesignStudioView({
     y: number;
     shape: Shape | null;
   }>({ isOpen: false, x: 0, y: 0, shape: null });
-  const [clipboardShape, setClipboardShape] = useState<Shape | null>(null);
+  const opacityKeyRef = useRef<OpacityKeyState | null>(null);
+  const [clip, setClip] = useState<Clip | null>(null);
+  const clipboardShape = clip ? clip.shapes.find((s) => s.id === clip.rootIds[0]) || null : null;
   const [copiedProperties, setCopiedProperties] = useState<Partial<Shape> | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Shape | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -762,6 +828,30 @@ export default function DesignStudioView({
   // Participante só fica somente-leitura se o anfitrião não permitiu edição
   const readOnly = room.role === 'viewing' && !room.canEdit;
 
+  // Design tokens do projeto (salvos no design.json): a IA segue estes valores quando existem
+  const [designTokens, setDesignTokens] = useState<DesignTokens | null>(null);
+  const designTokensRef = useRef<DesignTokens | null>(null);
+  designTokensRef.current = designTokens;
+  // a fonte dos tokens vale para o canvas (carrega do Google Fonts) e para medir/quebrar os textos
+  useEffect(() => {
+    const f = designTokens && designTokens.enabled !== false ? designTokens.fontFamily : null;
+    if (f) ensureGoogleFont(f);
+    setMeasureFamily(f);
+  }, [designTokens]);
+  // fontes usadas pelos textos do design (ex.: Inter, Roboto): carrega do Google Fonts se não estiverem instaladas
+  const fontFamiliesKey = useMemo(() => [...new Set(shapes.filter((x) => x.type === 'text' && x.fontFamily).map((x) => x.fontFamily as string))].slice(0, 8).join('|'), [shapes]);
+  useEffect(() => {
+    fontFamiliesKey.split('|').filter(Boolean).forEach((f) => ensureGoogleFont(f));
+  }, [fontFamiliesKey]);
+  // o que a coluna da direita mostra: propriedades do elemento ou os design tokens do projeto
+  const [rightPanelMode, setRightPanelMode] = useState<'properties' | 'tokens' | 'settings' | 'dev'>('properties');
+  const [isPanelMenuOpen, setIsPanelMenuOpen] = useState(false);
+  // última troca em massa dos tokens (extrair/gerar com IA): permite reverter para o que havia antes
+  const [tokensUndo, setTokensUndo] = useState<{ previous: DesignTokens | null; label: string; section: 'all' | 'colors' | TokenSection } | null>(null);
+  // selecionar um elemento com as configurações abertas volta ao inspetor (Propriedades)
+  useEffect(() => {
+    if (selectedIds.length > 0) setRightPanelMode((m) => (m === 'settings' ? 'properties' : m));
+  }, [selectedIds]);
   const {
     loadedShapes,
     loadedPages,
@@ -770,12 +860,17 @@ export default function DesignStudioView({
     loadedStyles,
     loadedVariables,
     loadedGuides,
+    loadedTokens,
     isLoading,
-  } = usePersistedDesign(workspacePath, shapes, pages, selectedPageId, pageViewports, readOnly, styles, { list: variables, modes, activeModeId }, guidesByPage);
+  } = usePersistedDesign(workspacePath, shapes, pages, selectedPageId, pageViewports, readOnly, styles, { list: variables, modes, activeModeId }, guidesByPage, designTokens);
 
   useEffect(() => {
     if (loadedGuides) setGuidesByPage(loadedGuides);
   }, [loadedGuides]);
+
+  useEffect(() => {
+    if (!isLoading) setDesignTokens(loadedTokens);
+  }, [loadedTokens, isLoading]);
 
   useEffect(() => {
     if (loadedVariables) {
@@ -794,9 +889,13 @@ export default function DesignStudioView({
   }, [loadedStyles]);
 
   useEffect(() => {
-    if (loadedShapes && loadedShapes.length > 0) {
+    if (loadedShapes) {
+      // também quando está vazia: apagar tudo e recarregar não pode trazer os exemplos de volta
       setShapesRaw(loadedShapes);
       historyRef.current = { stack: [loadedShapes], index: 0 };
+      // projeto sem páginas salvas: páginas padrão (não herda as do projeto anterior)
+      if (!(loadedPages && loadedPages.length > 0)) setPages(DEFAULT_PAGES);
+      if (!loadedSelectedPageId) setSelectedPageId(DEFAULT_PAGES[0].id);
     }
     if (loadedPages && loadedPages.length > 0) {
       setPages(loadedPages);
@@ -818,6 +917,31 @@ export default function DesignStudioView({
     return shapes.filter((s) => (s.pageId || 'page-1') === selectedPageId);
   }, [shapes, selectedPageId]);
 
+  /** Centraliza o canvas no elemento (e afasta o zoom só se ele não couber na tela) */
+  const focusOnShape = useCallback(
+    (id: string) => {
+      const list = shapesRef.current;
+      const s = list.find((x) => x.id === id);
+      if (!s) return;
+      // grupos podem ter tamanho 0: usa a caixa dos descendentes
+      let box = { x: s.x, y: s.y, w: s.width, h: s.height };
+      if (!(s.width > 0 && s.height > 0)) {
+        const kids = list.filter((k) => descendantIds(list, id).includes(k.id));
+        if (kids.length) {
+          const minX = Math.min(...kids.map((k) => k.x));
+          const minY = Math.min(...kids.map((k) => k.y));
+          box = { x: minX, y: minY, w: Math.max(...kids.map((k) => k.x + k.width)) - minX, h: Math.max(...kids.map((k) => k.y + k.height)) - minY };
+        }
+      }
+      // enquadra a camada (como "zoom para a seleção"): reduz se for grande e AMPLIA se for pequena (até 200%)
+      const fit = Math.min((viewport.width * zoom * 0.7) / Math.max(1, box.w), (viewport.height * zoom * 0.7) / Math.max(1, box.h));
+      const z = Math.min(2, Math.max(0.05, Number(fit.toFixed(3))));
+      if (z !== zoom) setZoom(z);
+      setTargetCamera({ x: box.x + box.w / 2, y: box.y + box.h / 2, zoom: z, timestamp: Date.now() });
+    },
+    [viewport, zoom]
+  );
+
   const applyActivePageShapes = useCallback(
     (nextActive: Shape[], commit: boolean = true) => {
       const tagged = nextActive.map((s) =>
@@ -826,7 +950,7 @@ export default function DesignStudioView({
       setShapesRaw((prev) => {
         const otherPageShapes = prev.filter((s) => (s.pageId || 'page-1') !== selectedPageId);
         // Ao confirmar a mudança, frames com auto layout reorganizam os filhos (e fazem hug)
-        const combined = [...otherPageShapes, ...(commit ? relayoutAll(syncInstances(applyVariables(applyStyles(tagged, stylesRef.current), variablesRef.current.list, variablesRef.current.modeId))) : tagged)];
+        const combined = [...otherPageShapes, ...(commit ? relayoutAll(applyTextResize(syncInstances(applyVariables(applyStyles(tagged, stylesRef.current), variablesRef.current.list, variablesRef.current.modeId)))) : tagged)];
         room.broadcast(combined);
         if (commit) {
           const h = historyRef.current;
@@ -842,7 +966,7 @@ export default function DesignStudioView({
 
   const applyShapes = useCallback(
     (rawNext: Shape[], commit: boolean) => {
-      const next = commit ? relayoutAll(syncInstances(applyVariables(applyStyles(rawNext, stylesRef.current), variablesRef.current.list, variablesRef.current.modeId))) : rawNext;
+      const next = commit ? relayoutAll(applyTextResize(syncInstances(applyVariables(applyStyles(rawNext, stylesRef.current), variablesRef.current.list, variablesRef.current.modeId)))) : rawNext;
       setShapesRaw(next);
       room.broadcast(next);
       if (commit) {
@@ -918,6 +1042,8 @@ export default function DesignStudioView({
     [activePageShapes, selectedId]
   );
 
+  const multiSelected = useMemo(() => (selectedIds.length > 1 ? activePageShapes.filter((s) => selectedIds.includes(s.id)) : []), [selectedIds, activePageShapes]);
+
   const selectedFrame = useMemo(() => {
     if (!selectedShape) return null;
     if (selectedShape.type === 'frame') return selectedShape;
@@ -927,18 +1053,22 @@ export default function DesignStudioView({
     return null;
   }, [selectedShape, activePageShapes]);
 
+  // Copia a seleção (ou só o elemento do menu, se ele não estiver selecionado) com todos os descendentes
   const handleCopy = useCallback((shape: Shape) => {
-    setClipboardShape(shape);
+    const ids = selectedIds.includes(shape.id) ? selectedIds : [shape.id];
+    const next = copySubtree(shapes, ids);
+    if (!next) return;
+    setClip(next);
     try {
-      navigator.clipboard.writeText(JSON.stringify(shape, null, 2));
+      navigator.clipboard.writeText(JSON.stringify(next.shapes.find((s) => s.id === next.rootIds[0]), null, 2));
     } catch (_) { }
-  }, []);
+  }, [selectedIds, shapes]);
 
   // Última versão do inserir-imagem (soltar vários arquivos precisa enxergar o estado já atualizado)
   const insertImageRef = useRef(handleInsertImage);
   insertImageRef.current = handleInsertImage;
 
-  const handlePaste = useCallback(async (coords?: { x: number; y: number }) => {
+  const handlePaste = useCallback(async (coords?: { x: number; y: number }, inPlace = false) => {
     // Imagem na área de transferência (print ou imagem copiada) vira um shape de imagem
     try {
       const items = await navigator.clipboard.read();
@@ -951,57 +1081,42 @@ export default function DesignStudioView({
         }
       }
     } catch {}
-    if (!clipboardShape) return;
-    const newId = crypto.randomUUID();
-    const maxZ = shapes.length ? Math.max(...shapes.map((s) => s.zIndex)) + 1 : 1;
-    const nextX = coords ? Math.round((coords.x - 300) / zoom) : clipboardShape.x + 30;
-    const nextY = coords ? Math.round((coords.y - 100) / zoom) : clipboardShape.y + 30;
-    const cloned: Shape = {
-      ...clipboardShape,
-      id: newId,
-      name: `${clipboardShape.name || 'Component'} (Copy)`,
-      pageId: selectedPageId,
-      x: nextX,
-      y: nextY,
-      zIndex: maxZ,
-    };
-    applyActivePageShapes([...activePageShapes, cloned], true);
-    setSelectedId(cloned.id);
-  }, [clipboardShape, shapes, activePageShapes, selectedPageId, zoom, applyActivePageShapes, handleInsertImage]);
+    if (!clip) return;
+    const { shapes: pasted, newRootIds } = pasteClip(clip, shapes, coords ? { at: { x: Math.round((coords.x - 300) / zoom), y: Math.round((coords.y - 100) / zoom) }, pageId: selectedPageId } : { offset: inPlace ? { x: 0, y: 0 } : { x: 30, y: 30 }, pageId: selectedPageId });
+    applyShapes([...shapes, ...pasted], true);
+    setSelectedIds(newRootIds);
+    setSelectedId(newRootIds[0]);
+  }, [clip, shapes, selectedPageId, zoom, applyShapes, handleInsertImage]);
 
   const handlePasteToReplace = useCallback((target: Shape) => {
-    if (!clipboardShape) return;
-    const replaced: Shape = {
-      ...clipboardShape,
-      id: target.id,
-      x: target.x,
-      y: target.y,
-      width: target.width,
-      height: target.height,
-      zIndex: target.zIndex,
-    };
-    applyShapes(shapes.map((s) => (s.id === target.id ? replaced : s)), true);
-  }, [clipboardShape, shapes, applyShapes]);
+    if (!clip) return;
+    const r = replaceWithClip(clip, shapes, target.id);
+    if (!r) return;
+    applyShapes(r.shapes, true);
+    setSelectedIds([r.newRootId]);
+    setSelectedId(r.newRootId);
+  }, [clip, shapes, applyShapes]);
 
-  const handleCopyAs = useCallback((format: 'svg' | 'png' | 'css') => {
+  // Copiar como SVG/PNG/CSS/código (Cmd/Ctrl+Shift+C copia como PNG)
+  const handleCopyAs = useCallback(async (format: 'svg' | 'png' | 'css' | 'code') => {
     if (!selectedShape) return;
-    if (format === 'svg') {
-      const svgStr = `<svg width="${selectedShape.width}" height="${selectedShape.height}" viewBox="0 0 ${selectedShape.width} ${selectedShape.height}" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="${selectedShape.width}" height="${selectedShape.height}" rx="${selectedShape.cornerRadius || 0}" fill="${selectedShape.fill}" stroke="${selectedShape.stroke}" stroke-width="${selectedShape.strokeWidth}" />
-</svg>`;
-      navigator.clipboard.writeText(svgStr);
-    } else if (format === 'css') {
-      const cssStr = `/* CSS for ${selectedShape.name || 'Component'} */
-width: ${selectedShape.width}px;
-height: ${selectedShape.height}px;
-background: ${selectedShape.fill};
-${selectedShape.strokeWidth > 0 ? `border: ${selectedShape.strokeWidth}px solid ${selectedShape.stroke};` : ''}
-${selectedShape.cornerRadius ? `border-radius: ${selectedShape.cornerRadius}px;` : ''}
-opacity: ${selectedShape.opacity ?? 1};
-transform: rotate(${selectedShape.rotation || 0}deg);`;
-      navigator.clipboard.writeText(cssStr);
+    try {
+      if (format === 'svg') {
+        await navigator.clipboard.writeText(buildExportSvg(shapes, selectedShape, 1).svg);
+      } else if (format === 'png') {
+        const { svg, bounds } = buildExportSvg(shapes, selectedShape, 2);
+        const blob = await rasterize(svg, Math.max(1, Math.round(bounds.width * 2)), Math.max(1, Math.round(bounds.height * 2)), 'image/png');
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      } else if (format === 'css') {
+        await navigator.clipboard.writeText(cssOf(specsOf(selectedShape, activePageShapes, styles, variables, activeModeId)));
+      } else {
+        await navigator.clipboard.writeText(generateCodeAny('react', activePageShapes, selectedShape));
+      }
+      onToast?.(`Copiado como ${format === 'code' ? 'código React' : format.toUpperCase()}`);
+    } catch (err) {
+      onToast?.(`Não foi possível copiar: ${err instanceof Error ? err.message : 'erro'}`);
     }
-  }, [selectedShape]);
+  }, [selectedShape, shapes, activePageShapes, styles, variables, activeModeId, onToast]);
 
   const handleCopyProperties = useCallback((shape: Shape) => {
     setCopiedProperties({
@@ -1089,12 +1204,45 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
     );
   }, [shapes, applyShapes]);
 
+  // Outline stroke: o traço vira um caminho preenchido (união dos segmentos com pontas/quinas redondas)
+  // Remover fundo da imagem com o rembg local; sem ele, o toast explica como instalar
+  const handleRemoveBackground = useCallback(async (shape: Shape) => {
+    const api = window.electronAPI;
+    if (!shape.imageUrl || !api?.fs?.saveTempImage || !api?.fs?.readFileDataUrl || !api?.shell?.exec) return onToast?.('Disponível apenas no app desktop');
+    onToast?.('Removendo o fundo…');
+    const r = await removeBackground(shape.imageUrl, {
+      saveTempImage: api.fs.saveTempImage,
+      exec: (c) => api.shell.exec(c),
+      readDataUrl: (p) => api.fs.readFileDataUrl!(p, 30 * 1024 * 1024),
+    });
+    if (!r.dataUrl) return onToast?.(r.error || 'Não foi possível remover o fundo');
+    applyShapes(shapes.map((s) => (s.id === shape.id ? { ...s, imageUrl: r.dataUrl } : s)), true);
+    onToast?.('Fundo removido');
+  }, [shapes, applyShapes, onToast]);
+
+  // Importar SVG: vira um frame com os elementos como shapes
+  const importSvgFile = useCallback(async (file: File, at?: { x: number; y: number }) => {
+    const text = await file.text();
+    const pos = at || { x: Math.round(viewport.x + viewport.width / 2 - 100), y: Math.round(viewport.y + viewport.height / 2 - 100) };
+    const imported = importSvg(text, file.name.replace(/\.svg$/i, ''), pos, () => crypto.randomUUID(), selectedPageId);
+    if (!imported) return onToast?.('Não consegui ler este SVG');
+    const z = shapes.length ? Math.max(...shapes.map((s) => s.zIndex)) : 0;
+    applyShapes([...shapes, ...imported.map((s, i) => ({ ...s, zIndex: z + 1 + i }))], true);
+    setSelectedIds([imported[0].id]);
+    setSelectedId(imported[0].id);
+    onToast?.(`SVG importado: ${imported.length - 1} elementos`);
+  }, [shapes, viewport, selectedPageId, applyShapes, onToast]);
+
   const handleOutlineStroke = useCallback((shape: Shape) => {
-    applyShapes(
-      shapes.map((s) => (s.id === shape.id ? { ...s, fill: s.stroke, strokeWidth: 0 } : s)),
-      true
-    );
-  }, [shapes, applyShapes]);
+    const r = outlineStroke(shapes, shape.id, crypto.randomUUID());
+    if (!r) {
+      onToast?.('Este elemento não tem traço visível para converter');
+      return;
+    }
+    applyShapes(r.shapes, true);
+    setSelectedIds([r.selectId]);
+    setSelectedId(r.selectId);
+  }, [shapes, applyShapes, onToast]);
 
   // Exporta o shape (e descendentes) em cada formato/escala configurado no painel; sem configuração, PNG 1x
   const handleExportShape = useCallback(
@@ -1232,6 +1380,48 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
         }
       }
 
+      // Modo contorno (Cmd/Ctrl+Y) e modo foco (Cmd/Ctrl+\\: esconde ou volta os dois painéis)
+      if (mod && !e.shiftKey && !e.altKey && e.code === 'KeyY') {
+        e.preventDefault();
+        setOutlineMode((v) => !v);
+        return;
+      }
+      if (mod && !e.shiftKey && !e.altKey && e.code === 'Backslash') {
+        e.preventDefault();
+        const open = !(isSidebarOpen || isRightPanelOpen);
+        setIsSidebarOpen(open);
+        toggleRightPanel(open);
+        return;
+      }
+
+      // Modo Dev (Shift+D)
+      if (e.shiftKey && !mod && !e.altKey && e.code === 'KeyD') {
+        e.preventDefault();
+        setRightPanelMode((m) => (m === 'dev' ? 'properties' : 'dev'));
+        return;
+      }
+
+      // Assets (Shift+I)
+      if (e.shiftKey && !mod && !e.altKey && e.code === 'KeyI') {
+        e.preventDefault();
+        setIsAssetsOpen((v) => !v);
+        return;
+      }
+
+      // Renomear a seleção em massa (F2)
+      if (e.key === 'F2' && !mod && selectedIds.length > 0) {
+        e.preventDefault();
+        setIsRenameOpen(true);
+        return;
+      }
+
+      // Organizar (Ctrl/Cmd+Alt+T)
+      if (mod && e.altKey && !e.shiftKey && e.code === 'KeyT') {
+        e.preventDefault();
+        keyActionsRef.current.handleTidy();
+        return;
+      }
+
       // Alinhar (Alt + A/D/W/S/V/H) e distribuir (Alt+Shift+H/V), como no Figma
       if (e.altKey && !mod) {
         const key = e.code;
@@ -1264,6 +1454,13 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
         return;
       }
 
+      // Copiar como PNG (Cmd/Ctrl+Shift+C)
+      if (mod && e.shiftKey && !e.altKey && e.code === 'KeyC' && selectedShape) {
+        e.preventDefault();
+        handleCopyAs('png');
+        return;
+      }
+
       // Context menu action shortcuts
       if (mod && e.key.toLowerCase() === 'c' && !e.shiftKey && !e.altKey) {
         if (selectedShape) {
@@ -1271,9 +1468,10 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
           handleCopy(selectedShape);
           return;
         }
-      } else if (mod && e.key.toLowerCase() === 'v' && !e.shiftKey && !e.altKey) {
+      } else if (mod && e.key.toLowerCase() === 'v' && !e.altKey) {
+        // Cmd/Ctrl+V cola deslocado; Cmd/Ctrl+Shift+V cola no mesmo lugar
         e.preventDefault();
-        handlePaste();
+        handlePaste(undefined, e.shiftKey);
         return;
       } else if (mod && e.shiftKey && e.key.toLowerCase() === 'r') {
         if (selectedShape) {
@@ -1404,6 +1602,17 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
         }
       }
 
+      // Opacidade pelo teclado: 1…9 = 10…90%, 0 = 100%, dois dígitos rápidos = valor exato
+      if (!mod && !e.altKey && !e.shiftKey && /^Digit[0-9]$/.test(e.code) && selectedIds.length > 0) {
+        const r = opacityFromKey(opacityKeyRef.current, e.code.slice(5), Date.now());
+        if (r) {
+          e.preventDefault();
+          opacityKeyRef.current = r.state;
+          applyShapes(shapes.map((s) => (selectedIds.includes(s.id) ? { ...s, opacity: r.opacity } : s)), true);
+          return;
+        }
+      }
+
       if (!mod && !e.altKey) {
         const key = e.key.toLowerCase();
         if (key === 'v') setTool('select');
@@ -1432,6 +1641,10 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
     readOnly,
     selectedShape,
     handleCopy,
+    handleCopyAs,
+    isSidebarOpen,
+    isRightPanelOpen,
+    toggleRightPanel,
     handlePaste,
     handlePasteToReplace,
     handleCopyProperties,
@@ -1458,23 +1671,50 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
   ]);
 
   // Alinha a seleção: com 2+ shapes, à própria seleção; com 1, ao pai (ou à área visível). Filhos acompanham.
+  const [alignTarget, setAlignTarget] = useState<AlignTarget>(() => {
+    try { return (localStorage.getItem('design_align_target') as AlignTarget) || 'auto'; } catch { return 'auto'; }
+  });
+  const changeAlignTarget = useCallback((t: AlignTarget) => {
+    setAlignTarget(t);
+    try { localStorage.setItem('design_align_target', t); } catch {}
+  }, []);
+  // Organizar (Tidy up): arruma a seleção em linhas/colunas com vão igual
+  const handleTidy = useCallback(() => {
+    const ids = selectedIds.length > 0 ? selectedIds : selectedShape ? [selectedShape.id] : [];
+    if (ids.length < 2) {
+      onToast?.('Selecione 2 ou mais elementos para organizar');
+      return;
+    }
+    const deltas = tidyShapes(shapes, ids);
+    if (deltas.size === 0) return;
+    applyShapes(applyDeltas(shapes, deltas), true);
+  }, [selectedIds, selectedShape, shapes, applyShapes, onToast]);
+
+  // Pseudolocalização: testa o layout com textos acentuados e ~30% mais longos (reversível)
+  const handlePseudoLoc = useCallback((restore: boolean) => {
+    const ids = selectedIds.length > 0 ? selectedIds : selectedShape ? [selectedShape.id] : [];
+    if (ids.length === 0) {
+      onToast?.('Selecione os elementos cujos textos serão pseudolocalizados');
+      return;
+    }
+    applyShapes(restore ? restoreLocalized(shapes, ids) : pseudoLocalizeShapes(shapes, ids), true);
+  }, [selectedIds, selectedShape, shapes, applyShapes, onToast]);
+
   const handleAlign = useCallback(
     (alignment: AlignMode) => {
       const ids = selectedIds.length > 0 ? selectedIds : selectedShape ? [selectedShape.id] : [];
       const targets = activePageShapes.filter((s) => ids.includes(s.id));
       if (targets.length === 0) return;
-      let ref: { x: number; y: number; width: number; height: number };
-      let margin = 0;
-      if (targets.length > 1) {
-        ref = unionBox(targets.map((t) => ({ x: t.x, y: t.y, width: t.width, height: t.height })));
-      } else {
-        const parent = targets[0].parentId ? shapes.find((s) => s.id === targets[0].parentId) : null;
-        ref = parent ? { x: parent.x, y: parent.y, width: parent.width, height: parent.height } : viewport;
-        margin = 20;
-      }
+      const parent = targets[0].parentId ? shapes.find((s) => s.id === targets[0].parentId) : null;
+      const { ref, margin } = alignReference(
+        targets.map((t) => ({ x: t.x, y: t.y, width: t.width, height: t.height })),
+        parent ? { x: parent.x, y: parent.y, width: parent.width, height: parent.height } : null,
+        viewport,
+        alignTarget
+      );
       applyShapes(applyDeltas(shapes, alignDeltas(shapes, ids, alignment, ref, margin)), true);
     },
-    [selectedIds, selectedShape, activePageShapes, shapes, applyShapes, viewport]
+    [selectedIds, selectedShape, activePageShapes, shapes, applyShapes, viewport, alignTarget]
   );
 
   // Operações booleanas entre 2+ formas fechadas (o resultado é um caminho; os originais saem do canvas) e Flatten
@@ -1532,14 +1772,36 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
     setActiveModeId(modeId);
   }, []);
 
-  const handleCreateVariable = useCallback(() => {
+  const handleCreateVariable = useCallback((kind: 'color' | 'number' | 'text' | 'boolean' = 'color') => {
     if (!selectedShape) return;
-    const first = selectedShape.fills && selectedShape.fills.length > 0 ? selectedShape.fills[0] : null;
     const id = crypto.randomUUID();
+    if (kind !== 'color') {
+      const initial = kind === 'number' ? String(Math.round(selectedShape.width)) : kind === 'text' ? selectedShape.text || 'Texto' : String(selectedShape.visible !== false);
+      commitVariables([...variables, createTypedVariable(kind, id, `${{ number: 'Número', text: 'Texto', boolean: 'Booleana' }[kind]} ${variables.length + 1}`, initial, modes)], activeModeId);
+      return;
+    }
+    const first = selectedShape.fills && selectedShape.fills.length > 0 ? selectedShape.fills[0] : null;
     const v = createColorVariable(id, `Variável ${variables.length + 1}`, first?.color || selectedShape.fill || '#D9D9D9', modes);
     commitVariables([...variables, v], activeModeId);
     applyShapes(shapes.map((s) => (s.id === selectedShape.id ? { ...s, fillVariableId: id } : s)), true);
   }, [selectedShape, variables, modes, activeModeId, shapes, applyShapes, commitVariables]);
+
+  // Liga uma variável de número/texto/booleana a uma propriedade dos elementos selecionados (ou desliga com `prop` vazio)
+  const handleBindTypedVariable = useCallback(
+    (variableId: string, prop: string | undefined) => {
+      const ids = selectedIds.length > 0 ? selectedIds : selectedShape ? [selectedShape.id] : [];
+      applyShapes(
+        shapes.map((s) => {
+          if (!ids.includes(s.id)) return s;
+          const rest = Object.fromEntries(Object.entries(s.variableBindings || {}).filter(([, v]) => v !== variableId));
+          const next = prop ? { ...rest, [prop]: variableId } : rest;
+          return { ...s, variableBindings: Object.keys(next).length ? next : undefined };
+        }),
+        true
+      );
+    },
+    [selectedIds, selectedShape, shapes, applyShapes]
+  );
 
   const handleBindVariable = useCallback(
     (variableId: string | undefined) => {
@@ -1563,7 +1825,14 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
   const handleDeleteVariable = useCallback(
     (variableId: string) => {
       commitVariables(variables.filter((v) => v.id !== variableId), activeModeId);
-      applyShapes(shapes.map((s) => (s.fillVariableId === variableId ? { ...s, fillVariableId: undefined } : s)), true);
+      applyShapes(
+        shapes.map((s) => {
+          if (s.fillVariableId !== variableId && !Object.values(s.variableBindings || {}).includes(variableId)) return s;
+          const rest = Object.fromEntries(Object.entries(s.variableBindings || {}).filter(([, v]) => v !== variableId));
+          return { ...s, fillVariableId: s.fillVariableId === variableId ? undefined : s.fillVariableId, variableBindings: Object.keys(rest).length ? rest : undefined };
+        }),
+        true
+      );
     },
     [variables, activeModeId, shapes, applyShapes, commitVariables]
   );
@@ -1583,13 +1852,14 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
   }, []);
 
   const handleCreateStyle = useCallback(
-    (kind: 'color' | 'text') => {
+    (kind: StyleKind) => {
       if (!selectedShape) return;
       const id = crypto.randomUUID();
       const count = styles.filter((s) => s.kind === kind).length + 1;
-      const style = kind === 'color' ? colorStyleFromShape(selectedShape, id, `Cor ${count}`) : textStyleFromShape(selectedShape, id, `Texto ${count}`);
+      const label = { color: 'Cor', text: 'Texto', effect: 'Efeito', grid: 'Grade' }[kind];
+      const style = styleFromShape(kind, selectedShape, id, `${label} ${count}`);
       commitStyles([...styles, style]);
-      applyShapes(shapes.map((s) => (s.id === selectedShape.id ? { ...s, ...(kind === 'color' ? { fillStyleId: id } : { textStyleId: id }) } : s)), true);
+      applyShapes(shapes.map((s) => (s.id === selectedShape.id ? { ...s, [STYLE_FIELD[kind]]: id } : s)), true);
     },
     [selectedShape, styles, shapes, applyShapes, commitStyles]
   );
@@ -1598,7 +1868,7 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
     (style: DesignStyle) => {
       const ids = selectedIds.length > 0 ? selectedIds : selectedShape ? [selectedShape.id] : [];
       applyShapes(
-        shapes.map((s) => (ids.includes(s.id) ? { ...s, ...(style.kind === 'color' ? { fillStyleId: style.id } : { textStyleId: style.id }) } : s)),
+        shapes.map((s) => (ids.includes(s.id) ? { ...s, [STYLE_FIELD[style.kind]]: style.id } : s)),
         true
       );
     },
@@ -1610,7 +1880,7 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
       if (!selectedShape) return;
       const old = styles.find((s) => s.id === styleId);
       if (!old) return;
-      const fresh = old.kind === 'color' ? colorStyleFromShape(selectedShape, styleId, old.name) : textStyleFromShape(selectedShape, styleId, old.name);
+      const fresh = styleFromShape(old.kind, selectedShape, styleId, old.name);
       commitStyles(styles.map((s) => (s.id === styleId ? fresh : s)));
       applyShapes(shapes, true); // propaga o valor novo para todos os shapes ligados
     },
@@ -1622,7 +1892,7 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
   const handleDeleteStyle = useCallback(
     (styleId: string) => {
       commitStyles(styles.filter((s) => s.id !== styleId));
-      applyShapes(shapes.map((s) => (s.fillStyleId === styleId || s.textStyleId === styleId ? { ...s, fillStyleId: s.fillStyleId === styleId ? undefined : s.fillStyleId, textStyleId: s.textStyleId === styleId ? undefined : s.textStyleId } : s)), true);
+      applyShapes(shapes.map((s) => (s.fillStyleId === styleId || s.textStyleId === styleId || s.effectStyleId === styleId || s.gridStyleId === styleId ? { ...s, fillStyleId: s.fillStyleId === styleId ? undefined : s.fillStyleId, textStyleId: s.textStyleId === styleId ? undefined : s.textStyleId, effectStyleId: s.effectStyleId === styleId ? undefined : s.effectStyleId, gridStyleId: s.gridStyleId === styleId ? undefined : s.gridStyleId } : s)), true);
     },
     [styles, shapes, applyShapes, commitStyles]
   );
@@ -1642,6 +1912,15 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
       onToast?.('Não foi possível salvar a versão');
     }
   }, [workspacePath, snapshotNow, onToast]);
+
+  // Comparar uma versão salva com o design atual
+  const [diffView, setDiffView] = useState<{ label: string; diff: ShapesDiff } | null>(null);
+  const handleCompareVersion = useCallback(async (v: VersionEntry) => {
+    if (!workspacePath) return;
+    const snap = await loadVersion(workspacePath, v.id);
+    if (!snap) return onToast?.('Versão não encontrada');
+    setDiffView({ label: v.label, diff: diffShapes(snap.shapes, shapes) });
+  }, [workspacePath, shapes, onToast]);
 
   const handleOpenVersions = useCallback(async () => {
     setIsDocMenuOpen(false);
@@ -1680,11 +1959,11 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
     [workspacePath]
   );
 
-  const codeText = useMemo(() => (codeShape ? generateCode(codeTarget, activePageShapes, codeShape) : ''), [codeShape, codeTarget, activePageShapes]);
+  const codeText = useMemo(() => (codeShape ? generateCodeAny(codeTarget, activePageShapes, codeShape) : ''), [codeShape, codeTarget, activePageShapes]);
 
   const handleSaveCodeToProject = useCallback(async () => {
     if (!codeShape || !workspacePath) return;
-    const ext = codeTarget === 'react' ? 'tsx' : codeTarget === 'html' ? 'html' : 'dart';
+    const ext = { react: 'tsx', html: 'html', flutter: 'dart', swiftui: 'swift', compose: 'kt' }[codeTarget];
     const name = componentName(codeShape.name || 'Tela');
     const file = `${workspacePath}/src/design-export/${name}.${ext}`;
     try {
@@ -1697,7 +1976,7 @@ transform: rotate(${selectedShape.rotation || 0}deg);`;
 
   const handleAskAiToImplement = useCallback(() => {
     if (!codeShape || !onSendToChat) return;
-    const label = codeTarget === 'react' ? 'React (TSX)' : codeTarget === 'html' ? 'HTML' : 'Flutter';
+    const label = { react: 'React (TSX)', html: 'HTML', flutter: 'Flutter', swiftui: 'SwiftUI', compose: 'Jetpack Compose' }[codeTarget];
     const issue = codeShape.linkedIssue ? ` Este design está ligado à issue #${codeShape.linkedIssue}.` : '';
     onSendToChat(
       `Implemente no projeto a tela "${codeShape.name || 'Tela'}" do Design (${label}), seguindo a stack e os componentes que o projeto já usa e reaproveitando o que existir.${issue}
@@ -1735,6 +2014,22 @@ ${codeText}
     [shapes, applyShapes, selectedPageId]
   );
 
+  // Assets: insere uma instância do componente no centro da área visível
+  const handleInsertComponent = useCallback(
+    (componentId: string) => {
+      const comp = shapes.find((s) => s.id === componentId);
+      if (!comp) return;
+      const cx = viewport.x + viewport.width / 2;
+      const cy = viewport.y + viewport.height / 2;
+      const inst = createInstance(shapes, componentId, { x: Math.round(cx - comp.x - comp.width / 2), y: Math.round(cy - comp.y - comp.height / 2) }).map((s) => ({ ...s, pageId: selectedPageId }));
+      if (inst.length === 0) return;
+      applyShapes([...shapes, ...inst], true);
+      setSelectedIds([inst[0].id]);
+      setSelectedId(inst[0].id);
+    },
+    [shapes, viewport, applyShapes, selectedPageId]
+  );
+
   const handleDetachInstance = useCallback(
     (shape: Shape) => {
       applyShapes(detachInstance(shapes, shape.id), true);
@@ -1755,8 +2050,8 @@ ${codeText}
   );
 
   // Os atalhos (efeito acima) chamam estas ações pela ref para sempre usar a versão mais recente
-  const keyActionsRef = useRef({ handleAlign, handleDistribute, handleBoolean });
-  keyActionsRef.current = { handleAlign, handleDistribute, handleBoolean };
+  const keyActionsRef = useRef({ handleAlign, handleDistribute, handleBoolean, handleTidy });
+  keyActionsRef.current = { handleAlign, handleDistribute, handleBoolean, handleTidy };
 
 
   const handleFocusSelection = useCallback(() => {
@@ -1911,33 +2206,119 @@ ${codeText}
   const [targetCamera, setTargetCamera] = useState<{ x: number; y: number; zoom?: number; timestamp?: number } | null>(null);
 
   // Telas geradas pela IA aguardando aceite / regeração
-  const [aiReview, setAiReview] = useState<Array<{ id: string; prompt: string; busy?: boolean; w?: number; h?: number; refs?: string[] }>>([]);
+  const [aiReview, setAiReview] = useState<AiReviewEntry[]>([]);
 
-  /** Brain do projeto + resumo dos arquivos (README, package.json, estrutura, cores) do projeto da header */
-  const getProjectContext = useCallback(async () => {
-    const digest = await buildProjectDigest(workspacePath).catch(() => '');
-    let brainText = '';
-    try {
-      const brain = workspacePath ? getActiveBrainContextSync(workspacePath) : null;
-      brainText = brain ? generateBrainAiContext(brain).replace(/\s+/g, ' ').slice(0, 1500) : '';
-    } catch {}
-    return [repoName ? `Projeto: ${repoName}.` : '', brainText, digest].filter(Boolean).join('\n').slice(0, 5500) || undefined;
-  }, [workspacePath, repoName]);
+  // Usar o contexto do projeto da header nas gerações (README, docs, arquivos). Desligado: só o pedido e as imagens.
+  const [useProjectContext, setUseProjectContext] = useState<boolean>(() => {
+    try { return localStorage.getItem('design_use_project_context') !== '0'; } catch { return true; }
+  });
+  const toggleProjectContext = useCallback((v: boolean) => {
+    setUseProjectContext(v);
+    try { localStorage.setItem('design_use_project_context', v ? '1' : '0'); } catch {}
+  }, []);
+  // Modo rápido: usa a variante "(Low)" do modelo para gerar (nos testes, 12–25s contra ~100s com "(High)" e layout equivalente)
+  const [fastMode, setFastMode] = useState<boolean>(() => {
+    try { return localStorage.getItem('design_fast_mode') !== '0'; } catch { return true; }
+  });
+  const toggleFastMode = useCallback((v: boolean) => {
+    setFastMode(v);
+    try { localStorage.setItem('design_fast_mode', v ? '1' : '0'); } catch {}
+  }, []);
+  /** pasta neutra para a CLI quando o contexto está desligado (não "enxerga" o projeto pelo diretório de trabalho) */
+  const NEUTRAL_CWD = '/tmp';
 
-  /** Gera telas em tempo real: cada elemento aparece no canvas assim que a IA o descreve. */
-  const runScreenGeneration = useCallback(
-    async (o: { signal?: { cancelled: boolean }; prompt: string; basePrompt: string; referenceImages?: string[]; startX: number; startY: number; onProgress?: (m: string) => void; replaceFrameId?: string; maxScreens?: number }) => {
-      const icons = await loadIcons().catch(() => undefined);
-      const projectContext = await getProjectContext();
-      const aiReq = { prompt: o.prompt, pageId: selectedPageId, startX: o.startX, startY: o.startY, accentColor, isDark: isEffectiveDark, icons, projectContext, canReadProject: !!workspacePath, maxScreens: o.maxScreens, referenceImages: o.referenceImages };
+  // O processo principal do Electron só atualiza ao reiniciar o app: sem isso, imagens de referência e fotos da IA falham em silêncio
+  const [mainOutdated, setMainOutdated] = useState(false);
+  useEffect(() => {
+    const caps = (window as any).electronAPI?.fs?.getCapabilities;
+    if (!caps) { setMainOutdated(true); return; }
+    caps().then((c: any) => setMainOutdated(!(c?.designAi >= 3))).catch(() => setMainOutdated(true));
+  }, []);
 
-      let base = activePageShapes;
-      if (o.replaceFrameId) {
-        const gone = new Set([o.replaceFrameId, ...descendantIds(activePageShapes, o.replaceFrameId)]);
-        base = activePageShapes.filter((s) => !gone.has(s.id));
+  // modelo que a CLI do provedor ativo aceita (o "selecionado" global pode ser de outro provedor)
+  const cliModel = useMemo(() => resolveCliModel(selectedAiProvider, selectedModel, activeModels), [selectedAiProvider, selectedModel, activeModels]);
+  const genModel = useMemo(() => (fastMode ? lowEffortModel(selectedAiProvider, cliModel, activeModels) : cliModel), [fastMode, selectedAiProvider, cliModel, activeModels]);
+
+  // ---------------- Design de um projeto (aberto ou não) ----------------
+  // A geração por IA pertence ao projeto em que foi pedida: continua se o usuário trocar de projeto e grava lá.
+  const workspaceRef = useRef(workspacePath);
+  workspaceRef.current = workspacePath;
+  const shapesRef = useRef(shapes);
+  shapesRef.current = shapes;
+  const isLoadingRef = useRef(isLoading);
+  isLoadingRef.current = isLoading;
+  /** O projeto está aberto no Design e já carregado: as mudanças vão direto para a tela */
+  const isVisible = (ws: string) => workspaceRef.current === ws && !isLoadingRef.current;
+  /** Todas as shapes do projeto: da tela se estiver aberto; senão do arquivo salvo */
+  const currentDoc = async (ws: string): Promise<Shape[]> => (isVisible(ws) ? shapesRef.current : readProjectShapes(ws));
+  /** tokens do projeto `ws` (o aberto, ou lidos do arquivo quando a geração roda em outro projeto) */
+  const getTokens = async (ws: string): Promise<DesignTokens | null> => {
+    const t = isVisible(ws) ? designTokensRef.current : normalizeTokens(await readProjectTokens(ws));
+    return t && t.enabled !== false ? t : null; // tokens desligados ("IA segue" off): a IA não os usa
+  };
+  /** Aplica a mudança no projeto: na tela se estiver aberto; senão direto no arquivo (só ao confirmar) */
+  const applyDoc = useCallback(
+    (ws: string, fn: (all: Shape[]) => Shape[], commit: boolean) => {
+      if (isVisible(ws)) {
+        setShapesRaw((prev) => {
+          const next = fn(prev);
+          const out = commit ? relayoutAll(applyTextResize(syncInstances(applyVariables(applyStyles(next, stylesRef.current), variablesRef.current.list, variablesRef.current.modeId)))) : next;
+          room.broadcast(out);
+          if (commit) {
+            const h = historyRef.current;
+            h.stack = h.stack.slice(0, h.index + 1);
+            h.stack.push(out);
+            h.index = h.stack.length - 1;
+          }
+          return out;
+        });
+      } else if (commit) {
+        updateProjectShapes(ws, (all) => relayoutAll(fn(all))).catch(() => {});
       }
+    },
+    [room]
+  );
+
+  /** Brain do projeto + resumo dos arquivos (README, package.json, estrutura, cores) do projeto indicado */
+  const getProjectContext = useCallback(
+    async (ws: string) => {
+      const digest = await buildProjectDigest(ws).catch(() => '');
+      let brainText = '';
+      try {
+        const brain = ws ? getActiveBrainContextSync(ws) : null;
+        brainText = brain ? generateBrainAiContext(brain).replace(/\s+/g, ' ').slice(0, 1500) : '';
+      } catch {}
+      const name = ws === workspacePath ? repoName : ws.split('/').filter(Boolean).pop();
+      return [name ? `Projeto: ${name}.` : '', brainText, digest].filter(Boolean).join('\n').slice(0, 9500) || undefined;
+    },
+    [workspacePath, repoName]
+  );
+
+  /** Gera telas em tempo real no projeto `ws`: cada elemento aparece no canvas (se o projeto estiver aberto) assim que a IA o descreve. */
+  const runScreenGeneration = useCallback(
+    async (o: { useCtx?: boolean; referenceSpec?: string; previousEntry?: AiReviewEntry; ws: string; pageId: string; signal?: { cancelled: boolean }; prompt: string; basePrompt: string; referenceImages?: string[]; startX: number; startY: number; onProgress?: (m: string) => void; replaceFrameId?: string; maxScreens?: number; placeholderIds?: string[]; quiet?: boolean; inspiration?: string[] }) => {
+      const { ws, pageId } = o;
+      const icons = await loadIcons().catch(() => undefined);
+      const useCtx = o.useCtx !== false;
+      const cwd = useCtx ? ws : NEUTRAL_CWD;
+      const projectContext = useCtx ? await getProjectContext(ws) : undefined;
+      const projTokens = await getTokens(ws);
+      const projectAssets = useCtx ? await listProjectAssets(ws).catch(() => []) : []; // logos e ícones do projeto (só com o contexto ligado)
+      const aiReq = { tokens: projTokens, projectAssets: projectAssets.length ? projectAssets : undefined, prompt: o.prompt, pageId, startX: o.startX, startY: o.startY, accentColor, isDark: isEffectiveDark, icons, projectContext, // com imagens de referência a IA não explora o projeto: cada ferramenta/leitura extra é uma volta lenta do modelo
+        canReadProject: useCtx && !!ws && !(o.referenceImages?.length || o.referenceSpec), useProjectContext: useCtx, maxScreens: o.maxScreens, referenceImages: o.referenceImages, referenceSpec: o.referenceSpec, inspirationImages: o.inspiration };
+
+      // o que a regeração substitui (guardado para restaurar se cancelar)
+      const doc0 = await currentDoc(ws);
+      const removedShapes = o.replaceFrameId ? doc0.filter((s) => s.id === o.replaceFrameId || descendantIds(doc0, o.replaceFrameId!).includes(s.id)) : [];
+      const removed = new Set(removedShapes.map((s) => s.id));
       let live: Shape[] = [];
-      const apply = (commit = false) => applyActivePageShapes([...base, ...live], commit);
+      // ids que o builder já emitiu em algum momento: o que ele descartou depois (ex.: gráfico refeito no tamanho final) sai do documento
+      const emitted = new Set<string>();
+      const compose = (all: Shape[]) => {
+        live.forEach((s) => emitted.add(s.id));
+        return [...all.filter((s) => !removed.has(s.id) && !emitted.has(s.id)), ...live.map((s) => (s.pageId === pageId ? s : { ...s, pageId }))];
+      };
+      const apply = (commit = false) => applyDoc(ws, compose, commit);
 
       const builder = new ScreenBuilder(aiReq);
       const stream = new AiJsonStream();
@@ -1945,32 +2326,50 @@ ${codeText}
       let streamDone = false;
       let screenCount = 0;
       const imageJobs: Promise<void>[] = [];
+      let imgFailed = 0;
+      let imgError = '';
       let imgStarted = 0;
       const startImages = () => {
         while (imgStarted < builder.pending.length) {
           const job = builder.pending[imgStarted++];
+          if (job.assetPath) {
+            // logo/ícone do projeto: lê o arquivo (sem Unsplash)
+            imageJobs.push(
+              Promise.resolve((window as any).electronAPI?.fs?.readFileDataUrl?.(job.assetPath))
+                .then((r: any) => {
+                  if (o.signal?.cancelled || !r?.dataUrl) return;
+                  builder.patch(job.id, { imageUrl: r.dataUrl });
+                  live = builder.all;
+                  apply(false);
+                })
+                .catch(() => {})
+            );
+            continue;
+          }
           imageJobs.push(
             fetchStockImage(job.query, job.width, job.height)
               .then((r) => {
-                if (!r || o.signal?.cancelled) return;
+                if (!r) { imgFailed++; return; }
+                if (o.signal?.cancelled) return;
                 const cur = builder.all.find((s) => s.id === job.id);
                 builder.patch(job.id, { imageUrl: r.dataUrl, name: r.credit ? `${cur?.name || 'Foto'} · Foto: ${r.credit} (Unsplash)` : cur?.name });
                 live = builder.all;
                 apply(false);
               })
-              .catch(() => {})
+              .catch((e) => { imgFailed++; imgError = String(e?.message || e); })
           );
         }
       };
       const handle = (ev: AiStreamEvent) => {
         if (ev.kind === 'screen') {
+          o.placeholderIds?.forEach((id) => removed.add(id)); // a tela de verdade substitui o frame provisório
           const shapes = builder.startScreen(ev.header);
           if (!shapes.length) return;
           live = builder.all;
           apply(false);
           screenCount++;
           o.onProgress?.(`Criando a tela "${shapes[0].name}"…`);
-          if (screenCount === 1) {
+          if (screenCount === 1 && isVisible(ws) && !o.quiet) {
             const f = shapes[0];
             const z = f.width > 1000 ? 0.48 : 0.65;
             setZoom(z);
@@ -1986,25 +2385,47 @@ ${codeText}
           o.onProgress?.(`Criando ${shape.name || shape.type}… (${builder.itemCount} elementos)`);
         }
       };
+      // Consumidor orientado a eventos: sem polling por timer (com a janela em segundo plano os timers são
+      // estrangulados pelo navegador) e as pausas "de animação" só existem com a janela visível
+      let wake: (() => void) | null = null;
+      const poke = () => {
+        const w = wake;
+        wake = null;
+        w?.();
+      };
+      const pause = (ms: number) => (document.visibilityState === 'visible' ? new Promise<void>((r) => setTimeout(r, ms)) : Promise.resolve());
       const consumer = (async () => {
-        while ((!streamDone || queue.length) && !o.signal?.cancelled) {
+        while (!o.signal?.cancelled) {
           const ev = queue.shift();
-          if (!ev) { await new Promise((r) => setTimeout(r, 30)); continue; }
+          if (!ev) {
+            if (streamDone) break;
+            await new Promise<void>((r) => {
+              wake = r;
+              if (queue.length || streamDone || o.signal?.cancelled) poke();
+            });
+            continue;
+          }
           handle(ev);
-          await new Promise((r) => setTimeout(r, queue.length > 10 ? 12 : ev.kind === 'item' ? 45 : 150));
+          await pause(queue.length > 10 ? 12 : ev.kind === 'item' ? 45 : 150);
         }
       })();
 
-      o.onProgress?.(`Pedindo o layout para ${selectedAiProvider || 'a IA'}${workspacePath ? ' (analisando o projeto)' : ''}...`);
+      o.onProgress?.(`Pedindo o layout para ${selectedAiProvider || 'a IA'}${useCtx && ws ? ' (analisando o projeto)' : ''}...`);
       let final = '';
       let failure: any = null;
       // enquanto a IA pensa (ainda sem nada para desenhar), mostra que está viva
       const startedAt = Date.now();
       const waitTimer = setInterval(() => {
-        if (builder.itemCount === 0 && screenCount === 0) o.onProgress?.(`${selectedAiProvider || 'A IA'} está pensando no layout… ${Math.round((Date.now() - startedAt) / 1000)}s`);
+        if (builder.itemCount === 0 && screenCount === 0) o.onProgress?.(`${selectedAiProvider || 'A IA'} está ${o.referenceImages?.length ? `analisando ${o.referenceImages.length} imagem(ns) e ` : ''}pensando no layout… ${Math.round((Date.now() - startedAt) / 1000)}s`);
       }, 1000);
       try {
-        final = await requestAiScreenRaw(buildAiScreenPrompt(aiReq), selectedAiProvider, selectedModel, workspacePath || undefined, 480000, (chunk) => queue.push(...stream.push(chunk)), (o.referenceImages || []).map((p) => p.slice(0, p.lastIndexOf('/'))));
+        const ask = () => requestAiScreenRaw(buildAiScreenPrompt(aiReq), selectedAiProvider, genModel, cwd || undefined, 480000, (chunk) => { queue.push(...stream.push(chunk)); poke(); }, (o.referenceImages || []).map((p) => p.slice(0, p.lastIndexOf('/'))), 150000);
+        // CLI sem nenhum texto em 150s = travada: uma nova tentativa quase sempre responde em ~1 min
+        final = await ask().catch((e) => {
+          if (!/^STALL/.test(String(e?.message)) || o.signal?.cancelled || builder.itemCount > 0) throw e;
+          o.onProgress?.('A IA travou; tentando de novo…');
+          return ask();
+        });
         // CLIs que só devolvem no fim: o que não chegou em tempo real entra agora (aparece em sequência)
         if (stream.consumed === 0 && final) queue.push(...stream.push(final));
       } catch (err) {
@@ -2012,10 +2433,12 @@ ${codeText}
       }
       clearInterval(waitTimer);
       streamDone = true;
+      poke();
       await consumer;
       if (o.signal?.cancelled) {
-        // cancelado: descarta o que foi criado até aqui
-        applyActivePageShapes(activePageShapes, false); // volta ao estado anterior (inclusive a tela que seria substituída)
+        // cancelado: descarta o que foi criado e restaura o que seria substituído
+        const liveIds = new Set(live.map((s) => s.id));
+        applyDoc(ws, (all) => [...all.filter((s) => !liveIds.has(s.id)), ...removedShapes.filter((r) => !all.some((s) => s.id === r.id))], false);
         return 0;
       }
 
@@ -2032,37 +2455,55 @@ ${codeText}
         }
       }
       await Promise.all(imageJobs);
+      if (imgFailed && !o.signal?.cancelled && isVisible(ws)) {
+        onToast?.(/No handler registered/i.test(imgError) ? 'As fotos da IA precisam que você reinicie o app (o download de imagens ainda não está ativo)' : `${imgFailed} foto(s) não carregaram (ficaram como placeholder cinza)`);
+      }
 
-      let frameIds = builder.frameIds.length ? builder.frameIds : live.filter((s) => s.type === 'frame' && !s.parentId).map((s) => s.id);
+      const frameIds = builder.frameIds.length ? builder.frameIds : live.filter((s) => s.type === 'frame' && !s.parentId).map((s) => s.id);
       if (live.length === 0) {
         // sem layout da IA não inventamos um modelo fixo: avisa o usuário
         setAiReview((prev) => prev.map((r) => (r.id === o.replaceFrameId ? { ...r, busy: false } : r)));
         throw new Error(failure?.message || 'A IA não devolveu um layout válido. Tente descrever a tela com mais detalhes ou escolha outro modelo.');
-      } else if (failure) {
+      } else if (failure && isVisible(ws)) {
         onToast?.(`${failure?.message || 'A IA parou antes do fim'}; mantive o que já foi criado`);
       }
-      apply(true);
-      handleSelectSingle(frameIds[0] || null);
-      setAiReview((prev) => [...prev.filter((r) => r.id !== o.replaceFrameId), ...frameIds.map((id) => { const sc = builder.screens_.find((x) => x.rootId === id); return { id, prompt: o.basePrompt, w: sc?.width, h: sc?.height, refs: o.referenceImages }; })]);
-      if (!o.replaceFrameId && frameIds.length > 1) {
-        const frames = live.filter((s) => frameIds.includes(s.id));
-        const minX = Math.min(...frames.map((f) => f.x));
-        const maxX = Math.max(...frames.map((f) => f.x + f.width));
-        const z = Math.max(0.1, Math.min(0.65, (viewport.width * zoom * 0.9) / (maxX - minX)));
-        setZoom(z);
-        setTargetCamera({ x: (minX + maxX) / 2, y: frames[0].y + frames[0].height / 2, zoom: z, timestamp: Date.now() });
+      builder.all = fixContrast(builder.all); // título escuro em fundo escuro etc.: corrige o contraste do que a IA desenhou
+      live = builder.all;
+      apply(true); // confirma: na tela (se o projeto estiver aberto) ou direto no arquivo do projeto
+      setAiReview((prev) => [...prev.filter((r) => r.id !== o.replaceFrameId), ...frameIds.map((id) => { const sc = builder.screens_.find((x) => x.rootId === id); const base = { id, prompt: o.basePrompt, w: sc?.width, h: sc?.height, refs: o.referenceImages, refSpec: o.referenceSpec, useCtx }; return o.replaceFrameId ? withPrevious(base, removedShapes, o.previousEntry) : base; })]);
+      if (isVisible(ws)) {
+        if (!o.quiet) handleSelectSingle(frameIds[0] || null);
+        if (!o.replaceFrameId && frameIds.length > 1) {
+          const frames = live.filter((s) => frameIds.includes(s.id));
+          const minX = Math.min(...frames.map((f) => f.x));
+          const maxX = Math.max(...frames.map((f) => f.x + f.width));
+          const z = Math.max(0.1, Math.min(0.65, (viewport.width * zoom * 0.9) / (maxX - minX)));
+          setZoom(z);
+          setTargetCamera({ x: (minX + maxX) / 2, y: frames[0].y + frames[0].height / 2, zoom: z, timestamp: Date.now() });
+        }
       }
       return frameIds.length;
     },
-    [selectedPageId, accentColor, isEffectiveDark, selectedAiProvider, selectedModel, workspacePath, getProjectContext, applyActivePageShapes, activePageShapes, handleSelectSingle, onToast, viewport, zoom]
+    [accentColor, isEffectiveDark, selectedAiProvider, genModel, getProjectContext, applyDoc, handleSelectSingle, onToast, viewport, zoom]
   );
 
   const handlePrototypeWithAi = useCallback(
-    async (prompt: string, onProgress?: (msg: string) => void, images?: string[], selection?: string[], signal?: { cancelled: boolean }) => {
+    async (prompt: string, onProgress?: (msg: string) => void, images?: string[], selection?: string[], signal?: { cancelled: boolean }, target?: { ws: string; pageId: string; useCtx?: boolean }) => {
       const clean = prompt.trim();
       if (!clean) return { success: false, error: 'O prompt não pode estar vazio.' };
+      const ws = target?.ws ?? workspacePath;
+      const pageId = target?.pageId ?? selectedPageId;
+      const useCtx = (target?.useCtx ?? useProjectContext) !== false;
+      const cwd = useCtx ? ws : NEUTRAL_CWD; // sem contexto, a CLI roda fora da pasta do projeto
+      const onPage = (all: Shape[]) => all.filter((s) => (s.pageId || 'page-1') === pageId);
+      // troca só a página do projeto, mantendo as demais
+      const replacePage = (next: Shape[]) => (all: Shape[]) => [...all.filter((s) => (s.pageId || 'page-1') !== pageId), ...next.map((s) => (s.pageId === pageId ? s : { ...s, pageId }))];
 
-      setIsGeneratingAi(true);
+      const projTokens = await getTokens(ws);
+      let phIds: Set<string> | null = null; // frame provisório ("brilhando") enquanto a IA ainda não desenhou
+      let phSpot: { x: number; y: number } | null = null;
+      let glowRoot: string | null = null;
+      let glowRoots: string[] = [];
       try {
         // imagens de referência: viram arquivos temporários que a CLI de IA abre pelo caminho
         const refs: string[] = [];
@@ -2072,81 +2513,296 @@ ${codeText}
           const r = await save(dataUrl.split(',')[1], 'jpg').catch(() => null);
           if (r?.path) refs.push(r.path);
         }
-        const refDirs = [...new Set(refs.map((p) => p.slice(0, p.lastIndexOf('/'))))];
-        if (refs.length) onProgress?.(`${refs.length} imagem(ns) de referência anexada(s)`);
+        if ((images?.length || 0) > refs.length) {
+          // sem a imagem a IA geraria um design genérico: melhor parar e dizer o motivo
+          return { success: false, error: 'Não consegui salvar as imagens de referência (a função não existe neste processo). Reinicie o app e envie de novo.' };
+        }
+        let refDirs = [...new Set(refs.map((p) => p.slice(0, p.lastIndexOf('/'))))];
         // só conta o que realmente existe e está visível nesta página (ids antigos/de outra página não são seleção)
+        const pageShapes = onPage(await currentDoc(ws));
         const sel = selection ?? selectedIds; // seleção do momento em que o pedido foi enviado
-        const liveIds = sel.filter((id) => activePageShapes.some((s) => s.id === id && s.visible !== false));
-        const firstSel = activePageShapes.find((s) => s.id === liveIds[0]);
-        const selFrame = firstSel ? (firstSel.type === 'frame' ? firstSel : activePageShapes.find((s) => s.id === firstSel.parentId && s.type === 'frame') || null) : null;
+        const liveIds = sel.filter((id) => pageShapes.some((s) => s.id === id && s.visible !== false));
+        const firstSel = pageShapes.find((s) => s.id === liveIds[0]);
+        const selFrame = firstSel ? (firstSel.type === 'frame' ? firstSel : pageShapes.find((s) => s.id === firstSel.parentId && s.type === 'frame') || null) : null;
         // aparelho selecionado: o alvo é a tela dentro dele
-        const genTarget = selFrame ? activePageShapes.find((s) => s.parentId === selFrame.id && s.deviceScreen) || selFrame : null;
-        const hasContent = !!genTarget && activePageShapes.some((s) => s.parentId === genTarget.id && !s.deviceChrome);
+        const genTarget0 = selFrame ? pageShapes.find((s) => s.parentId === selFrame.id && s.deviceScreen) || selFrame : null;
+        const hasContent = !!genTarget0 && pageShapes.some((s) => s.parentId === genTarget0.id && !s.deviceChrome);
+        // Com tela(s) selecionada(s), o pedido pode ser CRIAR outras telas desse sistema seguindo o padrão delas (não editar)
+        const fromSelection = liveIds.length > 0 && wantsNewScreens(clean);
+        const genTarget = fromSelection ? null : genTarget0;
+        let baseDims: { w: number; h: number } | null = null;
+        let baseRight = 0, baseTop = 0;
+        if (fromSelection) {
+          const byIdS = new Map(pageShapes.map((x) => [x.id, x]));
+          const rootIds = new Set<string>();
+          for (const id of liveIds) { let cur = byIdS.get(id); while (cur?.parentId && byIdS.get(cur.parentId)) cur = byIdS.get(cur.parentId); if (cur) rootIds.add(cur.id); }
+          const roots = [...rootIds].map((id) => byIdS.get(id)!).sort((a, b) => a.x - b.x).slice(0, 3);
+          onProgress?.('Lendo a tela selecionada como guia de estilo…');
+          for (const r of roots) {
+            const screen = pageShapes.find((x) => x.parentId === r.id && x.deviceScreen) || r;
+            if (!baseDims) baseDims = { w: Math.round(screen.width), h: Math.round(screen.height) };
+            baseRight = Math.max(baseRight, r.x + r.width);
+            baseTop = baseTop || r.y;
+            try {
+              const { blob } = await exportShape(shapesRef.current, screen, { id: 'ref', format: 'PNG', scale: '1x' });
+              const b64 = await new Promise<string>((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1] || ''); fr.onerror = () => rej(fr.error); fr.readAsDataURL(blob); });
+              const saved = await (window as any).electronAPI?.fs?.saveTempImage?.(b64, 'png');
+              if (saved?.path) refs.push(saved.path);
+            } catch {}
+          }
+          if (!refs.length) return { success: false, error: 'Não consegui ler a tela selecionada como referência. Reinicie o app e tente de novo.' };
+          refDirs = [...new Set(refs.map((p) => p.slice(0, p.lastIndexOf('/'))))];
+        }
+
+        // Biblioteca local de referências: o que você anexa é guardado (com etiquetas do pedido); sem anexo, as mais parecidas voltam como inspiração
+        const refFs = (window as any).electronAPI?.fs;
+        let inspiration: string[] = [];
+        if (ws && refFs?.readFile && refFs?.writeFile) {
+          if (images?.length) {
+            saveRefs(ws, images, clean, refFs).then((l) => l.length && onToast?.(`${l.length} referência(s) na biblioteca`)).catch(() => {});
+          } else if (!refs.length) {
+            try {
+              const hits = matchRefs(await listRefs(ws, refFs), clean, 2);
+              for (const h of hits) {
+                const url = await readRef(ws, h, refFs);
+                const r = url && (await refFs.saveTempImage?.(url.split(',')[1], 'jpg').catch(() => null));
+                if (r?.path) inspiration.push(r.path);
+              }
+              if (inspiration.length) refDirs = [...new Set([...refDirs, ...inspiration.map((p) => p.slice(0, p.lastIndexOf('/')))])];
+            } catch {}
+          }
+        }
+
+        // Tela nova (nada selecionado para editar): o frame já aparece e fica brilhando enquanto a IA analisa/pensa
+        const editsSelection = !fromSelection && liveIds.length > 0 && (!selFrame || liveIds.length > 1 || hasContent);
+        const aspect = images?.[0] ? await new Promise<number | undefined>((res) => { const im = new Image(); im.onload = () => res(im.width / (im.height || 1)); im.onerror = () => res(undefined); im.src = images[0]; }) : undefined;
+        const fmt = baseDims ? { mobile: baseDims.w <= 500 && baseDims.h >= 600, width: baseDims.w, height: baseDims.h } : guessScreenFormat(clean, aspect);
+        let hintedClean = clean;
+        if (!editsSelection && !genTarget) {
+          const visible0 = isVisible(ws);
+          const spot0 = baseDims
+            ? findFreeSpot(pageShapes, baseRight + 160, baseTop, baseDims.w + 80, baseDims.h + 80) // à direita da tela de referência
+            : findFreeSpot(pageShapes, visible0 ? Math.round(viewport.x + viewport.width * 0.1) || 100 : 100, visible0 ? Math.round(viewport.y + 60) || 100 : 100, 460, 920);
+          const dev = buildDevice(
+            { name: 'Gerando…', width: fmt.width, height: fmt.height, kind: fmt.mobile ? 'iphone-island' : 'plain', radius: fmt.mobile ? 55 : 0 },
+            { idGen: () => crypto.randomUUID(), pageId, x: spot0.x, y: spot0.y, z: 1, isDark: isEffectiveDark, name: 'Gerando…', icons: await loadIcons().catch(() => undefined) }
+          );
+          phIds = new Set(dev.shapes.map((x) => x.id));
+          phSpot = spot0;
+          applyDoc(ws, (all) => [...all, ...dev.shapes], false);
+          setGlowIds((g) => new Set([...g, dev.rootId]));
+          glowRoot = dev.rootId;
+          if (baseDims) hintedClean = `${clean}\n\n${STYLE_MODE_MARK} As imagens anexadas são telas JÁ EXISTENTES deste sistema/app; crie as telas pedidas no MESMO padrão de design delas. Tamanho: ${baseDims.w}x${baseDims.h} (${fmt.mobile ? 'MOBILE' : 'DESKTOP'}); escreva exatamente esse width/height.`;
+          else if (!aspect) hintedClean = `${clean}\n\n(Formato detectado: ${fmt.mobile ? 'MOBILE 393x852' : 'DESKTOP 1440x900'}. Use esse tamanho em "width"/"height".)`;
+          if (visible0) {
+            const z = fmt.mobile ? 0.65 : 0.48;
+            setZoom(z);
+            setTargetCamera({ x: spot0.x + dev.rootWidth / 2, y: spot0.y + dev.rootHeight / 2, zoom: z, timestamp: Date.now() });
+          }
+        } else if (genTarget) {
+          glowRoot = selFrame?.id ?? genTarget.id;
+          setGlowIds((g) => new Set([...g, glowRoot!]));
+        }
+        // Etapa 1: uma chamada só para olhar as imagens e descrever a interface (a geração recebe isso como regra)
+        let spec: string | undefined;
+        if (refs.length) {
+          onProgress?.(`Analisando ${refs.length} imagem(ns) de referência…`);
+          spec = await analyzeReferenceImages(refs, selectedAiProvider, visionModel(selectedAiProvider, cliModel, activeModels), cwd || undefined, refDirs).catch(() => undefined);
+          if (signal?.cancelled) return { success: false, error: 'cancelado' };
+          if (!spec) onProgress?.('Não consegui resumir as imagens; vou anexá-las direto…');
+        }
+        const specRefs = refs; // fidelidade máxima: a IA recebe a análise E as imagens originais para conferir
 
         // Seleção existente (que não seja um frame vazio): a IA EDITA o que está selecionado
-        if (liveIds.length > 0 && (!selFrame || liveIds.length > 1 || hasContent)) {
+        if (editsSelection) {
           const icons = await loadIcons().catch(() => undefined);
-          const scope = editScope(activePageShapes, liveIds);
+          // várias telas selecionadas: a mesma instrução é aplicada em CADA tela (uma chamada por tela, em paralelo)
+          const byIdP = new Map(pageShapes.map((x) => [x.id, x]));
+          const rootOf = (id: string) => { let cur = byIdP.get(id); while (cur?.parentId && byIdP.get(cur.parentId)) cur = byIdP.get(cur.parentId); return cur?.id ?? id; };
+          const groups = new Map<string, string[]>();
+          for (const id of liveIds) { const r = rootOf(id); groups.set(r, [...(groups.get(r) || []), id]); }
+          if (groups.size >= 2) {
+            const list = [...groups.entries()].sort((a, b) => (byIdP.get(a[0])?.x ?? 0) - (byIdP.get(b[0])?.x ?? 0));
+            const N = list.length;
+            let done = 0, changedTotal = 0, next = 0;
+            const errors: string[] = [];
+            let chain: Promise<void> = Promise.resolve(); // aplica uma tela por vez sobre o estado mais recente (sem sobrescrever as outras)
+            const worker = async () => {
+              while (next < N && !signal?.cancelled) {
+                const [rootId, ids] = list[next++];
+                const label = byIdP.get(rootId)?.name || 'tela';
+                try {
+                  const scope0 = editScope(pageShapes, ids);
+                  const raw = await requestAiScreenRaw(
+                    buildAiEditPrompt({ prompt: `${clean}\n\n(Esta é uma das ${N} telas selecionadas: aplique exatamente esta mudança nesta tela, de forma coerente com as demais.)`, accentColor, isDark: isEffectiveDark, referenceImages: specRefs, referenceSpec: spec, tokens: projTokens }, scope0, ids),
+                    selectedAiProvider, genModel, cwd || undefined, 480000, undefined, refDirs
+                  );
+                  if (signal?.cancelled) return;
+                  let pendingImgs: Array<{ id: string; query: string; width: number; height: number }> = [];
+                  await (chain = chain.then(async () => {
+                    const fresh = onPage(await currentDoc(ws));
+                    const edited = applyAiEdits(raw, fresh, editScope(fresh, ids), ids, { pageId, isDark: isEffectiveDark, accentColor, icons, tokens: projTokens });
+                    if (!edited) throw new Error('sem alterações válidas');
+                    applyDoc(ws, replacePage(edited.shapes), true);
+                    changedTotal += edited.changed + edited.added + edited.removed;
+                    pendingImgs = edited.pending as any;
+                    await new Promise((r) => setTimeout(r, 80)); // deixa o estado refletir antes da próxima tela
+                  }));
+                  if (pendingImgs.length) {
+                    const imgs = await Promise.all(pendingImgs.map((j) => fetchStockImage(j.query, j.width, j.height).then((r) => [j.id, r] as const).catch(() => [j.id, null] as const)));
+                    applyDoc(ws, (all) => all.map((x) => { const hit = imgs.find(([id]) => id === x.id)?.[1]; return hit ? { ...x, imageUrl: hit.dataUrl } : x; }), true);
+                  }
+                } catch (e: any) {
+                  errors.push(`${label}: ${e?.message || 'falhou'}`);
+                } finally {
+                  done++;
+                  onProgress?.(`Editando as telas selecionadas: ${done} de ${N}…`);
+                }
+              }
+            };
+            onProgress?.(`Aplicando a mudança em ${N} telas…`);
+            await Promise.all(Array.from({ length: Math.min(3, N) }, worker));
+            if (signal?.cancelled) return { success: false, error: 'cancelado' };
+            if (errors.length === N) return { success: false, error: 'A IA não devolveu alterações válidas em nenhuma tela. Tente descrever a mudança de outra forma.' };
+            if (isVisible(ws)) onToast?.(errors.length ? `IA: ${N - errors.length} de ${N} telas alteradas (${errors.map((x) => x.split(':')[0]).join(', ')} falharam)` : `IA: ${N} telas alteradas`);
+            onAiTaskDone?.({ ok: true, message: errors.length ? `${N - errors.length} de ${N} telas alteradas` : `Alterações aplicadas em ${N} telas`, workspace: ws });
+            return { success: true };
+          }
+          const scope0 = editScope(pageShapes, liveIds);
           onProgress?.(`Pedindo para ${selectedAiProvider || 'a IA'} editar ${liveIds.length} elemento(s) selecionado(s)...`);
           const raw = await requestAiScreenRaw(
-            buildAiEditPrompt({ prompt: clean, accentColor, isDark: isEffectiveDark, referenceImages: refs }, scope, liveIds),
-            selectedAiProvider, selectedModel, workspacePath || undefined, 240000, undefined, refDirs
+            buildAiEditPrompt({ prompt: clean, accentColor, isDark: isEffectiveDark, referenceImages: specRefs, referenceSpec: spec, tokens: projTokens }, scope0, liveIds),
+            selectedAiProvider, genModel, cwd || undefined, 480000, undefined, refDirs
           );
           if (signal?.cancelled) return { success: false, error: 'cancelado' };
-          const edited = applyAiEdits(raw, activePageShapes, scope, liveIds, { pageId: selectedPageId, isDark: isEffectiveDark, accentColor, icons });
-          if (!edited) { onAiTaskDone?.({ ok: false, message: 'A IA não devolveu alterações válidas. Tente descrever a mudança de outra forma.' }); return { success: false, error: 'A IA não devolveu alterações válidas. Tente descrever a mudança de outra forma.' }; }
+          // aplica sobre o estado de AGORA (o usuário pode ter editado enquanto a IA respondia)
+          const fresh = onPage(await currentDoc(ws));
+          const scope = editScope(fresh, liveIds);
+          const edited = applyAiEdits(raw, fresh, scope, liveIds, { pageId, isDark: isEffectiveDark, accentColor, icons, tokens: projTokens });
+          if (!edited) { return { success: false, error: 'A IA não devolveu alterações válidas. Tente descrever a mudança de outra forma.' }; }
           let editedShapes = edited.shapes;
           if (edited.pending.length) {
             const imgs = await Promise.all(edited.pending.map((j) => fetchStockImage(j.query, j.width, j.height).then((r) => [j.id, r] as const).catch(() => [j.id, null] as const)));
             editedShapes = editedShapes.map((s) => { const hit = imgs.find(([id]) => id === s.id)?.[1]; return hit ? { ...s, imageUrl: hit.dataUrl } : s; });
           }
-          applyActivePageShapes(editedShapes, true);
-          onToast?.(`IA: ${edited.changed} alterado(s), ${edited.added} adicionado(s), ${edited.removed} removido(s)`);
-          onAiTaskDone?.({ ok: true, message: 'Alterações aplicadas à seleção' });
+          applyDoc(ws, replacePage(editedShapes), true);
+          if (isVisible(ws)) onToast?.(`IA: ${edited.changed} alterado(s), ${edited.added} adicionado(s), ${edited.removed} removido(s)`);
+          onAiTaskDone?.({ ok: true, message: 'Alterações aplicadas à seleção', workspace: ws });
           return { success: true };
         }
 
         // Frame vazio selecionado: gera o conteúdo dentro dele (sem tempo real)
         if (genTarget) {
           const icons = await loadIcons().catch(() => undefined);
-          const aiReq = { prompt: clean, pageId: selectedPageId, startX: genTarget.x, startY: genTarget.y, accentColor, isDark: isEffectiveDark, targetFrame: genTarget, icons, canReadProject: !!workspacePath, referenceImages: refs };
-          let generated: ReturnType<typeof parseAiScreenResponse> = null;
+          const aiReq = { tokens: projTokens, prompt: clean, pageId, startX: genTarget.x, startY: genTarget.y, accentColor, isDark: isEffectiveDark, targetFrame: genTarget, icons, canReadProject: useCtx && !!ws && !refs.length, useProjectContext: useCtx, referenceImages: specRefs, referenceSpec: spec, inspirationImages: inspiration };
           onProgress?.(`Pedindo o layout para ${selectedAiProvider || 'a IA'}...`);
-          generated = parseAiScreenResponse(await requestAiScreenRaw(buildAiScreenPrompt(aiReq), selectedAiProvider, selectedModel, workspacePath || undefined, 240000, undefined, refDirs), aiReq);
+          const generated = parseAiScreenResponse(await requestAiScreenRaw(buildAiScreenPrompt(aiReq), selectedAiProvider, genModel, cwd || undefined, 480000, undefined, refDirs), aiReq);
           if (signal?.cancelled) return { success: false, error: 'cancelado' };
-          if (!generated) { onAiTaskDone?.({ ok: false, message: 'A IA não devolveu um layout válido. Tente descrever a tela com mais detalhes ou escolha outro modelo.' }); return { success: false, error: 'A IA não devolveu um layout válido. Tente descrever a tela com mais detalhes ou escolha outro modelo.' }; }
-          const result = generated;
+          if (!generated) { return { success: false, error: 'A IA não devolveu um layout válido. Tente descrever a tela com mais detalhes ou escolha outro modelo.' }; }
+          const fresh = onPage(await currentDoc(ws));
           // troca o conteúdo da tela (e tudo dentro dele), mantendo as peças do aparelho
-          const inside = new Set(descendantIds(activePageShapes, genTarget.id));
-          const others = activePageShapes.filter((s) => s.id !== genTarget.id && (!inside.has(s.id) || s.deviceChrome));
-          const content = result.shapes.filter((s) => s.id !== genTarget.id);
+          const inside = new Set(descendantIds(fresh, genTarget.id));
+          const others = fresh.filter((s) => s.id !== genTarget.id && (!inside.has(s.id) || s.deviceChrome));
+          const content = generated.shapes.filter((s) => s.id !== genTarget.id);
           let next = [...others, genTarget, ...content];
-          if (generated?.pending.length) {
+          if (generated.pending.length) {
             const imgs = await Promise.all(generated.pending.map((j) => fetchStockImage(j.query, j.width, j.height).then((r) => [j.id, r] as const).catch(() => [j.id, null] as const)));
             next = next.map((s) => { const hit = imgs.find(([id]) => id === s.id)?.[1]; return hit ? { ...s, imageUrl: hit.dataUrl } : s; });
           }
-          applyActivePageShapes(next, true);
-          handleSelectSingle(genTarget.id);
-          onAiTaskDone?.({ ok: true, message: 'Conteúdo da tela gerado' });
+          applyDoc(ws, replacePage(next), true);
+          if (isVisible(ws)) handleSelectSingle(genTarget.id);
+          onAiTaskDone?.({ ok: true, message: 'Conteúdo da tela gerado', workspace: ws });
           return { success: true };
         }
 
+        // Pedido de várias telas (fluxo / app completo): planeja as telas + design system e gera UMA tela por chamada, em paralelo
+        if (phIds && (looksMultiScreen(clean) || (fromSelection && /(telas|sequ[eê]ncia|fluxo|jornada|outras|pr[oó]ximas|etapas)/i.test(clean)))) {
+          onProgress?.('Planejando as telas do app…');
+          const planRaw = await requestAiScreenRaw(buildPlanPrompt(clean, useCtx ? await getProjectContext(ws) : undefined, spec, projTokens), selectedAiProvider, genModel, cwd || undefined, 120000).catch(() => null);
+          if (signal?.cancelled) return { success: false, error: 'cancelado' };
+          const plan = planRaw ? parsePlan(planRaw) : null;
+          if (plan && baseDims) { plan.width = baseDims.w; plan.height = baseDims.h; } // as telas novas têm o tamanho da referência
+          if (plan && plan.screens.length >= 2) {
+            const N = plan.screens.length;
+            const mobile = plan.width <= 500 && plan.height >= 600;
+            // troca o frame provisório único por um por tela, lado a lado
+            const old1 = phIds;
+            const base = phSpot!;
+            const groups: Array<{ ids: string[]; root: string; x: number }> = [];
+            const all: Shape[] = [];
+            let rowW = 0;
+            const icons0 = await loadIcons().catch(() => undefined);
+            for (let i = 0; i < N; i++) {
+              const dev = buildDevice(
+                { name: plan.screens[i].name, width: plan.width, height: plan.height, kind: mobile ? 'iphone-island' : 'plain', radius: mobile ? 55 : 0 },
+                { idGen: () => crypto.randomUUID(), pageId, x: base.x + rowW, y: base.y, z: 1, isDark: isEffectiveDark, name: plan.screens[i].name, icons: icons0 }
+              );
+              // buildDevice posiciona em o.x/o.y; o próximo começa depois desta largura + espaço
+              groups.push({ ids: dev.shapes.map((x) => x.id), root: dev.rootId, x: base.x + rowW });
+              all.push(...dev.shapes);
+              rowW += dev.rootWidth + 120;
+            }
+            phIds = new Set(groups.flatMap((g) => g.ids));
+            applyDoc(ws, (cur) => [...cur.filter((x) => !old1.has(x.id)), ...all], false);
+            setGlowIds((g) => { const n = new Set(g); if (glowRoot) n.delete(glowRoot); groups.forEach((x) => n.add(x.root)); return n; });
+            glowRoot = null;
+            glowRoots = groups.map((g) => g.root);
+            if (isVisible(ws)) {
+              const z = Math.max(0.1, Math.min(0.65, (viewport.width * zoom * 0.9) / Math.max(1, rowW - 120)));
+              setZoom(z);
+              setTargetCamera({ x: base.x + (rowW - 120) / 2, y: base.y + (mobile ? 436 : 450), zoom: z, timestamp: Date.now() });
+            }
+            let done = 0;
+            const errors: string[] = [];
+            let next = 0;
+            const worker = async () => {
+              while (next < N && !signal?.cancelled) {
+                const i = next++;
+                const g = groups[i];
+                try {
+                  await runScreenGeneration({
+                    ws, pageId, useCtx, prompt: screenPrompt(hintedClean, plan, i), basePrompt: screenPrompt(hintedClean, plan, i), placeholderIds: g.ids,
+                    referenceImages: specRefs, referenceSpec: spec, inspiration, startX: g.x, startY: base.y, maxScreens: 1, quiet: true, signal,
+                    onProgress: (m) => onProgress?.(`Tela ${Math.min(done + 1, N)} de ${N} · ${m}`),
+                  });
+                } catch (e: any) {
+                  errors.push(`${plan.screens[i].name}: ${e?.message || 'falhou'}`);
+                } finally {
+                  done++;
+                  setGlowIds((gl) => { const n = new Set(gl); n.delete(g.root); return n; });
+                }
+              }
+            };
+            await Promise.all(Array.from({ length: Math.min(3, N) }, worker));
+            if (signal?.cancelled) return { success: false, error: 'cancelado' };
+            const okCount = N - errors.length;
+            if (okCount === 0) return { success: false, error: errors[0] || 'A IA não gerou nenhuma tela.' };
+            if (isVisible(ws) && errors.length) onToast?.(`${errors.length} tela(s) falharam: ${errors.map((x) => x.split(':')[0]).join(', ')}`);
+            onAiTaskDone?.({ ok: true, message: errors.length ? `${okCount} de ${N} telas geradas (${errors.length} falharam)` : `${N} telas geradas e prontas para revisar`, workspace: ws });
+            return { success: true };
+          }
+        }
+
         // Nada selecionado: cria telas novas, em tempo real
-        const spot = findFreeSpot(activePageShapes, Math.round(viewport.x + viewport.width * 0.1) || 100, Math.round(viewport.y + 60) || 100, 460, 920);
-        const count = await runScreenGeneration({ prompt: clean, basePrompt: clean, referenceImages: refs, startX: spot.x, startY: spot.y, onProgress, signal });
+        const visible = isVisible(ws);
+        const spot = phSpot || findFreeSpot(pageShapes, visible ? Math.round(viewport.x + viewport.width * 0.1) || 100 : 100, visible ? Math.round(viewport.y + 60) || 100 : 100, 460, 920);
+        const count = await runScreenGeneration({ ws, pageId, useCtx, prompt: hintedClean, basePrompt: hintedClean, placeholderIds: phIds ? [...phIds] : undefined, referenceImages: specRefs, referenceSpec: spec, inspiration, startX: spot.x, startY: spot.y, onProgress, signal });
         if (signal?.cancelled) return { success: false, error: 'cancelado' };
-        onAiTaskDone?.({ ok: true, message: count === 1 ? 'Tela gerada e pronta para revisar' : `${count} telas geradas e prontas para revisar` });
+        onAiTaskDone?.({ ok: true, message: count === 1 ? 'Tela gerada e pronta para revisar' : `${count} telas geradas e prontas para revisar`, workspace: ws });
         return { success: true };
       } catch (err: any) {
         if (signal?.cancelled) return { success: false, error: 'cancelado' };
         console.error('Erro ao prototipar com IA:', err);
-        onAiTaskDone?.({ ok: false, message: err?.message || 'Falha ao gerar a tela' });
         return { success: false, error: err?.message || 'Falha ao processar protótipo com IA. Tente novamente.' };
       } finally {
-        setIsGeneratingAi(false);
+        if (phIds) {
+          const ids = phIds;
+          applyDoc(ws, (all) => all.filter((x) => !ids.has(x.id)), false);
+        }
+        if (glowRoot || glowRoots.length) setGlowIds((g) => { const n = new Set(g); if (glowRoot) n.delete(glowRoot); glowRoots.forEach((x) => n.delete(x)); return n; });
       }
     },
-    [viewport, selectedPageId, accentColor, isEffectiveDark, selectedAiProvider, selectedModel, workspacePath, applyActivePageShapes, activePageShapes, selectedIds, handleSelectSingle, onToast, onAiTaskDone, runScreenGeneration]
+    [viewport, zoom, getProjectContext, selectedPageId, accentColor, isEffectiveDark, selectedAiProvider, genModel, cliModel, workspacePath, applyDoc, selectedIds, handleSelectSingle, onToast, onAiTaskDone, runScreenGeneration, useProjectContext, activeModels]
   );
 
   /** Telas (frames raiz) das seleções, na ordem de leitura (esquerda→direita, cima→baixo) */
@@ -2180,8 +2836,8 @@ ${codeText}
         const frames = proposalFrames.map((f) => collectFrameContext(shapes, f));
         status(`${selectedAiProvider || 'A IA'} está analisando as telas${workspacePath ? ' e o projeto' : ''}…`);
         const raw = await requestAiScreenRaw(
-          buildProposalPrompt({ ...o, projectContext: await getProjectContext(), frames }),
-          selectedAiProvider, selectedModel, workspacePath || undefined, 240000
+          buildProposalPrompt({ ...o, projectContext: await getProjectContext(workspacePath), frames }),
+          selectedAiProvider, cliModel, workspacePath || undefined, 240000
         );
         const proposal = parseProposal(raw, frames);
         if (!proposal) return { ok: false, message: 'A IA não devolveu uma proposta válida. Tente novamente.' };
@@ -2195,7 +2851,23 @@ ${codeText}
         return { ok: false, message: err?.message || 'Falha ao gerar a proposta' };
       }
     },
-    [proposalFrames, shapes, selectedAiProvider, selectedModel, workspacePath, getProjectContext, accentColor]
+    [proposalFrames, shapes, selectedAiProvider, cliModel, workspacePath, getProjectContext, accentColor]
+  );
+
+  /** Volta para a tela de antes da regeração (a nova versão sai e a antiga é restaurada) */
+  const handleAiUndo = useCallback(
+    (id: string) => {
+      const entry = aiReview.find((r) => r.id === id);
+      if (!entry?.previous?.length || entry.busy) return;
+      const previous = entry.previous;
+      applyDoc(workspacePath, (all) => restorePrevious(all, id, previous), true);
+      // a tela antiga volta com os botões Aceitar/Regerar (se ela era uma tela gerada por IA)
+      setAiReview((prev) => reviewAfterUndo(prev, entry));
+      const root = previous.find((s) => !s.parentId) || previous[0];
+      handleSelectSingle(root.id);
+      onToast?.('Versão anterior restaurada');
+    },
+    [aiReview, applyDoc, workspacePath, handleSelectSingle, onToast]
   );
 
   const handleAiAccept = useCallback((id: string) => {
@@ -2203,10 +2875,31 @@ ${codeText}
     onToast?.('Tela aceita');
   }, [onToast]);
 
-  // ---------------- Fila de gerações da IA (uma por vez, em ordem) ----------------
+  // "Corrigir": ajusta espaçamentos, tamanhos, posições e sobreposições das telas selecionadas (sem IA, instantâneo)
+  const selectedRoots = useMemo(() => {
+    const byId = new Map(activePageShapes.map((x) => [x.id, x]));
+    const roots = new Set<string>();
+    for (const id of selectedIds) {
+      let cur = byId.get(id);
+      while (cur?.parentId && byId.get(cur.parentId)) cur = byId.get(cur.parentId);
+      if (cur) roots.add(cur.id);
+    }
+    return [...roots];
+  }, [selectedIds, activePageShapes]);
+  const pendingAcceptCount = aiReview.filter((r) => !r.busy).length;
+  const handleAcceptAllAi = useCallback(() => {
+    const n = aiReview.filter((r) => !r.busy).length;
+    setAiReview((prev) => prev.filter((r) => r.busy));
+    onToast?.(`${n} telas aceitas`);
+  }, [aiReview, onToast]);
+
+  // ---------------- Fila de gerações da IA (por projeto: uma por vez em cada projeto) ----------------
   interface AiJob {
     id: string;
     kind: 'prompt' | 'regen';
+    /** projeto e página onde o pedido foi feito: a geração é gravada ali, mesmo que o usuário troque de projeto */
+    ws: string;
+    pageId: string;
     prompt: string;
     label: string;
     images: string[];
@@ -2215,18 +2908,133 @@ ${codeText}
     status: 'queued' | 'running' | 'error';
     progress?: string;
     signal: { cancelled: boolean };
+    /** usar o contexto do projeto (valor do momento do envio) */
+    useCtx?: boolean;
   }
+  const [glowIds, setGlowIds] = useState<Set<string>>(new Set()); // frames em que a IA está trabalhando (brilho)
   const [aiQueue, setAiQueue] = useState<AiJob[]>([]);
-  const runningJobRef = useRef<string | null>(null);
+  const runningWsRef = useRef<Set<string>>(new Set());
 
   const patchJob = useCallback((id: string, patch: Partial<AiJob>) => setAiQueue((q) => q.map((j) => (j.id === id ? { ...j, ...patch } : j))), []);
 
+  // a barra de prompt só mostra os pedidos do projeto aberto
+  const projectQueue = useMemo(() => aiQueue.filter((j) => j.ws === workspacePath), [aiQueue, workspacePath]);
+  useEffect(() => {
+    setIsGeneratingAi(projectQueue.some((j) => j.status === 'running'));
+  }, [projectQueue]);
+
   const handleEnqueueAi = useCallback(
-    (prompt: string, images: string[]) => {
-      const job: AiJob = { id: crypto.randomUUID(), kind: 'prompt', prompt, label: prompt, images, selection: selectedIds, status: 'queued', signal: { cancelled: false } };
+    (prompt: string, images: string[], label?: string) => {
+      const job: AiJob = { id: crypto.randomUUID(), kind: 'prompt', ws: workspacePath, pageId: selectedPageId, prompt, label: label || prompt, images, selection: selectedIds, status: 'queued', signal: { cancelled: false }, useCtx: useProjectContext };
       setAiQueue((q) => [...q, job]);
     },
-    [selectedIds]
+    [selectedIds, workspacePath, selectedPageId, useProjectContext]
+  );
+
+  // "Corrigir": ajuste automático imediato (grade de 4px, tamanhos iguais, itens para dentro, sem sobreposição) + um pedido para a IA
+  // corrigir layout, espaçamento e padronização das telas selecionadas (a IA enxerga a seleção como qualquer outro pedido)
+  const handleFixLayout = useCallback(() => {
+    if (!selectedRoots.length) return;
+    const probe = fixLayout(shapesRef.current, selectedRoots);
+    if (probe.fixes) applyDoc(workspacePath, (all) => fixLayout(all, selectedRoots).shapes, true);
+    handleEnqueueAi(
+      'Corrija problemas de layout nas telas selecionadas, mantendo o design, as cores e os textos: alinhe os elementos (mesma margem lateral em todos os blocos e telas), padronize os espaçamentos (grade de 4px, mesmo espaço entre itens iguais), use o mesmo tamanho para componentes iguais (cards, botões, campos, chips, ícones, avatares), ajuste posições e tamanhos para não haver textos sobrepostos, cortados ou elementos fora da tela, e deixe as telas consistentes entre si (cabeçalho, barra de navegação e alinhamentos nos mesmos lugares). Altere só x, y, width e height e o que for necessário para corrigir.',
+      [],
+      `Corrigir layout (${selectedRoots.length} tela${selectedRoots.length > 1 ? 's' : ''})`
+    );
+  }, [selectedRoots, applyDoc, workspacePath, handleEnqueueAi]);
+
+  // Design tokens: gerar com IA (texto e/ou imagens de outro projeto), extrair do design atual e editar à mão
+  const handleGenerateTokens = useCallback(
+    async (o: { prompt: string; images: string[] }): Promise<string | null> => {
+      try {
+        const refs: string[] = [];
+        for (const d of o.images) {
+          const r = await (window as any).electronAPI?.fs?.saveTempImage?.(d.split(',')[1], 'jpg')?.catch?.(() => null);
+          if (r?.path) refs.push(r.path);
+        }
+        if (o.images.length > refs.length) return 'Não consegui salvar as imagens de referência. Reinicie o app e tente de novo.';
+        const refDirs = [...new Set(refs.map((p) => p.slice(0, p.lastIndexOf('/'))))];
+        const ctx = useProjectContext && workspacePath && !refs.length ? await getProjectContext(workspacePath) : undefined;
+        const raw = await requestAiScreenRaw(
+          buildTokensGenPrompt({ prompt: o.prompt, imagePaths: refs, projectContext: ctx, current: designTokensRef.current }),
+          selectedAiProvider, genModel, NEUTRAL_CWD, 240000, undefined, refDirs
+        );
+        const parsed = parseTokens(raw);
+        if (!parsed) return 'A IA não devolveu tokens válidos. Tente de novo ou descreva melhor o estilo.';
+        const t = applyModeScope(o.prompt, designTokensRef.current, parsed); // respeita "só o modo claro/escuro" e o modo ativo
+        setTokensUndo({ previous: designTokensRef.current, label: 'Tokens gerados com IA', section: 'all' });
+        setDesignTokens(t);
+        onToast?.('Design tokens gerados');
+        return null;
+      } catch (e: any) {
+        return e?.message || 'Falha ao gerar os tokens';
+      }
+    },
+    [useProjectContext, workspacePath, getProjectContext, selectedAiProvider, genModel, onToast]
+  );
+  // nova versão de UMA seção (tipografia, espaçamentos ou raios) pela IA; o resto dos tokens não muda
+  const handleAiTokensSection = useCallback(
+    async (section: TokenSection): Promise<string | null> => {
+      const cur = designTokensRef.current;
+      if (!cur) return null;
+      try {
+        const raw = await requestAiScreenRaw(buildTokensSectionPrompt(section, cur), selectedAiProvider, genModel, NEUTRAL_CWD, 180000);
+        const next = applyTokensSection(section, cur, raw);
+        if (!next) return 'A IA não devolveu uma proposta válida. Tente de novo.';
+        setTokensUndo({ previous: cur, label: 'Gerado com IA', section });
+        setDesignTokens(next);
+        return null;
+      } catch (e: any) {
+        return e?.message || 'Falha ao gerar com a IA';
+      }
+    },
+    [selectedAiProvider, genModel]
+  );
+  const handleReplaceTokens = useCallback((next: DesignTokens, label: string, section: 'all' | 'colors' | TokenSection = 'all') => {
+    setTokensUndo({ previous: designTokensRef.current, label, section });
+    setDesignTokens(next);
+  }, []);
+  const handleExtractTokens = useCallback(() => {
+    const t = tokensFromShapes(shapesRef.current);
+    if (!t) return false;
+    setTokensUndo({ previous: designTokensRef.current, label: 'Tokens extraídos do design', section: 'all' });
+    setDesignTokens(t);
+    onToast?.('Tokens extraídos do design atual');
+    return true;
+  }, [onToast]);
+
+  // Ações de projeto (antes no menu do projeto; agora em "Configurações do design")
+  const handleExportJson = useCallback(() => {
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify({ pages, selectedPageId, shapes, pageViewports }, null, 2));
+    const a = document.createElement('a');
+    a.setAttribute('href', dataStr);
+    a.setAttribute('download', `${docTitle || 'design'}.json`);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }, [pages, selectedPageId, shapes, pageViewports, docTitle]);
+  const handleGenerateProposalOpen = useCallback(() => {
+    if (proposalFrames.length === 0) onToast?.('Selecione uma ou mais telas (frames) para gerar a proposta');
+    else setIsProposalOpen(true);
+  }, [proposalFrames, onToast]);
+  const handleClearGuides = useCallback(() => {
+    setGuidesByPage((prev) => ({ ...prev, [selectedPageId]: [] }));
+    onToast?.('Guias da página removidas');
+  }, [selectedPageId, onToast]);
+
+  // "Cores da seleção" (como o Selection colors do Figma): frames/grupos/várias camadas listam as cores de tudo que têm dentro
+  const selectionColors = useMemo(() => {
+    if (!selectedIds.length) return [];
+    const first = activePageShapes.find((x) => x.id === selectedIds[0]);
+    const container = selectedIds.length > 1 || first?.type === 'frame' || first?.type === 'group' || first?.type === 'section';
+    return container ? collectSelectionColors(activePageShapes, selectedIds) : [];
+  }, [selectedIds, activePageShapes]);
+  const handleReplaceSelectionColor = useCallback(
+    (from: { hex: string; opacity: number }, to: { hex: string; opacity: number }) => {
+      applyActivePageShapes(replaceSelectionColor(activePageShapes, selectedIds, from, to), true);
+    },
+    [activePageShapes, selectedIds, applyActivePageShapes]
   );
 
   const handleCancelAiJob = useCallback(
@@ -2239,96 +3047,132 @@ ${codeText}
         setAiQueue((q) => q.filter((j) => j.id !== id));
       } else {
         patchJob(id, { progress: 'Cancelando…' });
-        (window as any).electronAPI?.ai?.cancel?.(undefined, workspacePath || undefined); // encerra a CLI em execução
+        (window as any).electronAPI?.ai?.cancel?.(undefined, (job.useCtx === false ? NEUTRAL_CWD : job.ws) || undefined); // encerra a CLI daquele projeto
       }
     },
-    [aiQueue, patchJob, workspacePath]
+    [aiQueue, patchJob, NEUTRAL_CWD]
   );
 
-  /** Sobe um pedido na fila, nunca acima do que já está sendo gerado */
+  /** Sobe um pedido na fila do projeto, nunca acima do que já está sendo gerado */
   const handleMoveAiJobUp = useCallback((id: string) => {
     setAiQueue((q) => {
-      const i = q.findIndex((j) => j.id === id);
-      const firstQueued = q.findIndex((j) => j.status === 'queued');
-      if (i <= 0 || i <= firstQueued || q[i].status !== 'queued') return q;
+      const job = q.find((j) => j.id === id);
+      if (!job || job.status !== 'queued') return q;
+      const sameWs = q.filter((j) => j.ws === job.ws);
+      const i = sameWs.findIndex((j) => j.id === id);
+      const firstQueued = sameWs.findIndex((j) => j.status === 'queued');
+      if (i <= 0 || i <= firstQueued) return q;
+      const prev = sameWs[i - 1];
       const next = q.slice();
-      [next[i - 1], next[i]] = [next[i], next[i - 1]];
+      const a = next.findIndex((j) => j.id === prev.id);
+      const b = next.findIndex((j) => j.id === id);
+      [next[a], next[b]] = [next[b], next[a]];
       return next;
     });
   }, []);
 
+  /**
+   * Regera uma tela com IA. Telas geradas por IA reaproveitam o pedido original; qualquer outro frame de topo
+   * (feito à mão ou importado) é refeito a partir do que está escrito nele.
+   */
   const handleAiRegenerate = useCallback(
     (id: string) => {
-      const entry = aiReview.find((r) => r.id === id);
       const frame = activePageShapes.find((s) => s.id === id);
-      if (!entry || !frame || entry.busy) return;
-      setAiReview((prev) => prev.map((r) => (r.id === id ? { ...r, busy: true } : r)));
-      setAiQueue((q) => [...q, { id: crypto.randomUUID(), kind: 'regen', prompt: entry.prompt, label: `Regerar a tela "${frame.name}"`, images: [], selection: [], frameId: id, status: 'queued', signal: { cancelled: false } }]);
+      if (!frame) return;
+      let entry = aiReview.find((r) => r.id === id);
+      if (entry?.busy) return;
+      if (!entry) {
+        const screen = activePageShapes.find((s) => s.parentId === id && s.deviceScreen);
+        const ctx = collectFrameContext(activePageShapes, frame);
+        const texts = ctx.texts.length ? ` Conteúdo atual (textos): ${ctx.texts.slice(0, 40).join(' | ')}.` : '';
+        entry = {
+          id,
+          prompt: `Refaça a tela "${frame.name}" mantendo o propósito e o conteúdo dela, como um app/sistema coerente, com um layout novo e melhor.${texts}`,
+          w: Math.round(screen?.width ?? frame.width),
+          h: Math.round(screen?.height ?? frame.height),
+        };
+        const created = entry;
+        setAiReview((prev) => [...prev.filter((r) => r.id !== id), { ...created, busy: true }]);
+      } else {
+        setAiReview((prev) => prev.map((r) => (r.id === id ? { ...r, busy: true } : r)));
+      }
+      setAiQueue((q) => [...q, { id: crypto.randomUUID(), kind: 'regen', ws: workspacePath, pageId: selectedPageId, prompt: entry!.prompt, label: `Regerar a tela "${frame.name}"`, images: [], selection: [], frameId: id, status: 'queued', signal: { cancelled: false }, useCtx: useProjectContext }]); // o interruptor que o usuário vê agora (não o do pedido original)
     },
-    [aiReview, activePageShapes]
+    [aiReview, activePageShapes, workspacePath, selectedPageId, useProjectContext]
   );
 
   const runRegenJob = useCallback(
     async (job: AiJob): Promise<string | null> => {
       const entry = aiReview.find((r) => r.id === job.frameId);
-      const frame = activePageShapes.find((s) => s.id === job.frameId);
+      const doc = await currentDoc(job.ws);
+      const frame = doc.find((s) => s.id === job.frameId);
       if (!entry || !frame) return 'A tela original não existe mais';
+      // identidade visual da tela atual: a nova versão muda a composição, não o estilo
+      const styleScreen = doc.find((s) => s.parentId === frame.id && s.deviceScreen) || frame;
+      const currentStyle = describeScreenStyle(doc, styleScreen);
+      const currentTexts = collectFrameContext(doc, styleScreen).texts.slice(0, 40).join(' | ');
+      setGlowIds((g) => new Set([...g, job.frameId!]));
       try {
         await runScreenGeneration({
-          prompt: `${entry.prompt}\n\nGere APENAS a tela "${frame.name}" (${Math.round(entry.w ?? frame.width)}x${Math.round(entry.h ?? frame.height)} px, escreva exatamente esse width/height): UMA única tela, com um layout NOVO e diferente da versão anterior (outra composição), mantendo o mesmo estilo e fluxo.`,
+          ws: job.ws,
+          pageId: job.pageId,
+          prompt: `${entry.prompt}\n\nGere APENAS ${job.useCtx === false ? 'uma tela' : `a tela "${frame.name}"`} (${Math.round(entry.w ?? frame.width)}x${Math.round(entry.h ?? frame.height)} px, escreva exatamente esse width/height): UMA única tela.
+
+REGERAR = MESMO PADRÃO DE DESIGN. Mantenha EXATAMENTE a identidade visual da versão atual (fundo e degradês, paleta, fonte e escala tipográfica, raios, vidro/sombras/granulado, estilo dos componentes e o conteúdo/textos) e use a tela atual só como base: o objetivo é uma composição/layout melhor e corrigir desalinhamentos, espaçamentos e tamanhos inconsistentes (grade de 4px, margens laterais iguais, itens iguais com mesmo tamanho, sem texto sobreposto, sem vazios estranhos). NÃO invente outra paleta, outro fundo nem outro estilo.
+PADRÃO DE DESIGN ATUAL (obrigatório manter):
+${currentStyle}
+Textos atuais (reaproveite): ${currentTexts}`,
           basePrompt: entry.prompt,
           referenceImages: entry.refs,
+          referenceSpec: entry.refSpec,
+          useCtx: job.useCtx,
           startX: frame.x,
           startY: frame.y,
           replaceFrameId: job.frameId,
+          previousEntry: entry,
           maxScreens: 1,
           signal: job.signal,
           onProgress: (m) => patchJob(job.id, { progress: m }),
         });
-        if (!job.signal.cancelled) onAiTaskDone?.({ ok: true, message: `Nova versão da tela "${frame.name}" gerada` });
+        if (!job.signal.cancelled) onAiTaskDone?.({ ok: true, message: `Nova versão da tela "${frame.name}" gerada`, workspace: job.ws });
         return null;
       } catch (err: any) {
-        if (!job.signal.cancelled) {
-          onAiTaskDone?.({ ok: false, message: err?.message || 'Falha ao regerar a tela' });
-          return err?.message || 'Falha ao regerar a tela';
-        }
-        return null;
+        return job.signal.cancelled ? null : err?.message || 'Falha ao regerar a tela';
       } finally {
+        setGlowIds((g) => { const n = new Set(g); n.delete(job.frameId!); return n; });
         setAiReview((prev) => prev.map((r) => (r.id === job.frameId ? { ...r, busy: false } : r)));
       }
     },
-    [aiReview, activePageShapes, runScreenGeneration, patchJob, onToast, onAiTaskDone]
+    [aiReview, runScreenGeneration, patchJob, onAiTaskDone]
   );
 
-  // Processa a fila: um pedido por vez, na ordem; ao terminar (ou cancelar) segue para o próximo
   // devolve a mensagem de erro (ou null): o card fica na fila com o erro até o usuário dispensar ou tentar de novo
   const runJobRef = useRef<(job: AiJob) => Promise<string | null>>(async () => null);
   runJobRef.current = async (job) => {
-    setIsGeneratingAi(true);
     try {
       if (job.kind === 'regen') return await runRegenJob(job);
-      const res = await handlePrototypeWithAi(job.prompt, (m) => patchJob(job.id, { progress: m }), job.images, job.selection, job.signal);
+      const res = await handlePrototypeWithAi(job.prompt, (m) => patchJob(job.id, { progress: m }), job.images, job.selection, job.signal, { ws: job.ws, pageId: job.pageId, useCtx: job.useCtx });
       if (res && res.success === false && !job.signal.cancelled) return res.error || 'Erro ao gerar com IA';
       return null;
     } catch (err: any) {
       return job.signal.cancelled ? null : err?.message || 'Erro ao gerar com IA';
-    } finally {
-      setIsGeneratingAi(false);
     }
   };
+  // Processa a fila: um pedido por vez em cada projeto (projetos diferentes geram em paralelo, cada um no seu)
   useEffect(() => {
-    if (runningJobRef.current) return;
-    const next = aiQueue.find((j) => j.status === 'queued');
-    if (!next) return;
-    runningJobRef.current = next.id;
-    setAiQueue((q) => q.map((j) => (j.id === next.id ? { ...j, status: 'running' } : j)));
-    runJobRef.current(next).then((error) => {
-      runningJobRef.current = null;
-      if (error) {
-        onToast?.(error);
-        setAiQueue((q) => q.map((j) => (j.id === next.id ? { ...j, status: 'error', progress: error } : j)));
-      } else setAiQueue((q) => q.filter((j) => j.id !== next.id));
-    });
+    for (const next of aiQueue) {
+      if (next.status !== 'queued' || runningWsRef.current.has(next.ws)) continue;
+      runningWsRef.current.add(next.ws);
+      setAiQueue((q) => q.map((j) => (j.id === next.id ? { ...j, status: 'running' } : j)));
+      runJobRef.current(next).then((error) => {
+        runningWsRef.current.delete(next.ws);
+        if (error) {
+          if (isVisible(next.ws)) onToast?.(error);
+          onAiTaskDone?.({ ok: false, message: error, workspace: next.ws });
+          setAiQueue((q) => q.map((j) => (j.id === next.id ? { ...j, status: 'error', progress: error } : j)));
+        } else setAiQueue((q) => q.filter((j) => j.id !== next.id));
+      });
+    }
   }, [aiQueue]);
 
   /** Tenta de novo um pedido que falhou: volta para o fim da fila */
@@ -2622,150 +3466,6 @@ ${codeText}
                       <Edit2 size={13} color={tokens.textSecondary} />
                       <span>Renomear</span>
                     </div>
-                    <div
-                      onClick={() => {
-                        const cloned = activePageShapes.map((s) => ({
-                          ...s,
-                          id: crypto.randomUUID(),
-                          x: s.x + 30,
-                          y: s.y + 30,
-                          pageId: selectedPageId,
-                        }));
-                        applyActivePageShapes([...activePageShapes, ...cloned], true);
-                        setIsDocMenuOpen(false);
-                      }}
-                      style={{
-                        padding: '7px 12px',
-                        fontSize: 11,
-                        fontFamily: "'Poppins', sans-serif",
-                        color: tokens.textPrimary,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = tokens.hoverBg)}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                    >
-                      <Copy size={13} color={tokens.textSecondary} />
-                      <span>Duplicar elementos</span>
-                    </div>
-                    <div
-                      onClick={() => {
-                        const dataStr =
-                          'data:text/json;charset=utf-8,' +
-                          encodeURIComponent(
-                            JSON.stringify(
-                              {
-                                pages,
-                                selectedPageId,
-                                shapes,
-                                pageViewports,
-                              },
-                              null,
-                              2
-                            )
-                          );
-                        const downloadAnchor = document.createElement('a');
-                        downloadAnchor.setAttribute('href', dataStr);
-                        downloadAnchor.setAttribute('download', `${docTitle || 'design'}.json`);
-                        document.body.appendChild(downloadAnchor);
-                        downloadAnchor.click();
-                        downloadAnchor.remove();
-                        setIsDocMenuOpen(false);
-                      }}
-                      style={{
-                        padding: '7px 12px',
-                        fontSize: 11,
-                        fontFamily: "'Poppins', sans-serif",
-                        color: tokens.textPrimary,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = tokens.hoverBg)}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                    >
-                      <Download size={13} color={tokens.textSecondary} />
-                      <span>Exportar JSON</span>
-                    </div>
-                    {([
-                      ['save', 'Salvar versão'],
-                      ['history', 'Histórico de versões…'],
-                      ['figma', 'Importar do Figma…'],
-                      ['proposal', 'Gerar proposta com IA (telas selecionadas)…'],
-                      ['unsplash', 'Chave do Unsplash (imagens da IA)…'],
-                      ['clearGuides', 'Limpar guias da página'],
-                    ] as const).map(([key, label]) => (
-                      <div
-                        key={key}
-                        onClick={() => {
-                          if (key === 'save') {
-                            setIsDocMenuOpen(false);
-                            handleSaveVersion();
-                          } else if (key === 'history') {
-                            handleOpenVersions();
-                          } else if (key === 'figma') {
-                            setIsDocMenuOpen(false);
-                            setIsFigmaImportOpen(true);
-                          } else if (key === 'proposal') {
-                            setIsDocMenuOpen(false);
-                            if (proposalFrames.length === 0) onToast?.('Selecione uma ou mais telas (frames) para gerar a proposta');
-                            else setIsProposalOpen(true);
-                          } else if (key === 'unsplash') {
-                            setIsDocMenuOpen(false);
-                            setIsUnsplashOpen(true);
-                          } else {
-                            setGuidesByPage((prev) => ({ ...prev, [selectedPageId]: [] }));
-                            setIsDocMenuOpen(false);
-                            onToast?.('Guias da página removidas');
-                          }
-                        }}
-                        style={{ padding: '7px 12px', fontSize: 11, fontFamily: "'Poppins', sans-serif", color: tokens.textPrimary, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = tokens.hoverBg)}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                      >
-                        <span style={{ width: 13 }} />
-                        <span>{label}</span>
-                      </div>
-                    ))}
-                    {([
-                      ['grid', "Mostrar grade  (Ctrl+')"],
-                      ['rulers', 'Mostrar réguas  (Shift+R)'],
-                      ['rulerRelative', 'Réguas relativas ao frame'],
-                      ['guides', 'Mostrar guias  (Ctrl+;)'],
-                      ['snap', 'Encaixe inteligente'],
-                    ] as const).map(([key, label]) => (
-                      <div
-                        key={key}
-                        onClick={() => toggleViewPref(key)}
-                        style={{ padding: '7px 12px', fontSize: 11, fontFamily: "'Poppins', sans-serif", color: tokens.textPrimary, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = tokens.hoverBg)}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                      >
-                        <span style={{ width: 13, textAlign: 'center', color: accentColor }}>{viewPrefs[key] ? '✓' : ''}</span>
-                        <span>{label}</span>
-                      </div>
-                    ))}
-                    <div
-                      onClick={() => setIsDocMenuOpen(false)}
-                      style={{
-                        padding: '7px 12px',
-                        fontSize: 11,
-                        fontFamily: "'Poppins', sans-serif",
-                        color: tokens.textPrimary,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = tokens.hoverBg)}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                    >
-                      <History size={13} color={tokens.textSecondary} />
-                      <span>Histórico de versões</span>
-                    </div>
                   </div>
                 </>
               )}
@@ -2783,6 +3483,7 @@ ${codeText}
               }}
             >
               <LayersPanel
+                onOpenAssets={() => setIsAssetsOpen(true)}
                 shapes={activePageShapes}
                 selectedId={selectedId}
                 selectedIds={selectedIds}
@@ -2796,7 +3497,16 @@ ${codeText}
                 onRenamePage={handleRenamePage}
                 onDuplicatePage={handleDuplicatePage}
                 onDeletePage={handleRequestDeletePage}
-                onSelect={handleSelectSingle}
+                onSelectMany={handleSelectMultiple}
+                onReorder={(dragId, targetId, pos) => {
+                  const next = reorderLayers(activePageShapes, dragId, targetId, pos);
+                  if (next) applyActivePageShapes(next, true);
+                  else onToast?.('Não dá para soltar a camada aí');
+                }}
+                onSelect={(id) => {
+                  handleSelectSingle(id);
+                  if (id) focusOnShape(id); // clicar numa camada leva o canvas até ela
+                }}
                 onToggleVisibility={handleToggleVisibility}
                 onToggleLock={handleToggleLock}
                 onDelete={(id) => {
@@ -2869,6 +3579,110 @@ ${codeText}
           </button>
         )}
 
+        {/* Canto superior direito do canvas: zoom (+ reabrir o painel quando oculto) */}
+        <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 40, display: 'flex', alignItems: 'center', gap: 6 }}>
+          {!isRightPanelOpen && (
+            <button
+              type="button"
+              onClick={() => toggleRightPanel(true)}
+              style={{ background: tokens.bgCardElevated, border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`, borderRadius: 6, color: tokens.textSecondary, cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', boxShadow: isEffectiveDark ? '0 4px 12px rgba(0,0,0,0.4)' : '0 4px 12px rgba(0,0,0,0.1)' }}
+              title="Mostrar painel de propriedades"
+            >
+              <PanelRight size={15} />
+            </button>
+          )}
+          <div style={{ background: tokens.bgCardElevated, border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`, borderRadius: 6, boxShadow: isEffectiveDark ? '0 4px 12px rgba(0,0,0,0.4)' : '0 4px 12px rgba(0,0,0,0.1)' }}>
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                onClick={() => setIsZoomMenuOpen((prev) => !prev)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 3,
+                  background: 'transparent',
+                  border: 'none',
+                  color: tokens.textPrimary,
+                  fontFamily: "'Poppins', sans-serif",
+                  fontSize: 11.5,
+                  fontWeight: 500,
+                  padding: '4px 6px',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  transition: 'background 0.1s ease',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = tokens.hoverBg)}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                title="Ajustar zoom"
+              >
+                <span>{`${Math.round(zoom * 100)}%`}</span>
+                <ChevronDown size={11} color={tokens.textSecondary} />
+              </button>
+
+              {isZoomMenuOpen && (
+                <>
+                <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setIsZoomMenuOpen(false)} />
+                <div
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: '100%',
+                    marginTop: 4,
+                    background: tokens.bgCardElevated,
+                    border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
+                    borderRadius: 8,
+                    boxShadow: isEffectiveDark ? '0 8px 24px rgba(0,0,0,0.6)' : '0 8px 24px rgba(0,0,0,0.15)',
+                    padding: '4px 0',
+                    minWidth: 154,
+                    zIndex: 100,
+                  }}
+                >
+                  {/* Barra de arrastar: zoom contínuo (escala logarítmica de 2% a 500%) */}
+                  <div style={{ padding: '6px 12px 8px', display: 'flex', alignItems: 'center' }}>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1000}
+                      step={1}
+                      value={Math.round((1000 * Math.log(Math.max(0.02, Math.min(5, zoom)) / 0.02)) / Math.log(250))}
+                      onChange={(e) => setZoom(Number((0.02 * Math.pow(250, Number(e.target.value) / 1000)).toFixed(3)))}
+                      title="Arraste para ajustar o zoom"
+                      style={{ width: 130, accentColor: accentColor, cursor: 'pointer' }}
+                    />
+                  </div>
+                  <div style={{ height: 1, background: tokens.border, margin: '0 0 4px' }} />
+                  {[
+                    { label: '21%', val: 0.21 },
+                    { label: '50%', val: 0.5 },
+                    { label: '100%', val: 1.0 },
+                    { label: '200%', val: 2.0 },
+                  ].map((item) => (
+                    <div
+                      key={item.label}
+                      onClick={() => {
+                        setZoom(item.val);
+                        setIsZoomMenuOpen(false);
+                      }}
+                      style={{
+                        padding: '5px 12px',
+                        fontSize: 11,
+                        fontFamily: "'Poppins', sans-serif",
+                        color: Math.round(zoom * 100) === Math.round(item.val * 100) ? accentColor : tokens.textPrimary,
+                        cursor: 'pointer',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = tokens.hoverBg)}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      {item.label}
+                    </div>
+                  ))}
+                </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
         {isLoading && (
           <div
             style={{
@@ -2894,9 +3708,19 @@ ${codeText}
             if (Array.from(e.dataTransfer?.items || []).some((i) => i.kind === 'file')) e.preventDefault();
           }}
           onDrop={(e) => {
-            const files = Array.from(e.dataTransfer?.files || []).filter((f) => f.type.startsWith('image/'));
-            if (files.length === 0 || readOnly) return;
+            const all = Array.from(e.dataTransfer?.files || []);
+            const svgFiles = all.filter((f) => f.type === 'image/svg+xml' || /\.svg$/i.test(f.name));
+            const files = all.filter((f) => f.type.startsWith('image/') && !svgFiles.includes(f));
+            if ((files.length === 0 && svgFiles.length === 0) || readOnly) return;
             e.preventDefault();
+            // SVG vira shapes editáveis (frame com retângulos, formas, caminhos e textos), não uma imagem
+            if (svgFiles.length) {
+              const svgEl = (e.target as Element).closest('svg');
+              const r = svgEl?.getBoundingClientRect();
+              const at = r ? { x: viewport.x + (e.clientX - r.left) / zoom, y: viewport.y + (e.clientY - r.top) / zoom } : { x: viewport.x + 80, y: viewport.y + 80 };
+              svgFiles.forEach((f, i) => importSvgFile(f, { x: at.x + i * 40, y: at.y + i * 40 }));
+            }
+            if (files.length === 0) return;
             // Ponto do soltar em coordenadas do canvas
             const svg = (e.target as Element).closest('svg');
             const rect = svg?.getBoundingClientRect();
@@ -2924,9 +3748,17 @@ ${codeText}
           onZoomChange={setZoom}
           onViewportChange={setViewport}
           targetCamera={targetCamera}
-          aiReview={aiReview}
+          aiReview={aiReview.map((r) => ({ id: r.id, busy: r.busy, canUndo: !!r.previous?.length }))}
+          onAiUndo={handleAiUndo}
           onAiAccept={handleAiAccept}
           onAiRegenerate={handleAiRegenerate}
+          glowIds={glowIds}
+          onFrameRegenerate={handleAiRegenerate}
+          isEffectiveDark={isEffectiveDark}
+          onFrameDelete={(id) => {
+            const f = shapes.find((x) => x.id === id);
+            if (f) handleRequestDelete(f);
+          }}
           onSelect={handleSelectSingle}
           onSelectMultiple={handleSelectMultiple}
           onShapesChange={applyActivePageShapes}
@@ -2948,6 +3780,11 @@ ${codeText}
           remoteCursors={Object.values(room.remoteCursors)}
           snapEnabled={viewPrefs.snap}
           showGrid={viewPrefs.grid}
+          redlines={rightPanelMode === 'dev'}
+          outlineMode={outlineMode}
+          colorBlind={colorBlind || undefined}
+          pixelSnap={viewPrefs.pixelSnap}
+          pixelGrid={viewPrefs.pixelGrid}
           showRulers={viewPrefs.rulers}
           rulerRelative={viewPrefs.rulerRelative}
           showUserGuides={viewPrefs.guides}
@@ -2974,9 +3811,27 @@ ${codeText}
           activeModels={activeModels}
           onInstallAiCli={onInstallAiCli}
           onPrototypeWithAi={handlePrototypeWithAi}
-          aiQueue={aiQueue.map((j) => ({ id: j.id, label: j.label, status: j.status, progress: j.progress }))}
+          aiQueue={projectQueue.map((j) => ({ id: j.id, label: j.label, images: j.images, prompt: j.kind === 'prompt' ? j.prompt : undefined, status: j.status, progress: j.progress }))}
           onEnqueueAi={handleEnqueueAi}
           onCancelAiJob={handleCancelAiJob}
+          useProjectContext={useProjectContext}
+          mainOutdated={mainOutdated}
+          onToggleProjectContext={toggleProjectContext}
+          selectedScreensCount={selectedRoots.length}
+          hasDesignTokens={!!designTokens}
+          tokensFollowing={!!designTokens && designTokens.enabled !== false}
+          onToggleTokens={() => {
+            if (!designTokens) { openTokensPanel(); return; }
+            const on = designTokens.enabled === false;
+            setDesignTokens({ ...designTokens, enabled: on });
+            onToast?.(on ? 'Design tokens ligados: a IA segue os tokens' : 'Design tokens desligados: a IA ignora os tokens');
+          }}
+          canFixLayout={selectedRoots.length > 0}
+          onFixLayout={handleFixLayout}
+          fastMode={fastMode}
+          onToggleFastMode={toggleFastMode}
+          pendingAcceptCount={pendingAcceptCount}
+          onAcceptAllAi={handleAcceptAllAi}
           onMoveAiJobUp={handleMoveAiJobUp}
           onRetryAiJob={handleRetryAiJob}
           isGeneratingAi={isGeneratingAi}
@@ -3017,11 +3872,21 @@ ${codeText}
               opacity={currentOpacity}
               themeTokens={tokens}
               accentColor={accentColor}
-              fillType={activeFillItem?.type}
-              gradientStops={activeFillItem?.gradientStops}
-              gradientAngle={activeFillItem?.gradientAngle}
+              fillType={activeColorPicker.target === 'fill' ? activeFillItem?.type : (activeStrokeItem?.type as any)}
+              gradientStops={activeColorPicker.target === 'fill' ? activeFillItem?.gradientStops : activeStrokeItem?.gradientStops}
+              gradientAngle={activeColorPicker.target === 'fill' ? activeFillItem?.gradientAngle : activeStrokeItem?.gradientAngle}
               onGradientChange={
-                activeColorPicker.target === 'fill'
+                activeColorPicker.target !== 'fill'
+                  ? (patch) => {
+                      const targetId = activeStrokeItem?.id;
+                      const updated = strokes.map((st) =>
+                        isAllStrokes || st.id === targetId
+                          ? { ...st, ...(patch as any), color: patch.gradientStops?.[0]?.color ?? st.color }
+                          : st
+                      );
+                      applyShapes(shapes.map((s) => (s.id === selectedShape.id ? { ...s, strokes: updated } : s)), false);
+                    }
+                  : activeColorPicker.target === 'fill'
                   ? (patch) => {
                       const targetId = activeFillItem?.id;
                       const updatedFills = fills.map((f) =>
@@ -3094,9 +3959,9 @@ ${codeText}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 14, fontWeight: 600, flex: 1 }}>Código de “{codeShape.name || 'Tela'}”</span>
-                {(['react', 'html', 'flutter'] as CodeTarget[]).map((t) => (
+                {(['react', 'html', 'flutter', 'swiftui', 'compose'] as CodeTarget[]).map((t) => (
                   <button key={t} type="button" onClick={() => setCodeTarget(t)} style={{ background: codeTarget === t ? `${accentColor}33` : 'transparent', border: `1px solid ${codeTarget === t ? accentColor : tokens.border}`, borderRadius: 6, color: tokens.textPrimary, fontSize: 11, padding: '4px 10px', cursor: 'pointer' }}>
-                    {t === 'react' ? 'React' : t === 'html' ? 'HTML' : 'Flutter'}
+                    {{ react: 'React', html: 'HTML', flutter: 'Flutter', swiftui: 'SwiftUI', compose: 'Compose' }[t]}
                   </button>
                 ))}
                 <button type="button" onClick={() => setCodeShape(null)} style={{ background: 'transparent', border: 'none', color: tokens.textSecondary, cursor: 'pointer', fontSize: 16 }}>×</button>
@@ -3141,6 +4006,87 @@ ${codeText}
 
         {isProposalOpen && (
           <ProposalPopup tokens={tokens} accentColor={accentColor} frameNames={proposalFrames.map((f) => f.name)} onClose={() => setIsProposalOpen(false)} onGenerate={handleGenerateProposal} />
+        )}
+
+        {isVariantMatrixOpen && selectedShape?.isComponent && (
+          <VariantMatrixPopup
+            tokens={tokens}
+            accentColor={accentColor}
+            componentName={selectedShape.name || 'Componente'}
+            hasGroup={!!selectedShape.variantGroup}
+            onClose={() => setIsVariantMatrixOpen(false)}
+            onCreate={(axes) => {
+              const r = createVariantMatrix(shapes, selectedShape.id, axes);
+              if (!r) return onToast?.('Não foi possível criar as variantes');
+              applyShapes(r.shapes, true);
+              onToast?.(`${r.shapes.filter((s) => s.isComponent && s.variantGroup === r.group).length} variantes no grupo "${r.group}"`);
+            }}
+            onArrange={() => selectedShape.variantGroup && applyShapes(arrangeVariants(shapes, selectedShape.variantGroup), true)}
+          />
+        )}
+
+        {diffView && (
+          <div style={{ position: 'relative', zIndex: 100001 }}>
+          <DiffPopup
+            tokens={tokens}
+            accentColor={accentColor}
+            label={diffView.label}
+            diff={diffView.diff}
+            existingIds={new Set(shapes.map((s) => s.id))}
+            onClose={() => setDiffView(null)}
+            onSelect={(id) => {
+              setSelectedIds([id]);
+              setSelectedId(id);
+            }}
+          />
+          </div>
+        )}
+
+        {isAuditOpen && (
+          <AuditPopup
+            tokens={tokens}
+            accentColor={accentColor}
+            shapes={activePageShapes}
+            styles={styles}
+            variables={variables}
+            modeId={activeModeId}
+            names={Object.fromEntries(activePageShapes.map((s) => [s.id, s.name || s.type]))}
+            onClose={() => setIsAuditOpen(false)}
+            onSelect={(id) => {
+              setSelectedIds([id]);
+              setSelectedId(id);
+              const s = activePageShapes.find((x) => x.id === id);
+              if (s) setViewport((prev) => ({ ...prev, x: Math.round(prev.width / 2 - (s.x + s.width / 2) * zoom), y: Math.round(prev.height / 2 - (s.y + s.height / 2) * zoom) }));
+            }}
+            onFix={(list) => {
+              let next = shapes;
+              for (const issue of list) next = applyAuditFix(next, issue);
+              applyShapes(next, true);
+              onToast?.(`${list.length} ${list.length === 1 ? 'correção aplicada' : 'correções aplicadas'}`);
+            }}
+          />
+        )}
+
+        {isAssetsOpen && (
+          <AssetsPopup
+            tokens={tokens}
+            accentColor={accentColor}
+            components={shapes.filter((s) => s.isComponent)}
+            onClose={() => setIsAssetsOpen(false)}
+            onInsert={handleInsertComponent}
+          />
+        )}
+
+        <input ref={svgInputRef} type="file" accept=".svg,image/svg+xml" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) importSvgFile(f); }} />
+
+        {isRenameOpen && selectedIds.length > 0 && (
+          <RenamePopup
+            tokens={tokens}
+            accentColor={accentColor}
+            items={shapes.filter((s) => selectedIds.includes(s.id)).sort((a, b) => a.y - b.y || a.x - b.x).map((s) => ({ id: s.id, name: s.name || '' }))}
+            onClose={() => setIsRenameOpen(false)}
+            onApply={(names) => applyShapes(shapes.map((s) => (names.has(s.id) ? { ...s, name: names.get(s.id)! } : s)), true)}
+          />
         )}
 
         {isUnsplashOpen && (
@@ -3214,6 +4160,7 @@ ${codeText}
                       <div style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v.label}</div>
                       <div style={{ fontSize: 10, color: tokens.textSecondary }}>{new Date(v.createdAt).toLocaleString('pt-BR')} • {v.shapeCount} elementos</div>
                     </div>
+                    <button type="button" onClick={() => handleCompareVersion(v)} title="Comparar esta versão com o design atual" style={{ background: 'transparent', border: `1px solid ${tokens.border}`, borderRadius: 6, color: tokens.textPrimary, fontSize: 11, padding: '4px 8px', cursor: 'pointer' }}>Comparar</button>
                     <button type="button" onClick={() => handleRestoreVersion(v)} style={{ background: 'transparent', border: `1px solid ${tokens.border}`, borderRadius: 6, color: tokens.textPrimary, fontSize: 11, padding: '4px 8px', cursor: 'pointer' }}>Restaurar</button>
                     <button type="button" onClick={() => handleDeleteVersion(v)} title="Excluir versão" style={{ background: 'transparent', border: 'none', color: tokens.textSecondary, cursor: 'pointer' }}>×</button>
                   </div>
@@ -3329,6 +4276,7 @@ ${codeText}
         title="Arraste para redimensionar (Duplo clique para restaurar 300px)"
         style={{
           '--accent-color': accentColor,
+          ...(isRightPanelOpen ? {} : { display: 'none' }),
         } as React.CSSProperties}
       />
 
@@ -3340,7 +4288,7 @@ ${codeText}
           width: rightSidebarWidth,
           flexShrink: 0,
           height: '100%',
-          display: 'flex',
+          display: isRightPanelOpen ? 'flex' : 'none',
           flexDirection: 'column',
           gap: 5,
         }}
@@ -3492,106 +4440,74 @@ ${codeText}
 
           {/* 2. Grupo da Direita: Botão Share + Seletor de Zoom */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {/* Botão Share */}
-            <button
-              type="button"
-              onClick={() => setIsShareModalOpen(true)}
-              style={{
-                background: accentColor,
-                border: 'none',
-                borderRadius: 6,
-                color: '#ffffff',
-                fontSize: 11.5,
-                fontWeight: 600,
-                fontFamily: "'Poppins', sans-serif",
-                padding: '4px 14px',
-                height: 28,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                transition: 'opacity 0.15s ease',
-                boxShadow: isEffectiveDark ? '0 2px 8px rgba(0,0,0,0.3)' : '0 2px 6px rgba(0,0,0,0.08)',
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
-              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-              title="Compartilhar projeto via LAN"
-            >
-              Share
-            </button>
-
-            {/* Seletor de Zoom */}
+            {/* Seletor do que mostrar no painel de baixo */}
             <div style={{ position: 'relative' }}>
               <button
                 type="button"
-                onClick={() => setIsZoomMenuOpen((prev) => !prev)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 3,
-                  background: 'transparent',
-                  border: 'none',
-                  color: tokens.textPrimary,
-                  fontFamily: "'Poppins', sans-serif",
-                  fontSize: 11.5,
-                  fontWeight: 500,
-                  padding: '4px 6px',
-                  borderRadius: 6,
-                  cursor: 'pointer',
-                  transition: 'background 0.1s ease',
-                }}
+                onClick={() => setIsPanelMenuOpen((v) => !v)}
+                title="O que mostrar no painel"
+                style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'transparent', border: 'none', color: tokens.textPrimary, fontFamily: "'Poppins', sans-serif", fontSize: 11.5, fontWeight: 500, padding: '4px 6px', borderRadius: 6, cursor: 'pointer' }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = tokens.hoverBg)}
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                title="Ajustar zoom"
               >
-                <span>{`${Math.round(zoom * 100)}%`}</span>
+                <span>{rightPanelMode === 'tokens' ? 'Design tokens' : rightPanelMode === 'settings' ? 'Configurações' : rightPanelMode === 'dev' ? 'Modo Dev' : 'Propriedades'}</span>
                 <ChevronDown size={11} color={tokens.textSecondary} />
               </button>
-
-              {isZoomMenuOpen && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    right: 0,
-                    top: '100%',
-                    marginTop: 4,
-                    background: tokens.bgCardElevated,
-                    border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
-                    borderRadius: 8,
-                    boxShadow: isEffectiveDark ? '0 8px 24px rgba(0,0,0,0.6)' : '0 8px 24px rgba(0,0,0,0.15)',
-                    padding: '4px 0',
-                    minWidth: 90,
-                    zIndex: 100,
-                  }}
-                >
-                  {[
-                    { label: '21%', val: 0.21 },
-                    { label: '50%', val: 0.5 },
-                    { label: '100%', val: 1.0 },
-                    { label: '200%', val: 2.0 },
-                  ].map((item) => (
-                    <div
-                      key={item.label}
-                      onClick={() => {
-                        setZoom(item.val);
-                        setIsZoomMenuOpen(false);
-                      }}
-                      style={{
-                        padding: '5px 12px',
-                        fontSize: 11,
-                        fontFamily: "'Poppins', sans-serif",
-                        color: Math.round(zoom * 100) === Math.round(item.val * 100) ? accentColor : tokens.textPrimary,
-                        cursor: 'pointer',
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = tokens.hoverBg)}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                    >
-                      {item.label}
-                    </div>
-                  ))}
-                </div>
+              {isPanelMenuOpen && (
+                <>
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setIsPanelMenuOpen(false)} />
+                  <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: 6, background: tokens.bgCardElevated, borderRadius: 8, boxShadow: isEffectiveDark ? '0 8px 24px rgba(0,0,0,0.6)' : '0 8px 24px rgba(0,0,0,0.15)', padding: 0, overflow: 'hidden', minWidth: 200, whiteSpace: 'nowrap', zIndex: 100 }}>
+                    {([['properties', 'Propriedades'], ['dev', 'Modo Dev (Shift+D)'], ['tokens', 'Design tokens'], ['settings', 'Configurações do design']] as const).map(([mode, label]) => (
+                      <div
+                        key={mode}
+                        onClick={() => { setRightPanelMode(mode); setIsPanelMenuOpen(false); }}
+                        style={{ padding: '8px 12px', fontSize: 11, fontFamily: "'Poppins', sans-serif", color: rightPanelMode === mode ? accentColor : tokens.textPrimary, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, borderBottom: `1px solid ${tokens.border}` }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = tokens.hoverBg)}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        <span style={{ width: 12 }}>{rightPanelMode === mode ? '✓' : ''}</span>
+                        <span>{label}{mode === 'tokens' && designTokens ? ' ✓' : ''}</span>
+                      </div>
+                    ))}
+                    {([['Exportar JSON', handleExportJson], ['Salvar versão', handleSaveVersion], ['Histórico de versões', handleOpenVersions], ['Importar do Figma', () => setIsFigmaImportOpen(true)], ...activePageShapes.filter((f) => f.flowStart && f.type === 'frame' && !f.parentId).map((f) => [`▶ Fluxo: ${f.flowName || f.name || 'Frame'}`, () => setPresentFrameId(f.id)] as [string, () => void]), ['Importar SVG…', () => svgInputRef.current?.click()], ['Revisar design', () => setIsAuditOpen(true)], ...(['', ...Object.keys(COLOR_BLIND)] as string[]).map((k) => [k ? `${colorBlind === k ? '✓ ' : ''}Simular: ${COLOR_BLIND[k].label}` : colorBlind ? 'Simular: desligar daltonismo' : 'Simular daltonismo ↓', () => setColorBlind(k)] as [string, () => void]), ['Pseudolocalizar seleção', () => handlePseudoLoc(false)], ['Restaurar textos da seleção', () => handlePseudoLoc(true)], ['Gerar proposta com IA', handleGenerateProposalOpen]] as Array<[string, () => void]>).map(([label, run], i, arr) => (
+                      <div
+                        key={label}
+                        onClick={() => { setIsPanelMenuOpen(false); run(); }}
+                        style={{ padding: '8px 12px 8px 32px', fontSize: 11, fontFamily: "'Poppins', sans-serif", color: tokens.textPrimary, cursor: 'pointer', borderBottom: i < arr.length - 1 ? `1px solid ${tokens.border}` : 'none' }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = tokens.hoverBg)}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        {label}
+                      </div>
+                    ))}
+                  </div>
+                </>
               )}
             </div>
+            {/* divisória entre o seletor do painel e o compartilhar */}
+            <div style={{ width: 1, height: 16, background: tokens.border, flexShrink: 0 }} />
+            {/* Compartilhar (iniciar LAN) */}
+            <button
+              type="button"
+              onClick={() => setIsShareModalOpen(true)}
+              title="Compartilhar projeto via LAN"
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, flexShrink: 0 }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = tokens.hoverBg)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              <Share2 size={18} color={accentColor} strokeWidth={2} />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => toggleRightPanel(false)}
+              title="Ocultar painel de propriedades"
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, flexShrink: 0 }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = tokens.hoverBg)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              <PanelRight size={18} color={accentColor} strokeWidth={2} />
+            </button>
           </div>
         </div>
 
@@ -3602,19 +4518,56 @@ ${codeText}
             minHeight: 0,
             borderRadius: 10,
             overflow: 'hidden',
+            position: 'relative',
             background: tokens.bgCard,
             border: '1px solid ' + tokens.border,
           }}
         >
+          {rightPanelMode === 'tokens' && (
+            <div style={{ position: 'absolute', inset: 0, zIndex: 20 }}>
+              <DesignTokensPanel tokens={tokens} accentColor={accentColor} value={designTokens} onChange={(t) => { setTokensUndo(null); setDesignTokens(t); }} undoInfo={tokensUndo ? { label: tokensUndo.label, hadBefore: !!tokensUndo.previous, section: tokensUndo.section } : null} onUndo={() => { if (tokensUndo) { setDesignTokens(tokensUndo.previous); setTokensUndo(null); onToast?.('Tokens revertidos'); } }} onDismissUndo={() => setTokensUndo(null)} onReplace={handleReplaceTokens} onAiSection={handleAiTokensSection} onExtract={handleExtractTokens} onBack={() => setRightPanelMode('properties')} isDark={isEffectiveDark} />
+            </div>
+          )}
+          {rightPanelMode === 'dev' && (
+            <div style={{ position: 'absolute', inset: 0, zIndex: 20, background: tokens.bgCard }}>
+              <DevPanel
+                tokens={tokens}
+                accentColor={accentColor}
+                shape={selectedShape}
+                shapes={activePageShapes}
+                styles={styles}
+                variables={variables}
+                modeId={activeModeId}
+                onShowCode={(sh) => setCodeShape(sh)}
+                onStatus={(sh, status) => applyShapes(shapes.map((x) => (x.id === sh.id ? { ...x, devStatus: status } : x)), true)}
+                onToast={onToast}
+              />
+            </div>
+          )}
+          {rightPanelMode === 'settings' && (
+            <div style={{ position: 'absolute', inset: 0, zIndex: 20 }}>
+              <DesignSettingsPanel tokens={tokens} accentColor={accentColor} viewPrefs={viewPrefs} onToggleView={toggleViewPref} fastMode={fastMode} onToggleFast={toggleFastMode} useProjectContext={useProjectContext} onToggleContext={toggleProjectContext} onUnsplashSaved={(has) => onToast?.(has ? 'Chave do Unsplash salva' : 'Chave removida: a IA usará fotos do picsum.photos')} onClearGuides={handleClearGuides} />
+            </div>
+          )}
           <PropertiesPanel
+            selectionColors={selectionColors}
+            onReplaceSelectionColor={handleReplaceSelectionColor}
             shape={selectedShape}
             themeTokens={tokens}
             accentColor={accentColor}
             isEffectiveDark={isEffectiveDark}
+            mixed={multiSelected.length > 1 ? mixedKeys(multiSelected) : undefined}
             onChange={(patch: Partial<Shape>) => {
               if (!selectedShape) return;
+              // Seleção múltipla: a edição vale para todos os selecionados
+              if (multiSelected.length > 1 && multiSelected.some((s) => s.id === selectedShape.id)) {
+                applyShapes(applyPatchToSelection(shapes, multiSelected.map((s) => s.id), selectedShape.id, patch), true);
+                return;
+              }
               // Editar a cor/tipografia à mão desliga o estilo do documento naquele elemento
               if (selectedShape.fillStyleId && ('fills' in patch || 'fill' in patch) && !('fillStyleId' in patch)) patch = { ...patch, fillStyleId: undefined };
+              if (selectedShape.effectStyleId && 'effects' in patch && !('effectStyleId' in patch)) patch = { ...patch, effectStyleId: undefined };
+              if (selectedShape.gridStyleId && 'layoutGrids' in patch && !('gridStyleId' in patch)) patch = { ...patch, gridStyleId: undefined };
               if (selectedShape.textStyleId && ['fontSize', 'fontFamily', 'fontWeight', 'letterSpacing', 'lineHeight'].some((k) => k in patch) && !('textStyleId' in patch)) patch = { ...patch, textStyleId: undefined };
               // Alterar uma instância registra o que foi sobrescrito (o componente não reverte essas propriedades)
               if (selectedShape.sourceId) {
@@ -3622,23 +4575,47 @@ ${codeText}
                 if (keys.length > 0) patch = { ...patch, overrides: Array.from(new Set([...(selectedShape.overrides || []), ...keys])) };
               }
               let next = shapes.map((s) => (s.id === selectedShape.id ? { ...s, ...patch } : s));
-              // Editar X/Y de um frame/grupo leva os filhos junto
+              // Editar X/Y de um frame/grupo leva todos os descendentes junto
               const dx = typeof patch.x === 'number' ? patch.x - selectedShape.x : 0;
               const dy = typeof patch.y === 'number' ? patch.y - selectedShape.y : 0;
               if (dx !== 0 || dy !== 0) {
-                const children = shapes.filter((c) => c.parentId === selectedShape.id).map((c) => [c.id, { dx, dy }] as const);
-                if (children.length > 0) next = applyDeltas(next, new Map(children));
+                const kids = descendantIds(shapes, selectedShape.id).map((id) => [id, { dx, dy }] as const);
+                if (kids.length > 0) next = applyDeltas(next, new Map(kids));
+              }
+              // Editar W/H de um frame: os filhos acompanham pelas restrições (como ao arrastar a alça); com auto layout, ele reflui
+              const resized = (typeof patch.width === 'number' && patch.width !== selectedShape.width) || (typeof patch.height === 'number' && patch.height !== selectedShape.height);
+              if (resized && !selectedShape.hasAutoLayout && (selectedShape.type === 'frame' || selectedShape.type === 'group' || selectedShape.type === 'section')) {
+                const after = next.find((s) => s.id === selectedShape.id)!;
+                const ids = new Set(descendantIds(shapes, selectedShape.id));
+                const patches = resizeDescendants(
+                  [selectedShape, ...shapes.filter((s) => ids.has(s.id))],
+                  selectedShape.id,
+                  { x: selectedShape.x, y: selectedShape.y, width: selectedShape.width, height: selectedShape.height },
+                  { x: after.x, y: after.y, width: after.width, height: after.height },
+                  'constraints'
+                );
+                if (patches.size > 0) next = next.map((s) => (patches.has(s.id) ? { ...s, ...patches.get(s.id) } : s));
               }
               applyShapes(next, true);
             }}
             onAlign={handleAlign}
+            alignTarget={alignTarget}
+            onAlignTargetChange={changeAlignTarget}
             onDistribute={handleDistribute}
+            onTidy={handleTidy}
             selectionCount={selectedIds.length}
             onBoolean={handleBoolean}
             onFitSelection={handleFitSelection}
             onCreateInstance={handleCreateInstance}
             variantOptions={selectedShape?.instanceOf ? variantsOf(activePageShapes, selectedShape.instanceOf).map((c) => ({ id: c.id, name: c.variantName || c.name || 'Variante' })) : []}
             onSwitchVariant={handleSwitchVariant}
+            onOpenVariantMatrix={() => setIsVariantMatrixOpen(true)}
+            onRemoveBackground={handleRemoveBackground}
+            onToastMessage={onToast}
+            pathTargets={selectedShape?.type === 'text-path' ? activePageShapes.filter((s) => s.id !== selectedShape.id && PATH_TARGET_TYPES.includes(s.type)).map((s) => ({ id: s.id, name: s.name || s.type })) : []}
+            swapOptions={selectedShape?.instanceOf ? shapes.filter((s) => s.isComponent && s.id !== selectedShape.instanceOf).map((c) => ({ id: c.id, name: c.variantGroup ? `${c.variantGroup} / ${c.variantName || c.name}` : c.name || 'Componente' })) : []}
+            propTargets={selectedShape?.isComponent ? propTargets(activePageShapes, selectedShape.id) : []}
+            instanceProps={selectedShape?.instanceOf ? (activePageShapes.find((c) => c.id === selectedShape.instanceOf)?.componentProps || []).map((p) => ({ prop: p, fallback: defaultPropValue(activePageShapes, p) })) : []}
             onShowCode={(sh) => setCodeShape(sh)}
             prototypeFrames={activePageShapes.filter((s) => s.type === 'frame').map((s) => ({ id: s.id, name: s.name || 'Frame' }))}
             onPresent={(id) => setPresentFrameId(id)}
@@ -3647,6 +4624,7 @@ ${codeText}
             activeModeId={activeModeId}
             onCreateVariable={handleCreateVariable}
             onBindVariable={handleBindVariable}
+            onBindTypedVariable={handleBindTypedVariable}
             onUpdateVariable={handleUpdateVariable}
             onDeleteVariable={handleDeleteVariable}
             onSetMode={handleSetMode}
@@ -3669,6 +4647,11 @@ ${codeText}
             onExport={handleExportShape}
           />
         </div>
+        {rightPanelMode === 'tokens' && (
+          <div style={{ flexShrink: 0 }}>
+            <DesignTokensComposer tokens={tokens} accentColor={accentColor} hasTokens={!!designTokens} onGenerate={handleGenerateTokens} isDark={isEffectiveDark} selectedAiProvider={selectedAiProvider} selectedModel={selectedModel} activeModels={activeModels} installedClis={installedClis} onSelectAiProvider={onSelectAiProvider} onSelectModel={onSelectModel} onInstallAiCli={onInstallAiCli} />
+          </div>
+        )}
       </div>
 
       {/* ===================================================================== */}
@@ -3787,6 +4770,24 @@ ${codeText}
         onFlipVertical={handleFlipVertical}
         onMoveToPage={handleMoveToPage}
         onSelectAll={handleSelectAll}
+        onSelectParent={(shape) => {
+          if (!shape.parentId) return;
+          setSelectedIds([shape.parentId]);
+          setSelectedId(shape.parentId);
+        }}
+        onSelectChildren={(shape) => {
+          const kids = activePageShapes.filter((s) => s.parentId === shape.id).map((s) => s.id);
+          if (kids.length === 0) return;
+          setSelectedIds(kids);
+          setSelectedId(kids[0]);
+        }}
+        onSelectSimilar={(shape, kind) => {
+          const ids = selectSimilar(activePageShapes, shape, kind);
+          if (ids.length === 0) return;
+          setSelectedIds(ids);
+          setSelectedId(ids[0]);
+          onToast?.(`${ids.length} elementos selecionados`);
+        }}
         onRequestDelete={handleRequestDelete}
       />
 

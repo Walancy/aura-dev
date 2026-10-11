@@ -58,6 +58,7 @@ export interface ElectronAPI {
     setAllCwd?: (cwd: string) => Promise<{ success: boolean }>;
     setAccentColor?: (accentColor: string) => Promise<{ success: boolean; error?: string }>;
     getHistory?: (id: string) => Promise<string>;
+    foreground?: () => Promise<Record<string, string>>;
     getRunningSessions?: () => Promise<Array<{ id: string; type: string; title: string; cwd: string; isAi: boolean; isRunning: boolean; projectName: string; lastActivity?: number }>>;
     onAiCompleted?: (callback: (payload: { id: string; type: string; cwd: string; projectName: string; summary: string; needsInput?: boolean; timestamp: number }) => void) => () => void;
     onSessionStatus?: (callback: (payload: { id: string; type: string; cwd: string; isAi: boolean; isRunning: boolean; exited?: boolean }) => void) => () => void;
@@ -69,11 +70,13 @@ export interface ElectronAPI {
     getTree: (dirPath: string, depth?: number) => Promise<{ tree: any }>;
     readFile: (filePath: string) => Promise<{ content: string; error?: string }>;
     writeFile: (filePath: string, content: string) => Promise<{ success: boolean }>;
+    getCapabilities?: () => Promise<{ designAi: number; stockImage: boolean; tempImages: boolean; exportPdf: boolean }>;
     stockImage?: (payload: { query: string; width: number; height: number; key?: string; index?: number }) => Promise<{ dataUrl?: string; credit?: string; source?: string; error?: string }>;
     exportPdf?: (html: string, defaultName: string) => Promise<{ path?: string; canceled?: boolean; error?: string }>;
     figmaFetch?: (token: string, apiPath: string) => Promise<{ data?: any; error?: string; status?: number }>;
     figmaDownloadImages?: (urls: Record<string, string>) => Promise<Record<string, string>>;
     saveTempImage?: (base64: string, ext?: string) => Promise<{ path: string }>;
+    readFileDataUrl?: (filePath: string, maxBytes?: number) => Promise<{ dataUrl?: string; error?: string }>;
     createItem: (itemPath: string, isDirectory: boolean) => Promise<{ success: boolean }>;
     deleteItem: (itemPath: string) => Promise<{ success: boolean }>;
     renameItem: (oldPath: string, newPath: string) => Promise<{ success: boolean }>;
@@ -90,6 +93,7 @@ export interface ElectronAPI {
   };
   ports: {
     scan: () => Promise<{ ports: any[] }>;
+    scanProject?: (workspacePath: string) => Promise<{ ports: Array<{ port: number; pid: string; command: string; url: string; serviceName?: string }> }>;
     kill: (pid: string | number) => Promise<{ success: boolean; error?: string }>;
   };
   roles: {
@@ -114,14 +118,6 @@ export interface ElectronAPI {
     onViewersChanged: (callback: (count: number) => void) => () => void;
     onDisconnected: (callback: () => void) => () => void;
   };
-  extensions?: {
-    search?: (query?: string, size?: number, category?: string) => Promise<{ success: boolean; extensions: any[]; totalSize?: number; error?: string }>;
-    getDetails?: (namespace: string, name: string) => Promise<{ success: boolean; details: any; error?: string }>;
-    install?: (namespace: string, name: string, version?: string) => Promise<{ success: boolean; record?: any; error?: string }>;
-    uninstall?: (namespace: string, name: string) => Promise<{ success: boolean; error?: string }>;
-    toggleEnabled?: (namespace: string, name: string) => Promise<{ success: boolean; error?: string }>;
-    getInstalled?: () => Promise<{ success: boolean; extensions: any[] }>;
-  };
   skills?: {
     call: (action: string, payload?: any) => Promise<{ success: boolean; data?: any; error?: string }>;
     onChanged: (callback: () => void) => () => void;
@@ -145,8 +141,8 @@ export interface ElectronAPI {
     loadSavedChat?: (sessionId: string) => Promise<any>;
     deleteSavedChat?: (sessionId: string) => Promise<{ success: boolean }>;
     saveTranscript?: (sessionId: string, history: any[]) => Promise<{ success: boolean; path: string }>;
-    runCli?: (payload: { cliCmd: string; prompt: string; model?: string; cwd?: string; additionalDirs?: string[]; useOrchestrator?: boolean; orchestratorConfig?: any; permissions?: any; streamText?: boolean }) => Promise<{ stdout: string; stderr: string; exitCode: number; cancelled?: boolean; usage?: { input_tokens?: number; output_tokens?: number } }>;
-    cancel?: (runId?: string, cwd?: string) => Promise<{ cancelled: boolean }>;
+    runCli?: (payload: { cliCmd: string; prompt: string; model?: string; cwd?: string; additionalDirs?: string[]; useOrchestrator?: boolean; orchestratorConfig?: any; permissions?: any; streamText?: boolean; streamId?: string }) => Promise<{ stdout: string; stderr: string; exitCode: number; cancelled?: boolean; usage?: { input_tokens?: number; output_tokens?: number } }>;
+    cancel?: (runId?: string, cwd?: string, streamId?: string) => Promise<{ cancelled: boolean }>;
     onEvent?: (callback: (event: any) => void) => () => void;
   };
   flutter?: {

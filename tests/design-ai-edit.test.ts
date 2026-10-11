@@ -67,3 +67,52 @@ test('busca em pt-BR e por contexto', () => {
   expect(has('seta direita', 'ArrowForward') || has('seta direita', 'ArrowRight')).toBe(true);
   expect(searchIcons(cat, 'zzzxxx')).toEqual([]);
 });
+
+test('edição de estilo: effects [] remove granulado; glass e gradiente são aplicados', async () => {
+  const { applyAiEdits, editScope } = await import('../src/components/design2/aiEdit');
+  const mk = (o: any) => ({ rotation: 0, fill: '#000', stroke: 'none', strokeWidth: 0, opacity: 1, zIndex: 1, visible: true, pageId: 'p', ...o });
+  const all = [
+    mk({ id: 's', type: 'frame', x: 0, y: 0, width: 300, height: 600, effects: [{ id: 'n', type: 'noise', color: '#000', opacity: 0.2, x: 0, y: 0, blur: 0, spread: 0, visible: true }] }),
+    mk({ id: 'c', type: 'frame', parentId: 's', x: 10, y: 10, width: 100, height: 50 }),
+  ] as any[];
+  const scope = editScope(all, ['s']);
+  const r = applyAiEdits(JSON.stringify({ edits: [{ id: 's', set: { effects: [] } }, { id: 'c', set: { glass: true } }] }), all, scope, ['s'], { pageId: 'p', isDark: true, accentColor: '#f90' })!;
+  expect(r.changed).toBe(2);
+  expect(r.shapes.find((x) => x.id === 's')!.effects).toEqual([]);
+  const c = r.shapes.find((x) => x.id === 'c')!;
+  expect(c.fills?.length).toBe(1);
+  expect(c.effects?.some((e) => e.type === 'background-blur')).toBe(true);
+});
+
+test('relevantScope: com muitos elementos, mostra só o bloco citado no pedido (prompt menor e mais rápido)', async () => {
+  const { relevantScope, buildAiEditPrompt } = await import('../src/components/design2/aiEdit');
+  const mk = (o: any) => ({ rotation: 0, fill: '#000', stroke: 'none', strokeWidth: 0, opacity: 1, zIndex: 1, visible: true, pageId: 'p', x: 0, y: 0, width: 50, height: 20, ...o });
+  const all: any[] = [mk({ id: 'root', type: 'frame', name: 'Tela', width: 400, height: 800 })];
+  for (let i = 0; i < 30; i++) { all.push(mk({ id: `c${i}`, parentId: 'root', type: 'frame', name: `Card ${i}` })); all.push(mk({ id: `t${i}`, parentId: `c${i}`, type: 'text', text: `Item ${i}`, name: `Item ${i}` })); }
+  all.push(mk({ id: 'btn', parentId: 'root', type: 'frame', name: 'Botão Entrar', fill: '#7C3AED' }), mk({ id: 'btnt', parentId: 'btn', type: 'text', text: 'Entrar', name: 'Entrar' }));
+  const shown = relevantScope(all, ['root'], 'troque a cor do botão entrar para verde');
+  const ids = shown.map((s: any) => s.id);
+  expect(ids).toContain('btn');
+  expect(ids).toContain('btnt');
+  expect(ids).toContain('root');
+  expect(shown.length).toBeLessThan(10);
+  // sem correspondência: mostra tudo (limitado)
+  expect(relevantScope(all, ['root'], 'deixe tudo mais bonito').length).toBe(all.length);
+  const prompt = buildAiEditPrompt({ prompt: 'troque a cor do botão entrar para verde', accentColor: '#f90', isDark: false } as any, all, ['root']);
+  expect(prompt).toContain('ESTILO ATUAL DESTA TELA');
+  expect(prompt).toContain('Mostrando só os');
+  expect(prompt).not.toContain('"Card 17"');
+});
+
+test('add com auto layout: header novo vira frame com filhos no fluxo', () => {
+  const screen = mk({ id: 'tela', type: 'frame', name: 'Tela', x: 0, y: 0, width: 393, height: 852 });
+  const raw = JSON.stringify({ add: [
+    { type: 'frame', id: 'h', parent: 'tela', name: 'Header', layout: 'horizontal', gap: 12, padding: [16, 16, 16, 16], align: 'left', width: 'fill', height: 'hug', fill: '#111111' },
+    { type: 'text', parent: 'h', text: 'Título', fontSize: 20, width: 'fill' },
+    { type: 'icon', parent: 'h', name: 'Home', size: 24 },
+  ] });
+  const r = applyAiEdits(raw, [screen as any], [screen as any], ['tela'], ctx)!;
+  const h = r.shapes.find((s) => s.name === 'Header')!;
+  expect(h.hasAutoLayout).toBe(true);
+  expect(r.shapes.filter((s) => s.parentId === h.id).length).toBe(2);
+});

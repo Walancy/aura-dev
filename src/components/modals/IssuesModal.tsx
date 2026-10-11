@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { CircleDot, CheckCircle2, Plus, RefreshCw, X, Sparkles, ExternalLink } from 'lucide-react';
+import { CircleDot, CheckCircle2, Plus, RefreshCw, X, ChevronDown, Check, ExternalLink, Search, Loader2 } from 'lucide-react';
 import type { ThemeTokens, GitHubIssueItem } from '../../types/ide';
+import { hexToRgba } from '../../utils/color';
 
 export interface IssuesModalProps {
   isEffectiveDark: boolean;
@@ -20,9 +21,38 @@ export interface IssuesModalProps {
   setIssuesSearchQuery: (value: string) => void;
   onLinkIssueToChat: (issue: GitHubIssueItem) => void;
   onOpenIssueInBrowser: (issueNumber: number) => void;
+  /** clicar no cartão abre os detalhes da issue (com botão Voltar para esta lista) */
+  onOpenIssueDetails?: (issueNumber: number) => void;
+  /** IA selecionada no cabeçalho (usada por "resolver"), lista de IAs para trocar e o ícone de cada uma */
+  aiProvider?: string;
+  aiProviders?: Array<{ id: string; name: string }>;
+  onChangeAiProvider?: (id: string) => void;
+  renderAiIcon?: (providerId: string, size: number) => React.ReactNode;
 }
 
-// GitHub Issues modal (list, search, quick-create, link to AI chat).
+/** Foto do usuário do GitHub (com a inicial como alternativa quando a imagem não carrega) */
+const Avatar: React.FC<{ login: string; url?: string; size?: number; ring: string }> = ({ login, url, size = 18, ring }) => {
+  const [failed, setFailed] = useState(false);
+  const clean = login.replace('@', '').trim();
+  return failed || !clean ? (
+    <span title={`@${clean}`} style={{ width: size, height: size, borderRadius: '50%', background: '#3f3f46', color: '#e4e4e7', fontSize: size * 0.5, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 0 0 2px ${ring}`, flexShrink: 0 }}>
+      {(clean[0] || '?').toUpperCase()}
+    </span>
+  ) : (
+    <img
+      src={url || `https://github.com/${clean}.png?size=48`}
+      alt={clean}
+      title={`@${clean}`}
+      onError={() => setFailed(true)}
+      style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', boxShadow: `0 0 0 2px ${ring}`, flexShrink: 0 }}
+    />
+  );
+};
+
+const OPEN = '#22c55e';
+const CLOSED = '#8b5cf6';
+
+// Lista de issues do GitHub no mesmo padrão do painel de detalhes: painel lateral à direita, superfícies sem borda.
 export const IssuesModal: React.FC<IssuesModalProps> = ({
   isEffectiveDark,
   themeTokens,
@@ -41,525 +71,366 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
   setIssuesSearchQuery,
   onLinkIssueToChat,
   onOpenIssueInBrowser,
+  onOpenIssueDetails,
+  aiProvider,
+  aiProviders = [],
+  onChangeAiProvider,
+  renderAiIcon,
 }) => {
+  const [aiMenuFor, setAiMenuFor] = useState<number | null>(null);
   const [stateFilter, setStateFilter] = useState<'all' | 'open' | 'closed'>('all');
 
-  const openCount = useMemo(
-    () => gitIssues.filter((i) => (i.state || 'open').toLowerCase() === 'open').length,
-    [gitIssues]
-  );
-  const closedCount = useMemo(
-    () => gitIssues.filter((i) => (i.state || 'open').toLowerCase() === 'closed').length,
-    [gitIssues]
-  );
+  // superfícies do padrão DevFlow (mesmas do painel de detalhes da issue)
+  const sheetBg = isEffectiveDark ? '#101010' : '#ffffff';
+  const cardBg = isEffectiveDark ? '#181818' : '#f8fafc';
+  const cardHoverBg = isEffectiveDark ? '#1f1f1f' : '#f1f5f9';
+  const controlBg = isEffectiveDark ? '#1e1e1e' : '#f1f5f9';
+  const controlHoverBg = isEffectiveDark ? '#262626' : '#e2e8f0';
+  const divider = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
+
+  const isClosedIssue = (i: GitHubIssueItem) => (i.state || 'open').toLowerCase() === 'closed';
+  const openCount = useMemo(() => gitIssues.filter((i) => !isClosedIssue(i)).length, [gitIssues]);
+  const closedCount = gitIssues.length - openCount;
 
   const filteredIssues = useMemo(() => {
+    const q = issuesSearchQuery.trim().toLowerCase();
     return gitIssues.filter((issue) => {
-      const isClosed = (issue.state || '').toLowerCase() === 'closed';
-      if (stateFilter === 'open' && isClosed) return false;
-      if (stateFilter === 'closed' && !isClosed) return false;
-      if (issuesSearchQuery.trim()) {
-        const q = issuesSearchQuery.toLowerCase();
-        const matchesTitle = issue.title.toLowerCase().includes(q);
-        const matchesNum = String(issue.number).includes(q);
-        const authorStr = typeof issue.author === 'string' ? issue.author : ((issue.author as any)?.login || '');
-        const matchesAuthor = authorStr.toLowerCase().includes(q);
-        return matchesTitle || matchesNum || matchesAuthor;
-      }
-      return true;
+      const closed = isClosedIssue(issue);
+      if (stateFilter === 'open' && closed) return false;
+      if (stateFilter === 'closed' && !closed) return false;
+      if (!q) return true;
+      const authorStr = typeof issue.author === 'string' ? issue.author : ((issue.author as any)?.login || '');
+      return issue.title.toLowerCase().includes(q) || String(issue.number).includes(q) || authorStr.toLowerCase().includes(q);
     });
   }, [gitIssues, stateFilter, issuesSearchQuery]);
+
+  const iconBtn: React.CSSProperties = {
+    width: 32,
+    height: 32,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: controlBg,
+    border: 'none',
+    borderRadius: 8,
+    cursor: 'pointer',
+    color: themeTokens.textSecondary,
+    transition: 'background 0.12s ease, color 0.12s ease',
+  };
+  const hoverOn = (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = controlHoverBg; e.currentTarget.style.color = themeTokens.textPrimary; };
+  const hoverOff = (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = controlBg; e.currentTarget.style.color = themeTokens.textSecondary; };
+
+  const filters: Array<{ id: 'all' | 'open' | 'closed'; label: string; count: number; color?: string }> = [
+    { id: 'all', label: 'Todas', count: gitIssues.length },
+    { id: 'open', label: 'Abertas', count: openCount, color: OPEN },
+    { id: 'closed', label: 'Fechadas', count: closedCount, color: CLOSED },
+  ];
 
   return (
     <div
       style={{
         position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0, 0, 0, 0.55)',
-        backdropFilter: 'blur(3px)',
-        animation: 'fadeIn 0.12s ease-out',
+        inset: 0,
+        zIndex: 99990,
         display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 9999,
-        padding: 20,
+        justifyContent: 'flex-end',
+        background: 'rgba(0, 0, 0, 0.72)',
+        backdropFilter: 'blur(6px)',
+        animation: 'sidesheetOverlayFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+        fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }}
       onClick={onClose}
     >
       <div
+        onClick={(e) => e.stopPropagation()}
         style={{
-          width: 720,
+          width: 'clamp(520px, 46vw, 760px)',
           maxWidth: '92vw',
-          maxHeight: '84vh',
-          background: isEffectiveDark ? '#141416' : '#ffffff',
-          border: `1px solid ${themeTokens.border}`,
-          borderRadius: 10,
-          boxShadow: '0 24px 64px rgba(0, 0, 0, 0.85)',
+          height: '100%',
+          background: sheetBg,
+          borderRadius: '16px 0 0 16px',
+          boxShadow: isEffectiveDark ? '-16px 0 48px rgba(0, 0, 0, 0.8)' : '-12px 0 36px rgba(0, 0, 0, 0.14)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          animation: 'fadeIn 0.12s ease-out',
-          fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          animation: 'sidesheetPanelSlideIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+          willChange: 'transform',
         }}
-        onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
+        {/* Cabeçalho */}
         <div
           style={{
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '14px 18px',
-            borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
-            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
+            alignItems: 'flex-start',
+            gap: 16,
+            padding: '20px 20px 14px 24px',
+            borderBottom: `1px solid ${divider}`,
+            flexShrink: 0,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 8,
-                background: 'rgba(34, 197, 94, 0.12)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <CircleDot size={17} color="#22c55e" />
-            </div>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontWeight: 600, fontSize: 14, color: themeTokens.textPrimary }}>
-                  Issues do GitHub
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 20, fontWeight: 500, color: themeTokens.textPrimary }}>Issues do GitHub</span>
+              <span style={{ background: hexToRgba(OPEN, 0.14), color: OPEN, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999 }}>
+                {openCount} abertas
+              </span>
+              {closedCount > 0 && (
+                <span style={{ background: hexToRgba(CLOSED, 0.16), color: CLOSED, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999 }}>
+                  {closedCount} fechadas
                 </span>
-                <span
-                  style={{
-                    background: 'rgba(34, 197, 94, 0.14)',
-                    color: '#22c55e',
-                    fontSize: 10.5,
-                    fontWeight: 600,
-                    padding: '2px 7px',
-                    borderRadius: 999,
-                  }}
-                >
-                  {openCount} abertas
-                </span>
-                {closedCount > 0 && (
-                  <span
-                    style={{
-                      background: isEffectiveDark ? 'rgba(130, 80, 223, 0.16)' : '#f3e8ff',
-                      color: '#8250df',
-                      fontSize: 10.5,
-                      fontWeight: 600,
-                      padding: '2px 7px',
-                      borderRadius: 999,
-                    }}
-                  >
-                    {closedCount} fechadas
-                  </span>
-                )}
-              </div>
-              <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>
-                {gitRepoName || 'Nenhum repositório selecionado'}
-              </div>
+              )}
             </div>
+            <span style={{ fontSize: 12, color: themeTokens.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {gitRepoName || 'Nenhum repositório selecionado'}
+            </span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
             <button
+              type="button"
               onClick={() => setIsCreatingIssue(!isCreatingIssue)}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 6,
-                background: isCreatingIssue ? 'rgba(255, 255, 255, 0.12)' : accentColor,
-                color: '#ffffff',
+                height: 32,
+                padding: '0 14px',
+                background: isCreatingIssue ? controlBg : accentColor,
+                color: isCreatingIssue ? themeTokens.textPrimary : '#ffffff',
                 border: 'none',
-                borderRadius: 6,
-                padding: '5px 11px',
-                fontSize: 11.5,
+                borderRadius: 8,
+                fontSize: 12.5,
                 fontWeight: 500,
                 cursor: 'pointer',
               }}
             >
-              <Plus size={13} />
-              {isCreatingIssue ? 'Cancelar' : 'Nova Issue'}
+              {isCreatingIssue ? <X size={14} /> : <Plus size={14} />}
+              {isCreatingIssue ? 'Cancelar' : 'Nova issue'}
             </button>
-
-            <button
-              onClick={onRefresh}
-              disabled={isLoadingIssues}
-              style={{
-                background: 'none',
-                border: 'none',
-                cursor: isLoadingIssues ? 'not-allowed' : 'pointer',
-                color: themeTokens.textSecondary,
-                padding: 4,
-                display: 'flex',
-              }}
-              title="Atualizar lista"
-            >
-              <RefreshCw
-                size={15}
-                style={{ animation: isLoadingIssues ? 'spin 1s linear infinite' : 'none' }}
-              />
+            <button type="button" onClick={onRefresh} disabled={isLoadingIssues} title="Atualizar lista" style={{ ...iconBtn, cursor: isLoadingIssues ? 'default' : 'pointer' }} onMouseEnter={hoverOn} onMouseLeave={hoverOff}>
+              <RefreshCw size={14} style={{ animation: isLoadingIssues ? 'spin 1s linear infinite' : 'none' }} />
             </button>
-
-            <button
-              onClick={onClose}
-              style={{
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                color: themeTokens.textSecondary,
-                padding: 4,
-                display: 'flex',
-              }}
-            >
-              <X size={16} />
+            <button type="button" onClick={onClose} title="Fechar" style={iconBtn} onMouseEnter={hoverOn} onMouseLeave={hoverOff}>
+              <X size={15} />
             </button>
           </div>
         </div>
 
-        {/* Quick create section */}
+        {/* Criação rápida */}
         {isCreatingIssue && (
-          <div
-            style={{
-              padding: '14px 18px',
-              borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
-              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.025)' : 'rgba(0, 0, 0, 0.025)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 10,
-            }}
-          >
-            <div style={{ fontSize: 12, fontWeight: 500, color: themeTokens.textPrimary }}>
-              Criar nova issue no GitHub
-            </div>
+          <div style={{ padding: '14px 24px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 10, flexShrink: 0 }}>
+            <span style={{ fontSize: 12, fontWeight: 500, color: themeTokens.textSecondary }}>Nova issue no GitHub</span>
             <div style={{ display: 'flex', gap: 8 }}>
               <input
                 type="text"
-                placeholder="Título da issue (ex: Corrigir erro no fluxo de login)..."
+                autoFocus
+                placeholder="Título da issue (ex.: Corrigir erro no fluxo de login)"
                 value={newIssueTitle}
                 onChange={(e) => setNewIssueTitle(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && newIssueTitle.trim()) {
-                    onCreateIssue(newIssueTitle);
-                  }
+                  if (e.key === 'Enter' && newIssueTitle.trim()) onCreateIssue(newIssueTitle);
                 }}
-                style={{
-                  flex: 1,
-                  background: isEffectiveDark ? '#1a1a1e' : '#f4f4f5',
-                  border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
-                  borderRadius: 7,
-                  padding: '7px 12px',
-                  fontSize: 12,
-                  color: themeTokens.textPrimary,
-                  outline: 'none',
-                }}
-                autoFocus
+                style={{ flex: 1, height: 36, background: controlBg, border: 'none', borderRadius: 8, padding: '0 12px', fontSize: 13, color: themeTokens.textPrimary, outline: 'none', fontFamily: 'inherit' }}
               />
               <button
+                type="button"
                 onClick={() => onCreateIssue(newIssueTitle)}
                 disabled={!newIssueTitle.trim() || isLoadingIssues}
-                style={{
-                  background: '#22c55e',
-                  color: '#ffffff',
-                  border: 'none',
-                  borderRadius: 7,
-                  padding: '7px 14px',
-                  fontSize: 12,
-                  fontWeight: 500,
-                  cursor: newIssueTitle.trim() ? 'pointer' : 'not-allowed',
-                  opacity: newIssueTitle.trim() ? 1 : 0.5,
-                }}
+                style={{ height: 36, padding: '0 16px', background: OPEN, color: '#ffffff', border: 'none', borderRadius: 8, fontSize: 12.5, fontWeight: 500, cursor: newIssueTitle.trim() ? 'pointer' : 'not-allowed', opacity: newIssueTitle.trim() ? 1 : 0.5 }}
               >
-                {isLoadingIssues ? 'Criando...' : 'Publicar'}
+                {isLoadingIssues ? 'Criando…' : 'Publicar'}
               </button>
             </div>
           </div>
         )}
 
-        {/* Search issues and Status Filters */}
-        <div style={{ padding: '10px 18px 8px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <input
-            type="text"
-            placeholder="Pesquisar por título, número ou autor..."
-            value={issuesSearchQuery}
-            onChange={(e) => setIssuesSearchQuery(e.target.value)}
-            style={{
-              width: '100%',
-              background: isEffectiveDark ? '#18181b' : '#f9fafb',
-              border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.07)'}`,
-              borderRadius: 6,
-              padding: '7px 12px',
-              fontSize: 11.5,
-              color: themeTokens.textPrimary,
-              outline: 'none',
-            }}
-          />
-
-          {/* Filter tabs: Todas, Abertas, Fechadas */}
+        {/* Busca e filtros */}
+        <div style={{ padding: '14px 24px 8px', display: 'flex', flexDirection: 'column', gap: 10, flexShrink: 0 }}>
+          <div style={{ position: 'relative' }}>
+            <Search size={14} color={themeTokens.textMuted} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+            <input
+              type="text"
+              placeholder="Pesquisar por título, número ou autor"
+              value={issuesSearchQuery}
+              onChange={(e) => setIssuesSearchQuery(e.target.value)}
+              style={{ width: '100%', boxSizing: 'border-box', height: 36, background: controlBg, border: 'none', borderRadius: 8, padding: '0 12px 0 34px', fontSize: 13, color: themeTokens.textPrimary, outline: 'none', fontFamily: 'inherit' }}
+            />
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <button
-              type="button"
-              onClick={() => setStateFilter('all')}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 5,
-                padding: '4px 10px',
-                borderRadius: 6,
-                border: 'none',
-                background: stateFilter === 'all'
-                  ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)')
-                  : 'transparent',
-                color: stateFilter === 'all' ? themeTokens.textPrimary : themeTokens.textSecondary,
-                fontSize: 11.5,
-                fontWeight: stateFilter === 'all' ? 600 : 400,
-                cursor: 'pointer',
-                transition: 'all 0.12s ease',
-              }}
-            >
-              <span>Todas</span>
-              <span
-                style={{
-                  fontSize: 10,
-                  padding: '1px 5px',
-                  borderRadius: 8,
-                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.06)',
-                }}
-              >
-                {gitIssues.length}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setStateFilter('open')}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 5,
-                padding: '4px 10px',
-                borderRadius: 6,
-                border: 'none',
-                background: stateFilter === 'open'
-                  ? 'rgba(34, 197, 94, 0.15)'
-                  : 'transparent',
-                color: stateFilter === 'open' ? '#22c55e' : themeTokens.textSecondary,
-                fontSize: 11.5,
-                fontWeight: stateFilter === 'open' ? 600 : 400,
-                cursor: 'pointer',
-                transition: 'all 0.12s ease',
-              }}
-            >
-              <CircleDot size={12} color={stateFilter === 'open' ? '#22c55e' : themeTokens.textSecondary} />
-              <span>Abertas</span>
-              <span
-                style={{
-                  fontSize: 10,
-                  padding: '1px 5px',
-                  borderRadius: 8,
-                  background: stateFilter === 'open' ? 'rgba(34, 197, 94, 0.2)' : (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'),
-                }}
-              >
-                {openCount}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setStateFilter('closed')}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 5,
-                padding: '4px 10px',
-                borderRadius: 6,
-                border: 'none',
-                background: stateFilter === 'closed'
-                  ? 'rgba(130, 80, 223, 0.18)'
-                  : 'transparent',
-                color: stateFilter === 'closed' ? '#8250df' : themeTokens.textSecondary,
-                fontSize: 11.5,
-                fontWeight: stateFilter === 'closed' ? 600 : 400,
-                cursor: 'pointer',
-                transition: 'all 0.12s ease',
-              }}
-            >
-              <CheckCircle2 size={12} color={stateFilter === 'closed' ? '#8250df' : themeTokens.textSecondary} />
-              <span>Fechadas</span>
-              <span
-                style={{
-                  fontSize: 10,
-                  padding: '1px 5px',
-                  borderRadius: 8,
-                  background: stateFilter === 'closed' ? 'rgba(130, 80, 223, 0.24)' : (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'),
-                }}
-              >
-                {closedCount}
-              </span>
-            </button>
+            {filters.map((f) => {
+              const active = stateFilter === f.id;
+              const tone = f.color || themeTokens.textPrimary;
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setStateFilter(f.id)}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    height: 28,
+                    padding: '0 11px',
+                    borderRadius: 7,
+                    border: 'none',
+                    background: active ? (f.color ? hexToRgba(f.color, 0.15) : controlBg) : 'transparent',
+                    color: active ? tone : themeTokens.textSecondary,
+                    fontSize: 12,
+                    fontWeight: active ? 500 : 400,
+                    cursor: 'pointer',
+                    transition: 'background 0.12s ease, color 0.12s ease',
+                  }}
+                >
+                  {f.id === 'open' && <CircleDot size={13} />}
+                  {f.id === 'closed' && <CheckCircle2 size={13} />}
+                  <span>{f.label}</span>
+                  <span style={{ fontSize: 10.5, color: active ? tone : themeTokens.textMuted, opacity: 0.9 }}>{f.count}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {/* Issues list */}
-        <div
-          style={{
-            flex: 1,
-            overflowY: 'auto',
-            padding: '8px 14px 16px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 6,
-          }}
-        >
-          {filteredIssues.length === 0 && !isLoadingIssues && (
-            <div style={{ padding: '36px 20px', textAlign: 'center', color: themeTokens.textSecondary, fontSize: 12 }}>
-              {stateFilter === 'closed'
-                ? 'Nenhuma issue fechada encontrada.'
+        {/* Lista */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 24px 24px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {isLoadingIssues && filteredIssues.length === 0 && (
+            <div style={{ padding: '40px 0', display: 'flex', justifyContent: 'center', color: themeTokens.textSecondary }}>
+              <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
+            </div>
+          )}
+          {!isLoadingIssues && filteredIssues.length === 0 && (
+            <div style={{ padding: '40px 20px', textAlign: 'center', color: themeTokens.textSecondary, fontSize: 13 }}>
+              {issuesSearchQuery.trim()
+                ? 'Nenhuma issue corresponde à busca.'
+                : stateFilter === 'closed'
+                ? 'Nenhuma issue fechada.'
                 : stateFilter === 'open'
-                ? 'Nenhuma issue aberta encontrada.'
-                : 'Nenhuma issue encontrada neste repositório.'}
+                ? 'Nenhuma issue aberta.'
+                : 'Nenhuma issue neste repositório.'}
             </div>
           )}
 
           {filteredIssues.map((issue) => {
-            const isClosed = (issue.state || '').toLowerCase() === 'closed';
+            const closed = isClosedIssue(issue);
+            const tone = closed ? CLOSED : OPEN;
+            const author = typeof issue.author === 'string' ? issue.author : ((issue.author as any)?.login || (issue.author as any)?.name || '');
+            // responsáveis (assignees): só as fotos
+            const assignees = [...(Array.isArray(issue.assignees) ? issue.assignees : []), ...(issue.assignee ? [issue.assignee] : [])]
+              .map((a: any) => (typeof a === 'string' ? { login: a, url: undefined } : { login: a?.login || '', url: a?.avatarUrl }))
+              .filter((a, i, arr) => a.login && arr.findIndex((b) => b.login === a.login) === i);
             return (
               <div
                 key={issue.number}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 6,
-                  padding: '10px 14px',
-                  borderRadius: 9,
-                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.025)' : 'rgba(0, 0, 0, 0.025)',
-                  border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)'}`,
-                  transition: 'background 0.15s ease, border-color 0.15s ease',
-                  opacity: isClosed ? 0.85 : 1,
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.025)' : 'rgba(0, 0, 0, 0.025)';
-                }}
+                onClick={() => onOpenIssueDetails?.(issue.number)}
+                style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '14px 16px', borderRadius: 10, background: cardBg, transition: 'background 0.12s ease', cursor: onOpenIssueDetails ? 'pointer' : 'default' }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = cardHoverBg)}
+                onMouseLeave={(e) => (e.currentTarget.style.background = cardBg)}
               >
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flex: 1, minWidth: 0 }}>
-                    {isClosed ? (
-                      <CheckCircle2 size={15} color="#8250df" style={{ marginTop: 2, flexShrink: 0 }} />
-                    ) : (
-                      <CircleDot size={15} color="#22c55e" style={{ marginTop: 2, flexShrink: 0 }} />
-                    )}
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        <span style={{ fontWeight: 600, color: themeTokens.textPrimary, fontSize: 13 }}>
-                          {issue.title}
-                        </span>
-                        <span style={{ color: themeTokens.textSecondary, fontSize: 11.5, fontWeight: 500 }}>
-                          #{issue.number}
-                        </span>
-                        {isClosed && (
-                          <span
-                            style={{
-                              fontSize: 10,
-                              fontWeight: 600,
-                              padding: '1px 6px',
-                              borderRadius: 8,
-                              background: isEffectiveDark ? 'rgba(130, 80, 223, 0.2)' : '#f3e8ff',
-                              color: '#8250df',
-                            }}
-                          >
-                            Fechada
-                          </span>
-                        )}
-                      </div>
-                      <div style={{ fontSize: 11, color: themeTokens.textSecondary, marginTop: 2 }}>
-                        {isClosed ? 'fechada' : 'aberta'} por {typeof issue.author === 'string' ? issue.author : ((issue.author as any)?.login || (issue.author as any)?.name || 'walancy')}
-                      </div>
-                    </div>
+                {/* Linha 1: estado, título e abrir no GitHub */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                  <span style={{ marginTop: 2, display: 'flex', flexShrink: 0 }}>
+                    {closed ? <CheckCircle2 size={16} color={tone} /> : <CircleDot size={16} color={tone} />}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0, fontSize: 14, lineHeight: 1.4, color: themeTokens.textPrimary, wordBreak: 'break-word' }}>
+                    {issue.title}
+                    <span style={{ marginLeft: 8, color: themeTokens.textMuted, fontSize: 12 }}>#{issue.number}</span>
                   </div>
-
-                  {/* Action buttons */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                    <button
-                      onClick={() => onLinkIssueToChat(issue)}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 5,
-                        background: 'rgba(255, 139, 103, 0.12)',
-                        color: accentColor,
-                        border: 'none',
-                        borderRadius: 6,
-                        padding: '5px 10px',
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease',
-                      }}
-                      title="Carregar Issue no chat para a IA resolver"
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = accentColor;
-                        e.currentTarget.style.color = '#ffffff';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = 'rgba(255, 139, 103, 0.12)';
-                        e.currentTarget.style.color = accentColor;
-                      }}
-                    >
-                      <Sparkles size={12} />
-                      Resolver com IA
-                    </button>
-
-                    <button
-                      onClick={() => onOpenIssueInBrowser(issue.number)}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
-                        color: themeTokens.textSecondary,
-                        border: 'none',
-                        borderRadius: 6,
-                        padding: 6,
-                        cursor: 'pointer',
-                      }}
-                      title="Abrir no GitHub"
-                    >
-                      <ExternalLink size={13} />
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onOpenIssueInBrowser(issue.number); }}
+                    title="Abrir no GitHub"
+                    style={{ ...iconBtn, width: 28, height: 28, background: 'transparent', flexShrink: 0 }}
+                    onMouseEnter={hoverOn}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = themeTokens.textSecondary; }}
+                  >
+                    <ExternalLink size={13} />
+                  </button>
                 </div>
 
-                {/* Labels */}
-                {issue.labels && issue.labels.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginLeft: 23 }}>
-                    {issue.labels.map((label, lIdx) => (
-                      <span
-                        key={lIdx}
-                        style={{
-                          fontSize: 10,
-                          padding: '1px 6px',
-                          borderRadius: 4,
-                          background: label.color ? `#${label.color}22` : 'rgba(255, 255, 255, 0.08)',
-                          color: label.color ? `#${label.color}` : themeTokens.textSecondary,
-                          fontWeight: 500,
-                        }}
-                      >
-                        {label.name}
-                      </span>
-                    ))}
+                {/* Linha 2: estado e etiquetas à esquerda; pessoas e ação à direita */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingLeft: 28, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', minWidth: 0 }}>
+                    <span style={{ fontSize: 11, fontWeight: 500, padding: '2px 9px', borderRadius: 999, background: hexToRgba(tone, 0.14), color: tone }}>
+                      {closed ? 'Fechada' : 'Aberta'}
+                    </span>
+                    {(issue.labels || []).map((label, i) => {
+                      const c = label.color ? `#${label.color}` : themeTokens.textSecondary;
+                      return (
+                        <span key={i} style={{ fontSize: 10.5, padding: '2px 8px', borderRadius: 999, background: label.color ? `${c}22` : controlBg, color: c, fontWeight: 500 }}>
+                          {label.name}
+                        </span>
+                      );
+                    })}
                   </div>
-                )}
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                    {author && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }} title={`Criada por @${author.replace('@', '')}`}>
+                        <span style={{ fontSize: 11.5, color: themeTokens.textMuted }}>por:</span>
+                        <Avatar login={author} url={issue.authorAvatar} size={20} ring={cardBg} />
+                        <span style={{ fontSize: 11.5, color: themeTokens.textSecondary }}>{author.replace('@', '')}</span>
+                      </span>
+                    )}
+                    {assignees.length > 0 && (
+                      <>
+                        {author && <span style={{ width: 1, height: 14, background: divider }} />}
+                        <span style={{ fontSize: 11.5, color: themeTokens.textMuted, marginRight: -4 }}>assignees:</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center' }} title={`Responsáveis: ${assignees.map((a) => '@' + a.login).join(', ')}`}>
+                          {assignees.slice(0, 5).map((a, i) => (
+                            <span key={a.login} style={{ marginLeft: i === 0 ? 0 : -6, display: 'flex' }}>
+                              <Avatar login={a.login} url={a.url} size={20} ring={cardBg} />
+                            </span>
+                          ))}
+                        </span>
+                      </>
+                    )}
+                    {/* Resolver com a IA selecionada no cabeçalho (só o logo) + troca de IA */}
+                    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => onLinkIssueToChat(issue)}
+                        title={`Resolver com ${aiProviders.find((p) => p.id === aiProvider)?.name || 'a IA'}`}
+                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, padding: 0, background: 'transparent', border: 'none', cursor: 'pointer', opacity: 0.9, transition: 'opacity 0.12s ease, transform 0.12s ease' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = 'scale(1.1)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.9'; e.currentTarget.style.transform = 'none'; }}
+                      >
+                        {renderAiIcon && aiProvider ? renderAiIcon(aiProvider, 20) : null}
+                      </button>
+                      {aiProviders.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setAiMenuFor((cur) => (cur === issue.number ? null : issue.number))}
+                          title="Trocar a IA"
+                          style={{ display: 'inline-flex', alignItems: 'center', padding: 2, marginLeft: -2, background: 'transparent', border: 'none', cursor: 'pointer', color: themeTokens.textMuted }}
+                          onMouseEnter={(e) => (e.currentTarget.style.color = themeTokens.textPrimary)}
+                          onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textMuted)}
+                        >
+                          <ChevronDown size={12} />
+                        </button>
+                      )}
+                      {aiMenuFor === issue.number && (
+                        <>
+                          <div style={{ position: 'fixed', inset: 0, zIndex: 5 }} onClick={() => setAiMenuFor(null)} />
+                          <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', minWidth: 170, background: isEffectiveDark ? '#1e1e1e' : '#ffffff', borderRadius: 10, boxShadow: '0 12px 32px rgba(0,0,0,0.55)', padding: 4, zIndex: 10, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                            {aiProviders.map((p) => (
+                              <div
+                                key={p.id}
+                                onClick={() => { onChangeAiProvider?.(p.id); setAiMenuFor(null); }}
+                                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 7, fontSize: 12.5, color: themeTokens.textPrimary, cursor: 'pointer', background: p.id === aiProvider ? controlBg : 'transparent' }}
+                                onMouseEnter={(e) => (e.currentTarget.style.background = controlHoverBg)}
+                                onMouseLeave={(e) => (e.currentTarget.style.background = p.id === aiProvider ? controlBg : 'transparent')}
+                              >
+                                <span style={{ display: 'flex', width: 18, justifyContent: 'center' }}>{renderAiIcon?.(p.id, 16)}</span>
+                                <span style={{ flex: 1 }}>{p.name}</span>
+                                {p.id === aiProvider && <Check size={13} color={accentColor} />}
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             );
           })}

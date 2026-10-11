@@ -27,6 +27,8 @@ interface AiChatTimelineProps {
   workedDuration?: string;
   thoughtSnippet?: string;
   isWorking?: boolean;
+  /** o que a IA está fazendo agora (ex.: "Editando App.tsx..."); sem isso mostra "Pensando…" */
+  liveAction?: string;
   terminalCommands?: TerminalExecutionRecord[];
   changedFiles?: ChangedFileItem[];
   onOpenFileAction?: (path: string, name: string, lineRange?: string) => void;
@@ -43,6 +45,7 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
   workedDuration,
   thoughtSnippet,
   isWorking = false,
+  liveAction,
   terminalCommands: rawTerminalCommands,
   changedFiles: rawChangedFiles,
   onOpenFileAction,
@@ -114,14 +117,15 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
             fontWeight: 500,
             cursor: 'pointer',
             padding: 0,
+            textAlign: 'left',
+            minWidth: 0,
+            flex: 1,
             transition: 'color 0.15s ease',
           }}
         >
-          {isAccordionOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-          <span>
-            {isWorking
-              ? 'Processando e analisando workspace...'
-              : `Worked for ${workedDuration || '3s'}`}
+          {isAccordionOpen ? <ChevronDown size={13} style={{ flexShrink: 0 }} /> : <ChevronRight size={13} style={{ flexShrink: 0 }} />}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+            {isWorking ? (liveAction || 'Pensando…') : workedDuration ? `Trabalhou por ${workedDuration}` : 'Concluído'}
           </span>
           {isWorking && (
             <span
@@ -131,6 +135,7 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
                 borderRadius: '50%',
                 background: accentColor,
                 display: 'inline-block',
+                flexShrink: 0,
                 animation: 'pulse 1.2s infinite ease-in-out',
               }}
             />
@@ -399,7 +404,7 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: 5, overflow: 'hidden' }}>
-                            <span style={{ color: themeTokens.textSecondary }}>{ch.type === 'analyze' ? 'Analyzed' : ch.label}</span>
+                            <span style={{ color: themeTokens.textSecondary }}>{ch.type === 'analyze' ? 'Analisou' : ch.label}</span>
                             {ch.file && <FileIcon fileName={ch.file} size={11} />}
                             <span style={{ color: themeTokens.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {ch.file || ''}

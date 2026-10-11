@@ -1,3 +1,12 @@
+import type { LayoutGrid } from './layoutGrid';
+import type { Handles } from './vector';
+import type { CapKind } from './caps';
+import type { ImageAdjust } from './imageFilter';
+import type { Interaction } from './prototype';
+import type { TextRun } from './richText';
+import type { PatternKind } from './pattern';
+import type { WidthProfile } from './widthProfile';
+import type { ComponentProp } from './componentProps';
 export type ShapeType =
   | 'rect'
   | 'ellipse'
@@ -55,7 +64,9 @@ export interface GradientStop {
 /** Estilo reutilizável do documento (cor ou texto). Mudar o estilo atualiza todos os shapes que o usam. */
 export type DesignStyle =
   | { id: string; name: string; kind: 'color'; color: string; opacity: number }
-  | { id: string; name: string; kind: 'text'; fontFamily?: string; fontSize?: number; fontWeight?: number | string; letterSpacing?: number | string; lineHeight?: number | string };
+  | { id: string; name: string; kind: 'text'; fontFamily?: string; fontSize?: number; fontWeight?: number | string; letterSpacing?: number | string; lineHeight?: number | string }
+  | { id: string; name: string; kind: 'effect'; effects: EffectItem[] }
+  | { id: string; name: string; kind: 'grid'; grids: LayoutGrid[] };
 
 /** Modo de variáveis (ex.: Claro/Escuro). Variáveis de cor guardam um valor por modo. */
 export interface DesignMode {
@@ -66,7 +77,8 @@ export interface DesignMode {
 export interface DesignVariable {
   id: string;
   name: string;
-  kind: 'color';
+  /** cor (hex), número, texto ou booleana; os valores ficam como texto por modo ("true"/"false" na booleana) */
+  kind: 'color' | 'number' | 'text' | 'boolean';
   values: Record<string, string>;
 }
 
@@ -75,11 +87,22 @@ export interface FillItem {
   color: string;
   opacity: number; // 0 to 1
   visible: boolean;
-  type?: 'solid' | 'linear' | 'radial' | 'angular' | 'diamond' | 'image';
+  type?: 'solid' | 'linear' | 'radial' | 'angular' | 'diamond' | 'image' | 'pattern';
+  /** Padrão: desenho que se repete (cor do desenho em `color`, fundo opcional em `patternBg`) */
+  patternKind?: PatternKind;
+  patternScale?: number;
+  patternAngle?: number;
+  patternBg?: string;
+  /** Modo de mesclagem desta camada de preenchimento (CSS mix-blend-mode) */
+  blendMode?: string;
   /** Gradiente linear/radial: paradas de cor (ordenadas por position) */
   gradientStops?: GradientStop[];
   /** Linear: ângulo estilo CSS (90 = da esquerda para a direita) */
   gradientAngle?: number;
+  /** Radial: centro (0..1 da caixa do shape; padrão 0.5/0.5) */
+  gradientCenter?: { x: number; y: number };
+  /** Radial: raio como fração da caixa (padrão 0.5 = círculo inscrito; >0.5 cobre mais área) */
+  gradientRadius?: number;
 }
 
 export interface StrokeItem {
@@ -88,6 +111,14 @@ export interface StrokeItem {
   opacity: number; // 0 to 1
   visible: boolean;
   width?: number;
+  /** Modo de mesclagem desta camada de traço (CSS mix-blend-mode) */
+  blendMode?: string;
+  /** Traço com gradiente (mesmos campos do preenchimento) */
+  type?: 'solid' | 'linear' | 'radial';
+  gradientStops?: GradientStop[];
+  gradientAngle?: number;
+  gradientCenter?: { x: number; y: number };
+  gradientRadius?: number;
 }
 
 export type EffectType =
@@ -123,7 +154,7 @@ export interface EffectItem {
 
 export interface ExportItem {
   id: string;
-  format: 'PNG' | 'JPG' | 'SVG' | 'PDF';
+  format: 'PNG' | 'JPG' | 'WEBP' | 'AVIF' | 'SVG' | 'PDF';
   scale: '0.5x' | '1x' | '1.5x' | '2x' | '3x' | '4x';
   suffix?: string;
 }
@@ -152,11 +183,23 @@ export interface Shape {
   textAlign?: 'left' | 'center' | 'right' | 'justify';
   textAlignVertical?: 'top' | 'middle' | 'bottom';
   textDecoration?: 'none' | 'underline' | 'line-through';
+  /** Estilo por trecho do texto (negrito, cor, tamanho, link…) */
+  runs?: TextRun[];
   textCase?: 'none' | 'uppercase' | 'lowercase' | 'title' | 'small-caps';
   verticalTrim?: 'standard' | 'cap-height';
   listStyle?: 'none' | 'bullet' | 'numbered';
   paragraphSpacing?: number;
   textTruncate?: 'none' | 'truncate';
+  /** Texto original antes da pseudolocalização (para restaurar) */
+  l10nOriginal?: string;
+  /** Fontes variáveis: valor por eixo (wght, wdth, slnt, opsz…) */
+  fontVariations?: Record<string, number>;
+  /** Recursos OpenType ligados (liga, tnum, smcp…) */
+  fontFeatures?: string[];
+  /** Corte vertical: a caixa começa na altura das maiúsculas e termina na linha de base (sem o respiro da entrelinha) */
+  textVerticalTrim?: 'standard' | 'cap-height';
+  /** Caixa do texto: acompanha o conteúdo (largura ou altura automática) ou fica fixa */
+  textResize?: 'auto-width' | 'auto-height' | 'fixed';
   wrapStyle?: 'auto' | 'balance';
   slant?: number;
   imageUrl?: string;
@@ -174,6 +217,8 @@ export interface Shape {
   iconName?: string;
   /** Peça do aparelho (barra de status, ilha, botões…): não conta como conteúdo da tela */
   deviceChrome?: boolean;
+  /** Texto original (sem as quebras de linha inseridas) de um texto com largura "fill" */
+  wrapSource?: string;
   /** Frame interno que representa a tela do aparelho (recebe o conteúdo; sem rótulo próprio) */
   deviceScreen?: boolean;
 
@@ -183,6 +228,30 @@ export interface Shape {
   // Auto layout
   hasAutoLayout?: boolean;
   layoutFlow?: 'freeform' | 'vertical' | 'horizontal' | 'grid';
+  /** Fora do fluxo do auto layout do pai (sobreposto, como "ignorar auto layout" do Figma): badges, pontos de notificação, botões flutuantes */
+  layoutAbsolute?: boolean;
+  /** Wrap/Grid: espaço entre as linhas (padrão: o mesmo do gap) */
+  layoutCounterGap?: number;
+  /** Grid: quantidade de colunas (padrão 3) */
+  gridCols?: number;
+  /** Tamanho mínimo/máximo dentro de um auto layout (e do próprio frame com hug) */
+  minW?: number;
+  maxW?: number;
+  minH?: number;
+  maxH?: number;
+  /** Status de entrega para desenvolvimento (rascunho é o padrão) */
+  devStatus?: 'ready' | 'done';
+  /** Frame raiz: começa um fluxo do protótipo (aparece na lista de fluxos ao apresentar) */
+  flowStart?: boolean;
+  flowName?: string;
+  /** Protótipo: este elemento fica fixo (não rola) quando o frame pai tem rolagem */
+  fixedOnScroll?: boolean;
+  /** Frame: rolagem do conteúdo no modo apresentação do protótipo */
+  scrollMode?: 'none' | 'vertical' | 'horizontal' | 'both';
+  /** Auto layout: o primeiro filho fica por cima na pilha (em vez do último) */
+  layoutStackFirstOnTop?: boolean;
+  /** Posição presa a um canto do pai (refeita depois do layout): dx/dy = quanto sai para fora do canto, em px */
+  overlayAnchor?: { anchor: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'center'; dx: number; dy: number };
   layoutAlign?:
     | 'top-left'
     | 'top-center'
@@ -194,6 +263,8 @@ export interface Shape {
     | 'bottom-center'
     | 'bottom-right';
   layoutGap?: number;
+  /** Espaçamento automático (space between): o espaço livre é dividido entre os itens */
+  layoutGapAuto?: boolean;
   paddingHorizontal?: number;
   paddingVertical?: number;
   paddingTop?: number;
@@ -224,32 +295,60 @@ export interface Shape {
   strokeCustomSides?: { top: number; right: number; bottom: number; left: number };
   strokeStyle?: 'solid' | 'dashed';
   strokeDash?: number;
+  /** Padrão de tracejado livre (ex.: "8 4 2 4"); vale no lugar de dash/gap quando válido */
+  strokeDashArray?: string;
   strokeGap?: number;
   strokeJoin?: 'miter' | 'bevel' | 'round';
   strokeMiterAngle?: number;
 
   // Effects
   effects?: EffectItem[];
+  /** Grades de layout do frame (colunas, linhas, grade quadrada) */
+  layoutGrids?: LayoutGrid[];
   /** Como o shape reage quando o frame pai é redimensionado */
   constraintH?: 'start' | 'end' | 'center' | 'stretch' | 'scale';
   constraintV?: 'start' | 'end' | 'center' | 'stretch' | 'scale';
   /** Pen/pencil: desenha o traço como curva suave passando pelos nós */
   smooth?: boolean;
+  /** Pen/linha: perfil de largura do traço (afinar, fino-grosso-fino…); desenha o traço como polígono preenchido */
+  widthProfile?: WidthProfile;
+  /** Máscara: 'outline' recorta pelo contorno (padrão); 'alpha' e 'luminance' usam o preenchimento da máscara */
+  maskType?: 'outline' | 'alpha' | 'luminance';
+  /** Pontas da linha/caminho (início e fim) */
+  startCap?: CapKind;
+  endCap?: CapKind;
+  /** Pen: alças Bézier por nó (deslocamentos a partir do nó) e caminho fechado (preenchível) */
+  pathHandles?: Handles;
+  closed?: boolean;
   /** Imagem: modo de ajuste e recorte (frações 0..1 da imagem original) */
   imageFit?: 'fill' | 'fit' | 'stretch';
   imageCrop?: { x: number; y: number; w: number; h: number };
-  /** Protótipo: ao clicar neste elemento no modo apresentação, vai para o frame de destino */
+  /** Vídeo como preenchimento (data URL; toca em laço, mudo, no canvas e no protótipo) */
+  videoUrl?: string;
+  /** Ajustes da imagem (exposição, contraste, saturação, temperatura, matiz) */
+  imageAdjust?: ImageAdjust;
+  /** Protótipo: ao clicar neste elemento no modo apresentação, vai para o frame de destino (formato antigo; vira uma interação de clique) */
   prototypeLink?: { targetId: string };
+  /** Protótipo: gatilhos e ações deste elemento (clique, hover, arrastar, tecla, tempo) */
+  interactions?: Interaction[];
   /** Issue do GitHub à qual este design (frame) está ligado */
   linkedIssue?: number;
   /** Variável de cor ligada ao preenchimento (muda com o modo ativo) */
   fillVariableId?: string;
+  /** Variáveis (número/texto/booleana) ligadas a propriedades do shape: propriedade → id da variável */
+  variableBindings?: Record<string, string>;
   /** Estilos do documento aplicados ao shape */
   fillStyleId?: string;
   textStyleId?: string;
+  effectStyleId?: string;
+  gridStyleId?: string;
   /** Componente: grupo de variantes (componentes com o mesmo grupo são variantes um do outro) e nome da variante */
   variantGroup?: string;
   variantName?: string;
+  /** Componente principal: propriedades expostas às instâncias (mostrar/ocultar camada, texto) */
+  componentProps?: ComponentProp[];
+  /** Instância (raiz): valores das propriedades do componente, por id da propriedade */
+  propValues?: Record<string, boolean | string>;
   /** Instância: id do componente principal (no shape raiz da instância) */
   instanceOf?: string;
   /** Filho de instância: id do shape correspondente no componente principal */
@@ -262,9 +361,16 @@ export interface Shape {
   pathH?: number;
   /** text-path: curvatura do arco (positivo sobe, negativo desce) */
   pathCurve?: number;
+  /** text-path: id de outro shape cujo contorno serve de caminho (em vez do arco) */
+  pathTargetId?: string;
 
   // Exports
   exports?: ExportItem[];
+
+  // Elipse como arco, fatia ou anel
+  arcStart?: number;
+  arcEnd?: number;
+  arcInner?: number; // 0 a 1 (fração do raio externo)
 
   // Polygon / Star
   polygonSides?: number;

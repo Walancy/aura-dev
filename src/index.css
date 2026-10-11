@@ -132,6 +132,10 @@ button {
 .xterm-viewport {
   background-color: var(--bg-card) !important;
 }
+/* terminal de IA do CLI: fundo transparente para aparecer o degradê e a logo atrás */
+[data-transparent="true"] .xterm-viewport {
+  background-color: transparent !important;
+}
 
 /* VS Code style Resizers */
 .resizer-col {
@@ -387,3 +391,13 @@ body.resizing-row {
   }
 }
 
+
+/* Frame em que a IA está trabalhando */
+@keyframes ai-glow-pulse {
+  0%, 100% { opacity: 0.35; filter: drop-shadow(0 0 4px currentColor); }
+  50% { opacity: 1; filter: drop-shadow(0 0 22px currentColor) drop-shadow(0 0 40px currentColor); }
+}
+.ai-glow { animation: ai-glow-pulse 1.6s ease-in-out infinite; }
+
+/* Navegando no canvas (pan/zoom): sem filtros (sombras, blur, ruído) para manter os quadros por segundo */
+.design-navigating *, .design-navigating { filter: none !important; }

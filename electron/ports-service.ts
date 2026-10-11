@@ -9,6 +9,7 @@ export interface OpenPort {
   url: string;
   status: 'online' | 'unreachable';
   serviceName?: string;
+  cwd?: string;
 }
 
 export class NativePortsService {
@@ -69,8 +70,43 @@ export class NativePortsService {
           }
         }
 
-        resolve(Array.from(portMap.values()).sort((a, b) => a.port - b.port));
+        const list = Array.from(portMap.values()).sort((a, b) => a.port - b.port);
+        this.cwdOf([...new Set(list.map((p) => p.pid))]).then((cwds) => {
+          for (const p of list) p.cwd = cwds.get(p.pid);
+          resolve(list);
+        });
       });
+    });
+  }
+
+  private cwdOf(pids: string[]): Promise<Map<string, string>> {
+    return new Promise((resolve) => {
+      if (!pids.length) return resolve(new Map());
+      exec(`lsof -nP -a -p ${pids.join(',')} -d cwd -Fpn 2>/dev/null`, (_err, stdout) => {
+        const map = new Map<string, string>();
+        let cur = '';
+        for (const line of (stdout || '').split('\n')) {
+          if (line.startsWith('p')) cur = line.slice(1);
+          else if (line.startsWith('n') && cur) map.set(cur, line.slice(1));
+        }
+        resolve(map);
+      });
+    });
+  }
+
+  /** Servidores em escuta cujo diretório de trabalho é o projeto (dev server rodando a partir dele). Ignora o próprio DevFlow. */
+  async scanForWorkspace(workspacePath: string): Promise<OpenPort[]> {
+    if (!workspacePath) return [];
+    // só runtimes de servidor web (as CLIs de IA, como codex e agy, também escutam portas a partir da pasta do projeto)
+    const SERVER_RUNTIME = /^(node|bun|deno|python[\d.]*|ruby|php|java|go|dart|npm|pnpm|yarn|vite|next|nuxt|uvicorn|gunicorn|dotnet|cargo|rails|puma)$/i;
+    const all = (await this.scan()).filter((p) => p.port !== 5185 && p.port !== 9222 && SERVER_RUNTIME.test(p.command));
+    const pids = [...new Set(all.map((p) => p.pid))];
+    if (!pids.length) return [];
+    const cwdByPid = await this.cwdOf(pids);
+    const ws = workspacePath.replace(/\/$/, '');
+    return all.filter((p) => {
+      const cwd = cwdByPid.get(p.pid);
+      return !!cwd && (cwd === ws || cwd.startsWith(ws + '/'));
     });
   }
 

@@ -43,11 +43,11 @@ export function linearVector(angleDeg: number) {
 }
 
 /** CSS equivalente (miniaturas e prévias no seletor). */
-export function cssGradient(f: Pick<FillItem, 'type' | 'gradientStops' | 'gradientAngle'>, forceAngle?: number): string {
+export function cssGradient(f: Pick<FillItem, 'type' | 'gradientStops' | 'gradientAngle' | 'gradientCenter' | 'gradientRadius'>, forceAngle?: number): string {
   const stops = sortStops(f.gradientStops || [])
     .map((s) => `${hexWithAlpha(s.color, s.opacity)} ${Math.round(s.position * 100)}%`)
     .join(', ');
-  if (f.type === 'radial') return `radial-gradient(circle at 50% 50%, ${stops})`;
+  if (f.type === 'radial') return `radial-gradient(circle at ${Math.round((f.gradientCenter?.x ?? 0.5) * 100)}% ${Math.round((f.gradientCenter?.y ?? 0.5) * 100)}%, ${stops})`;
   if (f.type === 'angular') return `conic-gradient(from ${forceAngle ?? f.gradientAngle ?? 0}deg at 50% 50%, ${stops})`;
   if (f.type === 'diamond') {
     // quatro quadrantes saindo do centro para os cantos formam o losango

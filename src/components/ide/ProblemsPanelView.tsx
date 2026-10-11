@@ -41,6 +41,8 @@ export interface ProblemsPanelViewProps {
   onRunProjectCheck?: () => Promise<void>;
   isCheckingProject?: boolean;
   lastCheckedTime?: Date | null;
+  /** resultado de cada verificação (tipos, ESLint, oxlint), inclusive as que não puderam rodar */
+  checkResults?: Array<{ label: string; ok: boolean; count: number; error?: string }>;
   themeTokens: {
     bgCard: string;
     border: string;
@@ -61,6 +63,7 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
   onRunProjectCheck,
   isCheckingProject = false,
   lastCheckedTime,
+  checkResults,
   themeTokens,
   accentColor,
   isEffectiveDark,
@@ -369,7 +372,7 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
               title="Executar checagem estática de tipos do TypeScript em todo o projeto"
             >
               <RefreshCw size={12} className={isCheckingProject ? 'animate-spin' : ''} style={{ animation: isCheckingProject ? 'spin 1s linear infinite' : 'none' }} />
-              <span>{isCheckingProject ? 'Verificando...' : 'Verificar Projeto (tsc)'}</span>
+              <span>{isCheckingProject ? 'Verificando...' : 'Verificar Projeto'}</span>
             </button>
           )}
         </div>
@@ -769,6 +772,16 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
           </span>
           {scope === 'active' && activeFile && <span>• Apenas {activeFile.name}</span>}
         </div>
+
+        {checkResults && checkResults.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', minWidth: 0 }}>
+            {checkResults.map((r) => (
+              <span key={r.label} title={r.error || `${r.count} problema(s)`} style={{ color: r.ok ? undefined : '#f97316', whiteSpace: 'nowrap', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {r.ok ? `✓ ${r.label}: ${r.count}` : `⚠ ${r.label}: ${r.error}`}
+              </span>
+            ))}
+          </div>
+        )}
 
         {lastCheckedTime && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, opacity: 0.85 }}>

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Copy, Check } from 'lucide-react';
+import { Check, ExternalLink, X } from 'lucide-react';
+import GradientWaves from './GradientWaves';
 import logoUrl from '../../../icon-devflow.svg';
 
 export interface GithubAuthenticatedUser {
@@ -12,6 +13,9 @@ export interface GithubAuthenticatedUser {
 export interface GithubLoginScreenProps {
   accentColor: string;
   onAuthenticated: (user: GithubAuthenticatedUser) => void;
+  /** usuário que acabou de sair (a sessão continua válida): mostra um card para voltar a ela sem trocar de conta */
+  previousUser?: { user: GithubAuthenticatedUser; lastLogin: string | null } | null;
+  onResume?: () => void;
 }
 
 type LoginState = 'idle' | 'requesting' | 'waiting' | 'error';
@@ -22,7 +26,7 @@ const GithubMarkIcon: React.FC<{ size?: number }> = ({ size = 16 }) => (
   </svg>
 );
 
-export const GithubLoginScreen: React.FC<GithubLoginScreenProps> = ({ accentColor, onAuthenticated }) => {
+export const GithubLoginScreen: React.FC<GithubLoginScreenProps> = ({ accentColor, onAuthenticated, previousUser, onResume }) => {
   const [state, setState] = useState<LoginState>('idle');
   const [userCode, setUserCode] = useState('');
   const [verificationUri, setVerificationUri] = useState('https://github.com/login/device');
@@ -101,23 +105,31 @@ export const GithubLoginScreen: React.FC<GithubLoginScreenProps> = ({ accentColo
         userSelect: 'none',
       }}
     >
-      {/* Ambient glow behind the logo */}
-      <div
-        style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -60%)',
-          width: 520,
-          height: 520,
-          borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0.06) 45%, transparent 70%)',
-          filter: 'blur(40px)',
-          pointerEvents: 'none',
-          opacity: 0,
-          animation: 'devflow-login-glow-in 2.8s ease-out forwards',
-        }}
-      />
+      {/* Fundo animado: GradientWaves (React Bits) */}
+      <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+        <GradientWaves
+          horizonColor="#5227FF"
+          waveColor="#FF9FFC"
+          crestColor="#FFFFFF"
+          speed={0.2}
+          amplitude={3.15}
+          waveScale={0.55}
+          waveRatio={0.6}
+          swell={40}
+          turbulence={7.5}
+          tilt={1.3}
+          zoom={1.15}
+          height={4.2}
+          fogDepth={16}
+          detail="medium"
+          brightness={1.1}
+          opacity={0.99}
+          mouseInteraction
+          parallaxStrength={0.14}
+          grain
+          grainIntensity={0.05}
+        />
+      </div>
 
       <div
         style={{
@@ -132,7 +144,7 @@ export const GithubLoginScreen: React.FC<GithubLoginScreenProps> = ({ accentColo
         <img
           src={logoUrl}
           alt="Aura Dev"
-          style={{ width: 84, height: 'auto', filter: 'drop-shadow(0 0 24px rgba(255,255,255,0.15))' }}
+          style={{ width: 84, height: 'auto', filter: 'none' }}
         />
 
         <div style={{ textAlign: 'center' }}>
@@ -151,7 +163,8 @@ export const GithubLoginScreen: React.FC<GithubLoginScreenProps> = ({ accentColo
           </div>
         </div>
 
-        {(state === 'idle' || state === 'requesting') && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 22, minWidth: 300 }}>
+        {!previousUser && (state === 'idle' || state === 'requesting') && (
           <button
             onClick={startLogin}
             disabled={state === 'requesting'}
@@ -161,21 +174,21 @@ export const GithubLoginScreen: React.FC<GithubLoginScreenProps> = ({ accentColo
               gap: 10,
               padding: '10px 20px',
               borderRadius: 8,
-              border: '1px solid rgba(255,255,255,0.12)',
-              background: '#161616',
+              border: 'none',
+              background: 'rgba(255,255,255,0.07)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
               color: '#ffffff',
               fontSize: 13.5,
-              fontWeight: 600,
+              fontWeight: 400,
               cursor: state === 'requesting' ? 'default' : 'pointer',
               opacity: state === 'requesting' ? 0.6 : 1,
               transition: 'background 0.15s ease, opacity 0.15s ease',
               marginTop: 6,
             }}
             onMouseEnter={(e) => {
-              if (state !== 'requesting') e.currentTarget.style.background = '#1f1f1f';
+              if (state !== 'requesting') e.currentTarget.style.background = 'rgba(255,255,255,0.12)';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background = '#161616';
+              e.currentTarget.style.background = 'rgba(255,255,255,0.07)';
             }}
           >
             <GithubMarkIcon size={16} />
@@ -183,101 +196,88 @@ export const GithubLoginScreen: React.FC<GithubLoginScreenProps> = ({ accentColo
           </button>
         )}
 
+        {previousUser && onResume && (state === 'idle' || state === 'requesting') && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+            <button
+              onClick={onResume}
+              title="Voltar para a sessão deste usuário"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 12, padding: '10px 18px 10px 12px', borderRadius: 10, cursor: 'pointer',
+                border: 'none', background: 'rgba(255,255,255,0.07)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', color: '#ffffff', textAlign: 'left', width: '100%', boxSizing: 'border-box',
+                transition: 'background 0.15s ease',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.12)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.07)')}
+            >
+              <img src={previousUser.user.avatarUrl} alt={previousUser.user.login} style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <span style={{ fontSize: 13.5, fontWeight: 400 }}>{previousUser.user.name || previousUser.user.login}</span>
+                <span style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.5)' }}>@{previousUser.user.login}</span>
+              </span>
+            </button>
+            <button
+              onClick={startLogin}
+              disabled={state === 'requesting'}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, alignSelf: 'center', marginTop: 6, padding: '4px 8px',
+                background: 'none', border: 'none', color: 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: 400,
+                cursor: state === 'requesting' ? 'default' : 'pointer', transition: 'color 0.15s ease',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = '#ffffff')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = 'rgba(255,255,255,0.55)')}
+            >
+              <GithubMarkIcon size={13} />
+              {state === 'requesting' ? 'Conectando...' : 'Trocar de conta'}
+            </button>
+          </div>
+        )}
+        </div>
+
         {state === 'waiting' && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, marginTop: 4 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, marginTop: 4 }}>
             <div
               style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                background: '#161616',
-                border: '1px solid rgba(255,255,255,0.12)',
-                borderRadius: 8,
-                padding: '10px 14px 10px 22px',
+                display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(255,255,255,0.07)', backdropFilter: 'blur(16px)',
+                WebkitBackdropFilter: 'blur(16px)', borderRadius: 10, padding: '10px 12px 10px 22px',
               }}
             >
-              <span
-                style={{
-                  fontFamily: '"JetBrains Mono", Menlo, monospace',
-                  fontSize: 26,
-                  fontWeight: 700,
-                  letterSpacing: 5,
-                  color: '#ffffff',
-                }}
-              >
+              <span style={{ fontFamily: '"JetBrains Mono", Menlo, monospace', fontSize: 24, fontWeight: 400, letterSpacing: 5, color: '#ffffff' }}>
                 {userCode}
               </span>
               <button
-                onClick={handleCopyCode}
-                title={copied ? 'Código copiado!' : 'Copiar código'}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  background: 'none',
-                  border: 'none',
-                  color: copied ? '#22c55e' : accentColor,
-                  cursor: 'pointer',
-                  padding: 6,
-                  borderRadius: 6,
-                  transition: 'background 0.15s ease',
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.08)')}
+                onClick={() => { handleCopyCode(); window.electronAPI?.shell?.openExternal?.(verificationUri); }}
+                title="Copiar código e abrir o link" 
+                style={{ display: 'flex', background: 'none', border: 'none', color: copied ? '#22c55e' : 'rgba(255,255,255,0.6)', cursor: 'pointer', padding: 6, borderRadius: 6, transition: 'background 0.15s ease' }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.1)')}
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
               >
-                {copied ? <Check size={18} /> : <Copy size={18} />}
+                {copied ? <Check size={16} /> : <ExternalLink size={16} />}
               </button>
             </div>
-            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', textAlign: 'center', maxWidth: 320, lineHeight: 1.5 }}>
-              Abrimos <span style={{ color: 'rgba(255,255,255,0.7)' }}>{verificationUri.replace('https://', '')}</span> no seu
-              navegador. Cole o código acima para autorizar.
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-              <span
-                style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: '50%',
-                  background: accentColor,
-                  animation: 'devflow-login-pulse 1.2s ease-in-out infinite',
-                }}
-              />
-              <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>Aguardando autorização...</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: accentColor, animation: 'devflow-login-pulse 1.2s ease-in-out infinite' }} />
+              <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>Aguardando...</span>
             </div>
             <button
               onClick={handleRetry}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: 'rgba(255,255,255,0.35)',
-                fontSize: 11.5,
-                cursor: 'pointer',
-                marginTop: 8,
-                textDecoration: 'underline',
-              }}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: 12, cursor: 'pointer', padding: '6px 10px', borderRadius: 6, transition: 'all 0.15s ease' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#ffffff'; e.currentTarget.style.background = 'rgba(255,255,255,0.1)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.4)'; e.currentTarget.style.background = 'transparent'; }}
             >
+              <X size={14} />
               Cancelar
             </button>
           </div>
         )}
 
         {state === 'error' && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, marginTop: 4 }}>
-            <div style={{ fontSize: 12.5, color: '#f87171', textAlign: 'center', maxWidth: 320 }}>{errorMessage}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, marginTop: 4 }}>
+            <div style={{ fontSize: 12.5, color: '#f87171', textAlign: 'center', maxWidth: 300 }}>{errorMessage}</div>
             <button
               onClick={handleRetry}
-              style={{
-                padding: '8px 18px',
-                borderRadius: 8,
-                border: '1px solid rgba(255,255,255,0.12)',
-                background: '#161616',
-                color: '#ffffff',
-                fontSize: 12.5,
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
+              style={{ padding: '8px 18px', borderRadius: 8, border: 'none', background: 'rgba(255,255,255,0.07)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', color: '#ffffff', fontSize: 12.5, fontWeight: 400, cursor: 'pointer' }}
             >
-              Tentar novamente
+              Tentar de novo
             </button>
           </div>
         )}
@@ -287,10 +287,6 @@ export const GithubLoginScreen: React.FC<GithubLoginScreenProps> = ({ accentColo
         @keyframes devflow-login-pulse {
           0%, 100% { opacity: 0.35; transform: scale(0.85); }
           50% { opacity: 1; transform: scale(1.15); }
-        }
-        @keyframes devflow-login-glow-in {
-          from { opacity: 0; transform: translate(-50%, -60%) scale(0.85); }
-          to { opacity: 1; transform: translate(-50%, -60%) scale(1); }
         }
       `}</style>
     </div>

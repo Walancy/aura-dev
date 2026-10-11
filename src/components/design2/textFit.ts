@@ -2,19 +2,42 @@
 export type Measure = (text: string, fontSize: number, weight: number) => number;
 
 let ctx: CanvasRenderingContext2D | null | undefined;
+let measureFamily = 'Poppins';
+/** Fonte usada para medir os textos (a dos design tokens, quando existir). */
+export function setMeasureFamily(family?: string | null) {
+  const f = (family || 'Poppins').trim() || 'Poppins';
+  if (f === measureFamily) return;
+  measureFamily = f;
+  cache.clear();
+}
+
 /** Canvas 2D quando existe (renderer); senão estimativa por caractere (testes). */
+const cache = new Map<string, number>();
 export const defaultMeasure: Measure = (text, fontSize, weight) => {
+  const key = `${weight}|${fontSize}|${text}`;
+  const hit = cache.get(key);
+  if (hit !== undefined) return hit;
+  const w = rawMeasure(text, fontSize, weight);
+  if (cache.size > 5000) cache.clear();
+  cache.set(key, w);
+  return w;
+};
+
+function rawMeasure(text: string, fontSize: number, weight: number): number {
   try {
     if (ctx === undefined) ctx = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null;
     if (ctx) {
-      ctx.font = `${weight} ${fontSize}px Inter, 'Poppins', sans-serif`;
+      ctx.font = `${weight} ${fontSize}px '${measureFamily}', Poppins, Inter, sans-serif`;
       return ctx.measureText(text).width;
     }
   } catch {}
   return text.length * fontSize * 0.55;
-};
+}
 
 export const LINE_HEIGHT = 1.25;
+
+/** Altura das maiúsculas como fração do tamanho da fonte (aproximação para o corte vertical). */
+export const CAP_HEIGHT = 0.72;
 
 export function wrapLines(text: string, width: number, fontSize: number, weight: number, measure: Measure = defaultMeasure): string[] {
   const lines: string[] = [];

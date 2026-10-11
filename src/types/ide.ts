@@ -25,6 +25,10 @@ export interface TerminalSessionItem {
   shellIntegration: string;
   isSplit?: boolean;
   splitWithId?: string;
+  /** onde o terminal vive: 'cli' (tela CLI) ou 'ide' (padrão, painel da IDE); cada tela só mostra os seus */
+  scope?: 'ide' | 'cli';
+  /** projeto dono do terminal: todos os projetos mantêm seus terminais abertos; a tela mostra só os do projeto ativo */
+  projectPath?: string;
 }
 
 export interface OpenFileItem {

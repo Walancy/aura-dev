@@ -115,3 +115,56 @@
 - [x] **Auto Layout na IA**: a IA descreve frames aninhados (`layout`, `gap`, `padding`, `align`, `parent`, tamanhos `fill`/`hug`/número); o `ScreenBuilder` aplica o auto layout a cada elemento (streaming incluso) e reajusta textos `fill` à largura final. Rótulos de nome só nos frames de topo.
 - [x] **Shift+A** envolve a seleção em auto layout; redimensionar filho reflui irmãos/pai ao vivo.
 - [x] **Fila de gerações da IA**: o prompt enviado vira um card acima da caixa (loading + progresso); botão só confirma "Enviado" e volta a "Gerar"; novos pedidos entram na fila (um por vez), com cancelar e subir na fila (nunca acima do que está rodando). "Regerar" também usa a fila. Novas telas nascem num espaço livre do canvas.
+- [x] **Geração presa ao projeto**: cada pedido guarda o projeto/página de origem; a barra de prompt mostra só a fila do projeto aberto; trocar de projeto não interrompe a IA (ela segue e grava no `design.json` do projeto de origem, com escrita serializada); voltar ao projeto mostra a geração em andamento; ao concluir fora do projeto/tela, notificação com atalho de volta. Projetos diferentes geram em paralelo.
+- [x] **Persistência**: lista vazia salva é respeitada ao recarregar (os exemplos não voltam), gravação imediata em reload/troca de projeto, projeto sem design começa vazio.
+- [x] **IA e barras fixas**: `pin:"bottom"|"top"` tira a navbar do fluxo e cola na borda da tela (e rede de segurança por nome: "Navbar", "Tab bar", "Barra de navegação"); receitas de componentes no prompt; frame com layout próprio respeita `hug` mesmo fora de um layout.
+- [x] **Auto Layout como no Figma**: texto se ajusta ao conteúdo (largura hug/auto, altura automática), texto `fill` quebra pela largura e re-quebra quando o pai muda, espaçamento automático (space between), digitar W/H ou arrastar alça vira tamanho fixo naquele eixo, edições de W/H no painel aplicam restrições nos filhos, X/Y move todos os descendentes.
+- [x] Clicar numa camada leva o canvas até o elemento.
+- [x] **Blindagem contra layouts ruins da IA**: frame sem `layout` com filhos sem x/y vira fluxo vertical (padding preservado); pai com id errado cai no layout principal; itens compactos (botão de ícone, badge, pílula) marcados `fill` ao lado de um texto `fill` viram `hug`; texto curto/valor monetário em `fill` nunca quebra linha; prompt com regras de fill/hug e `layout` obrigatório em frames com filhos.
+- [x] **Pedido sem assunto usa o projeto da header** ("crie a tela inicial do app"): o resumo do projeto agora inclui README, CLAUDE/AGENTS, PRD/spec/arquitetura e demais `.md` de `docs/` (ordenados por relevância), pastas da raiz, telas/rotas existentes, entidades do Prisma e cores do tema; o prompt detecta pedidos sem assunto, manda a IA derivar domínio/módulos/dados do projeto e libera ler até 6 arquivos (priorizando `.md`).
+- [x] **Menu "⋯" no frame selecionado**: botão no canto superior direito do frame de topo com "Regerar com IA" (usa o pedido original; frames feitos à mão são refeitos a partir dos textos deles; entra na fila da IA) e "Excluir frame" (com confirmação).
+- [x] **Modelo da CLI por provedor** (`aiModel.ts`): a IA do Design usa o modelo ativo do provedor selecionado; o "modelo selecionado" global só vale se pertencer ao provedor (evita `agy --model "sonnet"` → "invalid model selection").
+- [x] **Desfazer regeração**: após "Regerar", os botões acima da tela ganham "↶ Desfazer", que troca a nova versão pela anterior (com Aceitar/Regerar de volta se ela era da IA); Aceitar descarta a versão antiga. Lógica em `aiReviewUndo.ts` (testada).
+- [x] Imagens de referência aparecem no card do prompt enviado (miniatura 28 px recolhido; 72 px ao expandir).
+- [x] **Velocidade com imagem anexada** (medido no projeto estancia, Gemini 3.8 Flash High): 196 s → 149 s (sem explorar o projeto quando há imagem) → 98 s (JSON minificado, nomes curtos/omitidos, teto de ~80 elementos). Imagens reduzidas a 1280 px; imagem sozinha custa só ~25–40 s (uma volta de ferramenta). O nível de raciocínio vem do nome do modelo ("(High/Medium/Low)"), não de `--effort`.
+- [x] **Imagens de referência seguidas de verdade** (análise em 2 etapas): 1) uma chamada só para olhar as imagens e gerar uma especificação visual (blocos de cima para baixo, tema, tipografia, formas, composição; variante "(Low)" do modelo, ~15 s); 2) a geração recebe essa especificação como REGRA OBRIGATÓRIA (reproduz a estrutura/estilo, troca só o conteúdo pelo do pedido/projeto). Regerar reaproveita a especificação. Falha na análise → volta a anexar o arquivo.
+- [x] Conteúdo de frames com "recortar conteúdo" agora é recortado em todos os níveis (antes só nos filhos diretos: o texto vazava da tela do aparelho); raio > metade do lado = pílula (sem elipse); `gradient` (#RRGGBBAA) em rect/frame/ellipse; `inset` em barras `pin` (navbar flutuante).
+- [x] **Switch "Contexto do projeto"** na barra de prompt da IA (padrão ligado, salvo no navegador, vale por pedido e é mantido no Regerar). Desligado: a IA usa só o pedido e as imagens — sem resumo/README/docs do projeto, sem ler arquivos, rodando fora da pasta do projeto (`/tmp`) e com instrução para ignorar projeto/memória. Obs.: o Antigravity imprime "Estancia Bahia" no fim da resposta mesmo fora do projeto (rodapé da própria CLI, fora do JSON; é descartado).
+- [x] **Aviso de app desatualizado** (`app:capabilities`): o processo principal do Electron só atualiza ao reiniciar o app. Sem isso, imagens de referência (`fs:saveTempImage`) e fotos da IA (`unsplash:image`) falhavam em silêncio (a IA gerava um design genérico sem ver a imagem e deixava placeholders cinza). Agora a barra de prompt mostra "Reinicie o app", o pedido com imagem falha com mensagem clara em vez de seguir sem a imagem, e fotos que não carregam geram um aviso.
+- [x] Prompt: ordem de prioridade (referência > pedido > projeto > exemplos) e receitas de componentes reescritas como "sintaxe, não blocos obrigatórios" (evita o esqueleto genérico busca+chips+cards+lista+navbar).
+- [x] **Layout bagunçado (texto atrás de componente)**: frame/texto sem `width` dentro de auto layout agora é `hug` (antes virava largura fixa = linha toda, cobrindo o vizinho); itens compactos com largura fixa ≈ linha toda ao lado de um texto `fill` viram `hug`; texto `fill` nunca colapsa a 0 (largura mínima = maior palavra). **Regerar segue o interruptor "Contexto do projeto" atual** (antes mantinha o modo do pedido original e, sem contexto, não repete o nome da tela no prompt).
+
+## Estilos avançados e consistência de medidas na IA
+- `aiStyle.ts`: camadas `fills` (glass/neumorphism), gradientes (linear/radial/stops), cores `#RRGGBBAA`, `effects` (sombra, inner-shadow, blur, backdrop-blur, noise), `radii`, rotação, tipografia exata (letterSpacing, textCase, fontFamily…), fundo da tela com gradiente/efeitos.
+- Consistência: espaçamentos em grade de 4px, ícones em escala fixa, dimensões pares, `equalizeRows`, fill cruzado.
+- Canvas: o recorte de `clipContent` agora envolve o elemento inteiro (sombras/brilhos e rotação não vazam do frame pai).
+- Limites: backdrop-blur não verificável no export estático; `lineHeight` de referências ainda não é renderizado.
+
+## Desempenho da navegação no canvas
+- Pan/zoom mudam só o `transform` do SVG (`camRef` + `navigate`); o React é atualizado quando o gesto para (100ms) ou a cada 300ms em gestos longos.
+- Recorte por visibilidade: shapes fora da tela (margem de uma tela) ou menores que 1px não entram no DOM (só com >60 shapes; selecionados sempre ficam).
+- Durante a navegação a classe `design-navigating` desliga filtros (sombra/blur/ruído).
+- Medido no projeto estancia (~480 shapes, 6,5 mil elementos SVG): pan 105 → ~10 ms/quadro; zoom 81 → ~20 ms/quadro.
+
+## Geração rápida e várias telas em paralelo
+- Modo rápido (padrão): usa a variante "(Low)" do modelo. Teste real: 12–25s contra ~100s com "(High)", layout equivalente.
+- Pedidos de várias telas (`looksMultiScreen`): uma chamada de plano (`appPlan.ts`: telas + design system compartilhado) e depois UMA tela por chamada, 3 em paralelo, cada uma com frame provisório brilhando. 4 telas em ~45s.
+- Cada execução da CLI tem `streamId` (texto e cancelamento isolados). Com `maxScreens: 1` o prompt não pede o formato de várias telas.
+- "Aceitar tudo (N)" na barra do prompt quando há 2+ telas aguardando aceite.
+- Pendente: no login gerado alguns textos curtos ("Acesse sua conta", "Esqueci minha senha") quebraram em coluna estreita.
+
+## Design tokens
+- `designTokens.ts`: cores nomeadas, fonte, escala tipográfica, espaçamentos, raios e sombras; salvos em `designTokens` no design.json (projeto a projeto, inclusive para gerações em segundo plano).
+- Com tokens definidos, TODO prompt de criação, edição, plano de telas e regeração recebe o bloco obrigatório, e o que a IA devolve é ajustado aos tokens (cor próxima vira o token, fonte, tamanho da escala, espaços e raios). Com imagem de referência, os tokens mandam no estilo e a imagem só na estrutura.
+- Painel "Tokens" (barra do prompt e menu do projeto): editar à mão, extrair do design atual, ou gerar/refinar com IA a partir de texto e/ou imagens de outro projeto.
+- Teste real: tela gerada com tokens → 41/42 cores nos tokens, 26/27 fontes na escala, família 100% a dos tokens.
+
+## Fidelidade a referências (gráficos, divisórias, microcomponentes)
+- Item de IA `{"type":"chart","kind":"line|area|bar|donut",...}` (`charts.ts`): a IA manda só os dados; o app gera curva suave, área com degradê, barras com trilho e rótulos, rosca, grade, marcador e etiqueta. O frame do gráfico é refeito quando o auto layout define o tamanho final.
+- Análise da imagem ganhou seções de GRÁFICOS, DIVISÓRIAS, MICROCOMPONENTES e CONTAINERS (fundo/borda/sombra de cada card) + inventário indentado (hierarquia).
+- Prompt: receitas de divisórias (grade completa de calendário/tabela), microcomponentes (chips de ícone, tiles de estatística, badges, pilha de avatares com gap negativo, segmentado, progresso), gaps calculados pelas caixas do inventário; texto no idioma da imagem (sem traduzir).
+- Limite de elementos por tela: 450 (antes 150, cortava dashboards densos).
+
+## Novas telas a partir da tela selecionada
+- Com tela(s) selecionada(s), pedidos como "crie as outras telas", "faça o fluxo de pagamento", "gere 4 telas…" (`screenFlow.wantsNewScreens`) criam telas novas em vez de editar a selecionada.
+- A(s) tela(s) selecionada(s) (até 3) são exportadas como PNG e entram como GUIA DE ESTILO (`STYLE_MODE_MARK`): mesma estrutura (menu, cabeçalho, navegação), paleta, tipografia, raios, espaçamentos e componentes; só o conteúdo da área principal muda. Mesmo tamanho, posicionadas à direita da selecionada; vários pedidos de tela usam o plano + geração em paralelo.

@@ -68,12 +68,29 @@ export function boundsOfShapes(shapes: Shape[]): ExportBounds {
 export function buildExportSvg(all: Shape[], target: Shape, scale = 1): { svg: string; bounds: ExportBounds } {
   const subtree = collectSubtree(all, target);
   const bounds = boundsOfShapes(subtree);
+  return { svg: svgFromShapes(subtree, bounds, scale), bounds };
+}
+
+/**
+ * Dá ids únicos ao SVG (gradientes, recortes, filtros…) para que vários SVGs na mesma página não se confundam:
+ * `url(#x)` e `href="#x"` resolvem para o primeiro elemento do documento com aquele id.
+ */
+export function uniquifySvgIds(svg: string, prefix: string): string {
+  return svg
+    .replace(/\bid="([^"]+)"/g, (_m, id) => `id="${prefix}-${id}"`)
+    .replace(/url\(#([^)]+)\)/g, (_m, id) => `url(#${prefix}-${id})`)
+    .replace(/(xlink:)?href="#([^"]+)"/g, (_m, x, id) => `${x || ''}href="#${prefix}-${id}"`);
+}
+
+/** SVG autônomo de uma lista de shapes (já recortada) dentro de `bounds`; usado pela exportação e pelo player do protótipo. */
+export function svgFromShapes(subtree: Shape[], bounds: ExportBounds, scale = 1): string {
   const markup = renderToStaticMarkup(
     React.createElement(DesignCanvas, {
       shapes: subtree,
       selectedId: null,
       tool: 'select',
       readOnly: true,
+      hideOverlays: true,
       zoom: 1,
       onSelect: () => {},
       onShapesChange: () => {},
@@ -85,11 +102,7 @@ export function buildExportSvg(all: Shape[], target: Shape, scale = 1): { svg: s
   const inner = open >= 0 ? markup.slice(markup.indexOf('>', open) + 1, markup.lastIndexOf('</g>')) : '';
   const w = Math.round(bounds.width * scale);
   const h = Math.round(bounds.height * scale);
-  const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}">` +
-    inner +
-    `</svg>`;
-  return { svg, bounds };
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}">` + inner + `</svg>`;
 }
 
 export function scaleValue(scale: ExportItem['scale']): number {
@@ -105,7 +118,9 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
-async function rasterize(svg: string, width: number, height: number, mime: 'image/png' | 'image/jpeg', quality = 0.92): Promise<Blob> {
+export type RasterMime = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/avif';
+
+export async function rasterize(svg: string, width: number, height: number, mime: RasterMime, quality = 0.92): Promise<Blob> {
   const img = await loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -117,7 +132,18 @@ async function rasterize(svg: string, width: number, height: number, mime: 'imag
     ctx.fillRect(0, 0, width, height);
   }
   ctx.drawImage(img, 0, 0, width, height);
-  return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Falha ao gerar a imagem'))), mime, quality));
+  return new Promise((resolve, reject) =>
+    canvas.toBlob(
+      (b) => {
+        if (!b) return reject(new Error('Falha ao gerar a imagem'));
+        // o navegador devolve PNG quando não sabe codificar o formato pedido
+        if (b.type !== mime) return reject(new Error(`Este navegador não consegue exportar ${mime.replace('image/', '').toUpperCase()}`));
+        resolve(b);
+      },
+      mime,
+      quality
+    )
+  );
 }
 
 /** PDF de uma página com a imagem JPEG embutida (sem dependências). */
@@ -173,6 +199,8 @@ export async function exportShape(all: Shape[], shape: Shape, item: ExportItem):
   if (item.format === 'SVG') return { blob: new Blob([svg], { type: 'image/svg+xml' }), filename };
   if (item.format === 'PNG') return { blob: await rasterize(svg, w, h, 'image/png'), filename };
   if (item.format === 'JPG') return { blob: await rasterize(svg, w, h, 'image/jpeg'), filename };
+  if (item.format === 'WEBP') return { blob: await rasterize(svg, w, h, 'image/webp'), filename };
+  if (item.format === 'AVIF') return { blob: await rasterize(svg, w, h, 'image/avif'), filename };
   const jpeg = new Uint8Array(await (await rasterize(svg, w, h, 'image/jpeg')).arrayBuffer());
   return { blob: new Blob([buildPdfFromJpeg(jpeg, w, h, bounds.width, bounds.height) as BlobPart], { type: 'application/pdf' }), filename };
 }

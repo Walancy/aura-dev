@@ -1,5 +1,6 @@
 import type { Shape } from './types';
 import { descendantIds } from './constraints';
+import { applyComponentProps } from './componentProps';
 
 const collectSubtree = (all: Shape[], root: Shape): Shape[] => {
   const ids = new Set(descendantIds(all, root.id));
@@ -102,7 +103,7 @@ export function syncInstances(all: Shape[]): Shape[] {
     out = out.filter((s) => !removed.has(s.id)).map((s) => (patches.has(s.id) ? { ...s, ...patches.get(s.id) } : s));
     if (toAdd.length) out = [...out, ...toAdd];
   }
-  return out;
+  return applyComponentProps(out);
 }
 
 /** Componentes que são variantes do mesmo grupo. */

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { filterLayers } from './layersFilter';
 import {
   Square,
   Circle,
@@ -26,6 +27,7 @@ import {
   LockOpen,
   Trash2,
   Search,
+  Component,
   Plus,
   SlidersHorizontal,
   Copy,
@@ -45,10 +47,16 @@ interface LayersPanelProps {
   selectedPageId?: string;
   onSelectPage?: (pageId: string) => void;
   onAddPage?: () => void;
+  /** abre o painel de Assets (componentes do documento) */
+  onOpenAssets?: () => void;
   onRenamePage?: (pageId: string, newName: string) => void;
   onDuplicatePage?: (pageId: string) => void;
   onDeletePage?: (pageId: string) => void;
   onSelect: (id: string) => void;
+  /** seleção de várias camadas (Shift = intervalo, Cmd/Ctrl = alternar, Alt = camada + tudo que há dentro) */
+  onSelectMany?: (ids: string[]) => void;
+  /** arrastar uma camada: antes/depois de outra ou para dentro de um frame/grupo */
+  onReorder?: (dragId: string, targetId: string, pos: 'before' | 'after' | 'inside') => void;
   onToggleVisibility?: (id: string) => void;
   onToggleLock?: (id: string) => void;
   onDelete?: (id: string) => void;
@@ -56,7 +64,7 @@ interface LayersPanelProps {
 }
 
 export default function LayersPanel({
-  shapes,
+  shapes: shapesRaw,
   selectedId,
   selectedIds,
   readOnly = false,
@@ -71,15 +79,34 @@ export default function LayersPanel({
   selectedPageId = 'page-1',
   onSelectPage,
   onAddPage,
+  onOpenAssets,
   onRenamePage,
   onDuplicatePage,
   onDeletePage,
   onSelect,
+  onSelectMany,
+  onReorder,
   onToggleVisibility,
   onToggleLock,
   onDelete,
   onContextMenuShape,
 }: LayersPanelProps) {
+  // Como no Figma: a camada mais acima na pilha (zIndex maior) fica no TOPO da lista, em cada nível
+  const shapes = useMemo(() => {
+    const kids = new Map<string | undefined, Shape[]>();
+    const ids = new Set(shapesRaw.map((x) => x.id));
+    shapesRaw.forEach((x) => {
+      const k = x.parentId && ids.has(x.parentId) ? x.parentId : undefined;
+      (kids.get(k) ?? kids.set(k, []).get(k)!).push(x);
+    });
+    const out: Shape[] = [];
+    const walk = (k: string | undefined) => {
+      const list = (kids.get(k) ?? []).map((x, i) => ({ x, i })).sort((a, b) => (b.x.zIndex ?? 0) - (a.x.zIndex ?? 0) || b.i - a.i);
+      for (const { x } of list) { out.push(x); walk(x.id); }
+    };
+    walk(undefined);
+    return out;
+  }, [shapesRaw]);
   const [expandedFrames, setExpandedFrames] = useState<Record<string, boolean>>({});
   const [isSearchingPages, setIsSearchingPages] = useState(false);
   const [pageSearchQuery, setPageSearchQuery] = useState('');
@@ -87,35 +114,111 @@ export default function LayersPanel({
   const [editingPageName, setEditingPageName] = useState('');
   const [hoveredPageId, setHoveredPageId] = useState<string | null>(null);
 
+  // Índices (O(n)) em vez de buscas por linha: com centenas de camadas isso era quadrático e travava ao abrir/renderizar
+  const { depthMap, parentsWithKids, byId } = useMemo(() => {
+    const byId = new Map(shapes.map((x) => [x.id, x]));
+    const depthMap = new Map<string, number>();
+    const parentsWithKids = new Set<string>();
+    const depthOf = (id: string): number => {
+      const hit = depthMap.get(id);
+      if (hit !== undefined) return hit;
+      const sh = byId.get(id);
+      const d = sh?.parentId && byId.has(sh.parentId) ? depthOf(sh.parentId) + 1 : 0;
+      depthMap.set(id, d);
+      return d;
+    };
+    for (const x of shapes) {
+      depthOf(x.id);
+      if (x.parentId) parentsWithKids.add(x.parentId);
+    }
+    return { depthMap, parentsWithKids, byId };
+  }, [shapes]);
+
+  // Só os frames de topo começam abertos (árvore enxuta); o resto abre sob demanda
+  const isOpen = (id: string) => expandedFrames[id] ?? (depthMap.get(id) ?? 0) === 0;
+
   const toggleFrame = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setExpandedFrames((prev) => ({ ...prev, [id]: prev[id] === false ? true : false }));
+    setExpandedFrames((prev) => ({ ...prev, [id]: !isOpen(id) }));
   };
 
-  // Profundidade real (para indentação) e visibilidade na árvore (colapso de ancestral esconde filhos)
-  const depthOf = (id: string): number => {
-    let depth = 0;
-    let current = shapes.find((s) => s.id === id);
-    while (current?.parentId) {
-      depth += 1;
-      current = shapes.find((s) => s.id === current!.parentId);
-    }
-    return depth;
-  };
+  // Selecionar algo (no canvas ou nas camadas) abre os pais para a camada aparecer na árvore
+  useEffect(() => {
+    const ids = selectedIds && selectedIds.length > 0 ? selectedIds : selectedId ? [selectedId] : [];
+    if (!ids.length) return;
+    setExpandedFrames((prev) => {
+      let next = prev;
+      for (const id of ids) {
+        let cur = byId.get(id);
+        while (cur?.parentId) {
+          const pid = cur.parentId;
+          if ((prev[pid] ?? (depthMap.get(pid) ?? 0) === 0) === false && next[pid] !== true) next = { ...next, [pid]: true };
+          cur = byId.get(pid);
+        }
+      }
+      return next;
+    });
+  }, [selectedId, selectedIds, byId, depthMap]);
 
   const isVisibleInTree = (s: Shape): boolean => {
     let current = s;
     while (current.parentId) {
-      const parent = shapes.find((p) => p.id === current.parentId);
+      const parent = byId.get(current.parentId);
       if (!parent) break;
-      const parentExpanded = expandedFrames[parent.id] ?? true;
-      if (!parentExpanded) return false;
+      if (!isOpen(parent.id)) return false;
       current = parent;
     }
     return true;
   };
 
-  const visibleShapes = shapes.filter(isVisibleInTree);
+  // Busca de camadas: com texto digitado, lista as que combinam (achatadas, sem depender de pastas abertas)
+  const [layerQuery, setLayerQuery] = useState('');
+  const [isSearchingLayers, setIsSearchingLayers] = useState(false);
+  const visibleShapes = layerQuery.trim() ? filterLayers(shapes, layerQuery) : shapes.filter(isVisibleInTree);
+
+  // Seleção múltipla: ao selecionar uma camada "principal" (frame/grupo), as inferiores entram junto
+  const anchorRef = React.useRef<string | null>(null);
+  const [dragLayerId, setDragLayerId] = useState<string | null>(null);
+  const [dropHint, setDropHint] = useState<{ id: string; pos: 'before' | 'after' | 'inside' } | null>(null);
+  const zoneFor = (e: React.DragEvent, s: Shape): 'before' | 'after' | 'inside' => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const y = (e.clientY - r.top) / Math.max(1, r.height);
+    const container = s.type === 'frame' || s.type === 'group' || s.type === 'section';
+    if (container && !s.deviceChrome) return y < 0.25 ? 'before' : y > 0.75 ? 'after' : 'inside';
+    return y < 0.5 ? 'before' : 'after';
+  };
+  const withDescendants = (id: string): string[] => {
+    const out = [id];
+    for (let i = 0; i < out.length; i++) for (const k of shapes) if (k.parentId === out[i]) out.push(k.id);
+    return out;
+  };
+  const currentSelection = (): string[] => (selectedIds && selectedIds.length ? selectedIds : selectedId ? [selectedId] : []);
+  const handleRowClick = (e: React.MouseEvent, s: Shape) => {
+    if (!onSelectMany) { onSelect(s.id); return; }
+    if (e.shiftKey && anchorRef.current && anchorRef.current !== s.id) {
+      const ids = visibleShapes.map((x) => x.id);
+      const a = ids.indexOf(anchorRef.current), b = ids.indexOf(s.id);
+      if (a >= 0 && b >= 0) {
+        const range = ids.slice(Math.min(a, b), Math.max(a, b) + 1);
+        const all = new Set<string>();
+        range.forEach((id) => withDescendants(id).forEach((d) => all.add(d)));
+        onSelectMany([...all]);
+        return;
+      }
+    }
+    if (e.metaKey || e.ctrlKey) {
+      const cur = new Set(currentSelection());
+      const group = withDescendants(s.id);
+      if (cur.has(s.id)) group.forEach((d) => cur.delete(d));
+      else group.forEach((d) => cur.add(d));
+      anchorRef.current = s.id;
+      onSelectMany([...cur]);
+      return;
+    }
+    anchorRef.current = s.id;
+    if (e.altKey) { onSelectMany(withDescendants(s.id)); return; }
+    onSelect(s.id);
+  };
 
   const textPrimary = themeTokens?.textPrimary || '#ffffff';
   const textSecondary = themeTokens?.textSecondary || '#888888';
@@ -427,19 +530,41 @@ export default function LayersPanel({
         </span>
         <button
           type="button"
+          onClick={() => onOpenAssets?.()}
+          style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: 'pointer', padding: 2, display: 'flex', marginLeft: 'auto', marginRight: 6 }}
+          title="Assets: componentes do documento (Shift+I)"
+        >
+          <Component size={12} />
+        </button>
+        <button
+          type="button"
+          onClick={() => { setIsSearchingLayers((v) => !v); if (isSearchingLayers) setLayerQuery(''); }}
           style={{
             background: 'transparent',
             border: 'none',
-            color: textSecondary,
+            color: isSearchingLayers ? accentColor : textSecondary,
             cursor: 'pointer',
             padding: 2,
             display: 'flex',
           }}
-          title="Filtros de Camadas"
+          title="Buscar camadas (nome, tipo ou #cor)"
         >
-          <SlidersHorizontal size={12} />
+          <Search size={12} />
         </button>
       </div>
+      {isSearchingLayers && (
+        <div style={{ padding: '0 12px 6px', flexShrink: 0 }}>
+          <input
+            autoFocus
+            value={layerQuery}
+            onChange={(e) => setLayerQuery(e.target.value)}
+            onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') { setLayerQuery(''); setIsSearchingLayers(false); } }}
+            placeholder="Nome, tipo ou #cor"
+            style={{ width: '100%', boxSizing: 'border-box', background: hoverBg, border: 'none', borderRadius: 6, color: textPrimary, fontSize: 11, padding: '5px 8px', outline: 'none' }}
+          />
+          {layerQuery.trim() && <div style={{ fontSize: 10, color: textMuted, padding: '4px 2px 0' }}>{visibleShapes.length} resultado(s)</div>}
+        </div>
+      )}
 
       {/* Árvore de Camadas */}
       <div
@@ -477,16 +602,35 @@ export default function LayersPanel({
           visibleShapes.map((s) => {
           const isSelected = selectedIds && selectedIds.length > 0 ? selectedIds.includes(s.id) : s.id === selectedId;
           const isFrame = s.type === 'frame' || s.type === 'group';
-          const hasChildren = isFrame && shapes.some((c) => c.parentId === s.id);
-          const isExpanded = expandedFrames[s.id] ?? true;
-          const depth = depthOf(s.id);
+          const hasChildren = isFrame && parentsWithKids.has(s.id);
+          const isExpanded = isOpen(s.id);
+          const depth = layerQuery.trim() ? 0 : depthMap.get(s.id) ?? 0;
           const isHidden = s.visible === false;
           const isLocked = !!s.locked;
 
           return (
             <div
               key={s.id}
-              onClick={() => onSelect(s.id)}
+              draggable={!!onReorder && !s.deviceChrome && !s.locked && !readOnly}
+              onDragStart={(e) => { setDragLayerId(s.id); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', s.id); }}
+              onDragEnd={() => { setDragLayerId(null); setDropHint(null); }}
+              onDragOver={(e) => {
+                if (!dragLayerId || dragLayerId === s.id) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                const pos = zoneFor(e, s);
+                setDropHint((h) => (h && h.id === s.id && h.pos === pos ? h : { id: s.id, pos }));
+              }}
+              onDragLeave={() => setDropHint((h) => (h && h.id === s.id ? null : h))}
+              onDrop={(e) => {
+                e.preventDefault();
+                const id = dragLayerId;
+                const pos = zoneFor(e, s);
+                setDragLayerId(null);
+                setDropHint(null);
+                if (id && id !== s.id) onReorder?.(id, s.id, pos === 'before' ? 'after' : pos === 'after' ? 'before' : pos);
+              }}
+              onClick={(e) => handleRowClick(e, s)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -502,6 +646,8 @@ export default function LayersPanel({
                 background: isSelected ? `${accentColor}20` : 'transparent',
                 color: isSelected ? textPrimary : textSecondary,
                 borderLeft: isSelected ? `2.5px solid ${accentColor}` : '2.5px solid transparent',
+                boxShadow: dropHint?.id === s.id ? (dropHint.pos === 'before' ? `inset 0 2px 0 0 ${accentColor}` : dropHint.pos === 'after' ? `inset 0 -2px 0 0 ${accentColor}` : `inset 0 0 0 1.5px ${accentColor}`) : undefined,
+                ...(dragLayerId === s.id ? { opacity: 0.4 } : {}),
                 fontSize: 11,
                 gap: 6,
                 minHeight: 26,
@@ -551,6 +697,9 @@ export default function LayersPanel({
                 >
                   {s.name || s.type}
                 </span>
+                {s.devStatus && (
+                  <span title={s.devStatus === 'ready' ? 'Pronto para dev' : 'Implementado'} style={{ width: 7, height: 7, borderRadius: '50%', background: s.devStatus === 'ready' ? '#2ecc71' : '#4f9dff', flexShrink: 0, marginLeft: 4 }} />
+                )}
               </div>
 
               {/* Ações: visibilidade, travar, excluir */}

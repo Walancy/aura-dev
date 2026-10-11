@@ -5,12 +5,13 @@ import {
   Search,
   GitBranch,
   Play,
+  Link2,
   Monitor,
-  Blocks,
   Settings,
   MoreHorizontal,
   ChevronRight,
   ChevronDown,
+  Pin,
   Folder,
   FolderOpen,
   SplitSquareVertical,
@@ -74,12 +75,14 @@ import {
   Puzzle,
   Brain,
   Undo2,
+  Bell,
+  LogOut,
 } from 'lucide-react';
 import avatarImg from './avatar.png';
+import { PreviewTabView } from './components/ide/PreviewTabView';
 import { FileIcon, FolderIcon } from './components/FileIcon';
 import { PromptEditor, PromptEditorRef } from './components/PromptEditor';
 import { SidebarPanels } from './components/ide/SidebarPanels';
-import { ExtensionDetailsView } from './components/ide/ExtensionDetailsView';
 import { ProjectsSchedulerView, prefetchProjectsData } from './components/ProjectsSchedulerView';
 import { ProjectWorkspaceSelector } from './components/ide/ProjectWorkspaceSelector';
 import { HeaderProjectSelector, type HeaderActiveProjectInfo, type HeaderProjectItem, type ProjectAiStatus } from './components/HeaderProjectSelector';
@@ -119,7 +122,6 @@ import {
   CodiconSourceControl,
   CodiconDebugAlt,
   CodiconRemoteExplorer,
-  CodiconExtensions,
   CodiconBeaker,
   CodiconSettingsGear,
 } from './components/Codicons';
@@ -128,6 +130,9 @@ import { CustomizeLayoutIcon, GitDiamondIcon } from './components/icons/MiscIcon
 import { ClaudeIcon, AntigravityIcon, GeminiIcon, OllamaIcon, CodexIcon, renderAiIcon } from './components/icons/AiProviderIcons';
 import { getContrastTextColor, hexToRgba, hexToRgb, rgbToHex, rgbToHsv, hsvToRgb, hexToHsv } from './utils/color';
 import { MiniSwitch } from './components/ui/MiniSwitch';
+import { detectDevCommand, detectPackageManager, listScripts, otherCommands, scriptCommand, PACKAGE_MANAGERS, type PackageManager } from './utils/devCommand';
+import { computeDailyBudget, parseResetTimestamp, type DailyBudget, type DailyBudgetState } from './utils/dailyBudget';
+import { planChecks, parseTscOutput, parseEslintJson, parseOxlintJson, type CheckResult } from './utils/projectCheck';
 import { extractDocumentSymbols, getFileLanguage, isMarkdownFile } from './utils/editor';
 import type { DocumentSymbol } from './utils/editor';
 import { NativeXTerm } from './components/NativeXTerm';
@@ -135,9 +140,6 @@ import type { NativeXTermProps } from './components/NativeXTerm';
 import { AI_BRAND_COLORS, AI_MODES, AI_PROVIDERS, DEFAULT_AI_QUOTAS, formatModelDisplayName } from './constants/ai';
 import type { AiSlashCommand, AiMode, AiModeConfig, AiProviderConfig, AiQuotaConfig } from './constants/ai';
 import { formatQuotaResetDisplay, formatRelativeResetTime } from './utils/quota';
-import { evaluateWhenClause, resolveCommandIconUrl, getEditorTitleActions } from './utils/extensions';
-import type { ExtensionEditorTitleAction } from './utils/extensions';
-import { ExtensionTitleActionButton } from './components/ExtensionTitleActionButton';
 import { ThemePopup } from './components/modals/ThemePopup';
 import { CustomizeLayoutPopup } from './components/modals/CustomizeLayoutPopup';
 import { QuickOpenModal } from './components/modals/QuickOpenModal';
@@ -166,6 +168,8 @@ import type {
   QuickOpenItemDef,
 } from './types/ide';
 import { ProjectAiNotificationToast, ProjectAiNotificationItem } from './components/notifications/ProjectAiNotificationToast';
+import NotificationCenterPanel from './components/notifications/NotificationCenterPanel';
+import { useNotificationCenter } from './components/notifications/useNotificationCenter';
 import { useProjectNotifier } from './components/notifications/useProjectNotifier';
 import { SkillsModal } from './components/skills/SkillsModal';
 
@@ -274,6 +278,16 @@ export const App: React.FC = () => {
   });
   const activeFile = openFiles.find((f) => f.id === activeFileId) || (openFiles.length > 0 ? openFiles[0] : null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  // Centro de notificações (lista + histórico no armazenamento local)
+  const notifCenter = useNotificationCenter();
+  const [isNotifOpen, setIsNotifOpen] = useState(false);
+  // Todo toast também vai para o histórico (erros ficam como novos para não passarem despercebidos)
+  useEffect(() => {
+    if (!toastMessage) return;
+    const isError = /\b(erro|falha|falhou|não foi possível)\b/i.test(toastMessage);
+    notifCenter.add({ kind: isError ? 'error' : 'info', title: toastMessage, read: !isError });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toastMessage]);
   // Notificações de GitHub por projeto (Configurações → Alertas e notificações)
   useProjectNotifier((msg) => setToastMessage(msg));
 
@@ -508,7 +522,6 @@ export const App: React.FC = () => {
       setTerminalCwd(workspacePath);
       localStorage.setItem('ide_workspace_path', workspacePath);
       localStorage.setItem('ide_terminal_cwd', workspacePath);
-      window.electronAPI?.pty?.setAllCwd?.(workspacePath);
     }
   }, [workspacePath]);
 
@@ -549,6 +562,7 @@ export const App: React.FC = () => {
   const [editorErrors, setEditorErrors] = useState<number>(0);
   const [editorWarnings, setEditorWarnings] = useState<number>(0);
   const [projectProblems, setProjectProblems] = useState<IdeProblem[]>([]);
+  const [projectCheckResults, setProjectCheckResults] = useState<CheckResult[]>([]);
   const [editorMarkers, setEditorMarkers] = useState<IdeProblem[]>([]);
   const [isCheckingProject, setIsCheckingProject] = useState<boolean>(false);
   const [lastProjectCheckTime, setLastProjectCheckTime] = useState<Date | null>(null);
@@ -557,16 +571,19 @@ export const App: React.FC = () => {
     activeFileRef.current = activeFile;
   }, [activeFile]);
 
+  const checkedPathRef = useRef(workspacePath);
   const allProblems = useMemo(() => {
     const map = new Map<string, IdeProblem>();
-    for (const p of projectProblems) {
+    const root = workspacePath.replace(/\/$/, '') + '/';
+    const inProject = (p: IdeProblem) => !p.filePath.startsWith('/') || p.filePath.startsWith(root);
+    for (const p of projectProblems.filter(inProject)) {
       map.set(`${p.filePath}:${p.line}:${p.column}:${p.code || ''}`, p);
     }
-    for (const m of editorMarkers) {
+    for (const m of editorMarkers.filter(inProject)) {
       map.set(`${m.filePath}:${m.line}:${m.column}:${m.code || ''}`, m);
     }
     return Array.from(map.values());
-  }, [projectProblems, editorMarkers]);
+  }, [projectProblems, editorMarkers, workspacePath]);
   const [indentationSize, setIndentationSize] = useState<number>(2);
   const [lineEnding, setLineEnding] = useState<'LF' | 'CRLF'>('LF');
   const [workspaceGitInfo, setWorkspaceGitInfo] = useState<{
@@ -1956,7 +1973,7 @@ export const App: React.FC = () => {
                           e.currentTarget.style.background = 'transparent';
                         }}
                       >
-                        <span style={{ color: '#9ca3af', fontWeight: 400 }}>Analyzed</span>
+                        <span style={{ color: '#9ca3af', fontWeight: 400 }}>Analisou</span>
                         {child.file && renderFileIcon(child.file)}
                         <span style={{ fontWeight: 500, color: themeTokens.textPrimary }}>
                           {child.file || child.label}
@@ -1982,7 +1999,7 @@ export const App: React.FC = () => {
                           padding: '1px 4px',
                         }}
                       >
-                        <span>{child.label || `Thought for ${child.duration || '1s'}`}</span>
+                        <span>{child.label || `Pensou por ${child.duration || '1s'}`}</span>
                         <ChevronRight size={12} style={{ color: '#6b7280' }} />
                       </div>
                     );
@@ -2055,28 +2072,9 @@ export const App: React.FC = () => {
 
   // Panel & Layout Visibility Controls (Antigravity & VS Code Customize Layout)
   const [showExplorer, setShowExplorer] = useState(true);
-  const [activeActivityTab, setActiveActivityTab] = useState<'explorer' | 'search' | 'git' | 'debug' | 'preview' | 'extensions' | 'testing'>('explorer');
-  const [activeExtensionDetails, setActiveExtensionDetails] = useState<any | null>(null);
-  // Real installed extensions, sourced from disk (~/.devflow/extensions/installed.json)
-  // via the electron backend — populated by the effect below, never fabricated.
-  const [installedExtensions, setInstalledExtensions] = useState<any[]>([]);
-
-  useEffect(() => {
-    let isCancelled = false;
-    if (window.electronAPI?.extensions?.getInstalled) {
-      window.electronAPI.extensions
-        .getInstalled()
-        .then((res) => {
-          if (!isCancelled && res?.success && Array.isArray(res.extensions)) {
-            setInstalledExtensions(res.extensions);
-          }
-        })
-        .catch(() => {});
-    }
-    return () => {
-      isCancelled = true;
-    };
-  }, []);
+  const [activeActivityTab, setActiveActivityTab] = useState<'explorer' | 'search' | 'git' | 'debug' | 'preview' | 'testing'>('explorer');
+  const [previewTabUrl, setPreviewTabUrl] = useState<string | null>(null);
+  const [previewTabActive, setPreviewTabActive] = useState(false);
   const [gitModifiedCount, setGitModifiedCount] = useState<number>(0);
 
   useEffect(() => {
@@ -2127,6 +2125,179 @@ export const App: React.FC = () => {
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const [isHeaderAiMenuOpen, setIsHeaderAiMenuOpen] = useState(false);
+  // IAs fixadas no cabeçalho (acompanhar o uso de várias); a selecionada sempre aparece
+  const [pinnedAis, setPinnedAis] = useState<string[]>(() => {
+    try { const v = JSON.parse(localStorage.getItem('header_pinned_ais') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+  });
+  const [quotaTooltipProvider, setQuotaTooltipProvider] = useState<string | null>(null);
+  const [sidesheetFromList, setSidesheetFromList] = useState(false);
+  // servidores (dev server) rodando a partir da pasta do projeto: link para abrir no navegador + encerrar
+  const [hoveredServerKey, setHoveredServerKey] = useState<string | null>(null);
+  const [projectServers, setProjectServers] = useState<Array<{ port: number; pid: string; url: string; serviceName?: string }>>([]);
+  // comando para subir o projeto: detectado pelo gerenciador (packageManager/lockfile) e pelo script dev/start, ou outra stack
+  const [devStartCommand, setDevStartCommand] = useState<string | null>(null);
+  const [startingServer, setStartingServer] = useState(false);
+  const startingSessionRef = useRef<string | null>(null);
+  const devExitWatchRef = useRef<(() => void) | null>(null); // cancela a escuta do código de saída do comando do play
+  const devSessionRef = useRef<string | null>(null); // terminal do último projeto iniciado pelo play (para acompanhar a saída)
+  // opções do menu do play: gerenciador detectado, scripts do package.json e comandos de outras stacks
+  const [devOptions, setDevOptions] = useState<{ pm: PackageManager; scripts: string[]; others: Array<{ command: string; label: string }> } | null>(null);
+  const [devMenuOpen, setDevMenuOpen] = useState(false);
+  const [devMenuPm, setDevMenuPm] = useState<PackageManager>('npm');
+  const [devForce, setDevForce] = useState<boolean>(() => localStorage.getItem('dev_run_force') === 'true');
+  useEffect(() => { try { localStorage.setItem('dev_run_force', String(devForce)); } catch {} }, [devForce]);
+  useEffect(() => {
+    setDevStartCommand(null);
+    setDevOptions(null);
+    setDevMenuOpen(false);
+    if (!workspacePath) return;
+    let alive = true;
+    (async () => {
+      try {
+        const root = workspacePath.replace(/\/$/, '');
+        const read = async (name: string) => { try { const r = await window.electronAPI.fs.readFile(`${root}/${name}`); return r.error ? undefined : r.content; } catch { return undefined; } };
+        const ls = await window.electronAPI.shell.exec('ls -A1', workspacePath);
+        const rootFiles = (ls.stdout || '').split('\n').map((l) => l.trim()).filter(Boolean);
+        // data de modificação dos locks (bun.lock x package-lock.json...): o gerenciador usado por último vence
+        const lockMtimes: Record<string, number> = {};
+        const lockNames = rootFiles.filter((f) => /^(bun\.lockb?|pnpm-lock\.yaml|yarn\.lock|package-lock\.json|npm-shrinkwrap\.json)$/.test(f));
+        if (lockNames.length > 1) {
+          const st = await window.electronAPI.shell.exec(`stat -f '%m %N' ${lockNames.map((f) => `'${f}'`).join(' ')}`, workspacePath);
+          for (const line of (st.stdout || '').split('\n')) { const m = /^(\d+) (.+)$/.exec(line.trim()); if (m) lockMtimes[m[2]] = Number(m[1]); }
+        }
+        const found = detectDevCommand({
+          lockMtimes,
+          rootFiles,
+          packageJsonText: await read('package.json'),
+          denoJsonText: rootFiles.includes('deno.json') ? await read('deno.json') : rootFiles.includes('deno.jsonc') ? await read('deno.jsonc') : undefined,
+          makefileText: rootFiles.includes('Makefile') ? await read('Makefile') : undefined,
+        });
+        const pkgText = await read('package.json');
+        const denoText = rootFiles.includes('deno.json') ? await read('deno.json') : rootFiles.includes('deno.jsonc') ? await read('deno.jsonc') : undefined;
+        const makeText = rootFiles.includes('Makefile') ? await read('Makefile') : undefined;
+        const scripts = listScripts(pkgText);
+        const others = otherCommands({ rootFiles, denoJsonText: denoText, makefileText: makeText });
+        const pm = detectPackageManager({ rootFiles, packageJsonText: pkgText, lockMtimes });
+        if (alive) {
+          setDevStartCommand(found?.command ?? null);
+          setDevOptions(scripts.length || others.length ? { pm, scripts, others } : null);
+          setDevMenuPm(pm);
+        }
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, [workspacePath]);
+  useEffect(() => { if (projectServers.length > 0) setStartingServer(false); }, [projectServers.length]);
+  // abre o terminal da IDE na sessão do projeto iniciado pelo play, para acompanhar o que está acontecendo
+  const openDevTerminal = () => {
+    const id = devSessionRef.current;
+    if (!id || !terminalSessions.some((t) => t.id === id)) {
+      setToastMessage('Nenhum terminal do projeto para acompanhar');
+      setTimeout(() => setToastMessage(null), 2200);
+      return;
+    }
+    setActiveTab('ide');
+    setIsTerminalCollapsed(false);
+    setActiveTermTab('terminal');
+    setActiveSessionId(id);
+  };
+
+  // sobe o projeto com o comando escolhido num terminal da IDE; o processo inicia já, de qualquer tela
+  const startProject = (command: string) => {
+    setDevMenuOpen(false);
+    setStartingServer(true);
+    const sid = handleNewTerminalSession('zsh', `dev · ${workspacePath.split('/').filter(Boolean).pop() || 'projeto'}`, command) as string;
+    startingSessionRef.current = sid;
+    devSessionRef.current = sid;
+    // o terminal da IDE só monta (e inicia o shell) quando a aba da IDE está aberta; quando montar depois, reaproveita esta sessão
+    // Erros: o shell avisa o código de saída de cada comando (sequência invisível). O 1º aviso é do prompt inicial; o 2º é do comando.
+    devExitWatchRef.current?.();
+    let markers = 0;
+    let tail = '';
+    const stopWatch = window.electronAPI.pty.onData((payload: { id: string; data: string }) => {
+      if (payload.id !== sid) return;
+      tail = (tail + payload.data).slice(-6000);
+      const re = /\x1b\]777;devflow-exit;(\d+)\x07/;
+      for (let m = re.exec(tail); m; m = re.exec(tail)) {
+        markers += 1;
+        if (markers < 2) {
+          tail = tail.slice(m.index + m[0].length); // descarta o aviso do prompt inicial e o que veio antes
+          continue;
+        }
+        const code = Number(m[1]);
+        const text = tail.slice(0, m.index).replace(/\x1b\][^\x07]*\x07/g, '').replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '').replace(/\r/g, '');
+        const lines = text.split('\n').map((l) => l.replace(/[\u2800-\u28FF]/g, '').trim()).filter((l) => l && !/^\$ /.test(l)); // sem os giradores de progresso do npm
+        const reason = [...lines].reverse().find((l) => /error|erro|failed|falha|cannot|não foi possível|EADDRINUSE|ENOENT|not found/i.test(l)) || lines[lines.length - 1] || '';
+        stopWatch?.();
+        devExitWatchRef.current = null;
+        startingSessionRef.current = null;
+        setStartingServer(false);
+        // 130/143: interrompido pelo usuário (Ctrl+C ou cancelar)
+        if (code !== 0 && code !== 130 && code !== 143) {
+          setToastMessage(`Não foi possível rodar "${command}" (código ${code})${reason ? `: ${reason.slice(0, 220)}` : ''}`);
+          setTimeout(() => setToastMessage(null), 9000);
+        } else if (code === 0) {
+          setToastMessage(`"${command}" terminou`);
+          setTimeout(() => setToastMessage(null), 3500);
+        }
+        return;
+      }
+    });
+    devExitWatchRef.current = stopWatch || null;
+    (async () => {
+      try {
+        await window.electronAPI.pty.create(sid, 'zsh', workspacePath, 100, 30, accentColor);
+        window.electronAPI.pty.write(sid, `${command}\r`);
+      } catch (err) {
+        stopWatch?.();
+        setStartingServer(false);
+        setToastMessage('Não consegui iniciar o projeto');
+        setTimeout(() => setToastMessage(null), 2500);
+      }
+    })();
+    setToastMessage(`Iniciando: ${command}`);
+    setTimeout(() => setToastMessage(null), 2500);
+    setTimeout(() => setStartingServer(false), 45000);
+  };
+
+
+  useEffect(() => {
+    if (!workspacePath || !window.electronAPI?.ports?.scanProject) { setProjectServers([]); return; }
+    let alive = true;
+    const poll = async () => {
+      if (document.hidden) return;
+      try {
+        const r = await window.electronAPI.ports.scanProject!(workspacePath);
+        if (!alive) return;
+        const next = (r?.ports || []).slice(0, 3).map((p) => ({ port: p.port, pid: String(p.pid), url: p.url, serviceName: p.serviceName }));
+        setProjectServers((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+      } catch {}
+    };
+    setProjectServers([]);
+    poll();
+    const timer = setInterval(poll, 4000);
+    return () => { alive = false; clearInterval(timer); };
+  }, [workspacePath]);
+  // limite diário do Claude (a semana ÷ dias que faltam): recalculado a cada leitura da quota, o dia vira o ponto de partida
+  const [claudeDaily, setClaudeDaily] = useState<DailyBudget | null>(null);
+  const claudeWeekly = aiQuotas.claude?.weeklyPercent;
+  const claudeWeeklyReset = aiQuotas.claude?.weeklyResetTime;
+  useEffect(() => {
+    if (typeof claudeWeekly !== 'number') return;
+    let prev: DailyBudgetState | null = null;
+    try { prev = JSON.parse(localStorage.getItem('claude_daily_budget') || 'null'); } catch {}
+    const now = new Date();
+    const res = computeDailyBudget(prev, claudeWeekly, parseResetTimestamp(claudeWeeklyReset, now), now);
+    try { localStorage.setItem('claude_daily_budget', JSON.stringify(res.state)); } catch {}
+    setClaudeDaily(res);
+  }, [claudeWeekly, claudeWeeklyReset]);
+  const togglePinnedAi = (id: string) => setPinnedAis((prev) => {
+    // a IA selecionada já aparecia no cabeçalho sem estar fixada: ao fixar a primeira outra, ela fica fixada também (senão sumiria ao trocar)
+    const base = prev.length === 0 && id !== selectedAiProvider ? [selectedAiProvider] : prev;
+    const next = base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
+    try { localStorage.setItem('header_pinned_ais', JSON.stringify(next)); } catch {}
+    return next;
+  });
   // Skills do DevFlow: modal e contador de ativas no header
   const [isSkillsModalOpen, setIsSkillsModalOpen] = useState(false);
   const [isAiGlobalRulesModalOpen, setIsAiGlobalRulesModalOpen] = useState(false);
@@ -2145,7 +2316,7 @@ export const App: React.FC = () => {
   const [headerAiVersionMenuTop, setHeaderAiVersionMenuTop] = useState<number>(0);
   const headerAiMenuRef = useRef<HTMLDivElement>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [settingsActiveTab, setSettingsActiveTab] = useState<'general' | 'appearance' | 'editor' | 'terminal' | 'ai' | 'shortcuts' | 'extensions'>('general');
+  const [settingsActiveTab, setSettingsActiveTab] = useState<'general' | 'appearance' | 'editor' | 'terminal' | 'ai' | 'shortcuts'>('general');
 
   // Minimalist Draggable Theme Popup State
   const [isThemePopupOpen, setIsThemePopupOpen] = useState(false);
@@ -2202,9 +2373,42 @@ export const App: React.FC = () => {
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [isDraggingThemePopup]);
-  const [accentColor, setAccentColor] = useState<string>(() => {
+  const [baseAccentColor, setAccentColor] = useState<string>(() => {
     return localStorage.getItem('ide_accent_color') || '#FF6A00';
   });
+  // opção: o destaque do sistema segue a cor da IA selecionada no cabeçalho
+  const [useAiSystemAccent, setUseAiSystemAccent] = useState<boolean>(() => localStorage.getItem('ide_use_ai_system_accent') === 'true');
+  useEffect(() => {
+    try { localStorage.setItem('ide_use_ai_system_accent', String(useAiSystemAccent)); } catch {}
+  }, [useAiSystemAccent]);
+  // destaque rainbow: percorre as cores (pontos) em loop, como um efeito RGB
+  const [rainbow, setRainbow] = useState<{ on: boolean; stops: string[]; speed: number }>(() => {
+    try {
+      const r = JSON.parse(localStorage.getItem('ide_accent_rainbow') || 'null');
+      if (r && Array.isArray(r.stops) && r.stops.length >= 2) return { on: !!r.on, stops: r.stops, speed: Number(r.speed) > 0 ? Number(r.speed) : 10 };
+    } catch {}
+    return { on: false, stops: ['#EF4444', '#EAB308', '#10B981', '#3B82F6', '#A855F7'], speed: 10 };
+  });
+  useEffect(() => {
+    try { localStorage.setItem('ide_accent_rainbow', JSON.stringify(rainbow)); } catch {}
+  }, [rainbow]);
+  const [rainbowColor, setRainbowColor] = useState<string>(rainbow.stops[0]);
+  useEffect(() => {
+    if (!rainbow.on) return;
+    const rgbs = rainbow.stops.map(hexToRgb);
+    const tick = () => {
+      const pos = ((Date.now() / (rainbow.speed * 1000)) % 1) * rgbs.length;
+      const i = Math.floor(pos);
+      const f = pos - i;
+      const a = rgbs[i % rgbs.length];
+      const b = rgbs[(i + 1) % rgbs.length];
+      setRainbowColor(rgbToHex(...([0, 1, 2].map((k) => Math.round(a[k] + (b[k] - a[k]) * f)) as [number, number, number])));
+    };
+    tick();
+    const t = setInterval(tick, 150);
+    return () => clearInterval(t);
+  }, [rainbow]);
+  const accentColor = rainbow.on ? rainbowColor : useAiSystemAccent ? (AI_BRAND_COLORS[selectedAiProvider] || baseAccentColor) : baseAccentColor;
   const accentTextColor = getContrastTextColor(accentColor);
   const chatAccentColor = useAiChatThemeColor
     ? (AI_BRAND_COLORS[selectedAiProvider] || accentColor)
@@ -2322,6 +2526,14 @@ export const App: React.FC = () => {
     return null;
   });
 
+  // "Sair" não desloga de verdade: só volta à tela de login, com um card para retomar a sessão do usuário atual
+  const [signedOutUser, setSignedOutUser] = useState<{ user: GithubAuthenticatedUser; lastLogin: string | null } | null>(null);
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const markLastLogin = () => { try { localStorage.setItem('devflow_github_last_login', new Date().toISOString()); } catch {} };
+  useEffect(() => {
+    try { if (!localStorage.getItem('devflow_github_last_login')) markLastLogin(); } catch {}
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -2415,10 +2627,33 @@ export const App: React.FC = () => {
   const [moreOptionsOpen, setMoreOptionsOpen] = useState(false);
   const [terminalCommand, setTerminalCommand] = useState('');
   const [debugCommand, setDebugCommand] = useState('');
-  const [debugHistory, setDebugHistory] = useState<string[]>([
-    'Debugger listening on ws://127.0.0.1:9229/aura-dev-api',
-    'Debugger attached to process 58135 (Node.js runtime)',
-  ]);
+  // Debug console e Output são por projeto (chave = caminho do workspace)
+  const [debugByProject, setDebugByProject] = useState<Record<string, string[]>>({});
+  const debugHistory = debugByProject[workspacePath] || [];
+  const outputBuf = useRef<Record<string, { lines: string[]; partial: Record<string, string> }>>({});
+  const [outputTick, setOutputTick] = useState(0);
+  const outputLines = outputBuf.current[workspacePath]?.lines || [];
+  const terminalSessionsRef = useRef<TerminalSessionItem[]>([]);
+  useEffect(() => {
+    let dirty = false;
+    const off = window.electronAPI?.pty?.onData?.((payload) => {
+      const proj = terminalSessionsRef.current.find((t) => t.id === payload.id)?.projectPath;
+      if (!proj) return;
+      const buf = (outputBuf.current[proj] ||= { lines: [], partial: {} });
+      const text = (buf.partial[payload.id] || '') + payload.data
+        .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '')
+        .replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '')
+        .replace(/\r(?!\n)/g, '\n')
+        .replace(/\r/g, '');
+      const parts = text.split('\n');
+      buf.partial[payload.id] = parts.pop() || '';
+      for (const l of parts) if (l.trim()) buf.lines.push(l);
+      if (buf.lines.length > 600) buf.lines.splice(0, buf.lines.length - 500);
+      dirty = true;
+    });
+    const timer = setInterval(() => { if (dirty) { dirty = false; setOutputTick((n) => n + 1); } }, 500);
+    return () => { off?.(); clearInterval(timer); };
+  }, []);
   const [openPortsCount, setOpenPortsCount] = useState<number>(0);
 
   // Initial scan to populate open ports badge
@@ -2445,6 +2680,24 @@ export const App: React.FC = () => {
     },
   ]);
   const [activeSessionId, setActiveSessionId] = useState('1');
+  // terminais do CLI são separados dos da IDE: cada tela só enxerga os seus
+  // todos os projetos mantêm seus terminais abertos; cada tela mostra só os do projeto ativo (sem projeto = o ativo)
+  const inActiveProject = (s: TerminalSessionItem) => !s.projectPath || s.projectPath === workspacePath;
+  const allIdeTerminalSessions = useMemo(() => terminalSessions.filter((s) => s.scope !== 'cli'), [terminalSessions]);
+  const ideTerminalSessions = useMemo(() => terminalSessions.filter((s) => s.scope !== 'cli' && inActiveProject(s)), [terminalSessions, workspacePath]);
+  const cliTerminalSessions = useMemo(() => terminalSessions.filter((s) => s.scope === 'cli' && inActiveProject(s)), [terminalSessions, workspacePath]);
+  const [cliActiveSessionId, setCliActiveSessionId] = useState('');
+  useEffect(() => {
+    if (cliTerminalSessions.length > 0 && !cliTerminalSessions.some((s) => s.id === cliActiveSessionId)) setCliActiveSessionId(cliTerminalSessions[0].id);
+  }, [cliTerminalSessions, cliActiveSessionId]);
+  const setCliSessions = (update: React.SetStateAction<TerminalSessionItem[]>) =>
+    setTerminalSessions((prev) => {
+      const isMine = (s: TerminalSessionItem) => s.scope === 'cli' && (!s.projectPath || s.projectPath === workspacePath);
+      const mine = prev.filter(isMine);
+      const others = prev.filter((s) => !isMine(s));
+      const next = typeof update === 'function' ? (update as (p: TerminalSessionItem[]) => TerminalSessionItem[])(mine) : update;
+      return [...others, ...next.map((s) => ({ ...s, scope: 'cli' as const, projectPath: s.projectPath || workspacePath }))];
+    });
   const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
   const [hoveredRowId, setHoveredRowId] = useState<string | null>(null);
   const [popoverTop, setPopoverTop] = useState(25);
@@ -2490,18 +2743,31 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (activeTab === 'design') setDesignMounted(true);
   }, [activeTab]);
-  // Avisa que a IA do Design terminou quando o usuário está em outra tela (ou com o app em segundo plano)
+  // Avisa que a IA do Design terminou quando o usuário está em outra tela, em outro projeto ou com o app em segundo plano
   const handleDesignAiDone = useCallback(
-    (r: { ok: boolean; message: string }) => {
-      const away = activeTabRef.current !== 'design';
+    (r: { ok: boolean; message: string; workspace: string }) => {
+      const otherProject = !!r.workspace && r.workspace.toLowerCase() !== (workspacePathRef.current || '').toLowerCase();
+      const away = activeTabRef.current !== 'design' || otherProject;
       const background = !document.hasFocus();
+      const name = r.workspace.split('/').filter(Boolean).pop() || 'Design';
+      // sempre fica no histórico; só conta como "nova" se o usuário não estava olhando
+      notifCenter.add({
+        kind: r.ok ? 'design' : 'error',
+        title: r.ok ? `${name}: a IA do Design terminou` : `${name}: a IA do Design falhou`,
+        body: r.message,
+        projectPath: r.workspace,
+        projectName: name,
+        provider: selectedAiProvider,
+        source: 'design',
+        read: !(away || background),
+      });
       if (!away && !background) return;
       const notif: ProjectAiNotificationItem = {
         id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        projectPath: workspacePathRef.current || '',
-        projectName: 'Design',
+        projectPath: r.workspace,
+        projectName: name,
         provider: selectedAiProvider,
-        summary: r.ok ? r.message : `Falhou: ${r.message}`,
+        summary: r.ok ? `Design: ${r.message}` : `Design falhou: ${r.message}`,
         timestamp: Date.now(),
         kind: 'done',
         source: 'design',
@@ -2509,10 +2775,10 @@ export const App: React.FC = () => {
       setAiNotifications((prev) => [...prev.slice(-4), notif]);
       setTimeout(() => setAiNotifications((prev) => prev.filter((n) => n.id !== notif.id)), 15000);
       try {
-        if (background && 'Notification' in window) new Notification(r.ok ? 'Design: a IA terminou' : 'Design: a IA falhou', { body: notif.summary.slice(0, 140) });
+        if (background && 'Notification' in window) new Notification(r.ok ? `${name}: a IA do Design terminou` : `${name}: a IA do Design falhou`, { body: notif.summary.slice(0, 140) });
       } catch {}
     },
-    [selectedAiProvider]
+    [selectedAiProvider, notifCenter.add]
   );
 
 
@@ -2526,6 +2792,7 @@ export const App: React.FC = () => {
   const [ideAiStatus, setIdeAiStatus] = useState<Record<string, ProjectAiStatus>>({});
   const [cliAiStatus, setCliAiStatus] = useState<Record<string, ProjectAiStatus>>({});
 
+  terminalSessionsRef.current = terminalSessions;
   const projectAiStatus = useMemo(() => {
     const rank: Record<ProjectAiStatus, number> = { done: 1, generating: 2, waiting: 3 };
     const out: Record<string, ProjectAiStatus> = {};
@@ -2550,6 +2817,15 @@ export const App: React.FC = () => {
       };
       setAiNotifications((prev) => [...prev.slice(-4), notif]);
       setTimeout(() => setAiNotifications((prev) => prev.filter((n) => n.id !== notif.id)), 12000);
+      notifCenter.add({
+        kind: 'ai',
+        title: `${item.projectName}: ${item.kind === 'question' ? 'a IA precisa da sua resposta' : 'a IA terminou'}`,
+        body: item.summary,
+        projectPath: item.projectPath,
+        projectName: item.projectName,
+        provider: item.provider,
+        source: item.source,
+      });
       try {
         // Com o app em segundo plano o toast não é visto: usa a notificação do sistema
         if (!document.hasFocus() && 'Notification' in window) {
@@ -2558,7 +2834,7 @@ export const App: React.FC = () => {
         }
       } catch {}
     },
-    []
+    [notifCenter.add]
   );
 
   // Ao abrir um projeto, o que estava pendente nele já foi visto
@@ -2603,7 +2879,7 @@ export const App: React.FC = () => {
             }
             map[cwd].runningProcessCount += 1;
             if (s.isAi) {
-              map[cwd].activeAiProvider = s.type;
+              // o ícone da IA no seletor de projetos é só do chat da IDE respondendo (abaixo); terminais de IA não entram
               if (s.isRunning) {
                 map[cwd].isAiRunning = true;
               }
@@ -2624,9 +2900,9 @@ export const App: React.FC = () => {
               e.isRunning = true;
               e.runningProcessCount = terminalSessions.length;
             }
-            if (aiHistory.length > 0 || isAiExecuting) {
-              e.activeAiProvider = e.activeAiProvider || selectedAiProvider;
-              if (isAiExecuting) e.isAiRunning = true;
+            if (isAiExecuting) {
+              e.activeAiProvider = selectedAiProvider;
+              e.isAiRunning = true;
             }
           }
           Object.keys(ideAiStatus).forEach((path) => {
@@ -3009,7 +3285,8 @@ export const App: React.FC = () => {
   const handleNewTerminalSession = (
     type: string = 'zsh',
     name?: string,
-    initialCommand?: string
+    initialCommand?: string,
+    scope: 'ide' | 'cli' = 'ide'
   ) => {
     const newId = `term_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const pid = Math.floor(60000 + Math.random() * 5000);
@@ -3035,11 +3312,17 @@ export const App: React.FC = () => {
       command: cmd,
       initialCommand,
       shellIntegration: 'Rich',
+      scope,
+      projectPath: workspacePath,
     };
     setTerminalSessions((prev) => [...prev, newSession]);
-    setActiveSessionId(newId);
-    setIsTerminalCollapsed(false);
-    setActiveTermTab('terminal');
+    if (scope === 'cli') {
+      setCliActiveSessionId(newId);
+    } else {
+      setActiveSessionId(newId);
+      setIsTerminalCollapsed(false);
+      setActiveTermTab('terminal');
+    }
     return newId;
   };
 
@@ -3057,16 +3340,22 @@ export const App: React.FC = () => {
   const handleKillTerminalSession = (sessionId: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     setTerminalSessions((prev) => {
-      if (prev.length <= 1) return prev;
       const target = prev.find((s) => s.id === sessionId);
-      const siblingId = target?.splitWithId;
+      if (!target) return prev;
+      const sameProject = (s: TerminalSessionItem) => (s.projectPath || workspacePath) === (target.projectPath || workspacePath);
+      const sameScope = prev.filter((s) => (s.scope === 'cli') === (target.scope === 'cli') && sameProject(s));
+      if (sameScope.length <= 1) return prev;
+      const siblingId = target.splitWithId;
 
       const next = prev
         .filter((s) => s.id !== sessionId)
         .map((s) => (s.id === siblingId ? { ...s, isSplit: false, splitWithId: undefined } : s));
+      const nextSame = next.filter((s) => (s.scope === 'cli') === (target.scope === 'cli') && sameProject(s));
 
-      if (activeSessionId === sessionId) {
-        const fallbackId = siblingId && next.some((s) => s.id === siblingId) ? siblingId : next[0].id;
+      const fallbackId = siblingId && nextSame.some((s) => s.id === siblingId) ? siblingId : nextSame[0].id;
+      if (target.scope === 'cli') {
+        if (cliActiveSessionId === sessionId) setCliActiveSessionId(fallbackId);
+      } else if (activeSessionId === sessionId) {
         setActiveSessionId(fallbackId);
       }
       return next;
@@ -3093,6 +3382,8 @@ export const App: React.FC = () => {
         shellIntegration: 'Rich',
         isSplit: true,
         splitWithId: parent.id,
+        scope: parent.scope,
+        projectPath: parent.projectPath || workspacePath,
       };
 
       const updated = prev.map((s) =>
@@ -3110,7 +3401,7 @@ export const App: React.FC = () => {
   };
 
   const handleToggleSplitActiveSession = () => {
-    const current = terminalSessions.find((s) => s.id === activeSessionId);
+    const current = ideTerminalSessions.find((s) => s.id === activeSessionId);
     if (current?.splitWithId) {
       handleKillTerminalSession(current.splitWithId);
     } else {
@@ -3180,13 +3471,16 @@ export const App: React.FC = () => {
             localStorage.setItem(`ide_active_file_${workspacePath}`, activeFileId);
           }
 
-          // Salva terminais e sessão ativa deste projeto
+          // Salva terminais e sessão ativa deste projeto (os dos outros projetos continuam abertos, cada um no seu)
+          const oldProjectSessions = terminalSessions.filter((s) => (s.projectPath || workspacePath) === workspacePath);
           projectTerminalSessionsRef.current[workspacePath] = {
-            sessions: terminalSessions,
+            sessions: oldProjectSessions,
             activeId: activeSessionId,
           };
-          localStorage.setItem(`ide_terminal_sessions_${workspacePath}`, JSON.stringify(terminalSessions));
+          localStorage.setItem(`ide_terminal_sessions_${workspacePath}`, JSON.stringify(oldProjectSessions));
           localStorage.setItem(`ide_active_session_${workspacePath}`, activeSessionId);
+          // terminais sem projeto (criados antes) passam a pertencer ao projeto de onde estão saindo
+          setTerminalSessions((prev) => prev.map((s) => (s.projectPath ? s : { ...s, projectPath: workspacePath })));
 
           // Salva sessão de IA deste projeto garantindo que a sessão ativa contenha o histórico atual
           const currentSessionsWithActiveHistory = chatSessions.map((s) =>
@@ -3267,26 +3561,32 @@ export const App: React.FC = () => {
         } catch {}
       }
 
-      if (restoredSessions && restoredSessions.length > 0) {
-        setTerminalSessions(restoredSessions);
+      // A lista de terminais é global: nada é fechado. Acrescenta os salvos deste projeto que ainda não estão abertos
+      // e garante um terminal da IDE para ele; só muda o terminal ativo.
+      {
+        const known = new Set(terminalSessions.map((s) => s.id));
+        const fromSaved = (restoredSessions || []).filter((s) => !known.has(s.id)).map((s) => ({ ...s, projectPath: s.projectPath || newPath }));
+        const projectOwn = [...terminalSessions.filter((s) => (s.projectPath || workspacePath) === newPath), ...fromSaved];
+        const additions: TerminalSessionItem[] = [...fromSaved];
+        let ideOfProject = projectOwn.filter((s) => s.scope !== 'cli');
+        if (ideOfProject.length === 0) {
+          const freshSessionId = `term_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+          const freshSession: TerminalSessionItem = {
+            id: freshSessionId,
+            name: 'zsh',
+            type: 'zsh',
+            pid: Math.floor(60000 + Math.random() * 5000),
+            command: '/bin/zsh -il',
+            shellIntegration: 'Rich',
+            projectPath: newPath,
+          };
+          additions.push(freshSession);
+          ideOfProject = [freshSession];
+        }
+        if (additions.length) setTerminalSessions((prev) => [...prev, ...additions.filter((a) => !prev.some((p) => p.id === a.id))]);
         setActiveSessionId(
-          restoredActiveId && restoredSessions.some((s) => s.id === restoredActiveId)
-            ? restoredActiveId
-            : restoredSessions[0].id
+          restoredActiveId && ideOfProject.some((s) => s.id === restoredActiveId) ? restoredActiveId : ideOfProject[0].id
         );
-      } else {
-        // Projeto novo ou sem terminais salvos: cria um terminal zsh limpo exclusivo para este projeto
-        const freshSessionId = `term_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        const freshSession: TerminalSessionItem = {
-          id: freshSessionId,
-          name: 'zsh',
-          type: 'zsh',
-          pid: Math.floor(60000 + Math.random() * 5000),
-          command: '/bin/zsh -il',
-          shellIntegration: 'Rich',
-        };
-        setTerminalSessions([freshSession]);
-        setActiveSessionId(freshSessionId);
       }
 
       // 4. Sessão de IA do projeto: volta a conversa que estava aberta nele (cada projeto tem o seu chat)
@@ -3412,50 +3712,48 @@ export const App: React.FC = () => {
   const handleRunProjectCheck = async () => {
     const ws = workspacePath || '/Users/walancy/Documents/codes/devflow-desktop';
     if (!window.electronAPI?.shell?.exec) return;
+    checkedPathRef.current = ws;
     setIsCheckingProject(true);
     try {
-      const res = await window.electronAPI.shell.exec('npx tsc --noEmit --pretty false', ws);
-      const output = (res.stdout || '') + '\n' + (res.stderr || '');
-      const regex1 = /^([^(]+)\((\d+),(\d+)\):\s*(error|warning|info)\s+([A-Z0-9]+):\s*(.*)$/;
-      const regex2 = /^([^:]+):(\d+):(\d+)\s*-\s*(error|warning|info)\s+([A-Z0-9]+):\s*(.*)$/;
+      const sh = window.electronAPI.shell.exec;
+      const readText = async (name: string) => {
+        try { const r = await window.electronAPI.fs.readFile(`${ws.replace(/\/$/, '')}/${name}`); return r.error ? undefined : r.content; } catch { return undefined; }
+      };
+      const ls = await sh('ls -A1', ws);
+      const rootFiles = (ls.stdout || '').split('\n').map((l) => l.trim()).filter(Boolean);
+      const plans = planChecks({ tsconfigText: await readText('tsconfig.json'), packageJsonText: await readText('package.json'), rootFiles });
       const parsed: IdeProblem[] = [];
-
-      for (const line of output.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        const match = trimmed.match(regex1) || trimmed.match(regex2);
-        if (match) {
-          const [, relPath, lineStr, colStr, severityStr, code, message] = match;
-          const fullPath = relPath.startsWith('/')
-            ? relPath
-            : `${ws.replace(/\/$/, '')}/${relPath}`;
-          const fileName = relPath.split('/').pop() || relPath;
-          const severity = severityStr.toLowerCase() === 'error' ? 'error' : (severityStr.toLowerCase() === 'warning' ? 'warning' : 'info');
-
-          parsed.push({
-            id: `tsc-${fullPath}:${lineStr}:${colStr}:${code}`,
-            filePath: fullPath,
-            relPath,
-            fileName,
-            line: parseInt(lineStr, 10),
-            column: parseInt(colStr, 10),
-            severity,
-            severityCode: severity === 'error' ? 8 : (severity === 'warning' ? 4 : 2),
-            code,
-            message: message.trim(),
-            source: 'tsc',
-          });
+      const results: CheckResult[] = [];
+      for (const plan of plans) {
+        const res = await sh(plan.command, ws);
+        const out = (res.stdout || '') + '\n' + (res.stderr || '');
+        let found: IdeProblem[] | null;
+        if (plan.kind === 'tsc') {
+          found = parseTscOutput(out, ws);
+          // sem nenhum erro de TS e com saída de falha: o tsc nem rodou (não instalado, tsconfig inválido...)
+          if (!found.length && res.exitCode !== 0 && !/error TS\d+/.test(out)) found = null;
+        } else {
+          found = plan.kind === 'eslint' ? parseEslintJson(out, ws) : parseOxlintJson(out, ws);
+        }
+        if (found) {
+          parsed.push(...found);
+          results.push({ label: plan.label, ok: true, count: found.length });
+        } else {
+          const firstLine = out.split('\n').map((l) => l.trim()).find((l) => l && !/^npm (warn|notice)/i.test(l)) || 'não foi possível executar';
+          results.push({ label: plan.label, ok: false, count: 0, error: firstLine.slice(0, 140) });
         }
       }
+      if (!plans.length) results.push({ label: 'Projeto', ok: false, count: 0, error: 'sem tsconfig.json, ESLint ou oxlint configurados nesta pasta' });
 
-      setProjectProblems(parsed);
+      // remove duplicados (a mesma regra vinda de duas ferramentas na mesma posição)
+      const seen = new Set<string>();
+      const unique = parsed.filter((p) => { const k = `${p.source}:${p.filePath}:${p.line}:${p.column}:${p.code}`; if (seen.has(k)) return false; seen.add(k); return true; });
+      if (checkedPathRef.current !== ws) return; // o usuário trocou de projeto durante a checagem
+      setProjectProblems(unique);
+      setProjectCheckResults(results);
       setLastProjectCheckTime(new Date());
-      const tscErrors = parsed.filter((p) => p.severity === 'error').length;
-      const tscWarnings = parsed.filter((p) => p.severity === 'warning').length;
-      if (tscErrors > 0 || tscWarnings > 0) {
-        setEditorErrors(tscErrors);
-        setEditorWarnings(tscWarnings);
-      }
+      setEditorErrors(unique.filter((p) => p.severity === 'error').length);
+      setEditorWarnings(unique.filter((p) => p.severity === 'warning').length);
     } catch (e) {
       console.error('Error running project check:', e);
     } finally {
@@ -3469,6 +3767,19 @@ export const App: React.FC = () => {
       handleRunProjectCheck();
     }
   }, [activeTermTab]);
+
+  // Trocou o projeto da header: descarta os problemas do projeto anterior e refaz a checagem
+  useEffect(() => {
+    if (checkedPathRef.current === workspacePath) return;
+    checkedPathRef.current = workspacePath;
+    setProjectProblems([]);
+    setProjectCheckResults([]);
+    setEditorMarkers([]);
+    setEditorErrors(0);
+    setEditorWarnings(0);
+    setLastProjectCheckTime(null);
+    if (activeTermTab === 'problems') handleRunProjectCheck();
+  }, [workspacePath]);
 
   // Open File in Monaco Editor (with line range / line number precision navigation)
   const handleOpenFile = async (rawFilePath: string, fileName?: string, existingContent?: string, targetLineRange?: string | number) => {
@@ -4077,6 +4388,29 @@ export const App: React.FC = () => {
     }
   };
 
+  // "Resolver com IA": no CLI manda a issue para a IA do terminal ativo; na IDE (e nas demais telas) anexa ao chat da IA da IDE
+  const handleResolveIssueWithAi = (issue: GitHubIssueItem) => {
+    setIsIssuesModalOpen(false);
+    if (activeTab !== 'cli') {
+      if (activeTab !== 'ide') setActiveTab('ide');
+      handleTaskDoWithAi(issue);
+      return;
+    }
+    const sess = cliTerminalSessions.find((x) => x.id === cliActiveSessionId) || cliTerminalSessions[0];
+    const kind = (sess?.type || '').toLowerCase();
+    if (!sess || !/^(claude|agy|antigravity|gemini|codex|ollama)$/.test(kind)) {
+      setToastMessage('O terminal ativo não é uma IA: abra o Claude, Antigravity, Gemini ou Codex nele');
+      setTimeout(() => setToastMessage(null), 3000);
+      return;
+    }
+    const body = (issue.body || '').trim().slice(0, 4000);
+    const text = `Resolva a issue #${issue.number}: ${issue.title}\n\n${body ? `${body}\n\n` : ''}${issue.url ? `Link: ${issue.url}` : ''}`.trim();
+    window.electronAPI?.pty?.write(sess.id, `\x1b[200~${text}\x1b[201~`);
+    setTimeout(() => window.electronAPI?.pty?.write(sess.id, '\r'), 200);
+    setToastMessage(`Issue #${issue.number} enviada para a IA do terminal ativo`);
+    setTimeout(() => setToastMessage(null), 2500);
+  };
+
   const handleLinkIssueToChat = (issue: GitHubIssueItem) => {
     setIsIssuesModalOpen(false);
     setShowAiPanel(true);
@@ -4338,109 +4672,6 @@ export const App: React.FC = () => {
       setTimeout(() => setToastMessage(null), 2500);
     }
   }, [openFiles, activeFileId]);
-
-  // Apply VS Code Theme to Monaco Editor & System UI
-  const handleApplyVscodeTheme = (themeData: any, themeLabel: string) => {
-    if (!themeData) return;
-    try {
-      const rules: any[] = [];
-      for (const tc of themeData.tokenColors || []) {
-        const scopes = Array.isArray(tc.scope) ? tc.scope : typeof tc.scope === 'string' ? tc.scope.split(',').map((s: string) => s.trim()) : [];
-        for (const s of scopes) {
-          if (s && tc.settings) {
-            rules.push({
-              token: s,
-              foreground: tc.settings.foreground ? tc.settings.foreground.replace('#', '') : undefined,
-              fontStyle: tc.settings.fontStyle,
-              background: tc.settings.background ? tc.settings.background.replace('#', '') : undefined,
-            });
-          }
-        }
-      }
-
-      const base = themeData.type === 'light' ? 'vs' : 'vs-dark';
-      const sanitizedName = `vscode-${themeLabel.toLowerCase().replace(/[^a-z0-9]/g, '-')}`;
-
-      if ((window as any).monaco?.editor) {
-        (window as any).monaco.editor.defineTheme(sanitizedName, {
-          base,
-          inherit: true,
-          rules,
-          colors: themeData.colors || {},
-        });
-        (window as any).monaco.editor.setTheme(sanitizedName);
-      }
-
-      if (themeData.colors?.['activityBar.activeBackground'] || themeData.colors?.['accentColor'] || themeData.colors?.['focusBorder']) {
-        const newAccent = themeData.colors['focusBorder'] || themeData.colors['activityBar.activeBackground'] || accentColor;
-        setAccentColor(newAccent);
-      }
-
-      setToastMessage(`Tema "${themeLabel}" ativado`);
-    } catch (err: any) {
-      setToastMessage(`Erro ao aplicar tema: ${err?.message || err}`);
-    }
-  };
-
-  // -------------------------------------------------------------------------
-  // Real Extension Install/Uninstall/Toggle (single source of truth, backed by
-  // ~/.devflow/extensions/installed.json via the electron backend — used by both
-  // the Extensions marketplace list and the extension details view).
-  // -------------------------------------------------------------------------
-  const handleInstallExtension = async (ext: any) => {
-    if (!window.electronAPI?.extensions?.install) {
-      setToastMessage('Instalação de extensões indisponível neste ambiente.');
-      return;
-    }
-    setToastMessage(`Baixando e instalando "${ext.displayName || ext.name}"...`);
-    try {
-      const res = await window.electronAPI.extensions.install(ext.namespace, ext.name, ext.version);
-      if (res?.success && res.record) {
-        // Re-fetch the full list (rather than splicing res.record in directly) so
-        // computed fields like activityBarViews (resolved server-side) are included.
-        const listRes = await window.electronAPI.extensions.getInstalled?.();
-        if (listRes?.success && Array.isArray(listRes.extensions)) {
-          setInstalledExtensions(listRes.extensions);
-        } else {
-          setInstalledExtensions((prev) => [
-            res.record,
-            ...prev.filter((i) => !(i.namespace === ext.namespace && i.name === ext.name)),
-          ]);
-        }
-        if (res.record.themes && res.record.themes.length > 0) {
-          handleApplyVscodeTheme(res.record.themes[0].data, res.record.themes[0].label);
-        }
-        setToastMessage(`Extensão "${ext.displayName || ext.name}" instalada e pronta para uso!`);
-      } else {
-        setToastMessage(`Erro ao instalar extensão: ${res?.error || 'falha desconhecida'}`);
-      }
-    } catch (err: any) {
-      setToastMessage(`Erro ao instalar extensão: ${err?.message || err}`);
-    }
-  };
-
-  const handleUninstallExtension = async (ext: any) => {
-    if (!window.electronAPI?.extensions?.uninstall) return;
-    try {
-      await window.electronAPI.extensions.uninstall(ext.namespace, ext.name);
-      setInstalledExtensions((prev) => prev.filter((i) => !(i.namespace === ext.namespace && i.name === ext.name)));
-      setToastMessage(`Extensão "${ext.displayName || ext.name}" desinstalada.`);
-    } catch (err: any) {
-      setToastMessage(`Erro ao desinstalar: ${err?.message || err}`);
-    }
-  };
-
-  const handleToggleExtensionEnabled = async (ext: any) => {
-    if (!window.electronAPI?.extensions?.toggleEnabled) return;
-    try {
-      await window.electronAPI.extensions.toggleEnabled(ext.namespace, ext.name);
-      setInstalledExtensions((prev) =>
-        prev.map((i) => (i.namespace === ext.namespace && i.name === ext.name ? { ...i, enabled: !i.enabled } : i))
-      );
-    } catch (err: any) {
-      setToastMessage(`Erro ao alternar extensão: ${err?.message || err}`);
-    }
-  };
 
   // Generates a commit message from the repo's diff using the AI provider
   // currently selected in the AI chat panel (Source Control "Generate" button)
@@ -5303,11 +5534,13 @@ export const App: React.FC = () => {
   useEffect(() => {
     document.documentElement.style.setProperty('--accent-color', accentColor);
     document.documentElement.style.setProperty('--accent-text-color', accentTextColor);
-    localStorage.setItem('ide_accent_color', accentColor);
-    if (window.electronAPI?.pty?.setAccentColor) {
-      window.electronAPI.pty.setAccentColor(accentColor).catch(() => {});
-    }
   }, [accentColor, accentTextColor]);
+  useEffect(() => {
+    localStorage.setItem('ide_accent_color', baseAccentColor);
+    if (window.electronAPI?.pty?.setAccentColor) {
+      window.electronAPI.pty.setAccentColor(rainbow.on ? rainbow.stops[0] : accentColor).catch(() => {}); // rainbow: não manda IPC a cada frame
+    }
+  }, [rainbow.on ? rainbow.stops[0] : accentColor, baseAccentColor]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', isEffectiveDark ? 'dark' : 'light');
@@ -5534,16 +5767,6 @@ export const App: React.FC = () => {
           setShowExplorer(false);
         } else {
           setActiveActivityTab('debug');
-          setShowExplorer(true);
-        }
-      }
-      // Cmd/Ctrl + Shift + X: Extensions Marketplace
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'x') {
-        e.preventDefault();
-        if (showExplorer && activeActivityTab === 'extensions') {
-          setShowExplorer(false);
-        } else {
-          setActiveActivityTab('extensions');
           setShowExplorer(true);
         }
       }
@@ -7074,6 +7297,7 @@ ${prompt || userDisplayPrompt}`;
                 }
               }
 
+              if (newlyModifiedFiles.length > 200) newlyModifiedFiles.length = 200; // repositório com muita coisa nova: acompanha só os primeiros
               if (newlyModifiedFiles.length > 0) {
                 const diffRes = await window.electronAPI.shell.exec('git diff --numstat', effectiveCwd);
                 const diffMap = new Map<string, { additions: number; deletions: number }>();
@@ -7101,19 +7325,19 @@ ${prompt || userDisplayPrompt}`;
                     const exploreStep: ExecutionStepItem = {
                       id: `explore-${rel}`,
                       type: 'explore',
-                      label: 'Explored 1 file',
+                      label: 'Explorou 1 arquivo',
                       children: [
                         {
                           id: `analyzed-${rel}`,
                           type: 'analyze',
-                          label: `Analyzed ${fileName}`,
+                          label: `Analisou ${fileName}`,
                           file: fileName,
                           path: `${effectiveCwd}/${rel}`,
                         },
                         {
                           id: `thought-${rel}`,
                           type: 'thought',
-                          label: 'Thought for 1s',
+                          label: 'Pensou por 1s',
                           duration: '1s',
                         },
                       ],
@@ -7122,7 +7346,7 @@ ${prompt || userDisplayPrompt}`;
                     const editStep: ExecutionStepItem = {
                       id: `edit-${rel}`,
                       type: 'edit',
-                      label: `Edited ${fileName}`,
+                      label: `Editou ${fileName}`,
                       file: fileName,
                       path: `${effectiveCwd}/${rel}`,
                       additions: diffInfo.additions,
@@ -7131,7 +7355,7 @@ ${prompt || userDisplayPrompt}`;
 
                     liveSteps = [...liveSteps, exploreStep, editStep];
                     updated = true;
-                    setLiveCurrentAction(`Edited ${fileName} +${diffInfo.additions} -${diffInfo.deletions}`);
+                    setLiveCurrentAction(`Editou ${fileName} +${diffInfo.additions} -${diffInfo.deletions}`);
                   } else if (prev.additions !== diffInfo.additions || prev.deletions !== diffInfo.deletions) {
                     prev.additions = diffInfo.additions;
                     prev.deletions = diffInfo.deletions;
@@ -7142,7 +7366,7 @@ ${prompt || userDisplayPrompt}`;
                       return st;
                     });
                     updated = true;
-                    setLiveCurrentAction(`Edited ${fileName} +${diffInfo.additions} -${diffInfo.deletions}`);
+                    setLiveCurrentAction(`Editou ${fileName} +${diffInfo.additions} -${diffInfo.deletions}`);
                   }
                 }
 
@@ -7167,7 +7391,7 @@ ${prompt || userDisplayPrompt}`;
             const fileMatch = txt.match(/(?:Edited|Editing|Writing|Saving|replace_file_content|write_to_file)\s+([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)/i);
             if (fileMatch) {
               const fName = fileMatch[1].split('/').pop() || fileMatch[1];
-              setLiveCurrentAction(`Editing ${fName}...`);
+              setLiveCurrentAction(`Editando ${fName}...`);
             }
           }
         });
@@ -7306,7 +7530,7 @@ ${prompt || userDisplayPrompt}`;
                   }
                 }
 
-                for (const relPath of newlyModifiedFiles) {
+                for (const relPath of [...newlyModifiedFiles].slice(0, 500)) {
                   const partsSlash = relPath.split('/');
                   const fileName = partsSlash[partsSlash.length - 1];
                   const dirName = partsSlash.slice(0, -1).join('/');
@@ -7327,25 +7551,25 @@ ${prompt || userDisplayPrompt}`;
         // Construct Antigravity-style execution steps only if actual files were modified
         const executionSteps: ExecutionStepItem[] = [];
         if (liveSteps.length > 0) {
-          executionSteps.push(...liveSteps);
+          for (const st of liveSteps) executionSteps.push(st); // sem spread: com milhares de arquivos alterados estourava a pilha (Maximum call stack size exceeded)
         } else if (changedFiles.length > 0) {
           changedFiles.forEach((f, cIdx) => {
             executionSteps.push({
               id: `explore-${f.name}-${cIdx}`,
               type: 'explore',
-              label: 'Explored 1 file',
+              label: 'Explorou 1 arquivo',
               children: [
                 {
                   id: `analyzed-${f.name}-${cIdx}`,
                   type: 'analyze',
-                  label: `Analyzed ${f.name}`,
+                  label: `Analisou ${f.name}`,
                   file: f.name,
                   path: f.path,
                 },
                 {
                   id: `thought-${f.name}-${cIdx}`,
                   type: 'thought',
-                  label: 'Thought for 1s',
+                  label: 'Pensou por 1s',
                   duration: '1s',
                 },
               ],
@@ -7353,7 +7577,7 @@ ${prompt || userDisplayPrompt}`;
             executionSteps.push({
               id: `edit-${f.name}-${cIdx}`,
               type: 'edit',
-              label: `Edited ${f.name}`,
+              label: `Editou ${f.name}`,
               file: f.name,
               path: f.path,
               additions: f.additions,
@@ -7628,15 +7852,15 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
     e.preventDefault();
     if (!debugCommand.trim()) return;
 
-    let res = '';
-    try {
-      res = String(new Function('return (' + debugCommand + ')')());
-    } catch (err: any) {
-      res = `Evaluation Error: ${err.message}`;
-    }
-
-    setDebugHistory((prev) => [...prev, `> ${debugCommand}`, res]);
+    const expr = debugCommand;
+    const ws = workspacePath;
+    const push = (...l: string[]) => setDebugByProject((prev) => ({ ...prev, [ws]: [...(prev[ws] || []), ...l] }));
+    push(`> ${expr}`);
     setDebugCommand('');
+    // avalia com Node na pasta do projeto (o renderer não tem process/require)
+    window.electronAPI?.shell?.exec?.(`node -p '${expr.replace(/'/g, `'\\''`)}'`, ws)
+      .then((r) => push((r.stdout || r.stderr || r.error || '').trim() || 'undefined'))
+      .catch((err: any) => push(`Evaluation Error: ${err?.message || err}`));
   };
 
   const showTrafficLightSpacer = !isFullscreen;
@@ -7689,13 +7913,204 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
     return (
       <GithubLoginScreen
         accentColor={accentColor}
+        previousUser={signedOutUser}
+        onResume={() => {
+          markLastLogin();
+          setSignedOutUser(null);
+          setGithubAuthStatus('authenticated');
+        }}
         onAuthenticated={(user) => {
+          markLastLogin();
+          setSignedOutUser(null);
           setGithubUser(user);
+          try { localStorage.setItem('devflow_github_user', JSON.stringify(user)); } catch {}
           setGithubAuthStatus('authenticated');
         }}
       />
     );
   }
+
+  // Conteúdo das abas do painel do IDE (Problems, Output, Debug console, Ports, Tarefas): usado no IDE e na tela do CLI
+  const renderIdeDockTab = (tab: string) => (
+    <>
+                {/* 2. Problems View */}
+                {tab === 'problems' && (
+                  <ProblemsPanelView
+                    problems={allProblems}
+                    activeFile={activeFile}
+                    onOpenFile={handleOpenFile}
+                    onJumpToLocation={(filePath, line, col) => {
+                      if (editorInstanceRef.current) {
+                        editorInstanceRef.current.revealPositionInCenter({ lineNumber: line, column: col });
+                        editorInstanceRef.current.setPosition({ lineNumber: line, column: col });
+                        editorInstanceRef.current.focus();
+                      }
+                    }}
+                    onRunProjectCheck={handleRunProjectCheck}
+                    checkResults={projectCheckResults}
+                    isCheckingProject={isCheckingProject}
+                    lastCheckedTime={lastProjectCheckTime}
+                    themeTokens={themeTokens}
+                    accentColor={accentColor}
+                    isEffectiveDark={isEffectiveDark}
+                    onAskAiAboutProblem={(prob) => {
+                      setActiveTab('cli');
+                    }}
+                  />
+                )}
+
+                {/* 3. Output View */}
+                {tab === 'output' && (
+                  <div
+                    style={{
+                      flex: '1 1 0',
+                      alignSelf: 'stretch',
+                      padding: 14,
+                      background: themeTokens.bgCard,
+                      borderRadius: 10,
+                      border: '1px solid ' + themeTokens.border,
+                      flexDirection: 'column',
+                      gap: 6,
+                      display: 'flex',
+                      overflowY: 'auto',
+                      fontFamily: 'JetBrains Mono, Menlo, monospace',
+                      fontSize: 12,
+                      color: themeTokens.textSecondary,
+                    }}
+                  >
+                    {outputLines.length === 0 && <div>Sem saída dos terminais deste projeto ainda.</div>}
+                    {outputLines.slice(-300).map((l, i) => (
+                      <div key={i} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{l}</div>
+                    ))}
+                  </div>
+                )}
+
+                {/* 4. Debug Console View */}
+                {tab === 'debug' && (
+                  <div
+                    style={{
+                      flex: '1 1 0',
+                      alignSelf: 'stretch',
+                      padding: 14,
+                      background: themeTokens.bgCard,
+                      borderRadius: 10,
+                      border: '1px solid ' + themeTokens.border,
+                      flexDirection: 'column',
+                      justifyContent: 'space-between',
+                      display: 'flex',
+                      fontFamily: 'JetBrains Mono, Menlo, monospace',
+                      fontSize: 12,
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto' }}>
+                      {debugHistory.map((item, idx) => (
+                        <div key={idx} style={{ color: item.startsWith('>') ? accentColor : themeTokens.textSecondary }}>
+                          {item}
+                        </div>
+                      ))}
+                    </div>
+
+                    <form onSubmit={handleDebugSubmit} style={{ display: 'flex', alignItems: 'center', gap: 6, borderTop: '1px solid ' + themeTokens.border, paddingTop: 8 }}>
+                      <span style={{ color: accentColor }}>&gt;</span>
+                      <input
+                        type="text"
+                        value={debugCommand}
+                        onChange={(e) => setDebugCommand(e.target.value)}
+                        placeholder="Avaliar expressão (ex: 2 + 2, Date.now(), process.platform)"
+                        style={{
+                          flex: 1,
+                          background: 'transparent',
+                          border: 'none',
+                          outline: 'none',
+                          color: themeTokens.textPrimary,
+                          fontSize: 12,
+                          fontFamily: 'JetBrains Mono, Menlo, monospace',
+                        }}
+                      />
+                    </form>
+                  </div>
+                )}
+
+                {/* 5. Ports View */}
+                {tab === 'ports' && (
+                  <div
+                    style={{
+                      flex: '1 1 0',
+                      alignSelf: 'stretch',
+                      padding: 14,
+                      background: themeTokens.bgCard,
+                      borderRadius: 10,
+                      border: '1px solid ' + themeTokens.border,
+                      flexDirection: 'column',
+                      gap: 8,
+                      display: 'flex',
+                      overflowY: 'auto',
+                    }}
+                  >
+                    <div style={{ color: themeTokens.textPrimary, fontSize: 13, fontWeight: 500, marginBottom: 4, whiteSpace: 'nowrap' }}>
+                      Portas Encaminhadas e Serviços Ativos
+                    </div>
+                    {projectServers.length === 0 && (
+                      <div style={{ color: themeTokens.textSecondary, fontSize: 12 }}>Nenhuma porta aberta por este projeto.</div>
+                    )}
+                    {projectServers.map((p) => ({ port: p.port, proc: p.serviceName || `pid ${p.pid}`, url: p.url })).map((p) => (
+                      <div
+                        key={p.port}
+                        style={{
+                          padding: '8px 12px',
+                          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.03)',
+                          borderRadius: 6,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <Radio size={14} color="#3fb950" />
+                          <span style={{ color: themeTokens.textPrimary, fontWeight: 600, fontSize: 12.5 }}>:{p.port}</span>
+                          <span style={{ color: themeTokens.textSecondary, fontSize: 12 }}>{p.proc}</span>
+                        </div>
+                        <a
+                          href={p.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{
+                            color: accentColor,
+                            fontSize: 12,
+                            textDecoration: 'none',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 4,
+                          }}
+                        >
+                          {p.url}
+                          <ExternalLink size={12} />
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* 6. Tasks View */}
+                {tab === 'tasks' && (
+                  <ProjectTasksDockTab
+                    issues={gitIssues}
+                    isLoading={isLoadingIssues}
+                    onRefresh={refreshGitHubIssues}
+                    onDoWithAi={handleTaskDoWithAi}
+                    onOpenIssueDetails={handleOpenIssueSidesheet}
+                    currentUserLogin={githubUser?.login || 'walancy'}
+                    repoName={activeHeaderProject?.fullName || gitRepoName}
+                    sprints={projectMilestones}
+                    themeTokens={themeTokens}
+                    isEffectiveDark={isEffectiveDark}
+                    accentColor={accentColor}
+                  />
+                )}
+    </>
+  );
+
 
   return (
     <div
@@ -7836,6 +8251,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             onProjectsListChange={setHeaderProjectsList}
             projectRuntimes={projectRuntimes}
             projectAiStatus={projectAiStatus}
+            hideAiProvider={activeTab === 'cli'}
           />
 
           {/* Botão Brain do Projeto (Grafo Obsidian & Contexto de IA) */}
@@ -7880,6 +8296,185 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           >
             <Brain size={14} strokeWidth={1.8} />
           </button>
+
+          {/* Servidor do projeto rodando: link para abrir no navegador e botão para encerrar */}
+          {projectServers.length === 0 && devStartCommand && (
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center', borderRadius: 6, flexShrink: 0, background: startingServer ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)') : 'transparent', WebkitAppRegion: 'no-drag' as any }}>
+              <button
+                type="button"
+                disabled={startingServer}
+                onClick={() => (devOptions ? setDevMenuOpen((v) => !v) : devStartCommand && startProject(devStartCommand))}
+                title={startingServer ? `Iniciando (${devStartCommand})…` : devOptions ? 'Iniciar o projeto: escolha o gerenciador e o script' : `Iniciar o projeto (${devStartCommand})`}
+                style={{ display: 'flex', alignItems: 'center', padding: startingServer ? '6px 4px 6px 7px' : 6, borderRadius: 6, border: 'none', background: 'transparent', cursor: startingServer ? 'default' : 'pointer', color: themeTokens.textSecondary }}
+                onMouseEnter={(e) => { if (!startingServer) { e.currentTarget.style.color = '#3fb950'; e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)'; } }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = themeTokens.textSecondary; e.currentTarget.style.background = 'transparent'; }}
+              >
+                {startingServer ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} strokeWidth={1.8} />}
+              </button>
+              {devMenuOpen && devOptions && !startingServer && (
+                <>
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 99998 }} onClick={() => setDevMenuOpen(false)} />
+                  <div
+                    style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 232, maxHeight: 420, overflowY: 'auto', background: isEffectiveDark ? '#1a1a1c' : '#ffffff', borderRadius: 12, boxShadow: '0 16px 40px rgba(0,0,0,0.6)', padding: '6px 6px 8px', zIndex: 99999, display: 'flex', flexDirection: 'column', gap: 2, fontFamily: 'Poppins, sans-serif' }}
+                  >
+                    {devOptions.scripts.length > 0 && (
+                      <>
+                        {/* gerenciador: texto simples, o escolhido em destaque */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 10px 8px' }}>
+                          {PACKAGE_MANAGERS.map((pm) => (
+                            <span
+                              key={pm}
+                              onClick={() => setDevMenuPm(pm)}
+                              title={pm === devOptions.pm ? `${pm} (detectado no projeto)` : pm}
+                              style={{ fontSize: 12, cursor: 'pointer', fontWeight: devMenuPm === pm ? 600 : 400, color: devMenuPm === pm ? accentColor : themeTokens.textMuted, borderBottom: `1.5px solid ${devMenuPm === pm ? accentColor : 'transparent'}`, paddingBottom: 2, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                            >
+                              {pm}
+                              {pm === devOptions.pm && <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#3fb950' }} />}
+                            </span>
+                          ))}
+                        </div>
+                        {devOptions.scripts.slice(0, 14).map((sc) => (
+                          <div
+                            key={sc}
+                            onClick={() => startProject(scriptCommand(devMenuPm, sc, devForce))}
+                            title={scriptCommand(devMenuPm, sc, devForce)}
+                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 10px', borderRadius: 7, cursor: 'pointer', fontSize: 12.5, color: themeTokens.textPrimary }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = isEffectiveDark ? '#242426' : '#f1f5f9'; const i = e.currentTarget.lastElementChild as HTMLElement | null; if (i) i.style.opacity = '1'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; const i = e.currentTarget.lastElementChild as HTMLElement | null; if (i) i.style.opacity = '0'; }}
+                          >
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sc}</span>
+                            <Play size={11} color="#3fb950" style={{ opacity: 0, flexShrink: 0, transition: 'opacity 0.1s ease' }} />
+                          </div>
+                        ))}
+                        {/* forçar: repassa --force ao script */}
+                        <div
+                          onClick={() => setDevForce((v) => !v)}
+                          title="Repassa --force ao script (ex.: sobrescrever uma rota ou porta já registrada)"
+                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 10px 4px', marginTop: 4, cursor: 'pointer', fontSize: 12, color: themeTokens.textSecondary }}
+                        >
+                          <span>Forçar <span style={{ color: themeTokens.textMuted, fontFamily: 'JetBrains Mono, Menlo, monospace', fontSize: 11 }}>--force</span></span>
+                          <span style={{ width: 28, height: 16, borderRadius: 8, background: devForce ? accentColor : (isEffectiveDark ? '#333' : '#cbd5e1'), position: 'relative', transition: 'background 0.15s ease', flexShrink: 0 }}>
+                            <span style={{ position: 'absolute', top: 2, left: devForce ? 14 : 2, width: 12, height: 12, borderRadius: '50%', background: '#fff', transition: 'left 0.15s ease' }} />
+                          </span>
+                        </div>
+                      </>
+                    )}
+                    {devOptions.others.length > 0 && (
+                      <>
+                        {devOptions.scripts.length > 0 && <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', margin: '6px 8px 4px' }} />}
+                        {devOptions.others.map((o) => (
+                          <div
+                            key={o.command}
+                            onClick={() => startProject(o.command)}
+                            title={o.command}
+                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 10px', borderRadius: 7, cursor: 'pointer', fontSize: 12.5, color: themeTokens.textPrimary }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = isEffectiveDark ? '#242426' : '#f1f5f9'; const i = e.currentTarget.lastElementChild as HTMLElement | null; if (i) i.style.opacity = '1'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; const i = e.currentTarget.lastElementChild as HTMLElement | null; if (i) i.style.opacity = '0'; }}
+                          >
+                            <span>{o.label}</span>
+                            <Play size={11} color="#3fb950" style={{ opacity: 0, flexShrink: 0, transition: 'opacity 0.1s ease' }} />
+                          </div>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
+              {startingServer && (
+                <button
+                  type="button"
+                  onClick={openDevTerminal}
+                  title="Acompanhar no terminal"
+                  style={{ display: 'flex', alignItems: 'center', padding: '6px 3px', border: 'none', background: 'transparent', cursor: 'pointer', color: themeTokens.textSecondary }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = accentColor)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textSecondary)}
+                >
+                  <SquareTerminal size={13} />
+                </button>
+              )}
+              {startingServer && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = startingSessionRef.current;
+                    startingSessionRef.current = null;
+                    devExitWatchRef.current?.();
+                    devExitWatchRef.current = null;
+                    setStartingServer(false);
+                    if (id) {
+                      window.electronAPI?.pty?.kill?.(id);
+                      handleKillTerminalSession(id);
+                    }
+                    setToastMessage('Inicialização cancelada');
+                    setTimeout(() => setToastMessage(null), 2000);
+                  }}
+                  title="Cancelar a inicialização"
+                  style={{ display: 'flex', alignItems: 'center', padding: '6px 7px 6px 3px', border: 'none', background: 'transparent', cursor: 'pointer', color: themeTokens.textMuted }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = '#ef4444')}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textMuted)}
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+          )}
+          {projectServers.map((srv) => (
+            <div
+              key={srv.pid + ':' + srv.port}
+              onMouseEnter={() => setHoveredServerKey(srv.pid + ':' + srv.port)}
+              onMouseLeave={() => setHoveredServerKey(null)}
+              style={{ position: 'relative', display: 'flex', alignItems: 'center', borderRadius: 6, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)', flexShrink: 0, WebkitAppRegion: 'no-drag' as any }}
+            >
+              <button
+                type="button"
+                onClick={() => window.electronAPI?.shell?.openExternal?.(srv.url)}
+                title={`Abrir ${srv.url} no navegador${srv.serviceName ? ` (${srv.serviceName})` : ''}`}
+                style={{ display: 'flex', alignItems: 'center', padding: '6px 5px 6px 7px', border: 'none', background: 'transparent', cursor: 'pointer', color: '#3fb950' }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = accentColor)}
+                onMouseLeave={(e) => (e.currentTarget.style.color = '#3fb950')}
+              >
+                <Link2 size={14} strokeWidth={1.8} />
+              </button>
+              {hoveredServerKey === srv.pid + ':' + srv.port && (
+                <div
+                  style={{
+                    position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 100000, padding: '5px 9px', borderRadius: 6,
+                    background: themeTokens.bgCard, border: `1px solid ${themeTokens.border}`, boxShadow: '0 6px 20px rgba(0,0,0,0.45)',
+                    color: themeTokens.textPrimary, fontSize: 11.5, whiteSpace: 'nowrap', pointerEvents: 'none',
+                  }}
+                >
+                  {srv.url}{srv.serviceName ? ` · ${srv.serviceName}` : ''}
+                </div>
+              )}
+              {devSessionRef.current && terminalSessions.some((t) => t.id === devSessionRef.current) && (
+                <button
+                  type="button"
+                  onClick={openDevTerminal}
+                  title="Ver a saída no terminal"
+                  style={{ display: 'flex', alignItems: 'center', padding: '6px 3px', border: 'none', background: 'transparent', cursor: 'pointer', color: themeTokens.textMuted }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = accentColor)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textMuted)}
+                >
+                  <SquareTerminal size={13} />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={async () => {
+                  await window.electronAPI?.ports?.kill?.(srv.pid);
+                  setProjectServers((prev) => prev.filter((x) => x.pid !== srv.pid));
+                  setToastMessage(`Servidor da porta ${srv.port} encerrado`);
+                  setTimeout(() => setToastMessage(null), 2500);
+                }}
+                title={`Encerrar o servidor da porta ${srv.port}`}
+                style={{ display: 'flex', alignItems: 'center', padding: '6px 7px 6px 3px', border: 'none', background: 'transparent', cursor: 'pointer', color: themeTokens.textMuted }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = '#ef4444')}
+                onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textMuted)}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
         </div>
 
         {/* Right: Layout Icons, Dividers, Profile */}
@@ -8070,19 +8665,33 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
           {/* Header AI Group (2 Porcentagens de Uso + Seletor de IA) */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, WebkitAppRegion: 'no-drag' as any }}>
-            {/* Header AI Usage Quota Badge */}
+            {/* IAs fixadas (+ a selecionada): uso de cada uma e troca com um clique */}
+            {AI_PROVIDERS.map((p) => p.id).filter((id) => id === selectedAiProvider || pinnedAis.includes(id)).map((pid) => (
+              <div
+                key={pid}
+                onClick={() => { if (pid !== selectedAiProvider) handleSwitchAiProvider(pid); }}
+                onContextMenu={(e) => { e.preventDefault(); setIsAiGlobalRulesModalOpen(true); }}
+                title={pid === selectedAiProvider ? `IA ativa: ${AI_PROVIDERS.find((p) => p.id === pid)?.name} · ${selectedModel || 'Padrão'} (Botão direito para Regras Globais)` : `Usar ${AI_PROVIDERS.find((p) => p.id === pid)?.name}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '2px 4px 2px 2px',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  background: pid === selectedAiProvider ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)') : 'transparent',
+                  transition: 'background 0.12s ease',
+                }}
+              >
             {(() => {
-              const currentQuota = aiQuotas[selectedAiProvider] || aiQuotas.claude || DEFAULT_AI_QUOTAS.claude;
+              const currentQuota = aiQuotas[pid] || aiQuotas.claude || DEFAULT_AI_QUOTAS.claude;
               return (
                 <div
-                  ref={headerQuotaTooltipRef}
-                  onClick={() => {
-                    setHeaderQuotaTooltipOpen((prev) => !prev);
-                    refreshAiQuotas();
-                  }}
-                  onMouseEnter={() => setHeaderQuotaTooltipOpen(true)}
+                  ref={pid === selectedAiProvider ? headerQuotaTooltipRef : undefined}
+                  onClick={() => refreshAiQuotas()} /* o clique sobe para o card e seleciona a IA; o detalhe da quota aparece ao passar o mouse */
+                  onMouseEnter={() => { setQuotaTooltipProvider(pid); setHeaderQuotaTooltipOpen(true); }}
                   onMouseLeave={() => setHeaderQuotaTooltipOpen(false)}
-                  title="Clique para ver detalhes de uso e reset das quotas de IA"
+                  title={pid === selectedAiProvider ? undefined : `Usar ${AI_PROVIDERS.find((p) => p.id === pid)?.name}`}
                   style={{
                     position: 'relative',
                     display: 'flex',
@@ -8106,9 +8715,9 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         color: accentColor,
                         fontFamily: 'Poppins, -apple-system, sans-serif',
                       }}
-                      title={selectedAiProvider === 'claude' ? 'Sessão de 5h' : 'Diário'}
+                      title={pid === 'claude' ? 'Sessão de 5h' : 'Diário'}
                     >
-                      {selectedAiProvider === 'claude' ? '5h' : 'D'}
+                      {pid === 'claude' ? '5h' : 'D'}
                     </span>
                     <span
                       style={{
@@ -8130,15 +8739,15 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         color: accentColor,
                         fontFamily: 'Poppins, -apple-system, sans-serif',
                       }}
-                      title={selectedAiProvider === 'claude' ? 'Semanal (7 dias)' : 'Semanal'}
+                      title={pid === 'claude' ? 'Semanal (7 dias)' : 'Semanal'}
                     >
-                      {selectedAiProvider === 'claude' ? 'Sem' : 'S'}
+                      S
                     </span>
                     <span
                       style={{
                         fontSize: 9.5,
                         fontWeight: 700,
-                        color: currentQuota.weeklyPercent === 0 ? '#ef4444' : currentQuota.weeklyPercent <= 15 ? '#f97316' : (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary),
+                        color: currentQuota.weeklyPercent === 0 ? '#ef4444' : (pid === 'claude' && claudeDaily?.exceeded) ? '#f59e0b' : currentQuota.weeklyPercent <= 15 ? '#f97316' : (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary),
                         fontFamily: 'Poppins, -apple-system, sans-serif',
                         letterSpacing: '-0.02em',
                       }}
@@ -8148,7 +8757,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   </div>
 
                   {/* Header Quota Tooltip Popup */}
-                  {headerQuotaTooltipOpen && (
+                  {headerQuotaTooltipOpen && quotaTooltipProvider === pid && (
                     <div
                       ref={clampPopupToViewport}
                       onClick={(e) => e.stopPropagation()}
@@ -8183,118 +8792,78 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                          {selectedAiProvider === 'claude' && <ClaudeIcon size={15} />}
-                          {selectedAiProvider === 'antigravity' && <AntigravityIcon size={15} />}
-                          {selectedAiProvider === 'codex' && <CodexIcon size={15} />}
-                          {selectedAiProvider === 'gemini' && <GeminiIcon size={15} />}
-                          {selectedAiProvider === 'ollama' && <OllamaIcon size={15} />}
+                          {pid === 'claude' && <ClaudeIcon size={15} />}
+                          {pid === 'antigravity' && <AntigravityIcon size={15} />}
+                          {pid === 'codex' && <CodexIcon size={15} />}
+                          {pid === 'gemini' && <GeminiIcon size={15} />}
+                          {pid === 'ollama' && <OllamaIcon size={15} />}
                           <span style={{ fontSize: 12, fontWeight: 600, color: themeTokens.textPrimary, fontFamily: 'Poppins, sans-serif' }}>
-                            {AI_PROVIDERS.find((p) => p.id === selectedAiProvider)?.name || 'IA'}
+                            {AI_PROVIDERS.find((p) => p.id === pid)?.name || 'IA'}
                           </span>
-                        </div>
-                        <span
-                          style={{
-                            fontSize: 9.5,
-                            color: themeTokens.textSecondary,
-                            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
-                            padding: '2px 7px',
-                            borderRadius: 4,
-                            fontWeight: 500,
-                            fontFamily: 'Poppins, sans-serif',
-                          }}
-                        >
-                          Quota Restante
-                        </span>
-                      </div>
-
-                      {/* Daily / Session Quota */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11.5, fontFamily: 'Poppins, sans-serif' }}>
-                          <span style={{ color: themeTokens.textSecondary }}>
-                            {selectedAiProvider === 'claude' ? 'Sessão atual (5h):' : 'Limite diário:'}
-                          </span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <span style={{ color: themeTokens.textPrimary, fontWeight: 700 }}>
-                              {currentQuota.dailyPercent}% disp.
-                            </span>
-                            <span style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>
-                              ({100 - currentQuota.dailyPercent}% usado)
-                            </span>
-                          </div>
-                        </div>
-                        {/* Accent progress bar */}
-                        <div style={{ width: '100%', height: 4, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)', borderRadius: 2, overflow: 'hidden' }}>
-                          <div
-                            style={{
-                              width: `${Math.min(100, Math.max(0, currentQuota.dailyPercent))}%`,
-                              height: '100%',
-                              background: accentColor,
-                              borderRadius: 2,
-                              transition: 'width 0.3s ease',
-                            }}
-                          />
-                        </div>
-                        <div
-                          style={{
-                            fontSize: 10.5,
-                            color: themeTokens.textSecondary,
-                            marginTop: 2,
-                            fontFamily: 'Poppins, sans-serif',
-                            whiteSpace: 'normal',
-                            wordBreak: 'break-word',
-                            lineHeight: '14px',
-                          }}
-                        >
-                          Reset {selectedAiProvider === 'claude' ? 'da sessão' : 'diário'}: {formatQuotaResetDisplay(currentQuota.dailyResetTime, currentQuota.dailyResetDay || 'Hoje', false)}
                         </div>
                       </div>
 
-                      {/* Weekly Quota */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11.5, fontFamily: 'Poppins, sans-serif' }}>
-                          <span style={{ color: themeTokens.textSecondary }}>
-                            {selectedAiProvider === 'claude' ? 'Semana atual (7d):' : 'Limite semanal:'}
-                          </span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <span style={{ color: themeTokens.textPrimary, fontWeight: 700 }}>
-                              {currentQuota.weeklyPercent}% disp.
-                            </span>
-                            <span style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>
-                              ({100 - currentQuota.weeklyPercent}% usado)
-                            </span>
+                      {/* Quotas: título curto à esquerda, barra à direita, divisórias entre as categorias */}
+                      {(() => {
+                        const short = (t?: string) => { const m = /\(em ([^)]+)\)/.exec(t || ''); return m ? `reseta em ${m[1]}` : (t || '').slice(0, 28); };
+                        const tone = (pct: number) => (pct <= 0 ? '#ef4444' : pct <= 15 ? '#f97316' : accentColor);
+                        const track = isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)';
+                        const row = (label: string, sub: string, pct: number, value: string, color: string, valueColor?: string, used?: string) => (
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, fontFamily: 'Poppins, sans-serif' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: themeTokens.textPrimary }}>{label}</span>
+                              <span style={{ fontSize: 10, color: themeTokens.textSecondary, whiteSpace: 'nowrap' }}>{sub}</span>
+                            </div>
+                            <div style={{ width: 118, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                              <span style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                                {used && <span style={{ fontSize: 10, fontWeight: 400, color: themeTokens.textSecondary }}>{used}</span>}
+                                <span style={{ fontSize: 11.5, fontWeight: 700, color: valueColor || themeTokens.textPrimary }}>{value}</span>
+                              </span>
+                              <div style={{ width: '100%', height: 6, background: track, borderRadius: 999, overflow: 'hidden' }}>
+                                <div style={{ width: `${Math.min(100, Math.max(0, pct))}%`, height: '100%', borderRadius: 999, background: `linear-gradient(90deg, ${hexToRgba(color, 0.7)}, ${color})`, boxShadow: `0 0 8px ${hexToRgba(color, 0.45)}`, transition: 'width 0.3s ease' }} />
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                        {/* Accent progress bar */}
-                        <div style={{ width: '100%', height: 4, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)', borderRadius: 2, overflow: 'hidden' }}>
-                          <div
-                            style={{
-                              width: `${Math.min(100, Math.max(0, currentQuota.weeklyPercent))}%`,
-                              height: '100%',
-                              background: accentColor,
-                              borderRadius: 2,
-                              transition: 'width 0.3s ease',
-                            }}
-                          />
-                        </div>
-                        <div
-                          style={{
-                            fontSize: 10.5,
-                            color: themeTokens.textSecondary,
-                            marginTop: 2,
-                            fontFamily: 'Poppins, sans-serif',
-                            whiteSpace: 'normal',
-                            wordBreak: 'break-word',
-                            lineHeight: '14px',
-                          }}
-                        >
-                          Reset semanal: {formatQuotaResetDisplay(currentQuota.weeklyResetTime, currentQuota.weeklyResetDay || 'Sexta-feira', true)}
-                        </div>
-                      </div>
+                        );
+                        const divider = <div style={{ height: 1, width: '100%', flexShrink: 0, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.12)' }} />;
+                        return (
+                          <>
+                            {row(pid === 'claude' ? 'Sessão 5h' : 'Diário', short(currentQuota.dailyResetTime), currentQuota.dailyPercent, `${currentQuota.dailyPercent}%`, tone(currentQuota.dailyPercent))}
+                            {divider}
+                            {row(pid === 'claude' ? 'Semana' : 'Semanal', short(currentQuota.weeklyResetTime), currentQuota.weeklyPercent, `${currentQuota.weeklyPercent}%`, tone(currentQuota.weeklyPercent))}
+                            {pid === 'claude' && claudeDaily && (
+                              <>
+                                {divider}
+                                {(() => {
+                                  // 0 a 100: quanto do limite de hoje ainda resta; o dia reinicia à meia-noite
+                                  const left = claudeDaily.budget > 0 ? Math.max(0, Math.min(100, Math.round((claudeDaily.remaining / claudeDaily.budget) * 100))) : 0;
+                                  const nowD = new Date();
+                                  const ms = new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate() + 1).getTime() - nowD.getTime();
+                                  const h = Math.floor(ms / 3600000);
+                                  const m = Math.floor((ms % 3600000) / 60000);
+                                  return row(
+                                    'Hoje',
+                                    `reseta em ${h > 0 ? `${h}h ` : ''}${m}min`,
+                                    left,
+                                    // sobra de hoje em % da semana: (semana restante ÷ dias que faltam, que já inclui o que sobrou dos dias anteriores) − o usado hoje
+                                    `${Math.max(0, claudeDaily.remaining).toFixed(1)}%`,
+                                    claudeDaily.exceeded ? '#f59e0b' : tone(left),
+                                    claudeDaily.exceeded ? '#f59e0b' : undefined
+                                  );
+                                })()}
+                              </>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>
               );
             })()}
+                <div style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{renderAiIcon(pid, 17)}</div>
+              </div>
+            ))}
 
             {/* Header AI Selector Button & Dropdown */}
             <div style={{ position: 'relative' }} ref={headerAiMenuRef}>
@@ -8308,7 +8877,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 });
               }}
               style={{
-                width: 24,
+                width: 18,
                 height: 24,
                 display: 'flex',
                 alignItems: 'center',
@@ -8332,9 +8901,9 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 e.preventDefault();
                 setIsAiGlobalRulesModalOpen(true);
               }}
-              title={`IA Ativa: ${AI_PROVIDERS.find((p) => p.id === selectedAiProvider)?.name || 'Claude'} · ${selectedModel || 'Padrão'} (Clique para alternar · Botão direito para Regras Globais)`}
+              title="Escolher IA e modelo · fixe com o alfinete para acompanhar o uso"
             >
-              {renderAiIcon(selectedAiProvider, 17)}
+              <ChevronDown size={14} color={themeTokens.textSecondary} style={{ transform: isHeaderAiMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
             </div>
 
             {/* Header AI Dropdown Menu */}
@@ -8495,6 +9064,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                         {isInstalled && (
                           <>
+                            <span
+                              onClick={(e) => { e.stopPropagation(); togglePinnedAi(p.id); }}
+                              title={pinnedAis.includes(p.id) ? 'Desafixar do cabeçalho' : 'Fixar no cabeçalho para acompanhar o uso'}
+                              style={{ display: 'flex', cursor: 'pointer', padding: 2, borderRadius: 4, opacity: pinnedAis.includes(p.id) ? 1 : 0.55 }}
+                            >
+                              {pinnedAis.includes(p.id) ? <Pin size={12} color={accentColor} fill={accentColor} /> : <Pin size={12} color={themeTokens.textSecondary} />}
+                            </span>
                             {isSelected && (
                               <Check size={13} color={accentColor} />
                             )}
@@ -9319,38 +9895,6 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   {/* Divider */}
                   <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)', margin: '4px 0' }} />
 
-                  {/* Extensions */}
-                  <div
-                    onClick={() => {
-                      setSettingsActiveTab('extensions');
-                      setIsSettingsModalOpen(true);
-                      setIsSettingsMenuOpen(false);
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '5px 12px',
-                      cursor: 'pointer',
-                      fontSize: 11,
-                      color: '#cccccc',
-                      transition: 'background 0.08s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = '#04395e';
-                      e.currentTarget.style.color = '#ffffff';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'transparent';
-                      e.currentTarget.style.color = '#cccccc';
-                    }}
-                  >
-                    <span>Extensions</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                      <span style={{ fontSize: 10, color: '#888888', fontFamily: 'monospace' }}>⇧ ⌘ X</span>
-                    </div>
-                  </div>
-
                   {/* Keyboard Shortcuts */}
                   <div
                     onClick={() => {
@@ -9471,11 +10015,31 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               )}
             </div>
 
+          {/* Notificações (abre a sidebar com a lista e o histórico) */}
+          <div
+            onClick={() => setIsNotifOpen((v) => !v)}
+            style={{ position: 'relative', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: isNotifOpen ? accentColor : (isEffectiveDark ? '#858585' : themeTokens.textSecondary), cursor: 'pointer', borderRadius: 4, transition: 'all 0.15s ease' }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)}
+            onMouseLeave={(e) => (e.currentTarget.style.color = isNotifOpen ? accentColor : (isEffectiveDark ? '#858585' : themeTokens.textSecondary))}
+            title={notifCenter.unread > 0 ? `Notificações (${notifCenter.unread} novas)` : 'Notificações'}
+          >
+            <Bell size={18} />
+            {notifCenter.unread > 0 && (
+              <span style={{ position: 'absolute', top: -5, right: -6, minWidth: 15, height: 15, borderRadius: 8, background: accentColor, color: accentTextColor, fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', boxSizing: 'border-box' }}>
+                {notifCenter.unread > 99 ? '99+' : notifCenter.unread}
+              </span>
+            )}
+          </div>
+
           {/* Vertical Divider */}
           <div style={{ width: 1, height: 24, background: isEffectiveDark ? '#373737' : 'rgba(0, 0, 0, 0.1)' }} />
 
           {/* Profile: GitHub name / nick + avatar */}
-          <div style={{ justifyContent: 'flex-start', alignItems: 'center', gap: 12, display: 'flex', whiteSpace: 'nowrap' }}>
+          <div style={{ position: 'relative' }}>
+          <div
+            onClick={() => setIsProfileMenuOpen((v) => !v)}
+            style={{ justifyContent: 'flex-start', alignItems: 'center', gap: 12, display: 'flex', whiteSpace: 'nowrap', cursor: 'pointer' }}
+          >
             <div style={{ flexDirection: 'column', justifyContent: 'flex-start', alignItems: 'flex-end', display: 'inline-flex' }}>
               <div style={{ color: isEffectiveDark ? '#ffffff' : themeTokens.textPrimary, fontSize: 13, fontFamily: 'Poppins', fontWeight: '400', lineHeight: '14px', whiteSpace: 'nowrap' }}>
                 {githubUser?.name || githubUser?.login || 'Usuário'}
@@ -9518,6 +10082,32 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 alt={githubUser?.login || 'Usuário'}
               />
             </div>
+          </div>
+          {isProfileMenuOpen && (
+            <>
+              <div onClick={() => setIsProfileMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 99998 }} />
+              <div style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, minWidth: 170, padding: 6, borderRadius: 10, background: isEffectiveDark ? '#1a1a1c' : '#ffffff', boxShadow: '0 16px 40px rgba(0,0,0,0.6)', zIndex: 99999, fontFamily: 'Poppins, sans-serif' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsProfileMenuOpen(false);
+                    if (githubUser) {
+                      let lastLogin: string | null = null;
+                      try { lastLogin = localStorage.getItem('devflow_github_last_login'); } catch {}
+                      setSignedOutUser({ user: githubUser, lastLogin });
+                    }
+                    setGithubAuthStatus('unauthenticated');
+                  }}
+                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: 'none', borderRadius: 6, background: 'transparent', color: themeTokens.textPrimary, fontSize: 12.5, cursor: 'pointer', textAlign: 'left' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <LogOut size={14} />
+                  Sair
+                </button>
+              </div>
+            </>
+          )}
           </div>
         </div>
       </div>
@@ -9806,50 +10396,6 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   <CodiconRemoteExplorer size={22} />
                 </div>
 
-                {/* 6. Extensions Marketplace (Open VSX) */}
-                <div
-                  style={{
-                    width: 38,
-                    height: 38,
-                    borderRadius: 6,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    position: 'relative',
-                    cursor: 'pointer',
-                    background: (showExplorer && activeActivityTab === 'extensions')
-                      ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
-                      : 'transparent',
-                    color: (showExplorer && activeActivityTab === 'extensions')
-                      ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
-                      : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
-                    transition: 'all 0.15s ease',
-                  }}
-                  title="Extensões do VS Code (Open VSX Marketplace) (⌘⇧X)"
-                  onClick={() => {
-                    if (showExplorer && activeActivityTab === 'extensions') {
-                      setShowExplorer(false);
-                    } else {
-                      setActiveActivityTab('extensions');
-                      setShowExplorer(true);
-                    }
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!(showExplorer && activeActivityTab === 'extensions')) {
-                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
-                      e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : themeTokens.textPrimary;
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!(showExplorer && activeActivityTab === 'extensions')) {
-                      e.currentTarget.style.background = 'transparent';
-                      e.currentTarget.style.color = isEffectiveDark ? '#858585' : themeTokens.textSecondary;
-                    }
-                  }}
-                >
-                  <CodiconExtensions size={22} />
-                </div>
-
                 {/* 7. Testing (VS Code & Antigravity Beaker) */}
                 <div
                   style={{
@@ -9893,73 +10439,6 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 >
                   <CodiconBeaker size={20} />
                 </div>
-
-                {/* Extension-contributed Activity Bar shortcuts (contributes.viewsContainers.activitybar) */}
-                {installedExtensions
-                  .filter((ext) => ext.enabled && Array.isArray(ext.activityBarViews) && ext.activityBarViews.length > 0)
-                  .flatMap((ext) =>
-                    ext.activityBarViews.map((view: { id: string; title: string; icon?: string }) => {
-                      const isActive = activeExtensionDetails?.namespace === ext.namespace && activeExtensionDetails?.name === ext.name;
-                      return (
-                        <div
-                          key={`${ext.namespace}.${ext.name}.${view.id}`}
-                          style={{
-                            width: 38,
-                            height: 38,
-                            borderRadius: 6,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            position: 'relative',
-                            cursor: 'pointer',
-                            background: isActive
-                              ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
-                              : 'transparent',
-                            color: isActive
-                              ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
-                              : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
-                            transition: 'all 0.15s ease',
-                          }}
-                          title={`${view.title} (${ext.displayName || ext.name})`}
-                          onClick={() => setActiveExtensionDetails(ext)}
-                          onMouseEnter={(e) => {
-                            if (!isActive) {
-                              e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
-                              e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : themeTokens.textPrimary;
-                            }
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!isActive) {
-                              e.currentTarget.style.background = 'transparent';
-                              e.currentTarget.style.color = isEffectiveDark ? '#858585' : themeTokens.textSecondary;
-                            }
-                          }}
-                        >
-                          {view.icon ? (
-                            <div
-                              role="img"
-                              aria-label={view.title}
-                              style={{
-                                width: 20,
-                                height: 20,
-                                backgroundColor: 'currentColor',
-                                WebkitMaskImage: `url(${view.icon})`,
-                                maskImage: `url(${view.icon})`,
-                                WebkitMaskSize: 'contain',
-                                maskSize: 'contain',
-                                WebkitMaskRepeat: 'no-repeat',
-                                maskRepeat: 'no-repeat',
-                                WebkitMaskPosition: 'center',
-                                maskPosition: 'center',
-                              }}
-                            />
-                          ) : (
-                            <Blocks size={20} />
-                          )}
-                        </div>
-                      );
-                    })
-                  )}
 
                 {/* Settings Gear (Pinned to Bottom) */}
                 <div
@@ -10018,6 +10497,9 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               >
                 {activeActivityTab !== 'explorer' ? (
                   <SidebarPanels
+                    previewUrl={previewTabUrl}
+                    projects={headerProjectsList}
+                    onOpenPreview={(u) => { setPreviewTabUrl(u); setPreviewTabActive(true); }}
                     activeTab={activeActivityTab}
                     workspacePath={workspacePath}
                     themeTokens={themeTokens}
@@ -10048,11 +10530,6 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     onOpenBranchModal={() => setIsBranchModalOpen(true)}
                     currentBranch={currentBranch}
                     onGenerateCommitMessage={handleGenerateCommitMessage}
-                    installedExtensions={installedExtensions}
-                    onSelectExtension={(ext) => setActiveExtensionDetails(ext)}
-                    onInstallExtension={handleInstallExtension}
-                    onUninstallExtension={handleUninstallExtension}
-                    onToggleExtensionEnabled={handleToggleExtensionEnabled}
                   />
                 ) : (
                   <>
@@ -10676,48 +11153,30 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   transition: 'background 0.2s ease',
                 }}
               >
-                {/* Active Extension Details Tab (VS Code Style) */}
-                {activeExtensionDetails && (
+                {previewTabUrl && (
                   <div
-                    onClick={() => {}}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 7,
-                      padding: '5px 12px',
-                      background: hexToRgba(accentColor, 0.16),
-                      borderBottom: `2px solid ${accentColor}`,
-                      color: themeTokens.textPrimary,
-                      fontSize: 12,
-                      fontWeight: 500,
-                      cursor: 'pointer',
-                      userSelect: 'none',
-                      flexShrink: 0,
-                      borderRadius: '4px 4px 0 0',
-                    }}
+                    onClick={() => setPreviewTabActive(true)}
+                    style={{ height: 28, paddingLeft: 10, paddingRight: 8, borderRadius: 5, background: previewTabActive ? (isEffectiveDark ? '#1c1c1c' : '#e5e7eb') : 'transparent', alignItems: 'center', gap: 6, display: 'flex', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
                   >
-                    <Blocks size={13} color={accentColor} />
-                    <span>Extensão: {activeExtensionDetails.displayName || activeExtensionDetails.name}</span>
+                    <Monitor size={14} color={accentColor} />
+                    <div style={{ color: previewTabActive ? themeTokens.textPrimary : themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: previewTabActive ? 500 : 400 }}>
+                      Preview {previewTabUrl.replace(/^https?:\/\//, '')}
+                    </div>
                     <div
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setActiveExtensionDetails(null);
-                      }}
-                      style={{ padding: 2, borderRadius: 3, display: 'flex', alignItems: 'center' }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.15)')}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                      title="Fechar Aba da Extensão"
+                      onClick={(e) => { e.stopPropagation(); setPreviewTabUrl(null); setPreviewTabActive(false); }}
+                      title="Fechar preview"
+                      style={{ width: 16, height: 16, borderRadius: 3, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
                     >
-                      <X size={12} />
+                      <X size={12} color={themeTokens.textSecondary} />
                     </div>
                   </div>
                 )}
 
-                {openFiles.length === 0 ? (
+                {openFiles.length === 0 && !previewTabUrl ? (
                   <div style={{ padding: '0 10px', color: themeTokens.textSecondary, fontSize: 12 }}>Nenhum arquivo aberto</div>
                 ) : (
                   openFiles.map((file, idx) => {
-                    const isActive = activeFileId === file.id;
+                    const isActive = activeFileId === file.id && !previewTabActive;
 
                     return (
                       <React.Fragment key={file.id}>
@@ -10735,7 +11194,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             e.dataTransfer.setData('text/plain', `@[${file.path || file.id}]`);
                             e.dataTransfer.effectAllowed = 'copy';
                           }}
-                          onClick={() => setActiveFileId(file.id)}
+                          onClick={() => { setActiveFileId(file.id); setPreviewTabActive(false); }}
                           style={{
                             height: 28,
                             paddingLeft: 10,
@@ -10862,20 +11321,6 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   </div>
                 )}
 
-                {/* 0.5 Extension-contributed editor/title actions (per file type, from installed extensions' manifests) */}
-                {getEditorTitleActions(installedExtensions, activeFile?.name, isEffectiveDark).map((action, aIdx) => (
-                  <ExtensionTitleActionButton
-                    key={`${action.extensionName}-${action.command}-${aIdx}`}
-                    action={action}
-                    themeTokens={themeTokens}
-                    isEffectiveDark={isEffectiveDark}
-                    onClick={() =>
-                      setToastMessage(
-                        `"${action.title}" (${action.extensionName}): execução de comandos de extensões ainda não é suportada nesta IDE.`
-                      )
-                    }
-                  />
-                ))}
                 {/* 1. Split Editor Right / Vertical */}
                 <div
                   onClick={() => {
@@ -11124,7 +11569,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 width: '100%',
                 flex: '1 1 0',
                 minHeight: 0,
-                padding: activeExtensionDetails ? 0 : 10,
+                padding: 10,
                 background: themeTokens.bgCard,
                 borderRadius: 10,
                 border: '1px solid ' + themeTokens.border,
@@ -11133,20 +11578,8 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 transition: 'max-width 0.2s ease, background 0.2s ease',
               }}
             >
-              {activeExtensionDetails ? (
-                <ExtensionDetailsView
-                  extension={activeExtensionDetails}
-                  isInstalled={installedExtensions.some((i: any) => i.namespace === activeExtensionDetails.namespace && i.name === activeExtensionDetails.name)}
-                  themeTokens={themeTokens}
-                  isEffectiveDark={isEffectiveDark}
-                  accentColor={accentColor}
-                  onClose={() => setActiveExtensionDetails(null)}
-                  onInstall={handleInstallExtension}
-                  onUninstall={handleUninstallExtension}
-                  onToggleEnabled={handleToggleExtensionEnabled}
-                  onApplyTheme={(themeData, themeLabel) => handleApplyVscodeTheme(themeData, themeLabel)}
-                  onToast={(msg) => setToastMessage(msg)}
-                />
+              {previewTabActive && previewTabUrl ? (
+                <PreviewTabView url={previewTabUrl} onUrlChange={setPreviewTabUrl} themeTokens={themeTokens} isEffectiveDark={isEffectiveDark} accentColor={accentColor} />
               ) : activeReview ? (
                 <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%' }}>
                   {/* Review Toolbar */}
@@ -11844,7 +12277,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                       {/* Split Terminal ([|]) */}
                       {(() => {
-                        const activeSession = terminalSessions.find((s) => s.id === activeSessionId);
+                        const activeSession = ideTerminalSessions.find((s) => s.id === activeSessionId);
                         const isCurrentSplit = !!activeSession?.splitWithId;
                         return (
                           <div
@@ -12058,17 +12491,17 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     >
                     {/* Native Xterm Terminals Container (VS Code Multi-pane Split Engine) */}
                     {(() => {
-                      const currentActive = terminalSessions.find((s) => s.id === activeSessionId) || terminalSessions[0];
+                      const currentActive = ideTerminalSessions.find((s) => s.id === activeSessionId) || ideTerminalSessions[0];
                       const sibling = currentActive?.splitWithId
-                        ? terminalSessions.find((s) => s.id === currentActive.splitWithId)
+                        ? ideTerminalSessions.find((s) => s.id === currentActive.splitWithId)
                         : null;
 
                       let leftSession = currentActive;
                       let rightSession = sibling;
 
                       if (sibling && currentActive) {
-                        const activeIdx = terminalSessions.findIndex((s) => s.id === currentActive.id);
-                        const siblingIdx = terminalSessions.findIndex((s) => s.id === sibling.id);
+                        const activeIdx = ideTerminalSessions.findIndex((s) => s.id === currentActive.id);
+                        const siblingIdx = ideTerminalSessions.findIndex((s) => s.id === sibling.id);
                         if (siblingIdx < activeIdx) {
                           leftSession = sibling;
                           rightSession = currentActive;
@@ -12108,14 +12541,14 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               position: 'relative',
                             }}
                           >
-                            {terminalSessions.map((s) => {
+                            {allIdeTerminalSessions.map((s) => {
                               if (isSplit && s.id === rightSession?.id) return null;
                               return (
                                 <NativeXTerm
                                   key={s.id}
                                   sessionId={s.id}
                                   sessionType={s.type}
-                                  cwd={workspacePath || terminalCwd || '/Users/walancy/Documents/codes/devflow-desktop'}
+                                  cwd={s.projectPath || workspacePath || terminalCwd || '/Users/walancy/Documents/codes/devflow-desktop'}
                                   isActive={s.id === leftSession?.id}
                                   initialCommand={s.initialCommand}
                                   accentColor={accentColor}
@@ -12175,7 +12608,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   key={rightSession.id}
                                   sessionId={rightSession.id}
                                   sessionType={rightSession.type}
-                                  cwd={workspacePath || terminalCwd || '/Users/walancy/Documents/codes/devflow-desktop'}
+                                  cwd={rightSession.projectPath || workspacePath || terminalCwd || '/Users/walancy/Documents/codes/devflow-desktop'}
                                   isActive={activeSessionId === rightSession.id}
                                   initialCommand={rightSession.initialCommand}
                                   accentColor={accentColor}
@@ -12234,11 +12667,11 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           gap: 1,
                         }}
                       >
-                        {terminalSessions.map((s, index) => {
+                        {ideTerminalSessions.map((s, index) => {
                           const isActive = s.id === activeSessionId;
                           const isHovered = s.id === hoveredRowId;
                           const hasSibling = !!s.splitWithId;
-                          const siblingIndex = hasSibling ? terminalSessions.findIndex((other) => other.id === s.splitWithId) : -1;
+                          const siblingIndex = hasSibling ? ideTerminalSessions.findIndex((other) => other.id === s.splitWithId) : -1;
                           const isFirstSplit = hasSibling && siblingIndex > index;
                           const isSecondSplit = hasSibling && siblingIndex < index;
 
@@ -12402,7 +12835,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                       {/* VS Code Rich Tooltip Popover (Floating to the left of the sessions list) */}
                       {hoveredSessionId && (() => {
-                        const hoveredSession = terminalSessions.find((s) => s.id === hoveredSessionId);
+                        const hoveredSession = ideTerminalSessions.find((s) => s.id === hoveredSessionId);
                         if (!hoveredSession) return null;
 
                         return (
@@ -12509,183 +12942,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   </>
                 )}
 
-                {/* 2. Problems View */}
-                {activeTermTab === 'problems' && (
-                  <ProblemsPanelView
-                    problems={allProblems}
-                    activeFile={activeFile}
-                    onOpenFile={handleOpenFile}
-                    onJumpToLocation={(filePath, line, col) => {
-                      if (editorInstanceRef.current) {
-                        editorInstanceRef.current.revealPositionInCenter({ lineNumber: line, column: col });
-                        editorInstanceRef.current.setPosition({ lineNumber: line, column: col });
-                        editorInstanceRef.current.focus();
-                      }
-                    }}
-                    onRunProjectCheck={handleRunProjectCheck}
-                    isCheckingProject={isCheckingProject}
-                    lastCheckedTime={lastProjectCheckTime}
-                    themeTokens={themeTokens}
-                    accentColor={accentColor}
-                    isEffectiveDark={isEffectiveDark}
-                    onAskAiAboutProblem={(prob) => {
-                      setActiveTab('cli');
-                    }}
-                  />
-                )}
-
-                {/* 3. Output View */}
-                {activeTermTab === 'output' && (
-                  <div
-                    style={{
-                      flex: '1 1 0',
-                      alignSelf: 'stretch',
-                      padding: 14,
-                      background: themeTokens.bgCard,
-                      borderRadius: 10,
-                      border: '1px solid ' + themeTokens.border,
-                      flexDirection: 'column',
-                      gap: 6,
-                      display: 'flex',
-                      overflowY: 'auto',
-                      fontFamily: 'JetBrains Mono, Menlo, monospace',
-                      fontSize: 12,
-                      color: themeTokens.textSecondary,
-                    }}
-                  >
-                    <div style={{ color: accentColor }}>[Aura Dev Build Server] Compilando ambiente...</div>
-                    <div>[Nest] 58135 - 09/16/2026, 10:00:00 AM LOG [NestFactory] Starting Nest application...</div>
-                    <div>[Nest] 58135 - 09/16/2026, 10:00:01 AM LOG [InstanceLoader] ConfigHostModule dependencies initialized</div>
-                    <div>[Nest] 58135 - 09/16/2026, 10:00:01 AM LOG [InstanceLoader] ConfigModule dependencies initialized</div>
-                    <div>[Nest] 58135 - 09/16/2026, 10:00:02 AM LOG [RoutesResolver] AppController &#123;/api&#125;: mapped &#123;/status, GET&#125;</div>
-                    <div style={{ color: '#3fb950' }}>[Vite] Client build successful in 189ms.</div>
-                  </div>
-                )}
-
-                {/* 4. Debug Console View */}
-                {activeTermTab === 'debug' && (
-                  <div
-                    style={{
-                      flex: '1 1 0',
-                      alignSelf: 'stretch',
-                      padding: 14,
-                      background: themeTokens.bgCard,
-                      borderRadius: 10,
-                      border: '1px solid ' + themeTokens.border,
-                      flexDirection: 'column',
-                      justifyContent: 'space-between',
-                      display: 'flex',
-                      fontFamily: 'JetBrains Mono, Menlo, monospace',
-                      fontSize: 12,
-                    }}
-                  >
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto' }}>
-                      {debugHistory.map((item, idx) => (
-                        <div key={idx} style={{ color: item.startsWith('>') ? accentColor : themeTokens.textSecondary }}>
-                          {item}
-                        </div>
-                      ))}
-                    </div>
-
-                    <form onSubmit={handleDebugSubmit} style={{ display: 'flex', alignItems: 'center', gap: 6, borderTop: '1px solid ' + themeTokens.border, paddingTop: 8 }}>
-                      <span style={{ color: accentColor }}>&gt;</span>
-                      <input
-                        type="text"
-                        value={debugCommand}
-                        onChange={(e) => setDebugCommand(e.target.value)}
-                        placeholder="Avaliar expressão (ex: 2 + 2, Date.now(), process.platform)"
-                        style={{
-                          flex: 1,
-                          background: 'transparent',
-                          border: 'none',
-                          outline: 'none',
-                          color: themeTokens.textPrimary,
-                          fontSize: 12,
-                          fontFamily: 'JetBrains Mono, Menlo, monospace',
-                        }}
-                      />
-                    </form>
-                  </div>
-                )}
-
-                {/* 5. Ports View */}
-                {activeTermTab === 'ports' && (
-                  <div
-                    style={{
-                      flex: '1 1 0',
-                      alignSelf: 'stretch',
-                      padding: 14,
-                      background: themeTokens.bgCard,
-                      borderRadius: 10,
-                      border: '1px solid ' + themeTokens.border,
-                      flexDirection: 'column',
-                      gap: 8,
-                      display: 'flex',
-                      overflowY: 'auto',
-                    }}
-                  >
-                    <div style={{ color: themeTokens.textPrimary, fontSize: 13, fontWeight: 500, marginBottom: 4, whiteSpace: 'nowrap' }}>
-                      Portas Encaminhadas e Serviços Ativos
-                    </div>
-                    {[
-                      { port: 3000, proc: 'aura-dev-api (NestJS)', status: 'Online', url: 'http://localhost:3000' },
-                      { port: 5173, proc: 'wireframe (Vite)', status: 'Online', url: 'http://localhost:5173' },
-                      { port: 5432, proc: 'postgresql (Docker)', status: 'Online', url: 'localhost:5432' },
-                    ].map((p) => (
-                      <div
-                        key={p.port}
-                        style={{
-                          padding: '8px 12px',
-                          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.03)',
-                          borderRadius: 6,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <Radio size={14} color="#3fb950" />
-                          <span style={{ color: themeTokens.textPrimary, fontWeight: 600, fontSize: 12.5 }}>:{p.port}</span>
-                          <span style={{ color: themeTokens.textSecondary, fontSize: 12 }}>{p.proc}</span>
-                        </div>
-                        <a
-                          href={p.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{
-                            color: accentColor,
-                            fontSize: 12,
-                            textDecoration: 'none',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 4,
-                          }}
-                        >
-                          {p.url}
-                          <ExternalLink size={12} />
-                        </a>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* 6. Tasks View */}
-                {activeTermTab === 'tasks' && (
-                  <ProjectTasksDockTab
-                    issues={gitIssues}
-                    isLoading={isLoadingIssues}
-                    onRefresh={refreshGitHubIssues}
-                    onDoWithAi={handleTaskDoWithAi}
-                    onOpenIssueDetails={handleOpenIssueSidesheet}
-                    currentUserLogin={githubUser?.login || 'walancy'}
-                    repoName={activeHeaderProject?.fullName || gitRepoName}
-                    sprints={projectMilestones}
-                    themeTokens={themeTokens}
-                    isEffectiveDark={isEffectiveDark}
-                    accentColor={accentColor}
-                  />
-                )}
+                {['problems', 'output', 'debug', 'ports', 'tasks'].includes(activeTermTab) && renderIdeDockTab(activeTermTab)}
               </div>
                 </div>
             </>
@@ -14176,19 +14433,19 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           {
                             id: `explore-${f.name}-${fIdx}`,
                             type: 'explore' as const,
-                            label: 'Explored 1 file',
+                            label: 'Explorou 1 arquivo',
                             children: [
                               {
                                 id: `analyzed-${f.name}-${fIdx}`,
                                 type: 'analyze' as const,
-                                label: `Analyzed ${f.name}`,
+                                label: `Analisou ${f.name}`,
                                 file: f.name,
                                 path: f.path,
                               },
                               {
                                 id: `thought-${f.name}-${fIdx}`,
                                 type: 'thought' as const,
-                                label: 'Thought for 1s',
+                                label: 'Pensou por 1s',
                                 duration: '1s',
                               },
                             ],
@@ -14196,7 +14453,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           {
                             id: `edit-${f.name}-${fIdx}`,
                             type: 'edit' as const,
-                            label: `Edited ${f.name}`,
+                            label: `Editou ${f.name}`,
                             file: f.name,
                             path: f.path,
                             additions: f.additions,
@@ -14258,7 +14515,8 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               steps={steps || undefined}
                               workedDuration={item.workedDuration}
                               thoughtSnippet={item.thoughtSnippet}
-                              isWorking={isAiExecuting && idx === aiHistory.length - 1}
+                              isWorking={isAiExecuting && idx === aiHistory.length - 1 && !(item.text && item.timestamp)}
+                              liveAction={liveCurrentAction}
                               terminalCommands={item.terminalCommands || undefined}
                               changedFiles={item.changedFiles || undefined}
                               onOpenFileAction={(path, name, lineRange) => {
@@ -16474,6 +16732,24 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
       {/* 2.6 CLI Terminal Workspace (Navegação de arquivos + Terminal com abas) */}
       {activeTab === 'cli' && (
         <CliTerminalView
+          dockTabs={(() => {
+            const problemsCount = allProblems.length > 0 ? allProblems.length : (editorErrors + editorWarnings);
+            return [
+              { id: 'problems', label: 'Problems', count: problemsCount },
+              { id: 'output', label: 'Output', count: outputLines.length || undefined },
+              { id: 'debug', label: 'Debug console', count: debugHistory.length },
+              { id: 'terminal', label: 'Terminal' },
+              { id: 'ports', label: 'Ports', count: projectServers.length || undefined },
+            ];
+          })()}
+          renderDockContent={renderIdeDockTab}
+          problemsSummary={{ errors: allProblems.filter((p) => p.severity === 'error').length, warnings: allProblems.filter((p) => p.severity === 'warning').length }}
+          problemsPrompt={(() => {
+            if (!allProblems.length) return '';
+            const sorted = [...allProblems].sort((a, b) => b.severityCode - a.severityCode);
+            const lines = sorted.slice(0, 40).map((p) => `- ${p.relPath || p.filePath}:${p.line}:${p.column} [${p.source || 'editor'}${p.code ? ' ' + p.code : ''}] ${p.severity === 'error' ? 'erro' : 'aviso'}: ${p.message.replace(/\s+/g, ' ').slice(0, 220)}`);
+            return `Resolva estes problemas do projeto (${allProblems.length} no total${allProblems.length > 40 ? ', mostrando os 40 mais graves' : ''}). Corrija a causa sem mudar o comportamento e rode a checagem de novo no final:\n${lines.join('\n')}`;
+          })()}
           workspacePath={workspacePath}
           fileTree={fileTree}
           expandedFolders={expandedFolders}
@@ -16498,11 +16774,11 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           isEffectiveDark={isEffectiveDark}
           accentColor={accentColor}
           selectedAiProvider={selectedAiProvider}
-          terminalSessions={terminalSessions}
-          setTerminalSessions={setTerminalSessions}
-          activeSessionId={activeSessionId}
-          setActiveSessionId={setActiveSessionId}
-          onNewSession={handleNewTerminalSession}
+          terminalSessions={cliTerminalSessions}
+          setTerminalSessions={setCliSessions}
+          activeSessionId={cliActiveSessionId}
+          setActiveSessionId={setCliActiveSessionId}
+          onNewSession={(type, name, cmd) => handleNewTerminalSession(type, name, cmd, 'cli')}
           onCloseSession={handleKillTerminalSession}
           terminalFontSize={terminalFontSize}
           onSetTerminalFontSize={setTerminalFontSize}
@@ -17145,12 +17421,38 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           onOpenSettings={() => setIsSettingsModalOpen(true)}
         />
 
+        {/* sempre montado: o próprio painel anima a entrada/saída */}
+        {(
+          <NotificationCenterPanel
+            open={isNotifOpen}
+            items={notifCenter.items}
+            onClose={() => setIsNotifOpen(false)}
+            onRead={notifCenter.read}
+            onReadAll={notifCenter.readAll}
+            onRemove={notifCenter.remove}
+            onClearHistory={notifCenter.clearHistory}
+            onOpen={(n) => {
+              notifCenter.read(n.id);
+              if (n.projectPath && n.projectPath.toLowerCase() !== (workspacePathRef.current || '').toLowerCase()) handleSelectWorkspace(n.projectPath, n.projectName);
+              if (n.source) {
+                setActiveTab(n.source === 'ide' ? 'ide' : n.source === 'cli' ? 'cli' : 'design');
+                setIsNotifOpen(false);
+              }
+            }}
+            accentColor={accentColor}
+            isEffectiveDark={isEffectiveDark}
+            themeTokens={themeTokens}
+          />
+        )}
+
         {/* Notificações flutuantes de conclusão de IA entre projetos */}
         <ProjectAiNotificationToast
           notifications={aiNotifications}
           onDismiss={(id) => setAiNotifications((prev) => prev.filter((n) => n.id !== id))}
           onNavigateToProject={(projectPath, repoName, source) => {
             if (source === 'design') {
+              // volta ao projeto onde a IA gerou e abre o Design
+              if (projectPath && projectPath.toLowerCase() !== (workspacePathRef.current || '').toLowerCase()) handleSelectWorkspace(projectPath, repoName);
               setActiveTab('design');
               return;
             }
@@ -17308,7 +17610,6 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               setIsSkillsModalOpen(true);
             }}
             activeSkillsCount={activeSkills.length}
-            installedClis={installedClis}
           />
         )}
 
@@ -17329,7 +17630,11 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             setThemeMode={setThemeMode}
             useAiChatThemeColor={useAiChatThemeColor}
             setUseAiChatThemeColor={setUseAiChatThemeColor}
+            useAiSystemAccent={useAiSystemAccent}
+            setUseAiSystemAccent={setUseAiSystemAccent}
             selectedAiProvider={selectedAiProvider}
+            rainbow={rainbow}
+            setRainbow={setRainbow}
           />
         )}
 
@@ -17377,8 +17682,18 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             onCreateIssue={handleCreateIssue}
             issuesSearchQuery={issuesSearchQuery}
             setIssuesSearchQuery={setIssuesSearchQuery}
-            onLinkIssueToChat={handleLinkIssueToChat}
+            onLinkIssueToChat={handleResolveIssueWithAi}
+            aiProvider={selectedAiProvider}
+            aiProviders={AI_PROVIDERS.map((p) => ({ id: p.id, name: p.name }))}
+            onChangeAiProvider={handleSwitchAiProvider}
+            renderAiIcon={renderAiIcon}
             onOpenIssueInBrowser={handleOpenIssueInBrowser}
+            onOpenIssueDetails={(n) => {
+              // abre os detalhes por cima e guarda de onde veio: o Voltar do título retorna a esta lista
+              setSidesheetFromList(true);
+              setIsIssuesModalOpen(false);
+              handleOpenIssueSidesheet(n);
+            }}
           />
         )}
 
@@ -17402,7 +17717,8 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           accentColor={accentColor}
           accentContrastText={getContrastTextColor(accentColor)}
           currentUser={githubUser ? { login: githubUser.login, avatarUrl: githubUser.avatarUrl || avatarImg } : null}
-          onClose={() => setSidesheetIssue(null)}
+          onClose={() => { setSidesheetIssue(null); setSidesheetFromList(false); }}
+          onBackToList={sidesheetFromList ? () => { setSidesheetIssue(null); setSidesheetFromList(false); setIsIssuesModalOpen(true); } : undefined}
           onUpdateIssue={async (updatedFields) => {
             if (!sidesheetIssue) return;
             setSidesheetIssue((prev) => prev ? { ...prev, ...updatedFields } : null);

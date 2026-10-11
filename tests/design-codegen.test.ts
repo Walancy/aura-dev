@@ -59,3 +59,13 @@ describe('codegen', () => {
     expect(dart).toContain('SizedBox(width: 8)');
   });
 });
+
+describe('texto com estilo por trecho no código', () => {
+  const text = { id: 't', type: 'text', x: 0, y: 0, width: 200, height: 20, rotation: 0, opacity: 1, visible: true, zIndex: 1, fill: '#111', fontSize: 16, text: 'Olá mundo', runs: [{ start: 4, end: 9, fontWeight: 700, href: 'https://x.com' }] } as any;
+  it('HTML e React usam spans com o estilo de cada trecho', () => {
+    const html = generateHtml([text], text);
+    expect(html).toContain('Olá <a href="https://x.com" style="font-weight: 700; text-decoration: underline">mundo</a>');
+    const react = generateReact([text], text);
+    expect(react).toContain('<a href="https://x.com" style={{ fontWeight: 700, textDecoration: "underline" }}>mundo</a>');
+  });
+});

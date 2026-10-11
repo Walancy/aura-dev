@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { applyStyles, colorStyleFromShape, textStyleFromShape } from '../src/components/design2/styles';
+import { applyStyles, colorStyleFromShape, STYLE_FIELD, styleFromShape, textStyleFromShape } from '../src/components/design2/styles';
 import type { DesignStyle, Shape } from '../src/components/design2/types';
 
 const mk = (p: Partial<Shape> & { id: string }): Shape =>
@@ -31,5 +31,30 @@ describe('styles', () => {
     expect(applyStyles(shapes, [{ id: 's', name: 'x', kind: 'color', color: '#fff', opacity: 1 }])).toBe(shapes);
     expect(colorStyleFromShape(mk({ id: 'a', fill: '#abcdef' }), 'n', 'Azul')).toMatchObject({ kind: 'color', color: '#abcdef', opacity: 1 });
     expect(textStyleFromShape(mk({ id: 'a', fontSize: 20 }), 'n', 'Corpo')).toMatchObject({ kind: 'text', fontSize: 20 });
+  });
+});
+
+describe('estilos de efeito e de grade', () => {
+  const shape = (extra: any = {}) => ({ id: 's', type: 'frame', x: 0, y: 0, width: 10, height: 10, rotation: 0, opacity: 1, visible: true, zIndex: 1, ...extra } as any);
+  const fx = [{ id: 'e1', type: 'drop-shadow', visible: true, x: 0, y: 4, blur: 8, spread: 0, color: '#000', opacity: 0.3 }] as any;
+  const grids = [{ id: 'g1', kind: 'columns', visible: true, count: 4, gutter: 10, margin: 0, size: 80, alignment: 'stretch', color: '#f00', opacity: 0.1 }] as any;
+
+  it('criar a partir do shape copia os efeitos e as grades', () => {
+    expect(styleFromShape('effect', shape({ effects: fx }), 'x', 'Sombra')).toMatchObject({ kind: 'effect', effects: fx });
+    expect(styleFromShape('grid', shape({ layoutGrids: grids }), 'y', 'Colunas')).toMatchObject({ kind: 'grid', grids });
+  });
+
+  it('mudar o estilo propaga para quem o usa', () => {
+    const st = [{ id: 'fx', name: 'Sombra', kind: 'effect', effects: fx }, { id: 'gr', name: 'Grade', kind: 'grid', grids }] as any;
+    const out = applyStyles([shape({ effectStyleId: 'fx', gridStyleId: 'gr' })], st);
+    expect(out[0].effects).toEqual(fx);
+    expect(out[0].layoutGrids).toEqual(grids);
+    // sem mudança: devolve a mesma referência
+    expect(applyStyles(out, st)).toBe(out);
+  });
+
+  it('o campo guardado por tipo de estilo', () => {
+    expect(STYLE_FIELD.effect).toBe('effectStyleId');
+    expect(STYLE_FIELD.grid).toBe('gridStyleId');
   });
 });

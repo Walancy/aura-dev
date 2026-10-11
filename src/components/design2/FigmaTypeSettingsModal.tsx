@@ -11,6 +11,7 @@ import {
   ListOrdered,
 } from 'lucide-react';
 import { Shape } from './types';
+import { OPENTYPE_FEATURES, VARIATION_AXES, setAxis, toggleFeature } from './fontCss';
 import ScrubbableNumberInput from './ScrubbableNumberInput';
 
 interface FigmaTypeSettingsModalProps {
@@ -496,6 +497,37 @@ export default function FigmaTypeSettingsModal({
               isEffectiveDark={isEffectiveDark}
               style={{ width: 58, height: 24, borderRadius: 5 }}
             />
+          </div>
+
+          {/* Fontes variáveis: eixos (só têm efeito em fontes que os suportam) */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ color: textSecondary, fontSize: 11 }}>Variações da fonte</span>
+            {VARIATION_AXES.map((ax) => {
+              const cur = shape.fontVariations?.[ax.tag];
+              return (
+                <div key={ax.tag} style={{ display: 'grid', gridTemplateColumns: '80px 1fr 40px 18px', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 10.5, color: textSecondary }}>{ax.label}</span>
+                  <input type="range" min={ax.min} max={ax.max} step={ax.step} value={cur ?? ax.def} onChange={(e) => onChange({ fontVariations: setAxis(shape.fontVariations, ax.tag, Number(e.target.value)) })} style={{ accentColor }} />
+                  <span style={{ fontSize: 10.5, color: cur === undefined ? textSecondary : textPrimary, textAlign: 'right' }}>{cur ?? '—'}</span>
+                  <button type="button" title="Voltar ao padrão da fonte" disabled={cur === undefined} onClick={() => onChange({ fontVariations: setAxis(shape.fontVariations, ax.tag, undefined) })} style={{ background: 'transparent', border: 'none', color: textSecondary, cursor: cur === undefined ? 'default' : 'pointer', opacity: cur === undefined ? 0.3 : 1, padding: 0, fontSize: 12 }}>↺</button>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Recursos OpenType */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ color: textSecondary, fontSize: 11 }}>Recursos OpenType</span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {OPENTYPE_FEATURES.map((f) => {
+                const on = !!shape.fontFeatures?.includes(f.tag);
+                return (
+                  <button key={f.tag} type="button" title={f.title} onClick={() => onChange({ fontFeatures: toggleFeature(shape.fontFeatures, f.tag) })} style={{ ...getSegmentBtnStyle(on), background: on ? accentColor : bgSecondary, color: on ? '#fff' : textSecondary, borderRadius: 5 }}>
+                    {f.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Truncate text */}

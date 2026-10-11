@@ -10,7 +10,6 @@ import {
   Image as ImageIcon,
   Pencil,
   Type,
-  Hand,
   Hash,
   ChevronDown,
   ArrowUp,
@@ -27,6 +26,10 @@ import {
   MonitorSmartphone,
   Paperclip,
   RotateCcw,
+  Info,
+  Zap,
+  Wand2,
+  Palette,
 } from 'lucide-react';
 import type { ToolId, Shape } from './types';
 import { renderAiIcon } from '../icons/AiProviderIcons';
@@ -36,13 +39,38 @@ import { AI_PROVIDERS, DEFAULT_AI_QUOTAS } from '../../constants/ai';
 export interface AiQueueItem {
   id: string;
   label: string;
+  /** imagens de referência anexadas ao pedido (data URLs) */
+  images?: string[];
+  /** texto original do pedido: o X devolve para a caixa de texto */
+  prompt?: string;
   status: 'queued' | 'running' | 'error';
   progress?: string;
 }
 
 export interface DesignToolbarProps {
   aiQueue?: AiQueueItem[];
-  onEnqueueAi?: (prompt: string, images: string[]) => void;
+  onEnqueueAi?: (prompt: string, images: string[], label?: string) => void;
+  /** Usar o contexto do projeto da header (README, docs, arquivos) nas gerações com IA */
+  useProjectContext?: boolean;
+  /** o processo principal do app está desatualizado (precisa reiniciar) */
+  mainOutdated?: boolean;
+  onToggleProjectContext?: (value: boolean) => void;
+  /** Telas geradas aguardando aceite (prontas, não em geração) e ação de aceitar todas */
+  /** Modo rápido: gera com a variante (Low) do modelo */
+  /** Há telas selecionadas: mostra o botão Corrigir (ajusta espaçamentos, tamanhos e posições) */
+  /** quantas telas (frames de topo) estão selecionadas */
+  selectedScreensCount?: number;
+  /** O projeto tem design tokens definidos (a IA os segue) e abre o painel deles */
+  hasDesignTokens?: boolean;
+  /** tokens existem e a IA os segue (liga/desliga pelo botão); sem tokens, o botão abre o painel para criá-los */
+  tokensFollowing?: boolean;
+  onToggleTokens?: () => void;
+  canFixLayout?: boolean;
+  onFixLayout?: () => void;
+  fastMode?: boolean;
+  onToggleFastMode?: (value: boolean) => void;
+  pendingAcceptCount?: number;
+  onAcceptAllAi?: () => void;
   onCancelAiJob?: (id: string) => void;
   /** Sobe o item uma posição na fila (nunca acima do que já está sendo gerado) */
   onMoveAiJobUp?: (id: string) => void;
@@ -216,6 +244,19 @@ export default function DesignToolbar({
   onPrototypeWithAi,
   aiQueue = [],
   onEnqueueAi,
+  useProjectContext = true,
+  mainOutdated = false,
+  onToggleProjectContext,
+  selectedScreensCount = 0,
+  hasDesignTokens = false,
+  tokensFollowing = false,
+  onToggleTokens,
+  canFixLayout = false,
+  onFixLayout,
+  fastMode = true,
+  onToggleFastMode,
+  pendingAcceptCount = 0,
+  onAcceptAllAi,
   onCancelAiJob,
   onMoveAiJobUp,
   onRetryAiJob,
@@ -244,7 +285,7 @@ export default function DesignToolbar({
       reader.onload = () => {
         const img = new Image();
         img.onload = () => {
-          const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+          const k = Math.min(1, 1280 / Math.max(img.width, img.height)); // menor = a IA lê mais rápido (os modelos reduzem imagens grandes de qualquer jeito)
           const c = document.createElement('canvas');
           c.width = Math.round(img.width * k);
           c.height = Math.round(img.height * k);
@@ -252,7 +293,7 @@ export default function DesignToolbar({
           ctx.fillStyle = '#ffffff';
           ctx.fillRect(0, 0, c.width, c.height);
           ctx.drawImage(img, 0, 0, c.width, c.height);
-          setAiImages((prev) => (prev.length >= 6 ? prev : [...prev, c.toDataURL('image/jpeg', 0.85)]));
+          setAiImages((prev) => (prev.length >= 6 ? prev : [...prev, c.toDataURL('image/jpeg', 0.8)]));
         };
         img.src = String(reader.result);
       };
@@ -283,6 +324,7 @@ export default function DesignToolbar({
 
   // "Enviado": feedback rápido no botão; o trabalho segue na fila
   const [justSent, setJustSent] = useState(false);
+  const [showSendHint, setShowSendHint] = useState(false);
   const [expandedJobs, setExpandedJobs] = useState<Record<string, boolean>>({});
   const sentTimer = useRef<any>(null);
   const handleSendAi = () => {
@@ -695,11 +737,26 @@ export default function DesignToolbar({
                     >
                       <ChevronDown size={14} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
                     </button>
+                    {!expanded && (job.images?.length ?? 0) > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }} title={`${job.images!.length} imagem(ns) de referência`}>
+                        {job.images!.slice(0, 3).map((src, i) => (
+                          <img key={i} src={src} alt="" style={{ width: 28, height: 28, borderRadius: 6, objectFit: 'cover', border: `1px solid ${themeTokens.border}` }} />
+                        ))}
+                        {job.images!.length > 3 && <span style={{ fontSize: 10, color: themeTokens.textMuted }}>+{job.images!.length - 3}</span>}
+                      </div>
+                    )}
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div
                         title={expanded ? undefined : job.label}
                         style={{ fontSize: 12, color: themeTokens.textPrimary, lineHeight: 1.4, ...(expanded ? { whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 160, overflowY: 'auto' } : { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }) }}
                       >{job.label}</div>
+                      {expanded && (job.images?.length ?? 0) > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                          {job.images!.map((src, i) => (
+                            <img key={i} src={src} alt={`Referência ${i + 1}`} style={{ width: 72, height: 72, borderRadius: 8, objectFit: 'cover', border: `1px solid ${themeTokens.border}` }} />
+                          ))}
+                        </div>
+                      )}
                       <div style={{ fontSize: 10.5, color: themeTokens.textMuted, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {failed ? <span style={{ color: '#f87171' }} title={job.progress}>Falhou: {job.progress}</span> : running ? job.progress || 'Iniciando…' : `Na fila · ${idx}º`}
                       </div>
@@ -714,7 +771,13 @@ export default function DesignToolbar({
                         <ArrowUp size={14} />
                       </button>
                     )}
-                    <button type="button" title={running ? 'Cancelar geração' : failed ? 'Dispensar' : 'Remover da fila'} onClick={() => onCancelAiJob?.(job.id)} style={iconBtn}>
+                    <button type="button" title={running ? 'Cancelar geração' : failed ? 'Dispensar' : 'Remover da fila'} onClick={() => {
+                      if (job.prompt) { // não perde o que foi escrito: volta para a caixa de texto
+                        setAiPromptText((t) => (t.trim() ? `${t}\n${job.prompt}` : job.prompt!));
+                        if (job.images?.length) setAiImages((im) => (im.length ? im : job.images!));
+                      }
+                      onCancelAiJob?.(job.id);
+                    }} style={iconBtn}>
                       <X size={14} />
                     </button>
                     {running && <Loader2 size={15} className="animate-spin" style={{ flexShrink: 0, color: accentColor }} />}
@@ -1011,11 +1074,11 @@ export default function DesignToolbar({
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
                 }}
-                title={`Frame selecionado: ${selectedFrame.name}`}
+                title={selectedScreensCount > 1 ? `${selectedScreensCount} telas selecionadas: a IA aplica o pedido em todas` : `Frame selecionado: ${selectedFrame.name}`}
               >
                 <Hash size={12} color={accentColor} style={{ flexShrink: 0 }} />
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {selectedFrame.name}
+                  {selectedScreensCount > 1 ? `${selectedScreensCount} telas` : selectedFrame.name}
                 </span>
               </div>
             )}
@@ -1103,6 +1166,13 @@ export default function DesignToolbar({
             </button>
           </div>
 
+          {mainOutdated && (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px', borderRadius: 8, background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.35)', color: '#fbbf24', fontSize: 11.5, lineHeight: 1.45 }}>
+              <span style={{ flexShrink: 0 }}>⚠</span>
+              <span><strong>Reinicie o app.</strong> O processo principal está desatualizado: imagens de referência, fotos da IA e outros recursos novos não funcionam até reiniciar.</span>
+            </div>
+          )}
+
           {/* Campo de Digitação de Prompt com Altura Vertical Expandida */}
           <div
             onDragOver={(e) => e.preventDefault()}
@@ -1166,7 +1236,9 @@ export default function DesignToolbar({
                 }
               }}
               placeholder={
-                selectedFrame
+                selectedScreensCount > 1
+                  ? `Modificar as ${selectedScreensCount} telas selecionadas com IA... Ex: 'Troque a cor primária para azul'`
+                  : selectedFrame
                   ? `Modificar "${selectedFrame.name}" com IA... Ex: 'Adicionar barra de busca e 3 cards de métricas'`
                   : "Descreva a tela para a IA prototipar... Ex: 'Tela de login moderna com dark mode e botão Google'"
               }
@@ -1201,15 +1273,90 @@ export default function DesignToolbar({
               <input ref={aiFileRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { addAiImages(Array.from(e.target.files || [])); e.target.value = ''; }} />
               <button
                 type="button"
-                title="Anexar imagens de referência (ou cole / arraste aqui)"
+                title="Anexar imagens"
                 onClick={() => aiFileRef.current?.click()}
                 style={{ background: 'transparent', border: 'none', color: aiImages.length ? accentColor : themeTokens.textMuted, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, padding: '4px 6px', marginRight: 6, flexShrink: 0 }}
               >
                 <Paperclip size={14} />{aiImages.length > 0 && aiImages.length}
               </button>
-              <span style={{ fontSize: 11, color: themeTokens.textMuted, userSelect: 'none', flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', }}>
-                Pressione <strong style={{ color: themeTokens.textSecondary }}>Enter</strong> para {selectedFrame ? 'modificar' : 'prototipar'} ou <strong style={{ color: themeTokens.textSecondary }}>Shift+Enter</strong> para pular linha
-              </span>
+              <button
+                type="button"
+                onClick={() => onToggleTokens?.()}
+                title={!hasDesignTokens ? 'Design tokens (criar)' : tokensFollowing ? 'Design tokens: ligado' : 'Design tokens: desligado'}
+                style={{ width: 28, height: 28, border: 'none', borderRadius: 8, padding: 0, marginRight: 4, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: tokensFollowing ? accentColor + '26' : 'transparent', color: tokensFollowing ? accentColor : themeTokens.textMuted, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}
+              >
+                <Palette size={14} />
+              </button>
+              {canFixLayout && (
+                <button
+                  type="button"
+                  onClick={() => onFixLayout?.()}
+                  title="Corrigir layout"
+                  style={{ width: 28, height: 28, border: 'none', borderRadius: 8, padding: 0, marginRight: 4, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', color: themeTokens.textSecondary, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}
+                >
+                  <Wand2 size={14} />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => onToggleFastMode?.(!fastMode)}
+                title={fastMode ? 'Modo rápido: ligado' : 'Modo rápido: desligado'}
+                style={{ width: 28, height: 28, border: 'none', borderRadius: 8, padding: 0, marginRight: 4, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: fastMode ? accentColor + '26' : 'transparent', color: fastMode ? accentColor : themeTokens.textMuted, fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}
+              >
+                <Zap size={14} />
+              </button>
+              {pendingAcceptCount > 1 && (
+                <button
+                  type="button"
+                  onClick={() => onAcceptAllAi?.()}
+                  title="Aceitar todas as telas geradas que estão aguardando revisão"
+                  style={{ height: 24, border: 'none', borderRadius: 7, padding: '0 10px', marginRight: 8, flexShrink: 0, background: accentColor, color: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: "'Poppins', sans-serif" }}
+                >
+                  ✓ Aceitar tudo ({pendingAcceptCount})
+                </button>
+              )}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={useProjectContext}
+                onClick={() => onToggleProjectContext?.(!useProjectContext)}
+                title={useProjectContext ? 'Contexto do projeto: ligado' : 'Contexto do projeto: desligado'}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px 6px', marginRight: 8, flexShrink: 0, color: useProjectContext ? themeTokens.textPrimary : themeTokens.textMuted, fontSize: 11, fontFamily: "'Poppins', sans-serif" }}
+              >
+                <span style={{ position: 'relative', width: 26, height: 15, borderRadius: 8, background: useProjectContext ? accentColor : (isEffectiveDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.18)'), transition: 'background 0.15s ease', flexShrink: 0 }}>
+                  <span style={{ position: 'absolute', top: 2, left: useProjectContext ? 13 : 2, width: 11, height: 11, borderRadius: 6, background: '#fff', transition: 'left 0.15s ease' }} />
+                </span>
+                Contexto do projeto
+              </button>
+              <div style={{ flex: 1 }} />
+
+              {/* ⓘ: atalhos de envio em um tooltip (antes era um texto fixo na barra) */}
+              <div
+                style={{ position: 'relative', display: 'flex', alignItems: 'center', marginRight: 8, flexShrink: 0 }}
+                onMouseEnter={() => setShowSendHint(true)}
+                onMouseLeave={() => setShowSendHint(false)}
+              >
+                <button
+                  type="button"
+                  aria-label="Atalhos de envio"
+                  tabIndex={-1}
+                  onFocus={() => setShowSendHint(true)}
+                  onBlur={() => setShowSendHint(false)}
+                  style={{ background: 'transparent', border: 'none', padding: 4, cursor: 'help', color: showSendHint ? themeTokens.textPrimary : themeTokens.textMuted, display: 'flex', alignItems: 'center', transition: 'color 0.12s ease' }}
+                >
+                  <Info size={15} />
+                </button>
+                {showSendHint && (
+                  <div
+                    role="tooltip"
+                    style={{ position: 'absolute', right: 0, bottom: 'calc(100% + 8px)', whiteSpace: 'nowrap', padding: '7px 11px', borderRadius: 8, fontSize: 11.5, lineHeight: 1.5, fontFamily: "'Poppins', sans-serif", color: isEffectiveDark ? '#f1f1f1' : '#1e293b', background: isEffectiveDark ? '#1a1a1a' : '#ffffff', border: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`, boxShadow: isEffectiveDark ? '0 10px 30px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.05)' : '0 10px 25px rgba(0,0,0,0.15)', pointerEvents: 'none', zIndex: 130 }}
+                  >
+                    <strong>Enter</strong> para {selectedFrame ? 'modificar' : 'gerar'}
+                    <br />
+                    <strong>Shift+Enter</strong> para pular linha
+                  </div>
+                )}
+              </div>
 
               <button
                 id="design-ai-prompt-submit"
@@ -1299,35 +1446,6 @@ export default function DesignToolbar({
                 </div>
               ),
             })}
-
-            {/* 1.5 MÃO / PAN (H) */}
-            <button
-              type="button"
-              onClick={() => onSelectTool('hand')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                height: 32,
-                minWidth: 32,
-                padding: '0 7px',
-                borderRadius: 8,
-                border: 'none',
-                background: tool === 'hand' ? accentColor : 'transparent',
-                color: tool === 'hand' ? '#ffffff' : themeTokens.textPrimary,
-                cursor: 'pointer',
-                transition: 'all 0.12s ease',
-              }}
-              title="Mão / Pan (H)"
-              onMouseEnter={(e) => {
-                if (tool !== 'hand') e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
-              }}
-              onMouseLeave={(e) => {
-                if (tool !== 'hand') e.currentTarget.style.background = 'transparent';
-              }}
-            >
-              <Hand size={16} />
-            </button>
 
             {/* 2. FRAME / SECTION / SLICE */}
             {renderSplitToolGroup({

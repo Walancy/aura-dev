@@ -1,5 +1,5 @@
 import React from 'react';
-import { Settings, X, GaugeCircle, Palette, Code, SquareTerminal, Bot, Keyboard, Blocks, Folder, GitBranch } from 'lucide-react';
+import { Settings, X, GaugeCircle, Palette, Code, SquareTerminal, Bot, Keyboard, Folder, GitBranch } from 'lucide-react';
 import { hexToRgba } from '../../utils/color';
 import type { ThemeTokens } from '../../types/ide';
 import type { AiMode } from '../../constants/ai';
@@ -9,9 +9,8 @@ import { EditorSettingsTab } from './settings/EditorSettingsTab';
 import { TerminalSettingsTab } from './settings/TerminalSettingsTab';
 import { AiAgentsSettingsTab } from './settings/AiAgentsSettingsTab';
 import { ShortcutsSettingsTab } from './settings/ShortcutsSettingsTab';
-import { ExtensionsSettingsTab } from './settings/ExtensionsSettingsTab';
 
-export type SettingsTabId = 'general' | 'appearance' | 'editor' | 'terminal' | 'ai' | 'shortcuts' | 'extensions';
+export type SettingsTabId = 'general' | 'appearance' | 'editor' | 'terminal' | 'ai' | 'shortcuts';
 
 export interface SettingsModalProps {
   themeTokens: ThemeTokens;
@@ -86,8 +85,6 @@ export interface SettingsModalProps {
   onOpenSkills?: () => void;
   activeSkillsCount?: number;
 
-  // Extensions tab
-  installedClis: Record<string, boolean>;
 }
 
 const SETTINGS_TABS: Array<{ id: SettingsTabId; label: string; icon: React.ReactNode }> = [
@@ -97,7 +94,6 @@ const SETTINGS_TABS: Array<{ id: SettingsTabId; label: string; icon: React.React
   { id: 'terminal', label: 'Terminal', icon: <SquareTerminal size={15} /> },
   { id: 'ai', label: 'IA & Agentes', icon: <Bot size={15} /> },
   { id: 'shortcuts', label: 'Atalhos de Teclado', icon: <Keyboard size={15} /> },
-  { id: 'extensions', label: 'Extensões & Status', icon: <Blocks size={15} /> },
 ];
 
 // Settings modal shell: backdrop, dialog frame, header, sidebar nav, and composes
@@ -188,7 +184,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
                 Configurações
               </div>
               <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>
-                Estilização, editor, atalhos e extensões do Aura Dev
+                Estilização, editor e atalhos do Aura Dev
               </div>
             </div>
           </div>
@@ -401,15 +397,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
 
             {settingsActiveTab === 'shortcuts' && (
               <ShortcutsSettingsTab themeTokens={themeTokens} isEffectiveDark={isEffectiveDark} />
-            )}
-
-            {settingsActiveTab === 'extensions' && (
-              <ExtensionsSettingsTab
-                themeTokens={themeTokens}
-                isEffectiveDark={isEffectiveDark}
-                accentColor={accentColor}
-                installedClis={props.installedClis}
-              />
             )}
           </div>
         </div>
