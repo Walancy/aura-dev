@@ -1001,7 +1001,7 @@ ipcMain.handle('ai:checkCliUpdates', async () => {
     return new Promise((resolve) => {
       exec(cmd, {
         env: { ...process.env, PATH: envPath },
-        timeout: 2500,
+        timeout: 8000,
         shell: '/bin/zsh',
       }, (err: any, stdout: string) => {
         if (err || !stdout) resolve('');
@@ -1052,15 +1052,15 @@ ipcMain.handle('ai:checkCliUpdates', async () => {
         hasUpdate,
         currentVersion: claudeCur,
         latestVersion: claudeLatest || claudeCur,
-        updateCommand: 'npm install -g @anthropic-ai/claude-code@latest',
+        updateCommand: 'claude update',
       };
     }
 
     // Check Antigravity (agy)
     const agyCur = await getCliVersion('agy --version');
     if (agyCur) {
-      // Current agy version: e.g. 1.3.3. Simulated/known remote update 1.3.4
-      let agyLatest = '1.3.4';
+      // sem fonte oficial confiável da última versão: só sinaliza update se o endpoint responder
+      let agyLatest = '';
       try {
         const controller = new AbortController();
         const id = setTimeout(() => controller.abort(), 1500);
@@ -1075,8 +1075,8 @@ ipcMain.handle('ai:checkCliUpdates', async () => {
       results.antigravity = {
         hasUpdate,
         currentVersion: agyCur,
-        latestVersion: agyLatest,
-        updateCommand: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
+        latestVersion: agyLatest || agyCur,
+        updateCommand: 'agy update',
       };
     }
 
@@ -1096,13 +1096,13 @@ ipcMain.handle('ai:checkCliUpdates', async () => {
     // Check Codex
     const codexCur = await getCliVersion('codex --version');
     if (codexCur) {
-      const codexLatest = await getLatestNpmVersion('@openai/codex-cli');
+      const codexLatest = await getLatestNpmVersion('@openai/codex');
       const hasUpdate = isNewer(codexLatest, codexCur);
       results.codex = {
         hasUpdate,
         currentVersion: codexCur,
         latestVersion: codexLatest || codexCur,
-        updateCommand: 'npm install -g @openai/codex-cli@latest',
+        updateCommand: 'npm install -g @openai/codex@latest',
       };
     }
   } catch (e) {
@@ -1190,8 +1190,8 @@ ipcMain.handle('ai:getCommands', async (_event, { providerId }: { providerId: st
 });
 
 // Live AI Quotas
-ipcMain.handle('ai:getQuotas', async () => {
-  return quotaService.getQuotas();
+ipcMain.handle('ai:getQuotas', async (_e, force?: boolean) => {
+  return quotaService.getQuotas(!!force);
 });
 
 // Dynamic AI Models extractor and setter

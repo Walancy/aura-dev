@@ -133,7 +133,7 @@ export interface ElectronAPI {
     cancelAutonomous?: (runId: string) => Promise<{ cancelled: boolean }>;
     onOrchestratorEvent?: (callback: (event: { provider: string; kind: string; message: string; timestamp_ms: number; payload: unknown; runId?: string }) => void) => () => void;
     getCommands?: (providerId: string) => Promise<Array<{ command: string; description: string; usage?: string }>>;
-    getQuotas?: () => Promise<Record<string, { dailyPercent: number; weeklyPercent: number; dailyResetTime: string; weeklyResetDay: string; weeklyResetTime: string }>>;
+    getQuotas?: (force?: boolean) => Promise<Record<string, { dailyPercent: number; weeklyPercent: number; dailyResetTime: string; weeklyResetDay: string; weeklyResetTime: string }>>;
     getModels?: (providerId: string) => Promise<{ providerId: string; currentModel: string; currentModelId: string; models: Array<{ id: string; label: string; tag?: string; description?: string }> }>;
     setModel?: (providerId: string, modelId: string) => Promise<{ success: boolean; currentModel: string; message: string }>;
     saveChatLocally?: (session: any) => Promise<{ success: boolean; jsonPath: string; mdPath: string; error?: string }>;

@@ -89,9 +89,14 @@ export class QuotaService {
       }
     }
 
-    if (this.isFetching && this.cache) {
-      return this.cache;
-    }
+    if (this.inflight) return this.inflight;
+    this.inflight = this.fetchAll(now).finally(() => { this.inflight = null; });
+    return this.inflight;
+  }
+
+  private inflight: Promise<Record<string, AiQuotaConfig>> | null = null;
+
+  private async fetchAll(now: number): Promise<Record<string, AiQuotaConfig>> {
 
     const userHome = process.env.HOME || '';
 
@@ -270,7 +275,7 @@ export class QuotaService {
             encoding: 'utf8',
             shell: '/bin/zsh',
             env: execEnv,
-            timeout: 8000,
+            timeout: 25000,
           }, (_err, stdout) => {
             resolve(stdout ? stdout.toString() : '');
           });
@@ -322,7 +327,7 @@ export class QuotaService {
             encoding: 'utf8',
             shell: '/bin/zsh',
             env: execEnv,
-            timeout: 4000,
+            timeout: 15000,
           }, (_err, stdout) => {
             resolve(stdout ? stdout.toString() : '');
           });

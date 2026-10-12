@@ -195,8 +195,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     getCommands: (providerId: string) =>
       ipcRenderer.invoke('ai:getCommands', { providerId }),
-    getQuotas: () =>
-      ipcRenderer.invoke('ai:getQuotas'),
+    getQuotas: (force?: boolean) =>
+      ipcRenderer.invoke('ai:getQuotas', force),
     getModels: (providerId: string) =>
       ipcRenderer.invoke('ai:getModels', { providerId }),
     setModel: (providerId: string, modelId: string) =>

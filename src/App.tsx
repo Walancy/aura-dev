@@ -1208,12 +1208,6 @@ export const App: React.FC = () => {
 
   // AI CLI Updates state
   const [aiUpdatesAvailable, setAiUpdatesAvailable] = useState<Record<string, { hasUpdate: boolean; currentVersion?: string; latestVersion?: string; updateCommand?: string }>>({
-    antigravity: {
-      hasUpdate: true,
-      currentVersion: '1.3.3',
-      latestVersion: '1.3.4',
-      updateCommand: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
-    },
   });
   const notifiedUpdatesRef = useRef<Set<string>>(new Set());
 
@@ -6613,7 +6607,7 @@ export const App: React.FC = () => {
   // Fetch real live AI Quotas from native CLI service
   const refreshAiQuotas = useCallback(() => {
     if (window.electronAPI?.ai?.getQuotas) {
-      window.electronAPI.ai.getQuotas().then((quotas) => {
+      window.electronAPI.ai.getQuotas(true).then((quotas) => {
         if (quotas && Object.keys(quotas).length > 0) {
           setAiQuotas(quotas);
         }
