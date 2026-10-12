@@ -3,20 +3,27 @@ import { Bell, BellRing, Siren } from 'lucide-react';
 import { Panel, SmallButton, inputStyle } from '../../team/teamUi';
 import { DEFAULT_PROJECT_SETTINGS, isQuietNow } from '../projectSettingsStore';
 import { Field, Notice, NumberInput, Toggle, type SectionProps } from '../settingsUi';
+import { logSystemActivity } from '../../../utils/brainService';
 
 export const AlertsSection: React.FC<SectionProps> = ({ ctx, repoFullName, settings, update, showToast }) => {
   const { accentColor } = ctx;
   const al = settings.alerts;
   const nt = settings.notifications;
-  const setAl = (patch: Partial<typeof al>) => update((s) => ({ ...s, alerts: { ...s.alerts, ...patch } }));
-  const setNt = (patch: Partial<typeof nt>) => update((s) => ({ ...s, notifications: { ...s.notifications, ...patch } }));
+  const setAl = (patch: Partial<typeof al>) => {
+    logSystemActivity('configuracoes_projeto', 'atualizar_regras_alertas', repoFullName, patch);
+    update((s) => ({ ...s, alerts: { ...s.alerts, ...patch } }));
+  };
+  const setNt = (patch: Partial<typeof nt>) => {
+    logSystemActivity('configuracoes_projeto', 'atualizar_notificacoes', repoFullName, patch);
+    update((s) => ({ ...s, notifications: { ...s.notifications, ...patch } }));
+  };
   const setEv = (patch: Partial<typeof nt.events>) => setNt({ events: { ...nt.events, ...patch } });
 
   const testNotification = async () => {
-    if (nt.toast) showToast(`🔔 Teste de notificação — ${repoFullName}`);
+    if (nt.toast) showToast(`Teste de notificação — ${repoFullName}`);
     if (nt.system && 'Notification' in window) {
       const perm = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission;
-      if (perm === 'granted') new Notification('DevFlow', { body: `Teste de notificação — ${repoFullName}` });
+      if (perm === 'granted') new Notification('Aura Dev', { body: `Teste de notificação — ${repoFullName}` });
       else showToast('Notificações do sistema bloqueadas. Libere em Ajustes do macOS → Notificações.');
     }
   };
@@ -67,7 +74,7 @@ export const AlertsSection: React.FC<SectionProps> = ({ ctx, repoFullName, setti
         }
       >
         <div style={{ fontSize: 11.5, color: ctx.theme.textSecondary }}>
-          Com o DevFlow aberto, verifica este repositório periodicamente e avisa sobre eventos novos que envolvem você.
+          Com o Aura Dev aberto, verifica este repositório periodicamente e avisa sobre eventos novos que envolvem você.
         </div>
         {nt.enabled && isQuietNow(nt.quietStart, nt.quietEnd) && <Notice ctx={ctx}>Horário de silêncio ativo agora — as notificações ficam guardadas até o fim do período.</Notice>}
         <Field ctx={ctx} label="Issue atribuída a mim">

@@ -637,7 +637,7 @@ export class GitService {
         headers,
         body: JSON.stringify({
           title,
-          body: body || 'Criada via DevFlow IDE',
+          body: body || 'Criada via Aura Dev IDE',
         }),
       });
       if (res.ok) {
@@ -663,9 +663,14 @@ export class GitService {
       return { success: false, error: 'Diretório de destino inválido ou inexistente' };
     }
 
-    const cleanUrl = repoUrl.trim();
-    const parts = cleanUrl.split('/');
-    let folderName = parts[parts.length - 1] || 'repository';
+    const cleanUrl = repoUrl.trim().replace(/\/+$/, '');
+    let folderName = 'repository';
+    const lastSlash = cleanUrl.lastIndexOf('/');
+    const lastColon = cleanUrl.lastIndexOf(':');
+    const cutIdx = Math.max(lastSlash, lastColon);
+    if (cutIdx !== -1) {
+      folderName = cleanUrl.substring(cutIdx + 1);
+    }
     if (folderName.endsWith('.git')) {
       folderName = folderName.slice(0, -4);
     }
@@ -675,24 +680,131 @@ export class GitService {
       return { success: true, repoPath, error: 'Repositório já existe na pasta de destino' };
     }
 
-    return new Promise((resolve) => {
-      exec(
-        `git clone "${cleanUrl}"`,
-        {
-          cwd: targetParentDir,
-          timeout: 180000,
-          env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-        },
-        (error, _stdout, stderr) => {
-          if (error) {
-            resolve({ success: false, error: stderr || error.message });
-          } else {
-            resolve({ success: true, repoPath });
-          }
+    const userHome = process.env.HOME || process.env.USERPROFILE || '';
+    const customPaths = [
+      path.join(userHome, '.local/bin'),
+      '/opt/homebrew/bin',
+      '/usr/local/bin',
+      '/usr/bin',
+      '/bin',
+      '/usr/sbin',
+      '/sbin',
+    ];
+    const envPath = `${customPaths.join(':')}:${process.env.PATH || ''}`;
+    const token = this.getGitHubToken();
+
+    const baseEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: envPath,
+      GIT_TERMINAL_PROMPT: '0',
+      ...(token ? { GITHUB_TOKEN: token, GH_TOKEN: token } : {}),
+    };
+
+    const ghMatch = cleanUrl.match(/github\.com[:/]([^\/]+\/[^\/\.]+)(?:\.git)?$/i);
+    const ghRepoId = ghMatch ? ghMatch[1] : null;
+
+    const cleanupFailedDir = () => {
+      try {
+        if (fs.existsSync(repoPath)) {
+          fs.rmSync(repoPath, { recursive: true, force: true });
         }
+      } catch (err) {
+        console.warn('[GitService] Erro ao limpar diretório de clone:', err);
+      }
+    };
+
+    const runCmd = (cmd: string, envOverrides: NodeJS.ProcessEnv = {}): Promise<{ ok: boolean; stderr: string; stdout: string }> => {
+      return new Promise((resolve) => {
+        exec(
+          cmd,
+          {
+            cwd: targetParentDir,
+            timeout: 240000,
+            env: { ...baseEnv, ...envOverrides },
+          },
+          (error, stdout, stderr) => {
+            if (error) {
+              resolve({ ok: false, stderr: (stderr || error.message).trim(), stdout: (stdout || '').trim() });
+            } else {
+              resolve({ ok: true, stderr: (stderr || '').trim(), stdout: (stdout || '').trim() });
+            }
+          }
+        );
+      });
+    };
+
+    let lastError = '';
+
+    // 1. Tier 1: GitHub CLI (gh repo clone)
+    if (ghRepoId) {
+      console.log(`[GitService] Tentando clonar via gh repo clone: ${ghRepoId}`);
+      const ghRes = await runCmd(`gh repo clone "${ghRepoId}" "${repoPath}"`);
+      if (ghRes.ok && fs.existsSync(repoPath)) {
+        return { success: true, repoPath };
+      }
+      lastError = ghRes.stderr || ghRes.stdout;
+      cleanupFailedDir();
+    }
+
+    // 2. Tier 2: Git HTTPS autenticado com Token (se disponível)
+    if (ghRepoId && token) {
+      console.log(`[GitService] Tentando clonar via git token auth: ${ghRepoId}`);
+      const tokenCloneUrl = `https://x-access-token:${token}@github.com/${ghRepoId}.git`;
+      const tokenRes = await runCmd(`git clone "${tokenCloneUrl}" "${repoPath}"`);
+      if (tokenRes.ok && fs.existsSync(repoPath)) {
+        try {
+          execSync(`git remote set-url origin "${cleanUrl}"`, {
+            cwd: repoPath,
+            env: baseEnv,
+            timeout: 5000,
+          });
+        } catch {}
+        return { success: true, repoPath };
+      }
+      lastError = tokenRes.stderr || tokenRes.stdout;
+      cleanupFailedDir();
+    }
+
+    // 3. Tier 3: Git com gh credential helper embutido
+    if (cleanUrl.includes('github.com')) {
+      console.log(`[GitService] Tentando clonar com credential.helper gh auth: ${cleanUrl}`);
+      const credRes = await runCmd(
+        `git -c credential.helper= -c "credential.helper=!gh auth git-credential" clone "${cleanUrl}" "${repoPath}"`
       );
-    });
+      if (credRes.ok && fs.existsSync(repoPath)) {
+        return { success: true, repoPath };
+      }
+      lastError = credRes.stderr || credRes.stdout;
+      cleanupFailedDir();
+    }
+
+    // 4. Tier 4: Fallback SSH (se HTTPS falhou)
+    if (ghRepoId && cleanUrl.startsWith('http')) {
+      const sshUrl = `git@github.com:${ghRepoId}.git`;
+      console.log(`[GitService] Tentando clonar via SSH: ${sshUrl}`);
+      const sshRes = await runCmd(`git clone "${sshUrl}" "${repoPath}"`);
+      if (sshRes.ok && fs.existsSync(repoPath)) {
+        return { success: true, repoPath };
+      }
+      lastError = sshRes.stderr || sshRes.stdout;
+      cleanupFailedDir();
+    }
+
+    // 5. Tier 5: Fallback git clone padrão
+    console.log(`[GitService] Tentando git clone padrão: ${cleanUrl}`);
+    const stdRes = await runCmd(`git clone "${cleanUrl}" "${repoPath}"`);
+    if (stdRes.ok && fs.existsSync(repoPath)) {
+      return { success: true, repoPath };
+    }
+    lastError = stdRes.stderr || stdRes.stdout;
+    cleanupFailedDir();
+
+    return {
+      success: false,
+      error: lastError || 'Falha ao clonar repositório após todas as tentativas de autenticação.',
+    };
   }
+
 
   public getRecentCommitsSummary(
     options:

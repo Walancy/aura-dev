@@ -54,7 +54,7 @@ export const RepoFileEditor: React.FC<Props> = ({ ctx, owner, repo, path, title,
         path,
         content: text,
         sha: file?.sha,
-        message: `${file ? 'chore: atualiza' : 'chore: cria'} ${path} via DevFlow`,
+        message: `${file ? 'chore: atualiza' : 'chore: cria'} ${path} via Aura Dev`,
       });
       setFile({ sha: res?.content?.sha, content: text });
       showToast(`${path} salvo (commit na branch padrão).`);

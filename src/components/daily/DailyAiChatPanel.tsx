@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
-  Send,
+  ArrowRight,
   Sparkles,
   RotateCcw,
   Check,
@@ -10,12 +10,31 @@ import {
   AlertTriangle,
   Clock,
   ChevronRight,
+  ChevronDown,
   FolderGit2,
   ListTodo,
   ExternalLink,
+  Loader2,
 } from 'lucide-react';
-import { ClaudeIcon, AntigravityIcon, GeminiIcon } from '../icons/AiProviderIcons';
+import { renderAiIcon } from '../icons/AiProviderIcons';
 import { DailyItem, WeeklyGoal } from './DailySchedulerView';
+import { AI_BRAND_COLORS, AI_PROVIDERS, formatModelDisplayName } from '../../constants/ai';
+import { logSystemActivity } from '../../utils/brainService';
+
+function hexToRgba(hex: string, alpha: number): string {
+  if (!hex) return `rgba(255, 255, 255, ${alpha})`;
+  const clean = hex.replace('#', '');
+  if (clean.length === 3) {
+    const r = parseInt(clean[0] + clean[0], 16);
+    const g = parseInt(clean[1] + clean[1], 16);
+    const b = parseInt(clean[2] + clean[2], 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  const r = parseInt(clean.substring(0, 2), 16) || 0;
+  const g = parseInt(clean.substring(2, 4), 16) || 0;
+  const b = parseInt(clean.substring(4, 6), 16) || 0;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
 
 export interface SuggestedTask {
   id: string;
@@ -40,6 +59,162 @@ export interface ChatMessage {
   modelUsed?: string;
 }
 
+export function extractTasksFromMarkdown(
+  text: string,
+  defaultProject: string,
+  detectedProjects: string[] = [],
+  _allCommitsList: Array<{ project: string; hash: string; message: string }> = []
+): SuggestedTask[] {
+  if (!text) return [];
+
+  const lines = text.split('\n');
+  const tasks: SuggestedTask[] = [];
+
+  let currentCategory: 'yesterday' | 'today' | 'blocker' | 'weekly' = 'today';
+  let currentProject = defaultProject || 'Geral';
+
+  const ignorePatterns = [
+    /não consultei/i,
+    /apenas o registro/i,
+    /risco de haver/i,
+    /estancia bahia/i,
+    /#ponytail/i,
+    /#uiux/i,
+    /#/i,
+    /copilot de engenharia/i,
+    /aqui está o resumo/i,
+    /com base nos commits/i,
+    /analisei os/i,
+    /conforme solicitado/i,
+    /bom dia/i,
+    /olá/i,
+    /ola/i,
+  ];
+
+  const projRegex = /(?:(?:no\s+)?(?:projeto|reposit[óo]rio|repo))\s*(?::|\-)?\s*([a-zA-Z0-9_\-\.\/]+)/i;
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i].trim();
+    if (!rawLine) continue;
+
+    if (ignorePatterns.some((p) => p.test(rawLine))) continue;
+
+    const lowerLine = rawLine.toLowerCase();
+    const bulletMatch = rawLine.match(/^[\s]*(?:[•\-\*\+—]|\d+[\.\)])\s+(.*)$/);
+
+    // Se NÃO for um item de lista, pode ser um cabeçalho de categoria ou de projeto
+    if (!bulletMatch) {
+      if (
+        lowerLine.includes('ontem') ||
+        lowerLine.includes('concluíd') ||
+        lowerLine.includes('finalizad') ||
+        lowerLine.includes('entregue') ||
+        lowerLine.includes('yesterday') ||
+        lowerLine.includes('feito ontem')
+      ) {
+        currentCategory = 'yesterday';
+      } else if (
+        lowerLine.includes('impedimento') ||
+        lowerLine.includes('bloqueio') ||
+        lowerLine.includes('travament') ||
+        lowerLine.includes('risco') ||
+        lowerLine.includes('blocker')
+      ) {
+        currentCategory = 'blocker';
+      } else if (
+        lowerLine.includes('weekly') ||
+        lowerLine.includes('semana') ||
+        lowerLine.includes('meta da semana') ||
+        lowerLine.includes('metas semanais')
+      ) {
+        currentCategory = 'weekly';
+      } else if (
+        lowerLine.includes('hoje') ||
+        lowerLine.includes('a fazer') ||
+        lowerLine.includes('planejad') ||
+        lowerLine.includes('today') ||
+        lowerLine.includes('para hoje')
+      ) {
+        currentCategory = 'today';
+      }
+
+      const pMatch = rawLine.match(projRegex);
+      if (pMatch) {
+        const candidate = pMatch[1].replace(/[:,\*\s]+$/, '').trim();
+        if (
+          candidate &&
+          candidate.length > 2 &&
+          !['hoje', 'ontem', 'daily', 'weekly', 'geral', 'o', 'um', 'uma'].includes(candidate.toLowerCase())
+        ) {
+          currentProject = candidate;
+        }
+      }
+
+      for (const dp of detectedProjects) {
+        if (lowerLine.includes(dp.toLowerCase())) {
+          currentProject = dp;
+          break;
+        }
+      }
+      continue;
+    }
+
+    // É um item de tarefa/atividade!
+    let itemContent = bulletMatch[1].trim();
+    if (ignorePatterns.some((p) => p.test(itemContent))) continue;
+    if (itemContent.length < 4) continue;
+
+    let itemProject = currentProject;
+    const inlineProjMatch =
+      itemContent.match(/^\[([a-zA-Z0-9_\-\.\/]+)\]\s*(.*)$/) ||
+      itemContent.match(/^\(([a-zA-Z0-9_\-\.\/]+)\)\s*(.*)$/);
+    if (inlineProjMatch) {
+      itemProject = inlineProjMatch[1];
+      itemContent = inlineProjMatch[2];
+    }
+
+    let title = itemContent;
+    let description = '';
+
+    const boldMatch = itemContent.match(/^\*\*(.*?)\*\*(?::?\s*(.*))?$/);
+    if (boldMatch) {
+      title = boldMatch[1].trim();
+      description = boldMatch[2]?.trim() || '';
+    } else {
+      const colonIdx = itemContent.indexOf(':');
+      if (colonIdx > 8 && colonIdx < 60) {
+        title = itemContent.slice(0, colonIdx).trim();
+        description = itemContent.slice(colonIdx + 1).trim();
+      }
+    }
+
+    title = title.replace(/\*\*/g, '').replace(/`/g, '').trim();
+    description = description.replace(/\*\*/g, '').replace(/`/g, '').trim();
+
+    if (title.length >= 4) {
+      tasks.push({
+        id: `task_parsed_${Date.now()}_${tasks.length}_${Math.random().toString(36).slice(2, 6)}`,
+        category: currentCategory,
+        title,
+        description: description || `Identificado na análise da Daily (${itemProject})`,
+        projectName: itemProject,
+        tag:
+          currentCategory === 'yesterday'
+            ? 'Git Sync'
+            : currentCategory === 'blocker'
+            ? 'Impedimento'
+            : currentCategory === 'weekly'
+            ? 'Weekly'
+            : 'Hoje',
+        priority: currentCategory === 'blocker' ? 'Alta' : 'Média',
+        estimatedHours: 2,
+      });
+    }
+  }
+
+  return tasks;
+}
+
 interface DailyAiChatPanelProps {
   selectedDate: Date;
   selectedDateIso: string;
@@ -54,6 +229,9 @@ interface DailyAiChatPanelProps {
   onAddWeeklyGoal: (goal: Partial<WeeklyGoal>) => void;
   selectedAiProvider?: string;
   selectedModel?: string;
+  activeModels?: Record<string, any>;
+  onSelectAiProvider?: (providerId: string) => void;
+  onSelectModel?: (modelItem: { id: string; label: string } | string, providerId?: string) => void;
   onToast?: (msg: string) => void;
 }
 
@@ -71,8 +249,95 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
   onAddWeeklyGoal,
   selectedAiProvider = 'claude',
   selectedModel,
+  activeModels,
+  onSelectAiProvider,
+  onSelectModel,
   onToast,
 }) => {
+  const [currentAiProvider, setCurrentAiProvider] = useState<string>(selectedAiProvider || 'claude');
+  const [currentModel, setCurrentModel] = useState<string>(selectedModel || '');
+  const [isAiDropdownOpen, setIsAiDropdownOpen] = useState(false);
+  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+
+  useEffect(() => {
+    if (selectedAiProvider && selectedAiProvider !== currentAiProvider) {
+      setCurrentAiProvider(selectedAiProvider);
+    }
+  }, [selectedAiProvider]);
+
+  useEffect(() => {
+    if (selectedModel && selectedModel !== currentModel) {
+      setCurrentModel(selectedModel);
+    }
+  }, [selectedModel]);
+
+  const availableModels = useMemo(() => {
+    const dyn = activeModels?.[currentAiProvider]?.models || [];
+    if (dyn.length > 0) {
+      return dyn.map((m: any) => (typeof m === 'string' ? { id: m, label: m } : m));
+    }
+    const prov = AI_PROVIDERS.find((p) => p.id === currentAiProvider);
+    return (prov?.models || []).map((m) => ({ id: m, label: m }));
+  }, [currentAiProvider, activeModels]);
+
+  const currentModelDisplay = useMemo(() => {
+    const active = currentModel || activeModels?.[currentAiProvider]?.currentModel;
+    if (active) return formatModelDisplayName(active) || active;
+    if (availableModels.length > 0) {
+      return formatModelDisplayName(availableModels[0].label) || availableModels[0].label;
+    }
+    return 'Padrão';
+  }, [currentModel, currentAiProvider, activeModels, availableModels]);
+
+  const currentProviderName = useMemo(() => {
+    const p = AI_PROVIDERS.find((item) => item.id === currentAiProvider);
+    return p?.name || currentAiProvider || 'IA';
+  }, [currentAiProvider]);
+
+  const handleSelectProvider = (provId: string) => {
+    setCurrentAiProvider(provId);
+    setIsAiDropdownOpen(false);
+    setIsModelDropdownOpen(false);
+
+    const provModels = activeModels?.[provId]?.models || AI_PROVIDERS.find((p) => p.id === provId)?.models || [];
+    const firstModel = provModels[0];
+    const firstModelLabel = typeof firstModel === 'string' ? firstModel : firstModel?.label || '';
+    const firstModelId = typeof firstModel === 'string' ? firstModel : firstModel?.id || firstModelLabel;
+
+    if (firstModelLabel) {
+      setCurrentModel(firstModelLabel);
+    }
+
+    if (onSelectAiProvider) {
+      onSelectAiProvider(provId);
+    }
+    if (onSelectModel && firstModelLabel) {
+      onSelectModel({ id: firstModelId, label: firstModelLabel }, provId);
+    }
+
+    const provName = AI_PROVIDERS.find((p) => p.id === provId)?.name || provId;
+    logSystemActivity('daily_copilot', 'Troca de IA', repoName || 'Daily', {
+      provider: provId,
+      model: firstModelLabel,
+    });
+    onToast?.(`IA alterada para ${provName}`);
+  };
+
+  const handleSelectModelOption = (modelItem: { id: string; label: string }) => {
+    setCurrentModel(modelItem.label);
+    setIsModelDropdownOpen(false);
+
+    if (onSelectModel) {
+      onSelectModel(modelItem, currentAiProvider);
+    }
+
+    logSystemActivity('daily_copilot', 'Troca de Modelo', repoName || 'Daily', {
+      provider: currentAiProvider,
+      model: modelItem.label,
+    });
+    onToast?.(`Modelo alterado para ${formatModelDisplayName(modelItem.label) || modelItem.label}`);
+  };
+
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     return [
       {
@@ -87,7 +352,15 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
   const [inputPrompt, setInputPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${Math.min(Math.max(textareaRef.current.scrollHeight, 28), 120)}px`;
+    }
+  }, [inputPrompt]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -134,6 +407,11 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
       onToast?.(`Tarefa adicionada à Daily: "${task.title}"`);
     }
 
+    logSystemActivity('daily_copilot', 'Sugestão aplicada', task.projectName || repoName || 'Daily', {
+      taskTitle: task.title,
+      category: task.category,
+    });
+
     setMessages((prev) =>
       prev.map((msg) => {
         if (msg.id !== msgId || !msg.suggestedTasks) return msg;
@@ -155,12 +433,26 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
   };
 
   const cliInfo = useMemo(() => {
-    const p = (selectedAiProvider || '').toLowerCase();
+    const p = (currentAiProvider || '').toLowerCase();
     if (p.includes('codex')) return { cmd: 'codex', label: 'Codex CLI' };
     if (p.includes('antigravity') || p.includes('agy')) return { cmd: 'agy', label: 'Antigravity CLI' };
     if (p.includes('gemini')) return { cmd: 'gemini', label: 'Gemini CLI' };
     return { cmd: 'claude', label: 'Claude Code CLI' };
-  }, [selectedAiProvider]);
+  }, [currentAiProvider]);
+
+  const chatAccentColor = useMemo(() => {
+    const p = (currentAiProvider || '').toLowerCase();
+    if (p.includes('antigravity') || p.includes('agy')) return AI_BRAND_COLORS.antigravity || '#69C2FD';
+    if (p.includes('claude')) return AI_BRAND_COLORS.claude || '#FF8B67';
+    if (p.includes('codex')) return AI_BRAND_COLORS.codex || '#8975B9';
+    if (p.includes('gemini')) return AI_BRAND_COLORS.gemini || '#589EFF';
+    if (p.includes('ollama')) return AI_BRAND_COLORS.ollama || '#ECECEC';
+    return (currentAiProvider && AI_BRAND_COLORS[currentAiProvider]) || accentColor || '#69C2FD';
+  }, [currentAiProvider, accentColor]);
+
+  const panelBackground = isEffectiveDark
+    ? `radial-gradient(ellipse 120.00% 159.98% at 5.85% 100.00%, ${hexToRgba(chatAccentColor, 0.20)} 0%, #101010 100%)`
+    : `radial-gradient(ellipse 120.00% 159.98% at 5.85% 100.00%, ${hexToRgba(chatAccentColor, 0.22)} 0%, #ffffff 100%)`;
 
   const renderFormattedText = (raw: string) => {
     const lines = raw.split('\n');
@@ -174,7 +466,7 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
             <strong
               key={pIdx}
               style={{
-                fontWeight: 600,
+                fontWeight: 500,
                 color: isEffectiveDark ? '#ffffff' : '#0f172a',
               }}
             >
@@ -187,15 +479,15 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
 
       if (isBullet) {
         return (
-          <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: 5, marginTop: 2, marginBottom: 2 }}>
-            <span style={{ color: accentColor, fontSize: 10, lineHeight: 1.4 }}>•</span>
-            <span style={{ flex: 1 }}>{content}</span>
+          <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 2, marginBottom: 2 }}>
+            <span style={{ color: chatAccentColor, fontSize: 10, lineHeight: '18px' }}>•</span>
+            <span style={{ flex: 1, lineHeight: '20px' }}>{content}</span>
           </div>
         );
       }
 
       if (!line.trim()) {
-        return <div key={idx} style={{ height: 5 }} />;
+        return <div key={idx} style={{ height: 6 }} />;
       }
 
       return (
@@ -210,7 +502,11 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
   // em vez de tratar TODA mensagem como um pedido de sugestão de tarefas.
   const TASK_INTENT_KEYWORDS = [
     'tarefa', 'tarefas', 'sugest', 'sugir', 'monta', 'montar', 'planej',
-    'daily', 'weekly', 'demanda', 'backlog', 'sprint',
+    'daily', 'weekly', 'demanda', 'demandas', 'backlog', 'sprint',
+    'atividade', 'atividades', 'ontem', 'hoje', 'commit', 'commits',
+    'fiz', 'feito', 'fazer', 'trabalhei', 'status', 'progresso',
+    'resumo', 'update', 'oque', 'o que', 'qual', 'quais', 'lista',
+    'estancia', 'painel', 'ajuda', 'ajude', 'verifique', 'analise',
   ];
   const detectsTaskIntent = (text: string) => {
     const lower = text.toLowerCase();
@@ -222,14 +518,15 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
   const callAi = async (aiPrompt: string): Promise<{ rawOutput: string; usedCliName: string; usedModelName?: string }> => {
     let rawOutput = '';
     let usedCliName = '';
-    let usedModelName = selectedModel;
+    const activeModelToUse = currentModel || selectedModel;
+    let usedModelName = activeModelToUse;
 
     if (window.electronAPI?.ai?.runCli) {
       try {
         const cliRes = await window.electronAPI.ai.runCli({
           cliCmd: cliInfo.cmd,
           prompt: aiPrompt,
-          model: selectedModel,
+          model: activeModelToUse || undefined,
           cwd: workspacePath || undefined,
         });
 
@@ -243,7 +540,7 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
         if (stdout && !isErrorOutput) {
           rawOutput = stdout;
           usedCliName = cliInfo.label;
-        } else if (selectedModel) {
+        } else if (activeModelToUse) {
           // Tenta sem model parameter (fallback para modelo nativo default do CLI)
           const retryRes = await window.electronAPI.ai.runCli({
             cliCmd: cliInfo.cmd,
@@ -266,7 +563,7 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
     // Fallback para window.electronAPI.ai.prompt (chamada direta, sem CLI)
     if (!rawOutput && window.electronAPI?.ai?.prompt) {
       try {
-        const pRes = await window.electronAPI.ai.prompt(aiPrompt, selectedModel || 'claude-headless', workspacePath);
+        const pRes = await window.electronAPI.ai.prompt(aiPrompt, activeModelToUse || 'claude-headless', workspacePath);
         if (pRes?.response) {
           rawOutput = pRes.response.trim();
           usedCliName = 'IA API';
@@ -292,6 +589,40 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
     setInputPrompt('');
     setIsLoading(true);
 
+    logSystemActivity('daily_copilot', 'Consulta ao Copilot', repoName || 'Daily', {
+      userText,
+      selectedAiProvider,
+    });
+
+    // Evita sugerir de novo algo que já está na Daily/Weekly
+    const normalizeTitle = (s: string) =>
+      s
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const existingTitles = [
+      ...currentDailyItems.map((i) => normalizeTitle(i.title)),
+      ...weeklyGoals.map((g) => normalizeTitle(g.title)),
+    ].filter(Boolean);
+
+    const isDuplicateOfExisting = (title: string) => {
+      const norm = normalizeTitle(title);
+      if (!norm) return false;
+      return existingTitles.some((existing) => {
+        if (existing === norm) return true;
+        const wordsA = new Set(norm.split(' ').filter((w) => w.length > 2));
+        const wordsB = new Set(existing.split(' ').filter((w) => w.length > 2));
+        if (wordsA.size === 0 || wordsB.size === 0) return false;
+        const intersection = [...wordsA].filter((w) => wordsB.has(w)).length;
+        const overlapRatio = intersection / Math.min(wordsA.size, wordsB.size);
+        return overlapRatio >= 0.7;
+      });
+    };
+
     const wantsTaskSuggestions = detectsTaskIntent(userText);
 
     // Modo conversa natural: sem forçar geração de tarefas, sem fallback inventado.
@@ -302,7 +633,7 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
             ? currentDailyItems.slice(0, 8).map((i) => `- [${i.category.toUpperCase()}] [${i.projectName || 'Geral'}] ${i.title}`).join('\n')
             : 'Nenhuma tarefa cadastrada na Daily para esta data ainda.';
 
-        const chatPrompt = `Você é o Copilot de Engenharia do DevFlow. Converse de forma natural, direta e útil em português do Brasil.
+        const chatPrompt = `Você é o Copilot de Engenharia do Aura Dev. Converse de forma natural, direta e útil em português do Brasil.
 Responda exatamente o que o desenvolvedor perguntou — não force uma lista de tarefas nem inclua blocos JSON. Só sugira tarefas se ele pedir isso explicitamente.
 
 Contexto (use apenas se for relevante para a pergunta):
@@ -314,11 +645,54 @@ Mensagem do desenvolvedor: "${userText}"`;
 
         const { rawOutput, usedCliName, usedModelName } = await callAi(chatPrompt);
 
+        // Se a resposta conversacional tiver trazido atividades em bullets (ex: /tmp/df/50.png)
+        const convTasks = extractTasksFromMarkdown(rawOutput, repoName || 'Geral', [], []);
+        const autoCreatedConv: SuggestedTask[] = [];
+
+        if (convTasks.length > 0) {
+          convTasks.forEach((t) => {
+            if (isDuplicateOfExisting(t.title)) return;
+            existingTitles.push(normalizeTitle(t.title));
+
+            if (t.category === 'weekly') {
+              onAddWeeklyGoal({
+                title: t.title,
+                priority: (t.priority as any) || 'Alta',
+              });
+            } else {
+              onAddDailyItem({
+                category: t.category,
+                title: t.title,
+                description: t.description || 'Criado automaticamente pelo Copilot de Daily.',
+                projectName: t.projectName || repoName || 'Geral',
+                tag: t.tag || (t.category === 'yesterday' ? 'Git Sync' : t.category === 'blocker' ? 'Impedimento' : 'Hoje'),
+                priority: t.priority || 'Média',
+                estimatedHours: t.estimatedHours || 2,
+                dateIso: selectedDateIso,
+              });
+            }
+            t.added = true;
+            autoCreatedConv.push(t);
+          });
+
+          if (autoCreatedConv.length > 0) {
+            const targetProj = autoCreatedConv[0]?.projectName || repoName || 'Daily';
+            logSystemActivity('daily_copilot', 'Criação Automática de Cards Daily', targetProj, {
+              count: autoCreatedConv.length,
+              tasks: autoCreatedConv.map((task) => ({ title: task.title, category: task.category, project: task.projectName })),
+              selectedAiProvider: currentAiProvider,
+              model: usedModelName,
+            });
+            onToast?.(`${autoCreatedConv.length} card(s) de daily criados automaticamente pela IA!`);
+          }
+        }
+
         const assistantMsg: ChatMessage = {
           id: `msg_asst_${Date.now()}`,
           sender: 'assistant',
           text: rawOutput || 'Não consegui me conectar à IA agora. Verifique se o CLI configurado está instalado e tente novamente.',
           timestamp: Date.now(),
+          suggestedTasks: autoCreatedConv.length > 0 ? autoCreatedConv : undefined,
           usedCli: usedCliName,
           modelUsed: usedModelName,
         };
@@ -395,13 +769,13 @@ Mensagem do desenvolvedor: "${userText}"`;
           ? weeklyGoals.slice(0, 6).map((g) => `- [WEEKLY] ${g.title} (${g.priority})`).join('\n')
           : 'Nenhuma meta registrada na Weekly atual.';
 
-      const aiPrompt = `Você é o Copilot de Engenharia do DevFlow, especialista em Daily Scrum e Weekly Planning.
+      const aiPrompt = `Você é o Copilot de Engenharia do Aura Dev, especialista em Daily Scrum e Weekly Planning.
 Analise os dados reais dos repositórios e projetos locais abaixo e responda ao desenvolvedor:
 
 [REPOSITÓRIOS COM ATIVIDADES DETECTADAS NOS COMMITS]:
 ${detectedProjects.length > 0 ? detectedProjects.map((p) => `- ${p}`).join('\n') : `- ${primaryActiveRepo}`}
 
-[REPOSITÓRIO ATIVO NO CABEÇALHO DO DEVFLOW]:
+[REPOSITÓRIO ATIVO NO CABEÇALHO DO AURA DEV]:
 ${repoName || 'Geral'}
 
 [DATA SELECIONADA]: ${selectedDateIso}
@@ -421,7 +795,7 @@ ${weeklySummary}
 DIRETRIZES OBRIGATÓRIAS:
 1. Responda em Português do Brasil com tom ágil, técnico, objetivo e colaborativo.
 2. Analise os commits reais para identificar o que já foi entregue (categoria "yesterday") e o que deve ser priorizado ou continuado para hoje (categoria "today") ou potenciais impedimentos ("blocker").
-3. Se o pedido for sobre Weekly, sugira metas estratégicas da semana com categoria "weekly".
+3. CADA ATIVIDADE IDENTIFICADA SERÁ AUTOMATICAMENTE CRIADA COMO CARD NA DAILY DO USUÁRIO. Liste claramente as tarefas encontradas indicando o projeto específico. Se o pedido for sobre Weekly, sugira metas estratégicas da semana com categoria "weekly".
 4. REGRA FUNDAMENTAL PARA O CAMPO "projectName":
    - Cada tarefa DEVE OBRIGATORIAMENTE ter o campo "projectName" preenchido com o NOME EXATO do repositório/projeto onde a alteração/commit realmente aconteceu (ex: "${primaryActiveRepo}").
    - NUNCA use o repositório selecionado no cabeçalho (${repoName}) se os commits vieram de outro repositório! Use sempre o nome do repositório onde o commit foi realizado (ex: ${detectedProjects.join(', ') || primaryActiveRepo}).
@@ -503,36 +877,6 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
         return primaryActiveRepo;
       };
 
-      // Evita sugerir de novo algo que já está na Daily/Weekly (segurança extra, além da
-      // instrução dada à própria IA no prompt).
-      const normalizeTitle = (s: string) =>
-        s
-          .toLowerCase()
-          .normalize('NFD')
-          .replace(/[̀-ͯ]/g, '')
-          .replace(/[^a-z0-9\s]/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim();
-
-      const existingTitles = [
-        ...currentDailyItems.map((i) => normalizeTitle(i.title)),
-        ...weeklyGoals.map((g) => normalizeTitle(g.title)),
-      ].filter(Boolean);
-
-      const isDuplicateOfExisting = (title: string) => {
-        const norm = normalizeTitle(title);
-        if (!norm) return false;
-        return existingTitles.some((existing) => {
-          if (existing === norm) return true;
-          const wordsA = new Set(norm.split(' ').filter((w) => w.length > 2));
-          const wordsB = new Set(existing.split(' ').filter((w) => w.length > 2));
-          if (wordsA.size === 0 || wordsB.size === 0) return false;
-          const intersection = [...wordsA].filter((w) => wordsB.has(w)).length;
-          const overlapRatio = intersection / Math.min(wordsA.size, wordsB.size);
-          return overlapRatio >= 0.7;
-        });
-      };
-
       let assistantText = '';
       const suggestedTasks: SuggestedTask[] = [];
       const pushIfNotDuplicate = (task: SuggestedTask) => {
@@ -542,7 +886,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
       };
 
       if (rawOutput) {
-        // Extrair bloco JSON (suporta ```json ... ``` ou ``` ... ``` ou array puro)
+        // 1. Extrair bloco JSON se existir (suporta ```json ... ``` ou ``` ... ``` ou array puro)
         const jsonMatch =
           rawOutput.match(/```(?:json)?\s*(\[\s*\{[\s\S]*?\}\s*\])\s*```/i) ||
           rawOutput.match(/(\[\s*\{\s*(?:"category"|"titulo"|"title")[\s\S]*?\}\s*\])/i);
@@ -591,6 +935,28 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
           assistantText = rawOutput;
         }
 
+        // 2. Extração complementar via markdown se o JSON não trouxe tarefas ou a IA respondeu em bullet points (como em /tmp/df/50.png)
+        const markdownTasks = extractTasksFromMarkdown(
+          rawOutput,
+          primaryActiveRepo,
+          detectedProjects,
+          allCommitsList
+        );
+
+        if (markdownTasks.length > 0) {
+          markdownTasks.forEach((mTask) => {
+            const resolvedProject = resolveTaskProject(
+              mTask.projectName,
+              mTask.title,
+              mTask.description || ''
+            );
+            pushIfNotDuplicate({
+              ...mTask,
+              projectName: resolvedProject,
+            });
+          });
+        }
+
         if (!assistantText) {
           assistantText = 'Analisei seu histórico de commits e atividades recentes. Aqui estão as sugestões organizadas:';
         }
@@ -637,7 +1003,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
             });
           }
 
-          const targetProj = commitsData[0]?.projectName || repoName || 'DevFlow';
+          const targetProj = commitsData[0]?.projectName || repoName || 'Aura Dev';
           pushIfNotDuplicate({
             id: `task_t_${Date.now()}_1`,
             category: 'today',
@@ -651,6 +1017,50 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
         } else {
           assistantText = `Não consegui me conectar à IA e não encontrei commits recentes nas últimas 48h para basear uma sugestão. Verifique se o CLI configurado (${cliInfo.label}) está instalado, ou me conte diretamente o que você fez.`;
         }
+      }
+
+      // 4. CRIAÇÃO AUTOMÁTICA DOS CARDS NO QUADRO DA DAILY / WEEKLY
+      // A IA da Daily deve criar cards de daily com as atividades que ela encontrar automaticamente
+      const autoCreatedTasks: SuggestedTask[] = [];
+
+      suggestedTasks.forEach((t) => {
+        if (!t.added) {
+          if (t.category === 'weekly') {
+            onAddWeeklyGoal({
+              title: t.title,
+              priority: (t.priority as any) || 'Alta',
+            });
+          } else {
+            onAddDailyItem({
+              category: t.category,
+              title: t.title,
+              description: t.description || 'Criado automaticamente pelo Copilot de Daily.',
+              projectName: t.projectName || repoName || 'Geral',
+              tag: t.tag || (t.category === 'yesterday' ? 'Git Sync' : t.category === 'blocker' ? 'Impedimento' : 'Hoje'),
+              priority: t.priority || 'Média',
+              estimatedHours: t.estimatedHours || 2,
+              dateIso: selectedDateIso,
+            });
+          }
+          t.added = true;
+          autoCreatedTasks.push(t);
+        }
+      });
+
+      if (autoCreatedTasks.length > 0) {
+        const targetProj = autoCreatedTasks[0]?.projectName || repoName || 'Daily';
+        logSystemActivity('daily_copilot', 'Criação Automática de Cards Daily', targetProj, {
+          count: autoCreatedTasks.length,
+          tasks: autoCreatedTasks.map((task) => ({
+            title: task.title,
+            category: task.category,
+            project: task.projectName,
+          })),
+          selectedAiProvider: currentAiProvider,
+          model: usedModelName,
+        });
+
+        onToast?.(`${autoCreatedTasks.length} card(s) de daily criados automaticamente pela IA!`);
       }
 
       const assistantMsg: ChatMessage = {
@@ -681,26 +1091,29 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
     }
   };
 
-  const renderAiIcon = () => {
-    const p = (selectedAiProvider || '').toLowerCase();
-    if (p.includes('claude')) return <ClaudeIcon size={14} />;
-    if (p.includes('agy') || p.includes('antigravity')) return <AntigravityIcon size={14} />;
-    if (p.includes('gemini')) return <GeminiIcon size={14} />;
-    return <Sparkles size={14} color={accentColor} />;
-  };
-
   const getCategoryBadge = (cat: string) => {
     switch (cat) {
       case 'yesterday':
-        return { label: 'Feito Ontem', bg: '#22c55e18', color: '#22c55e', border: '#22c55e44' };
+        return { label: 'Feito Ontem', bg: '#22c55e18', color: '#22c55e' };
       case 'today':
-        return { label: 'Para Hoje', bg: `${accentColor}18`, color: accentColor, border: `${accentColor}44` };
+        return { label: 'Para Hoje', bg: hexToRgba(chatAccentColor, 0.15), color: chatAccentColor };
       case 'blocker':
-        return { label: 'Impedimento', bg: '#ef444418', color: '#ef4444', border: '#ef444444' };
+        return { label: 'Impedimento', bg: '#ef444418', color: '#ef4444' };
       case 'weekly':
-        return { label: 'Weekly', bg: '#8b5cf618', color: '#a78bfa', border: '#8b5cf644' };
+        return { label: 'Weekly', bg: '#8b5cf618', color: '#a78bfa' };
       default:
-        return { label: 'Tarefa', bg: 'rgba(255,255,255,0.08)', color: themeTokens.textPrimary, border: 'transparent' };
+        return { label: 'Tarefa', bg: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', color: themeTokens.textPrimary };
+    }
+  };
+
+  const divider = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)';
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (inputPrompt.trim() && !isLoading) {
+        processUserRequest(inputPrompt.trim());
+      }
     }
   };
 
@@ -710,65 +1123,367 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
         flex: 1,
         minHeight: 0,
         width: '100%',
-        background: isEffectiveDark ? '#141414' : '#ffffff',
+        background: panelBackground,
         borderRadius: 10,
         border: 'none',
-        boxShadow: isEffectiveDark ? '0 2px 8px rgba(0,0,0,0.2)' : '0 1px 3px rgba(0,0,0,0.06)',
+        boxShadow: 'none',
         display: 'flex',
         flexDirection: 'column',
         boxSizing: 'border-box',
         overflow: 'hidden',
         position: 'relative',
+        transition: 'background 0.2s ease',
       }}
     >
-      {/* 1. Header do Chat */}
+      {/* 1. Header do Chat: Apenas Seletor de IA/Modelos e Botão de Reload */}
       <div
         style={{
-          padding: '8px 10px',
-          borderBottom: isEffectiveDark ? '1px solid rgba(255,255,255,0.07)' : '1px solid rgba(0,0,0,0.07)',
+          padding: '6px 8px',
+          borderBottom: `1px solid ${divider}`,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          background: isEffectiveDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
+          background: 'transparent',
           flexShrink: 0,
+          gap: 6,
+          position: 'relative',
+          zIndex: 30,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
-          <div
-            style={{
-              width: 22,
-              height: 22,
-              borderRadius: 5,
-              background: `${accentColor}20`,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-            }}
-          >
-            {renderAiIcon()}
-          </div>
-          <div style={{ minWidth: 0 }}>
-            <div
+        {/* Seletor de IA e Modelos (microcomponente integrado com divisória sutil) */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
+            borderRadius: 6,
+            padding: 2,
+            gap: 2,
+            minWidth: 0,
+            maxWidth: 'calc(100% - 36px)',
+          }}
+        >
+          {/* Seletor de IA */}
+          <div style={{ position: 'relative' }}>
+            <button
+              type="button"
+              onClick={() => {
+                setIsAiDropdownOpen((prev) => !prev);
+                setIsModelDropdownOpen(false);
+              }}
+              title={`IA ativa: ${currentProviderName}`}
               style={{
-                fontSize: 11.5,
-                fontWeight: 600,
+                height: 28,
+                padding: '0 7px',
+                borderRadius: 5,
+                border: 'none',
+                background: isAiDropdownOpen
+                  ? isEffectiveDark
+                    ? 'rgba(255, 255, 255, 0.1)'
+                    : 'rgba(0, 0, 0, 0.08)'
+                  : 'transparent',
                 color: themeTokens.textPrimary,
-                fontFamily: 'Poppins, sans-serif',
+                fontSize: 11.5,
+                fontWeight: 400,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                transition: 'background 0.15s ease',
                 whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
+                flexShrink: 0,
+              }}
+              onMouseEnter={(e) => {
+                if (!isAiDropdownOpen) {
+                  e.currentTarget.style.background = isEffectiveDark
+                    ? 'rgba(255, 255, 255, 0.07)'
+                    : 'rgba(0, 0, 0, 0.06)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!isAiDropdownOpen) {
+                  e.currentTarget.style.background = 'transparent';
+                }
               }}
             >
-              Daily & Weekly Copilot
-            </div>
-            <div style={{ fontSize: 9.5, color: '#22c55e', display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ width: 4.5, height: 4.5, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 6px #22c55e' }} />
-              <span>Git + {cliInfo.label} Conectado</span>
-            </div>
+              <span style={{ display: 'flex', alignItems: 'center' }}>
+                {renderAiIcon(currentAiProvider || 'claude', 13)}
+              </span>
+              <span>{currentProviderName}</span>
+              <ChevronDown
+                size={10}
+                color={themeTokens.textSecondary}
+                style={{
+                  transform: isAiDropdownOpen ? 'rotate(180deg)' : 'none',
+                  transition: 'transform 0.15s ease',
+                  flexShrink: 0,
+                }}
+              />
+            </button>
+
+            {isAiDropdownOpen && (
+              <>
+                <div
+                  style={{ position: 'fixed', inset: 0, zIndex: 99998 }}
+                  onClick={() => setIsAiDropdownOpen(false)}
+                />
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 4px)',
+                    left: 0,
+                    background: isEffectiveDark ? '#1a1a1c' : '#ffffff',
+                    borderRadius: 8,
+                    border: 'none',
+                    boxShadow: 'none',
+                    padding: 4,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                    zIndex: 99999,
+                    minWidth: 160,
+                    animation: 'fadeIn 0.12s ease-out',
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div
+                    style={{
+                      padding: '3px 8px 4px',
+                      fontSize: 10,
+                      fontWeight: 400,
+                      color: themeTokens.textSecondary,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    Provedor de IA
+                  </div>
+                  {AI_PROVIDERS.map((prov) => {
+                    const isSelected = prov.id === currentAiProvider;
+                    return (
+                      <div
+                        key={prov.id}
+                        onClick={() => handleSelectProvider(prov.id)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                          padding: '6px 8px',
+                          borderRadius: 6,
+                          cursor: 'pointer',
+                          fontSize: 11.5,
+                          fontWeight: 400,
+                          color: isSelected ? accentColor : themeTokens.textPrimary,
+                          background: isSelected
+                            ? hexToRgba(accentColor, 0.12)
+                            : 'transparent',
+                          transition: 'background 0.15s ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isSelected) {
+                            e.currentTarget.style.background = isEffectiveDark
+                              ? 'rgba(255, 255, 255, 0.06)'
+                              : 'rgba(0, 0, 0, 0.05)';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isSelected) {
+                            e.currentTarget.style.background = 'transparent';
+                          }
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                          {renderAiIcon(prov.id, 14)}
+                          <span style={{ whiteSpace: 'nowrap' }}>{prov.name}</span>
+                        </div>
+                        {isSelected && <Check size={12} color={accentColor} style={{ flexShrink: 0 }} />}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Divisória vertical de baixa opacidade */}
+          <div
+            style={{
+              width: 1,
+              height: 14,
+              background: divider,
+              flexShrink: 0,
+            }}
+          />
+
+          {/* Seletor de Modelo */}
+          <div style={{ position: 'relative', minWidth: 0, flex: 1 }}>
+            <button
+              type="button"
+              onClick={() => {
+                setIsModelDropdownOpen((prev) => !prev);
+                setIsAiDropdownOpen(false);
+              }}
+              title={`Modelo ativo: ${currentModelDisplay}`}
+              style={{
+                height: 28,
+                padding: '0 7px',
+                borderRadius: 5,
+                border: 'none',
+                background: isModelDropdownOpen
+                  ? isEffectiveDark
+                    ? 'rgba(255, 255, 255, 0.1)'
+                    : 'rgba(0, 0, 0, 0.08)'
+                  : 'transparent',
+                color: themeTokens.textSecondary,
+                fontSize: 11,
+                fontWeight: 400,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                transition: 'background 0.15s ease',
+                minWidth: 0,
+                maxWidth: 145,
+                width: '100%',
+              }}
+              onMouseEnter={(e) => {
+                if (!isModelDropdownOpen) {
+                  e.currentTarget.style.background = isEffectiveDark
+                    ? 'rgba(255, 255, 255, 0.07)'
+                    : 'rgba(0, 0, 0, 0.06)';
+                  e.currentTarget.style.color = themeTokens.textPrimary;
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!isModelDropdownOpen) {
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.color = themeTokens.textSecondary;
+                }
+              }}
+            >
+              <span
+                style={{
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  flex: 1,
+                  textAlign: 'left',
+                }}
+              >
+                {currentModelDisplay}
+              </span>
+              <ChevronDown
+                size={10}
+                color={themeTokens.textSecondary}
+                style={{
+                  transform: isModelDropdownOpen ? 'rotate(180deg)' : 'none',
+                  transition: 'transform 0.15s ease',
+                  flexShrink: 0,
+                }}
+              />
+            </button>
+
+            {isModelDropdownOpen && (
+              <>
+                <div
+                  style={{ position: 'fixed', inset: 0, zIndex: 99998 }}
+                  onClick={() => setIsModelDropdownOpen(false)}
+                />
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 4px)',
+                    left: 0,
+                    background: isEffectiveDark ? '#1a1a1c' : '#ffffff',
+                    borderRadius: 8,
+                    border: 'none',
+                    boxShadow: 'none',
+                    padding: 4,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                    zIndex: 99999,
+                    minWidth: 170,
+                    maxWidth: 240,
+                    maxHeight: 240,
+                    overflowY: 'auto',
+                    animation: 'fadeIn 0.12s ease-out',
+                  }}
+                  className="no-scrollbar"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div
+                    style={{
+                      padding: '3px 8px 4px',
+                      fontSize: 10,
+                      fontWeight: 400,
+                      color: themeTokens.textSecondary,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.5,
+                    }}
+                  >
+                    Modelos {currentProviderName}
+                  </div>
+                  {availableModels.map((m) => {
+                    const formatted = formatModelDisplayName(m.label) || m.label;
+                    const isSelected =
+                      m.label === currentModel ||
+                      m.id === currentModel ||
+                      formatted === currentModelDisplay;
+                    return (
+                      <div
+                        key={m.id}
+                        onClick={() => handleSelectModelOption(m)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                          padding: '6px 8px',
+                          borderRadius: 6,
+                          cursor: 'pointer',
+                          fontSize: 11.5,
+                          fontWeight: 400,
+                          color: isSelected ? accentColor : themeTokens.textPrimary,
+                          background: isSelected
+                            ? hexToRgba(accentColor, 0.12)
+                            : 'transparent',
+                          transition: 'background 0.15s ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isSelected) {
+                            e.currentTarget.style.background = isEffectiveDark
+                              ? 'rgba(255, 255, 255, 0.06)'
+                              : 'rgba(0, 0, 0, 0.05)';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isSelected) {
+                            e.currentTarget.style.background = 'transparent';
+                          }
+                        }}
+                      >
+                        <span
+                          style={{
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {formatted}
+                        </span>
+                        {isSelected && <Check size={12} color={accentColor} style={{ flexShrink: 0 }} />}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
+        {/* Botão de Reload / Limpar chat à direita */}
         <button
           type="button"
           onClick={() => {
@@ -780,23 +1495,42 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                 timestamp: Date.now(),
               },
             ]);
+            logSystemActivity('daily_copilot', 'Chat reiniciado', repoName || 'Daily', {
+              provider: currentAiProvider,
+              model: currentModel,
+            });
             onToast?.('Chat reiniciado');
           }}
           style={{
+            width: 28,
+            height: 28,
             background: 'transparent',
             border: 'none',
+            outline: 'none',
             color: themeTokens.textSecondary,
-            padding: 4,
-            borderRadius: 4,
+            borderRadius: 6,
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            transition: 'color 0.15s ease',
+            transition: 'all 0.15s ease',
+            flexShrink: 0,
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = isEffectiveDark
+              ? 'rgba(255, 255, 255, 0.06)'
+              : 'rgba(0, 0, 0, 0.06)';
+            e.currentTarget.style.color = themeTokens.textPrimary;
+            e.currentTarget.style.transform = 'rotate(-45deg)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'transparent';
+            e.currentTarget.style.color = themeTokens.textSecondary;
+            e.currentTarget.style.transform = 'rotate(0deg)';
           }}
           title="Limpar histórico do chat"
         >
-          <RotateCcw size={12} />
+          <RotateCcw size={13} />
         </button>
       </div>
 
@@ -805,286 +1539,408 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
         style={{
           flex: 1,
           overflowY: 'auto',
-          padding: '10px 8px',
+          padding: '10px 10px',
           display: 'flex',
           flexDirection: 'column',
-          gap: 9,
-          fontSize: 11,
+          gap: 10,
+          fontSize: 12,
           minHeight: 0,
+          position: 'relative',
         }}
       >
+        {/* Marca d'água da IA no fundo quando chat tem poucas mensagens */}
+        {messages.length <= 1 && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              pointerEvents: 'none',
+              zIndex: 0,
+              userSelect: 'none',
+            }}
+          >
+            <div
+              style={{
+                opacity: isEffectiveDark ? 0.08 : 0.06,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'opacity 0.25s ease, transform 0.25s ease',
+              }}
+            >
+              {renderAiIcon((currentAiProvider === 'agy' ? 'antigravity' : currentAiProvider) || 'antigravity', 140)}
+            </div>
+          </div>
+        )}
+
         {messages.map((msg) => {
           const isUser = msg.sender === 'user';
+          if (isUser) {
+            return (
+              <div
+                key={msg.id}
+                style={{
+                  alignSelf: 'flex-end',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'flex-end',
+                  maxWidth: '88%',
+                  position: 'relative',
+                  zIndex: 1,
+                }}
+              >
+                <div
+                  style={{
+                    background: hexToRgba(chatAccentColor, 0.16),
+                    color: themeTokens.textPrimary,
+                    padding: '8px 12px',
+                    borderRadius: '8px 2px 8px 8px',
+                    border: 'none',
+                    boxShadow: 'none',
+                    wordBreak: 'break-word',
+                    whiteSpace: 'pre-wrap',
+                    fontWeight: 400,
+                    lineHeight: '18px',
+                    fontSize: 12.5,
+                  }}
+                >
+                  {msg.text}
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div
               key={msg.id}
               style={{
+                alignSelf: 'flex-start',
                 display: 'flex',
-                flexDirection: 'column',
-                alignItems: isUser ? 'flex-end' : 'flex-start',
-                gap: 5,
+                flexDirection: 'row',
+                alignItems: 'flex-start',
+                gap: 8,
+                maxWidth: '96%',
+                width: '100%',
+                position: 'relative',
+                zIndex: 1,
               }}
             >
-              {/* Tag do CLI / IA utilizada */}
-              {!isUser && (msg.usedCli || (msg.commitsReferenced && msg.commitsReferenced.length > 0)) && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9.5, color: themeTokens.textSecondary, marginBottom: -1 }}>
-                  {msg.usedCli && (
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 3,
-                        padding: '1px 6px',
-                        borderRadius: 4,
-                        background: `${accentColor}18`,
-                        color: accentColor,
-                        fontWeight: 600,
-                        fontSize: 9,
-                      }}
-                    >
-                      <Sparkles size={9} />
-                      {msg.usedCli}
-                      {msg.modelUsed ? ` (${msg.modelUsed})` : ''}
-                    </span>
-                  )}
-                  {msg.commitsReferenced && msg.commitsReferenced.length > 0 && (
-                    <span style={{ fontSize: 9, opacity: 0.8 }}>
-                      {msg.commitsReferenced.length} commits analisados
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {/* Balão de Texto */}
+              {/* Assistant Avatar */}
               <div
                 style={{
-                  maxWidth: '92%',
-                  padding: '7px 10px',
-                  borderRadius: isUser ? '10px 10px 2px 10px' : '10px 10px 10px 2px',
-                  background: isUser
-                    ? accentColor
-                    : isEffectiveDark
-                    ? 'rgba(255, 255, 255, 0.05)'
-                    : 'rgba(0, 0, 0, 0.04)',
-                  color: isUser ? '#ffffff' : themeTokens.textPrimary,
-                  fontSize: 11,
-                  lineHeight: 1.45,
-                  boxShadow: isUser ? `0 2px 6px ${accentColor}33` : 'none',
-                  border: !isUser && isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.06)' : 'none',
-                  whiteSpace: 'pre-wrap',
+                  width: 22,
+                  height: 22,
+                  borderRadius: 5,
+                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  marginTop: 2,
                 }}
               >
-                {isUser ? msg.text : renderFormattedText(msg.text)}
+                {renderAiIcon(currentAiProvider || 'claude', 14)}
               </div>
 
-              {/* Commits referenciados (se houver) */}
-              {msg.commitsReferenced && msg.commitsReferenced.length > 0 && (
+              {/* Content Container */}
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  flex: '1 1 auto',
+                  minWidth: 0,
+                }}
+              >
+                {/* Tag do CLI / IA utilizada */}
+                {(msg.usedCli || (msg.commitsReferenced && msg.commitsReferenced.length > 0)) && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: themeTokens.textSecondary }}>
+                    {msg.usedCli && (
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          padding: '2px 6px',
+                          borderRadius: 4,
+                          background: hexToRgba(chatAccentColor, 0.12),
+                          color: chatAccentColor,
+                          fontWeight: 500,
+                          fontSize: 10,
+                        }}
+                      >
+                        <Sparkles size={10} />
+                        {msg.usedCli}
+                        {msg.modelUsed ? ` (${msg.modelUsed})` : ''}
+                      </span>
+                    )}
+                    {msg.commitsReferenced && msg.commitsReferenced.length > 0 && (
+                      <span style={{ fontSize: 10, opacity: 0.8 }}>
+                        {msg.commitsReferenced.length} commits analisados
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Balão de Texto do Assistente */}
                 <div
                   style={{
-                    width: '92%',
-                    background: isEffectiveDark ? 'rgba(0, 0, 0, 0.28)' : 'rgba(0, 0, 0, 0.03)',
-                    borderRadius: 6,
-                    padding: '5px 8px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 3,
-                    border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.04)' : '1px solid rgba(0, 0, 0, 0.05)',
+                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
+                    color: themeTokens.textPrimary,
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    border: 'none',
+                    boxShadow: 'none',
+                    wordBreak: 'break-word',
+                    lineHeight: '20px',
+                    fontSize: 12.5,
+                    fontWeight: 400,
+                    whiteSpace: 'pre-wrap',
                   }}
                 >
+                  {renderFormattedText(msg.text)}
+                </div>
+
+                {/* Commits referenciados (se houver) */}
+                {msg.commitsReferenced && msg.commitsReferenced.length > 0 && (
                   <div
                     style={{
-                      fontSize: 9.5,
-                      fontWeight: 600,
-                      color: themeTokens.textSecondary,
+                      background: isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
+                      borderRadius: 8,
+                      padding: 8,
                       display: 'flex',
-                      alignItems: 'center',
-                      gap: 4,
+                      flexDirection: 'column',
+                      gap: 6,
+                      border: 'none',
+                      boxShadow: 'none',
                     }}
                   >
-                    <GitCommit size={11} color={accentColor} />
-                    <span>Commits analisados no dia/ontem:</span>
-                  </div>
-                  {msg.commitsReferenced.slice(0, 3).map((c, i) => (
                     <div
-                      key={i}
                       style={{
-                        fontSize: 9.5,
-                        color: themeTokens.textPrimary,
+                        fontSize: 11,
+                        fontWeight: 500,
+                        color: themeTokens.textSecondary,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 5,
+                      }}
+                    >
+                      <GitCommit size={12} color={chatAccentColor} />
+                      <span>Commits analisados no dia/ontem:</span>
+                    </div>
+                    {msg.commitsReferenced.slice(0, 3).map((c, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          fontSize: 11,
+                          color: themeTokens.textPrimary,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 6,
+                        }}
+                      >
+                        <span
+                          style={{
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            maxWidth: 190,
+                          }}
+                        >
+                          <strong style={{ color: chatAccentColor, fontWeight: 500 }}>{c.project}:</strong> {c.message}
+                        </span>
+                        <span style={{ color: themeTokens.textSecondary, flexShrink: 0, fontSize: 10 }}>
+                          {c.hash}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Tarefas Sugeridas / Cards Criados */}
+                {msg.suggestedTasks && msg.suggestedTasks.length > 0 && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 8,
+                    }}
+                  >
+                    {/* Status informando a criação automática dos cards */}
+                    <div
+                      style={{
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        gap: 4,
+                        padding: '6px 8px',
+                        background: isEffectiveDark ? 'rgba(34, 197, 94, 0.08)' : 'rgba(34, 197, 94, 0.06)',
+                        borderRadius: 6,
+                        color: '#22c55e',
+                        fontSize: 11,
+                        fontWeight: 400,
                       }}
                     >
-                      <span
-                        style={{
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                          maxWidth: 180,
-                        }}
-                      >
-                        <strong style={{ color: accentColor }}>{c.project}:</strong> {c.message}
-                      </span>
-                      <span style={{ color: themeTokens.textSecondary, flexShrink: 0, fontSize: 8.5 }}>
-                        {c.hash}
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Check size={12} color="#22c55e" />
+                        <span>
+                          {msg.suggestedTasks.filter((t) => t.added).length === msg.suggestedTasks.length
+                            ? `${msg.suggestedTasks.length} card(s) criados automaticamente na Daily`
+                            : `${msg.suggestedTasks.length} atividade(s) identificadas`}
+                        </span>
+                      </div>
                     </div>
-                  ))}
-                </div>
-              )}
 
-              {/* Tarefas Sugeridas com Botões de Ação */}
-              {msg.suggestedTasks && msg.suggestedTasks.length > 0 && (
-                <div
-                  style={{
-                    width: '94%',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 5,
-                    marginTop: 2,
-                  }}
-                >
-                  {/* Botão de Adicionar Todas */}
-                  {msg.suggestedTasks.some((t) => !t.added) && (
-                    <button
-                      type="button"
-                      onClick={() => handleApplyAllTasks(msg.id, msg.suggestedTasks!)}
-                      style={{
-                        padding: '4px 8px',
-                        background: accentColor,
-                        border: 'none',
-                        borderRadius: 5,
-                        color: '#ffffff',
-                        fontSize: 10,
-                        fontWeight: 600,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 5,
-                        cursor: 'pointer',
-                        boxShadow: `0 2px 6px ${accentColor}44`,
-                        transition: 'opacity 0.15s ease',
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
-                      onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-                    >
-                      <Plus size={11} />
-                      <span>Adicionar todas as sugestões à Daily</span>
-                    </button>
-                  )}
-
-                  {msg.suggestedTasks.map((t) => {
-                    const badge = getCategoryBadge(t.category);
-                    return (
-                      <div
-                        key={t.id}
+                    {/* Botão de Adicionar Todas (caso alguma ainda não tenha sido aplicada) */}
+                    {msg.suggestedTasks.some((t) => !t.added) && (
+                      <button
+                        type="button"
+                        onClick={() => handleApplyAllTasks(msg.id, msg.suggestedTasks!)}
                         style={{
-                          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
-                          border: `1px solid ${t.added ? '#22c55e55' : isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)'}`,
+                          height: 28,
+                          padding: '0 8px',
+                          background: chatAccentColor,
+                          border: 'none',
                           borderRadius: 6,
-                          padding: '6px 8px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: 4,
-                          transition: 'all 0.15s ease',
+                          color: '#ffffff',
+                          fontSize: 11.5,
+                          fontWeight: 400,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 6,
+                          cursor: 'pointer',
+                          boxShadow: 'none',
+                          transition: 'opacity 0.15s ease',
                         }}
+                        onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+                        onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
-                          <span
-                            style={{
-                              fontSize: 8.5,
-                              fontWeight: 600,
-                              textTransform: 'uppercase',
-                              padding: '1px 5px',
-                              borderRadius: 3,
-                              background: badge.bg,
-                              color: badge.color,
-                              border: `1px solid ${badge.border}`,
-                            }}
-                          >
-                            {badge.label}
-                          </span>
+                        <Plus size={12} />
+                        <span>Adicionar todas as sugestões à Daily</span>
+                      </button>
+                    )}
 
-                          {t.projectName && (
-                            <span
-                              style={{
-                                fontSize: 9,
-                                color: themeTokens.textSecondary,
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                                maxWidth: 110,
-                              }}
-                            >
-                              {t.projectName}
-                            </span>
-                          )}
-                        </div>
-
+                    {msg.suggestedTasks.map((t) => {
+                      const badge = getCategoryBadge(t.category);
+                      return (
                         <div
+                          key={t.id}
                           style={{
-                            fontSize: 10.5,
-                            fontWeight: 500,
-                            color: themeTokens.textPrimary,
-                            lineHeight: 1.3,
+                            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
+                            border: 'none',
+                            boxShadow: 'none',
+                            borderRadius: 8,
+                            padding: 8,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 8,
+                            transition: 'all 0.15s ease',
                           }}
                         >
-                          {t.title}
-                        </div>
-
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingTop: 2 }}>
-                          {t.added ? (
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                             <span
                               style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 3,
                                 fontSize: 9.5,
-                                color: '#22c55e',
-                                fontWeight: 500,
-                              }}
-                            >
-                              <Check size={11} />
-                              <span>Adicionado à {t.category === 'weekly' ? 'Weekly' : 'Daily'}</span>
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleApplyTask(msg.id, t)}
-                              style={{
-                                background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
-                                border: 'none',
-                                color: accentColor,
+                                fontWeight: 400,
+                                textTransform: 'uppercase',
+                                padding: '2px 6px',
                                 borderRadius: 4,
-                                padding: '3px 8px',
-                                fontSize: 9.5,
-                                fontWeight: 600,
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 4,
-                                transition: 'all 0.12s ease',
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.background = accentColor;
-                                e.currentTarget.style.color = '#ffffff';
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
-                                e.currentTarget.style.color = accentColor;
+                                background: badge.bg,
+                                color: badge.color,
+                                border: 'none',
                               }}
                             >
-                              <Plus size={10} />
-                              <span>Adicionar à {t.category === 'weekly' ? 'Weekly' : 'Daily'}</span>
-                            </button>
-                          )}
+                              {badge.label}
+                            </span>
+
+                            {t.projectName && (
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  color: themeTokens.textSecondary,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                  maxWidth: 140,
+                                  fontWeight: 400,
+                                }}
+                              >
+                                {t.projectName}
+                              </span>
+                            )}
+                          </div>
+
+                          <div
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 400,
+                              color: themeTokens.textPrimary,
+                              lineHeight: '16px',
+                            }}
+                          >
+                            {t.title}
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingTop: 2 }}>
+                            {t.added ? (
+                              <span
+                                style={{
+                                  height: 28,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  fontSize: 11,
+                                  color: '#22c55e',
+                                  fontWeight: 400,
+                                }}
+                              >
+                                <Check size={12} />
+                                <span>Card criado no quadro</span>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleApplyTask(msg.id, t)}
+                                style={{
+                                  height: 28,
+                                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+                                  border: 'none',
+                                  boxShadow: 'none',
+                                  color: chatAccentColor,
+                                  borderRadius: 6,
+                                  padding: '0 8px',
+                                  fontSize: 11,
+                                  fontWeight: 400,
+                                  cursor: 'pointer',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 5,
+                                  transition: 'all 0.15s ease',
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.background = chatAccentColor;
+                                  e.currentTarget.style.color = '#ffffff';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)';
+                                  e.currentTarget.style.color = chatAccentColor;
+                                }}
+                              >
+                                <Plus size={11} />
+                                <span>Adicionar à {t.category === 'weekly' ? 'Weekly' : 'Daily'}</span>
+                              </button>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           );
         })}
@@ -1093,18 +1949,23 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
         {isLoading && (
           <div
             style={{
+              alignSelf: 'flex-start',
               display: 'flex',
+              flexDirection: 'row',
               alignItems: 'center',
-              gap: 6,
-              padding: '6px 10px',
-              borderRadius: 6,
-              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
+              gap: 8,
+              padding: 8,
+              borderRadius: 8,
+              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
               color: themeTokens.textSecondary,
-              fontSize: 10.5,
+              fontSize: 12,
+              fontWeight: 400,
+              border: 'none',
+              boxShadow: 'none',
               width: 'fit-content',
             }}
           >
-            <Sparkles size={12} color={accentColor} />
+            <Loader2 size={13} className="animate-spin" style={{ color: chatAccentColor, flexShrink: 0 }} />
             <span>Consultando commits locais e executando {cliInfo.label}...</span>
           </div>
         )}
@@ -1115,12 +1976,12 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
       {/* 3. Atalhos Rápidos (Chips) */}
       <div
         style={{
-          padding: '6px 8px',
+          padding: '8px 10px',
           display: 'flex',
-          gap: 4,
+          gap: 8,
           overflowX: 'auto',
-          borderTop: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.06)' : '1px solid rgba(0, 0, 0, 0.06)',
-          background: isEffectiveDark ? 'rgba(0,0,0,0.15)' : 'rgba(0,0,0,0.02)',
+          borderTop: `1px solid ${divider}`,
+          background: 'transparent',
           flexShrink: 0,
         }}
       >
@@ -1129,25 +1990,30 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
           disabled={isLoading}
           onClick={() => processUserRequest('Sugerir Daily completa com base nos meus commits de hoje e ontem')}
           style={{
+            height: 28,
             whiteSpace: 'nowrap',
-            padding: '3px 7px',
-            borderRadius: 4,
-            border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)',
-            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
+            padding: '0 10px',
+            borderRadius: 6,
+            border: 'none',
+            boxShadow: 'none',
+            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
             color: themeTokens.textPrimary,
-            fontSize: 9.5,
+            fontSize: 11.5,
+            fontWeight: 400,
             cursor: 'pointer',
-            display: 'flex',
+            display: 'inline-flex',
             alignItems: 'center',
-            gap: 4,
-            transition: 'all 0.12s ease',
+            gap: 6,
+            transition: 'all 0.15s ease',
           }}
-          onMouseEnter={(e) => (e.currentTarget.style.borderColor = accentColor)}
-          onMouseLeave={(e) =>
-            (e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)')
-          }
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
+          }}
         >
-          <Sparkles size={10} color={accentColor} />
+          <Sparkles size={12} color={chatAccentColor} />
           <span>Sugerir Daily com commits</span>
         </button>
 
@@ -1156,25 +2022,30 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
           disabled={isLoading}
           onClick={() => processUserRequest('Planejar demandas prioritárias da semana para a Weekly')}
           style={{
+            height: 28,
             whiteSpace: 'nowrap',
-            padding: '3px 7px',
-            borderRadius: 4,
-            border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)',
-            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
+            padding: '0 10px',
+            borderRadius: 6,
+            border: 'none',
+            boxShadow: 'none',
+            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
             color: themeTokens.textPrimary,
-            fontSize: 9.5,
+            fontSize: 11.5,
+            fontWeight: 400,
             cursor: 'pointer',
-            display: 'flex',
+            display: 'inline-flex',
             alignItems: 'center',
-            gap: 4,
-            transition: 'all 0.12s ease',
+            gap: 6,
+            transition: 'all 0.15s ease',
           }}
-          onMouseEnter={(e) => (e.currentTarget.style.borderColor = accentColor)}
-          onMouseLeave={(e) =>
-            (e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)')
-          }
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
+          }}
         >
-          <Calendar size={10} color={accentColor} />
+          <Calendar size={12} color={chatAccentColor} />
           <span>Planejar Weekly</span>
         </button>
 
@@ -1183,90 +2054,136 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
           disabled={isLoading}
           onClick={() => processUserRequest('O que fiz ontem e hoje nos projetos?')}
           style={{
+            height: 28,
             whiteSpace: 'nowrap',
-            padding: '3px 7px',
-            borderRadius: 4,
-            border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)',
-            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
+            padding: '0 10px',
+            borderRadius: 6,
+            border: 'none',
+            boxShadow: 'none',
+            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
             color: themeTokens.textPrimary,
-            fontSize: 9.5,
+            fontSize: 11.5,
+            fontWeight: 400,
             cursor: 'pointer',
-            display: 'flex',
+            display: 'inline-flex',
             alignItems: 'center',
-            gap: 4,
-            transition: 'all 0.12s ease',
+            gap: 6,
+            transition: 'all 0.15s ease',
           }}
-          onMouseEnter={(e) => (e.currentTarget.style.borderColor = accentColor)}
-          onMouseLeave={(e) =>
-            (e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)')
-          }
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
+          }}
         >
-          <GitCommit size={10} color={accentColor} />
+          <GitCommit size={12} color={chatAccentColor} />
           <span>Commits recentes</span>
         </button>
       </div>
 
-      {/* 4. Barra de Input */}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (inputPrompt.trim() && !isLoading) {
-            processUserRequest(inputPrompt.trim());
-          }
-        }}
+      {/* 4. Barra de Input em Card Unificado */}
+      <div
         style={{
-          padding: '6px 8px',
-          borderTop: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.07)' : '1px solid rgba(0, 0, 0, 0.07)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
+          padding: '8px 10px 10px 10px',
+          borderTop: `1px solid ${divider}`,
+          background: 'transparent',
           flexShrink: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
         }}
       >
-        <input
-          ref={inputRef}
-          type="text"
-          value={inputPrompt}
-          onChange={(e) => setInputPrompt(e.target.value)}
-          placeholder="Pergunte sobre seus commits, daily ou weekly..."
-          disabled={isLoading}
+        <div
           style={{
-            flex: 1,
-            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
-            border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)',
-            borderRadius: 6,
-            padding: '5px 8px',
-            color: themeTokens.textPrimary,
-            fontSize: 10.5,
-            fontFamily: 'Poppins, sans-serif',
-            outline: 'none',
-          }}
-        />
-
-        <button
-          type="submit"
-          disabled={!inputPrompt.trim() || isLoading}
-          style={{
-            width: 26,
-            height: 26,
-            borderRadius: 6,
-            background: inputPrompt.trim() && !isLoading ? accentColor : 'transparent',
+            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
+            borderRadius: 8,
             border: 'none',
-            color: inputPrompt.trim() && !isLoading ? '#ffffff' : themeTokens.textSecondary,
+            boxShadow: 'none',
+            padding: 8,
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: inputPrompt.trim() && !isLoading ? 'pointer' : 'default',
-            opacity: inputPrompt.trim() && !isLoading ? 1 : 0.4,
-            transition: 'all 0.15s ease',
-            flexShrink: 0,
+            flexDirection: 'column',
+            gap: 8,
+            transition: 'background 0.15s ease',
           }}
-          title="Enviar mensagem"
         >
-          <Send size={12} />
-        </button>
-      </form>
+          <textarea
+            ref={textareaRef}
+            value={inputPrompt}
+            onChange={(e) => setInputPrompt(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Pergunte sobre seus commits, daily ou weekly..."
+            disabled={isLoading}
+            rows={1}
+            style={{
+              width: '100%',
+              background: 'transparent',
+              border: 'none',
+              outline: 'none',
+              color: themeTokens.textPrimary,
+              fontSize: 12,
+              fontFamily: 'Poppins, sans-serif',
+              fontWeight: 400,
+              lineHeight: '18px',
+              minHeight: 28,
+              maxHeight: 120,
+              resize: 'none',
+              boxSizing: 'border-box',
+              padding: 0,
+            }}
+          />
+
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 8,
+            }}
+          >
+            <span
+              style={{
+                fontSize: 10.5,
+                color: themeTokens.textSecondary,
+                opacity: 0.7,
+                fontWeight: 400,
+                userSelect: 'none',
+              }}
+            >
+              Enter para enviar
+            </span>
+
+            <button
+              type="button"
+              disabled={!inputPrompt.trim() || isLoading}
+              onClick={() => {
+                if (inputPrompt.trim() && !isLoading) {
+                  processUserRequest(inputPrompt.trim());
+                }
+              }}
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 6,
+                background: inputPrompt.trim() && !isLoading ? chatAccentColor : (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'),
+                border: 'none',
+                outline: 'none',
+                boxShadow: 'none',
+                color: inputPrompt.trim() && !isLoading ? '#ffffff' : (isEffectiveDark ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.3)'),
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: inputPrompt.trim() && !isLoading ? 'pointer' : 'default',
+                transition: 'all 0.15s ease',
+                flexShrink: 0,
+              }}
+              title="Enviar mensagem"
+            >
+              <ArrowRight size={13} strokeWidth={2.5} />
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, RefreshCw, Search, Tags, Trash2, Wand2 } from 'lucide-react';
 import { EmptyState, Panel, Pill, SmallButton, inputStyle } from '../../team/teamUi';
 import { Notice, ghSettings, type SectionProps } from '../settingsUi';
+import { logSystemActivity } from '../../../utils/brainService';
 
 interface Label {
   name: string;
@@ -71,6 +72,7 @@ export const LabelsSection: React.FC<SectionProps> = ({ ctx, owner, repo, isAdmi
     try {
       if (original) await ghSettings('updateLabel', { owner, repo, name: original, patch: { new_name: draft.name.trim(), color, description: draft.description } });
       else await ghSettings('createLabel', { owner, repo, name: draft.name.trim(), color, description: draft.description });
+      logSystemActivity('configuracoes_projeto', original ? 'atualizar_label' : 'criar_label', `${owner}/${repo}`, { name: draft.name.trim(), color });
       showToast(original ? 'Label atualizada.' : 'Label criada.');
       setEditing(null);
       setCreating(false);
@@ -92,6 +94,7 @@ export const LabelsSection: React.FC<SectionProps> = ({ ctx, owner, repo, isAdmi
         ok++;
       } catch {}
     }
+    logSystemActivity('configuracoes_projeto', 'criar_labels_padrao', `${owner}/${repo}`, { count: ok });
     showToast(`${ok} label(s) padrão criadas.`);
     setBusy(false);
     load();
@@ -117,8 +120,8 @@ export const LabelsSection: React.FC<SectionProps> = ({ ctx, owner, repo, isAdmi
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
       {missing.length > 0 && isAdmin && (
-        <Panel ctx={ctx} icon={<Wand2 size={14} color={accentColor} />} title="Labels do DevFlow" right={<SmallButton ctx={ctx} primary disabled={busy} onClick={createMissing}>Criar {missing.length} faltando</SmallButton>}>
-          <div style={{ fontSize: 11.5, color: theme.textSecondary }}>O DevFlow usa estas labels para prioridade, tag e status das tarefas:</div>
+        <Panel ctx={ctx} icon={<Wand2 size={14} color={accentColor} />} title="Labels do Aura Dev" right={<SmallButton ctx={ctx} primary disabled={busy} onClick={createMissing}>Criar {missing.length} faltando</SmallButton>}>
+          <div style={{ fontSize: 11.5, color: theme.textSecondary }}>O Aura Dev usa estas labels para prioridade, tag e status das tarefas:</div>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {missing.map((l) => (
               <Pill key={l.name} color={`#${l.color}`}>
@@ -135,7 +138,7 @@ export const LabelsSection: React.FC<SectionProps> = ({ ctx, owner, repo, isAdmi
         title={`Labels (${labels?.length ?? '…'})`}
         right={
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, background: theme.controlBg, borderRadius: 6, padding: '0 8px', height: 26 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg, borderRadius: 6, padding: '0 8px', height: 26 }}>
               <Search size={12} color={theme.textSecondary} />
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar" style={{ ...inputStyle(ctx), background: 'transparent', padding: 0, width: 120, height: 24 }} />
             </div>
@@ -151,53 +154,72 @@ export const LabelsSection: React.FC<SectionProps> = ({ ctx, owner, repo, isAdmi
         {creating && editor(null)}
         {labels && labels.length === 0 && <EmptyState ctx={ctx} text="Nenhuma label neste repositório." />}
         {Object.entries(grouped).map(([group, list]) => (
-          <div key={group} style={{ display: 'flex', flexDirection: 'column' }}>
-            <div style={{ fontSize: 10, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '8px 0 4px' }}>{group}</div>
-            {list.map((l) =>
-              editing === l.name ? (
-                <React.Fragment key={l.name}>{editor(l.name)}</React.Fragment>
-              ) : (
-                <div key={l.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderTop: `1px solid ${theme.tableBorder}` }}>
-                  <div style={{ width: 170, flexShrink: 0 }}>
+          <div key={group} style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+            <div style={{ fontSize: 10, fontWeight: 400, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '4px 0 2px' }}>{group}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {list.map((l) =>
+                editing === l.name ? (
+                  <React.Fragment key={l.name}>
+                    {editor(l.name)}
+                  </React.Fragment>
+                ) : (
+                  <div
+                    key={l.name}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '8px 10px',
+                      borderRadius: 6,
+                      background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg,
+                      border: 'none',
+                      boxShadow: 'none',
+                      transition: 'all 0.15s ease',
+                      minWidth: 0,
+                    }}
+                  >
                     <Pill color={`#${l.color}`} solid>
                       {l.name}
                     </Pill>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: theme.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {l.description}
+                    </span>
+                    <code style={{ fontSize: 10, color: theme.textMuted, flexShrink: 0 }}>#{l.color}</code>
+                    {isAdmin && (
+                      <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                        <SmallButton ctx={ctx} onClick={() => { setEditing(l.name); setCreating(false); setDraft({ ...l }); }}>
+                          Editar
+                        </SmallButton>
+                        <SmallButton
+                          ctx={ctx}
+                          danger
+                          onClick={() =>
+                            confirm({
+                              title: 'Excluir label',
+                              message: `Excluir a label "${l.name}"?`,
+                              itemDescription: 'Ela será removida de todas as issues e PRs.',
+                              confirmLabel: 'Excluir',
+                              onConfirm: async () => {
+                                try {
+                                  await ghSettings('deleteLabel', { owner, repo, name: l.name });
+                                  logSystemActivity('configuracoes_projeto', 'excluir_label', `${owner}/${repo}`, { name: l.name });
+                                  showToast('Label excluída.');
+                                  load();
+                                } catch (e: any) {
+                                  showToast(`Falhou: ${e.message}`);
+                                }
+                              },
+                            })
+                          }
+                        >
+                          <Trash2 size={11} />
+                        </SmallButton>
+                      </div>
+                    )}
                   </div>
-                  <span style={{ flex: 1, fontSize: 11.5, color: theme.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.description}</span>
-                  <code style={{ fontSize: 10.5, color: theme.textMuted }}>#{l.color}</code>
-                  {isAdmin && (
-                    <>
-                      <SmallButton ctx={ctx} onClick={() => { setEditing(l.name); setCreating(false); setDraft({ ...l }); }}>
-                        Editar
-                      </SmallButton>
-                      <SmallButton
-                        ctx={ctx}
-                        danger
-                        onClick={() =>
-                          confirm({
-                            title: 'Excluir label',
-                            message: `Excluir a label "${l.name}"?`,
-                            itemDescription: 'Ela será removida de todas as issues e PRs.',
-                            confirmLabel: 'Excluir',
-                            onConfirm: async () => {
-                              try {
-                                await ghSettings('deleteLabel', { owner, repo, name: l.name });
-                                showToast('Label excluída.');
-                                load();
-                              } catch (e: any) {
-                                showToast(`Falhou: ${e.message}`);
-                              }
-                            },
-                          })
-                        }
-                      >
-                        <Trash2 size={11} />
-                      </SmallButton>
-                    </>
-                  )}
-                </div>
-              ),
-            )}
+                ),
+              )}
+            </div>
           </div>
         ))}
       </Panel>

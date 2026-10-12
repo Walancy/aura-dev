@@ -16,6 +16,7 @@ export interface AiProviderConfig {
   loginHelp?: string;
   models: string[];
   commands: AiSlashCommand[];
+  patchNotesUrl?: string;
 }
 
 // Brand accent colors for AI providers
@@ -86,6 +87,7 @@ export const AI_PROVIDERS: AiProviderConfig[] = [
     cliCommand: 'claude',
     installUrl: 'https://claude.com/download',
     installGuide: 'npm install -g @anthropic-ai/claude-code',
+    patchNotesUrl: 'https://github.com/anthropics/claude-code/releases',
     requiresLogin: true,
     loginCommand: 'claude login',
     loginUrl: 'https://claude.ai/login',
@@ -123,6 +125,7 @@ export const AI_PROVIDERS: AiProviderConfig[] = [
     cliCommand: 'agy',
     installUrl: 'https://antigravity.google/product/antigravity-cli?authuser=31',
     installGuide: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
+    patchNotesUrl: 'https://antigravity.google/changelog',
     requiresLogin: true,
     loginCommand: 'export PATH="$HOME/.local/bin:$PATH"; agy',
     loginUrl: 'https://antigravity.google/product/antigravity-cli?authuser=31',
@@ -162,6 +165,7 @@ export const AI_PROVIDERS: AiProviderConfig[] = [
     cliCommand: 'codex',
     installUrl: 'https://learn.chatgpt.com/docs/codex/cli',
     installGuide: 'npm install -g @openai/codex',
+    patchNotesUrl: 'https://github.com/openai/codex/releases',
     requiresLogin: true,
     loginCommand: 'codex login',
     loginUrl: 'https://platform.openai.com/api-keys',
@@ -186,6 +190,7 @@ export const AI_PROVIDERS: AiProviderConfig[] = [
     cliCommand: 'gemini',
     installUrl: 'https://geminicli.com/docs/get-started/installation/',
     installGuide: 'npm install -g @google/gemini-cli',
+    patchNotesUrl: 'https://github.com/google-gemini/gemini-cli/releases',
     requiresLogin: true,
     loginCommand: 'gemini auth login',
     loginUrl: 'https://aistudio.google.com/apikey',
@@ -218,6 +223,7 @@ export const AI_PROVIDERS: AiProviderConfig[] = [
     cliCommand: 'ollama',
     installUrl: 'https://ollama.com/download',
     installGuide: 'brew install ollama',
+    patchNotesUrl: 'https://github.com/ollama/ollama/releases',
     requiresLogin: false,
     loginHelp: 'O Ollama não requer login na nuvem! Ele executa modelos 100% locais e offline na sua máquina.',
     models: [

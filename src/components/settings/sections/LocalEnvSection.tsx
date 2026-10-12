@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Eye, EyeOff, FolderOpen, KeyRound, Play, Plus, Smartphone, SquareTerminal, Trash2, Wand2 } from 'lucide-react';
 import { EmptyState, Panel, Pill, SmallButton, inputStyle, selectStyle } from '../../team/teamUi';
 import { Field, Notice, type SectionProps } from '../settingsUi';
+import { logSystemActivity } from '../../../utils/brainService';
 
 type EnvLine = { kind: 'pair'; key: string; value: string } | { kind: 'raw'; text: string };
 
@@ -33,7 +34,10 @@ export const LocalEnvSection: React.FC<SectionProps & { detectedPath?: string }>
   const { theme, accentColor } = ctx;
   const local = settings.local;
   const path = local.path || detectedPath || '';
-  const setLocal = (patch: Partial<typeof local>) => update((s) => ({ ...s, local: { ...s.local, ...patch } }));
+  const setLocal = (patch: Partial<typeof local>) => {
+    logSystemActivity('configuracoes_projeto', 'atualizar_ambiente_local', path, patch);
+    update((s) => ({ ...s, local: { ...s.local, ...patch } }));
+  };
   const [entries, setEntries] = useState<Array<{ name: string; path: string; isDirectory: boolean }>>([]);
   const [envFile, setEnvFile] = useState<string | null>(null);
   const [envLines, setEnvLines] = useState<EnvLine[] | null>(null);
@@ -165,54 +169,54 @@ export const LocalEnvSection: React.FC<SectionProps & { detectedPath?: string }>
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
       <Panel ctx={ctx} icon={<FolderOpen size={14} color={accentColor} />} title="Pasta local">
-        <Field ctx={ctx} label={path ? <code style={{ fontSize: 12 }}>{path}</code> : 'Nenhuma pasta vinculada'} hint={local.path ? 'Definida manualmente.' : detectedPath ? 'Detectada automaticamente pelo nome do repositório.' : 'Clone o repositório e vincule a pasta.'}>
-          <SmallButton ctx={ctx} onClick={pickFolder}>
-            <FolderOpen size={11} /> {path ? 'Trocar' : 'Escolher pasta'}
-          </SmallButton>
-          {local.path && (
-            <SmallButton ctx={ctx} onClick={() => setLocal({ path: undefined })}>
-              Usar detecção
+          <Field ctx={ctx} label={path ? <code style={{ fontSize: 12 }}>{path}</code> : 'Nenhuma pasta vinculada'} hint={local.path ? 'Definida manualmente.' : detectedPath ? 'Detectada automaticamente pelo nome do repositório.' : 'Clone o repositório e vincule a pasta.'}>
+            <SmallButton ctx={ctx} onClick={pickFolder}>
+              <FolderOpen size={11} /> {path ? 'Trocar' : 'Escolher pasta'}
             </SmallButton>
-          )}
-          {path && (
-            <>
-              <SmallButton ctx={ctx} onClick={() => window.electronAPI?.shell?.exec?.(`open "${path}"`)}>
-                Finder
+            {local.path && (
+              <SmallButton ctx={ctx} onClick={() => setLocal({ path: undefined })}>
+                Usar detecção
               </SmallButton>
-              <SmallButton ctx={ctx} onClick={() => runInTerminal('git status')}>
-                <SquareTerminal size={11} /> Terminal
-              </SmallButton>
-            </>
-          )}
-        </Field>
-      </Panel>
-
-      <Panel
-        ctx={ctx}
-        icon={<Play size={14} color={accentColor} />}
-        title="Comandos do projeto"
-        right={
-          path ? (
-            <SmallButton ctx={ctx} disabled={detecting} onClick={detectCommands}>
-              <Wand2 size={11} /> Detectar
-            </SmallButton>
-          ) : undefined
-        }
-      >
-        {(['run', 'test', 'build', 'deploy'] as const).map((k) => (
-          <Field key={k} ctx={ctx} label={{ run: 'Rodar', test: 'Testar', build: 'Build', deploy: 'Deploy' }[k]}>
-            <input
-              value={local.commands[k] || ''}
-              onChange={(e) => setLocal({ commands: { ...local.commands, [k]: e.target.value || undefined } })}
-              placeholder={{ run: 'bun run dev', test: 'bun test', build: 'bun run build', deploy: './deploy.sh' }[k]}
-              style={{ ...inputStyle(ctx), width: 280, fontFamily: "'JetBrains Mono', Menlo, monospace" }}
-            />
-            <SmallButton ctx={ctx} disabled={!local.commands[k] || !path} onClick={() => runInTerminal(local.commands[k])} title="Executar no terminal do sistema">
-              <Play size={11} />
-            </SmallButton>
+            )}
+            {path && (
+              <>
+                <SmallButton ctx={ctx} onClick={() => window.electronAPI?.shell?.exec?.(`open "${path}"`)}>
+                  Finder
+                </SmallButton>
+                <SmallButton ctx={ctx} onClick={() => runInTerminal('git status')}>
+                  <SquareTerminal size={11} /> Terminal
+                </SmallButton>
+              </>
+            )}
           </Field>
-        ))}
-      </Panel>
+        </Panel>
+
+        <Panel
+          ctx={ctx}
+          icon={<Play size={14} color={accentColor} />}
+          title="Comandos do projeto"
+          right={
+            path ? (
+              <SmallButton ctx={ctx} disabled={detecting} onClick={detectCommands}>
+                <Wand2 size={11} /> Detectar
+              </SmallButton>
+            ) : undefined
+          }
+        >
+          {(['run', 'test', 'build', 'deploy'] as const).map((k) => (
+            <Field key={k} ctx={ctx} label={{ run: 'Rodar', test: 'Testar', build: 'Build', deploy: 'Deploy' }[k]}>
+              <input
+                value={local.commands[k] || ''}
+                onChange={(e) => setLocal({ commands: { ...local.commands, [k]: e.target.value || undefined } })}
+                placeholder={{ run: 'bun run dev', test: 'bun test', build: 'bun run build', deploy: './deploy.sh' }[k]}
+                style={{ ...inputStyle(ctx), width: 220, fontFamily: "'JetBrains Mono', Menlo, monospace" }}
+              />
+              <SmallButton ctx={ctx} disabled={!local.commands[k] || !path} onClick={() => runInTerminal(local.commands[k])} title="Executar no terminal do sistema">
+                <Play size={11} />
+              </SmallButton>
+            </Field>
+          ))}
+        </Panel>
 
       <Panel
         ctx={ctx}

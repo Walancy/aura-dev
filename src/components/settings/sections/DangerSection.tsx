@@ -3,6 +3,7 @@ import { Archive, Download, Eraser, LayoutTemplate, Send, ShieldAlert, Trash2, U
 import { Panel, SmallButton, inputStyle } from '../../team/teamUi';
 import { exportProjectSettings, importProjectSettings } from '../projectSettingsStore';
 import { Field, Notice, type SectionProps, ghSettings } from '../settingsUi';
+import { logSystemActivity } from '../../../utils/brainService';
 
 export const DangerSection: React.FC<SectionProps & { onRefreshRepoDetails?: () => void; onRepoGone?: () => void }> = ({
   ctx,
@@ -27,7 +28,7 @@ export const DangerSection: React.FC<SectionProps & { onRefreshRepoDetails?: () 
   const clearCache = () =>
     confirm({
       title: 'Limpar cache do repositório',
-      message: 'Apagar os dados em cache deste projeto no DevFlow?',
+      message: 'Apagar os dados em cache deste projeto no Aura Dev?',
       itemDescription: 'Issues, sprints locais e estados de busca serão recarregados do GitHub. Configurações deste projeto são mantidas.',
       confirmLabel: 'Limpar cache',
       onConfirm: () => {
@@ -37,6 +38,7 @@ export const DangerSection: React.FC<SectionProps & { onRefreshRepoDetails?: () 
           if (lk.startsWith('devflow_project_settings_v1:') || lk.startsWith('devflow_team_repo_v1:')) return;
           if (lk.includes(needle) || lk.includes(needle.replace(/[^a-z0-9_-]/g, '_'))) localStorage.removeItem(k);
         });
+        logSystemActivity('configuracoes_projeto', 'limpar_cache', repoFullName, {});
         showToast('Cache do repositório limpo.');
         onRefreshRepoDetails?.();
       },
@@ -49,6 +51,7 @@ export const DangerSection: React.FC<SectionProps & { onRefreshRepoDetails?: () 
       confirmLabel: 'Restaurar',
       onConfirm: () => {
         ['devflow_milestone_left_sidebar_width', 'devflow_milestone_right_panel_width', 'milestone_right_panel_ratios'].forEach((k) => localStorage.removeItem(k));
+        logSystemActivity('configuracoes_projeto', 'redefinir_layout', repoFullName, {});
         showToast('Layout redefinido.');
       },
     });
@@ -60,12 +63,14 @@ export const DangerSection: React.FC<SectionProps & { onRefreshRepoDetails?: () 
     a.download = `devflow-config-${repoFullName.replace('/', '__')}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    logSystemActivity('configuracoes_projeto', 'exportar_configuracoes', repoFullName, {});
   };
 
   const importJson = async (file: File) => {
     try {
       const next = importProjectSettings(repoFullName, await file.text());
       update(() => next);
+      logSystemActivity('configuracoes_projeto', 'importar_configuracoes', repoFullName, {});
       showToast('Configurações importadas (pasta local e comandos mantidos).');
     } catch (e: any) {
       showToast(`Arquivo inválido: ${e.message}`);
@@ -75,6 +80,7 @@ export const DangerSection: React.FC<SectionProps & { onRefreshRepoDetails?: () 
   const ghAction = async (action: string, payload: any, ok: string) => {
     try {
       await ghSettings(action, { owner, repo, ...payload });
+      logSystemActivity('configuracoes_projeto', action, repoFullName, payload);
       showToast(ok);
       return true;
     } catch (e: any) {
@@ -85,7 +91,7 @@ export const DangerSection: React.FC<SectionProps & { onRefreshRepoDetails?: () 
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-      <Panel ctx={ctx} icon={<LayoutTemplate size={14} color={theme.textSecondary} />} title="DevFlow (só nesta máquina)">
+      <Panel ctx={ctx} icon={<LayoutTemplate size={14} color={theme.textSecondary} />} title="Aura Dev (só nesta máquina)">
         <Field ctx={ctx} label="Exportar configurações" hint="Fluxo de trabalho, IA, alertas e notificações deste projeto em JSON — para replicar em outros repositórios.">
           <SmallButton ctx={ctx} onClick={exportJson}>
             <Download size={11} /> Exportar

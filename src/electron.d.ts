@@ -125,6 +125,7 @@ export interface ElectronAPI {
   ai: {
     prompt: (prompt: string, model: string, cwd?: string, provider?: string, timeoutMs?: number) => Promise<{ response?: string; error?: string }>;
     checkClis?: () => Promise<Record<string, boolean>>;
+    checkCliUpdates?: () => Promise<Record<string, { hasUpdate: boolean; currentVersion?: string; latestVersion?: string; updateCommand?: string }>>;
     orchestratorProviders?: () => Promise<Array<{ id: 'claude' | 'codex' | 'antigravity'; available: boolean; version?: string }>>;
     orchestrate?: (input: { runId?: string; provider: 'claude' | 'codex' | 'antigravity'; request: string; cwd: string; model?: string; mode?: 'ask' | 'plan' | 'execute'; depth?: 'fast' | 'balanced' | 'deep'; additionalDirs?: string[]; timeoutMs?: number }) => Promise<{ stdout: string; stderr: string; exitCode: number; requestId: string; cancelled?: boolean; usage?: { input_tokens?: number; output_tokens?: number } }>;
     cancelOrchestration?: (runId: string) => Promise<{ cancelled: boolean }>;

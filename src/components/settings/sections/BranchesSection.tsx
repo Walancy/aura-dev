@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { GitBranch, GitMerge, Shield } from 'lucide-react';
 import { Panel, Pill, SmallButton, inputStyle, selectStyle } from '../../team/teamUi';
 import { Field, NumberInput, Notice, Toggle, ghSettings, ignoredMessage, patchRepoVerified, type SectionProps } from '../settingsUi';
+import { logSystemActivity } from '../../../utils/brainService';
 
 interface ProtectionDraft {
   requirePr: boolean;
@@ -125,6 +126,7 @@ export const BranchesSection: React.FC<SectionProps & { branches: Array<{ name: 
     }
     try {
       const { ignored } = await patchRepoVerified(owner, repo, { [key]: value });
+      logSystemActivity('configuracoes_projeto', 'atualizar_regras_merge', `${owner}/${repo}`, { [key]: value });
       showToast(ignored.length ? ignoredMessage(ignored) : `${label} ${value ? 'ativado' : 'desativado'}.`);
       await reloadRepo();
     } catch (e: any) {
@@ -138,6 +140,7 @@ export const BranchesSection: React.FC<SectionProps & { branches: Array<{ name: 
     try {
       await ghSettings('setBranchProtection', { owner, repo, branch, body: toApi(draft) });
       setIsProtected(true);
+      logSystemActivity('configuracoes_projeto', 'salvar_protecao_branch', `${owner}/${repo}`, { branch, draft });
       showToast(`Proteção de "${branch}" salva.`);
       reloadBranches();
     } catch (e: any) {
@@ -181,7 +184,7 @@ export const BranchesSection: React.FC<SectionProps & { branches: Array<{ name: 
               {branches.map((b) => (
                 <option key={b.name} value={b.name}>
                   {b.name}
-                  {b.protected ? ' 🔒' : ''}
+                  {b.protected ? ' (protegida)' : ''}
                 </option>
               ))}
             </select>

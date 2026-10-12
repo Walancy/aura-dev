@@ -203,48 +203,72 @@ ${suggestions.map((s) => `- #${s.issue.githubNumber} [${s.issue.priority}] ${s.i
   const visibleAlerts = alerts.filter((a) => severity === 'all' || a.severity === severity);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
-      {/* Resumo semanal */}
-      <Panel
-        ctx={ctx}
-        icon={<Sparkles size={14} color={accentColor} />}
-        title="Resumo semanal do time"
-        right={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {repoData.aiSummary && (
-              <span style={{ fontSize: 11, color: theme.textMuted }}>
-                {repoData.aiSummary.provider ? `${repoData.aiSummary.provider} • ` : ''}
-                {relativeTime(repoData.aiSummary.generatedAt)}
-              </span>
-            )}
-            <SmallButton ctx={ctx} primary onClick={generateSummary} disabled={generating}>
-              {generating ? <Loader2 size={12} className="spin" style={{ animation: 'spin 1s linear infinite' }} /> : <Sparkles size={12} />}
-              {generating ? 'Gerando…' : repoData.aiSummary ? 'Gerar novamente' : `Gerar com ${provider.name}`}
-            </SmallButton>
-          </div>
-        }
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'row',
+        alignItems: 'stretch',
+        gap: 5,
+        width: '100%',
+        height: '100%',
+        minHeight: 0,
+        flex: 1,
+        boxSizing: 'border-box',
+        overflow: 'hidden',
+      }}
+    >
+      {/* Lado Esquerdo: Resumo Semanal + Sugestões de Atribuição */}
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 5,
+          height: '100%',
+          overflowY: 'auto',
+        }}
+        className="no-scrollbar"
       >
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <Pill color="#22c55e">{weekData.closed.length} issues fechadas</Pill>
-          <Pill color="#3b82f6">{weekData.merged.length} PRs mergeados</Pill>
-          <Pill color={theme.textSecondary}>{weekData.opened.length} issues novas</Pill>
-          <Pill color="#f59e0b">{alerts.length} alertas</Pill>
-        </div>
-        {repoData.aiSummary ? (
-          <div style={{ fontSize: 12, color: theme.textSecondary, lineHeight: 1.55, display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {renderMarkdownLite(repoData.aiSummary.text, theme.textPrimary, theme.textMuted)}
+        {/* Resumo semanal */}
+        <Panel
+          ctx={ctx}
+          title="Resumo semanal do time"
+          right={
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {repoData.aiSummary && (
+                <span style={{ fontSize: 11, color: theme.textMuted }}>
+                  {repoData.aiSummary.provider ? `${repoData.aiSummary.provider} • ` : ''}
+                  {relativeTime(repoData.aiSummary.generatedAt)}
+                </span>
+              )}
+              <SmallButton ctx={ctx} primary onClick={generateSummary} disabled={generating}>
+                {generating ? <Loader2 size={12} className="spin" style={{ animation: 'spin 1s linear infinite' }} /> : <Sparkles size={12} />}
+                {generating ? 'Gerando…' : repoData.aiSummary ? 'Gerar novamente' : `Gerar com ${provider.name}`}
+              </SmallButton>
+            </div>
+          }
+        >
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <Pill color="#22c55e">{weekData.closed.length} issues fechadas</Pill>
+            <Pill color="#3b82f6">{weekData.merged.length} PRs mergeados</Pill>
+            <Pill color={theme.textSecondary}>{weekData.opened.length} issues novas</Pill>
+            <Pill color="#f59e0b">{alerts.length} alertas</Pill>
           </div>
-        ) : (
-          <EmptyState ctx={ctx} text="Gere um resumo com entregas, riscos, quem está travado e recomendações — baseado nos dados reais dos últimos 7 dias." />
-        )}
-      </Panel>
+          {repoData.aiSummary ? (
+            <div style={{ fontSize: 12, color: theme.textSecondary, lineHeight: 1.55, display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {renderMarkdownLite(repoData.aiSummary.text, theme.textPrimary, theme.textMuted)}
+            </div>
+          ) : (
+            <EmptyState ctx={ctx} text="Gere um resumo com entregas, riscos, quem está travado e recomendações — baseado nos dados reais dos últimos 7 dias." />
+          )}
+        </Panel>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 5 }}>
         {/* Sugestão de atribuição */}
         <Panel
           ctx={ctx}
-          icon={<Lightbulb size={14} color={accentColor} />}
           title={`Sugestões de atribuição (${suggestions.length})`}
+          style={{ flex: 1 }}
           right={
             suggestions.length > 0 ? (
               <SmallButton ctx={ctx} onClick={refineWithAi} disabled={refining}>
@@ -277,7 +301,7 @@ ${suggestions.map((s) => `- #${s.issue.githubNumber} [${s.issue.priority}] ${s.i
                           <div
                             key={c.login}
                             title={c.reasons.join(' • ')}
-                            style={{ display: 'flex', alignItems: 'center', gap: 5, background: theme.controlBg, borderRadius: 6, padding: '3px 4px 3px 6px', boxShadow: isAi ? `0 0 0 1px ${accentColor}` : undefined, maxWidth: '100%' }}
+                            style={{ display: 'flex', alignItems: 'center', gap: 5, background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg, borderRadius: 6, padding: '3px 4px 3px 6px', maxWidth: '100%', border: 'none', boxShadow: 'none' }}
                           >
                             <span onClick={() => onOpenMember(c.login)} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', minWidth: 0 }}>
                               <Avatar ctx={ctx} login={c.login} url={m?.avatarUrl} size={16} />
@@ -306,12 +330,24 @@ ${suggestions.map((s) => `- #${s.issue.githubNumber} [${s.issue.priority}] ${s.i
             </div>
           )}
         </Panel>
+      </div>
 
-        {/* Alertas */}
+      {/* Lado Direito: Div dedicada para Alertas */}
+      <div
+        style={{
+          width: 380,
+          minWidth: 320,
+          maxWidth: 420,
+          flexShrink: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+        }}
+      >
         <Panel
           ctx={ctx}
-          icon={<AlertTriangle size={14} color={accentColor} />}
           title={`Alertas (${alerts.length})`}
+          style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}
           right={
             <select value={severity} onChange={(e) => setSeverity(e.target.value as any)} style={selectStyle(ctx)}>
               <option value="all">Todos</option>
@@ -324,18 +360,29 @@ ${suggestions.map((s) => `- #${s.issue.githubNumber} [${s.issue.priority}] ${s.i
           {visibleAlerts.length === 0 ? (
             <EmptyState ctx={ctx} text="Nenhum alerta neste filtro." />
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minHeight: 0, overflowY: 'auto' }} className="no-scrollbar">
               {visibleAlerts.map((a) => (
                 <div
                   key={a.id}
                   {...rowHover(ctx)}
                   onClick={() => (a.url ? openUrl(a.url) : a.login ? onOpenMember(a.login) : undefined)}
-                  style={{ display: 'flex', gap: 8, padding: '6px 4px', borderRadius: 6, cursor: a.url || a.login ? 'pointer' : 'default', alignItems: 'flex-start' }}
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    padding: '8px 10px',
+                    borderRadius: 6,
+                    cursor: a.url || a.login ? 'pointer' : 'default',
+                    alignItems: 'flex-start',
+                    background: ctx.isEffectiveDark ? '#1c1c1c' : 'rgba(0, 0, 0, 0.02)',
+                    border: 'none',
+                    boxShadow: 'none',
+                    transition: 'background 0.12s ease',
+                  }}
                 >
                   <span style={{ width: 7, height: 7, borderRadius: '50%', background: SEVERITY_COLOR[a.severity], marginTop: 5, flexShrink: 0 }} />
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 12, color: theme.textPrimary }}>{a.title}</div>
-                    <div style={{ fontSize: 11, color: theme.textSecondary, lineHeight: 1.4 }}>{a.detail}</div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 400, color: theme.textPrimary, lineHeight: 1.4 }}>{a.title}</div>
+                    <div style={{ fontSize: 11, color: theme.textSecondary, lineHeight: 1.45, marginTop: 2 }}>{a.detail}</div>
                   </div>
                 </div>
               ))}

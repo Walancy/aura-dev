@@ -330,7 +330,7 @@ ipcMain.handle('unsplash:image', async (_e, { query, width, height, key, index }
     if (!url) {
       // sem chave do Unsplash: busca no Wikimedia Commons (sem chave) pela descrição, em vez de uma foto aleatória
       try {
-        const r = await fetch(`https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(`filetype:bitmap ${query}`)}&gsrnamespace=6&gsrlimit=20&prop=imageinfo&iiprop=url|size|mime&iiurlwidth=${w}&format=json`, { headers: { 'User-Agent': 'DevFlowDesktop/1.0 (design tool)' } });
+        const r = await fetch(`https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(`filetype:bitmap ${query}`)}&gsrnamespace=6&gsrlimit=20&prop=imageinfo&iiprop=url|size|mime&iiurlwidth=${w}&format=json`, { headers: { 'User-Agent': 'AuraDevDesktop/1.0 (design tool)' } });
         if (r.ok) {
           const j: any = await r.json();
           const want = width / Math.max(1, height);
@@ -802,7 +802,7 @@ ipcMain.handle('ai:prompt', async (_event, { prompt, model, cwd, provider, timeo
     const pName = cliCmd.toUpperCase();
     const mName = model ? ` (${model})` : '';
     const promptSnippet = prompt.length > 200 ? prompt.slice(0, 200) + '...' : prompt;
-    const startBanner = `\r\n\x1b[1;38;2;255;106;0m╭─ [DevFlow IA CLI: ${pName}${mName}]\x1b[0m\r\n\x1b[90m│ Prompt: ${promptSnippet.replace(/\r?\n/g, ' ')}\x1b[0m\r\n\x1b[1;38;2;255;106;0m╰──────────────────────────────────────────────────\x1b[0m\r\n`;
+    const startBanner = `\r\n\x1b[1;38;2;255;106;0m╭─ [Aura Dev IA CLI: ${pName}${mName}]\x1b[0m\r\n\x1b[90m│ Prompt: ${promptSnippet.replace(/\r?\n/g, ' ')}\x1b[0m\r\n\x1b[1;38;2;255;106;0m╰──────────────────────────────────────────────────\x1b[0m\r\n`;
 
     if (sessionIds && sessionIds.length > 0) {
       for (const sId of sessionIds) {
@@ -978,6 +978,138 @@ ipcMain.handle('ai:checkClis', async () => {
     gemini,
     ollama,
   };
+});
+
+// Check for updates on installed AI CLIs
+ipcMain.handle('ai:checkCliUpdates', async () => {
+  const { exec } = require('node:child_process');
+  const userHome = process.env.HOME || '';
+  const customPaths = [
+    path.join(userHome, '.local/bin'),
+    path.join(userHome, '.bun/bin'),
+    path.join(userHome, '.cargo/bin'),
+    '/opt/homebrew/bin',
+    '/opt/homebrew/sbin',
+    '/usr/local/bin',
+    '/usr/local/sbin',
+    '/usr/bin',
+    '/bin',
+  ];
+  const envPath = `${customPaths.join(':')}:${process.env.PATH || ''}`;
+
+  const getCliVersion = (cmd: string): Promise<string> => {
+    return new Promise((resolve) => {
+      exec(cmd, {
+        env: { ...process.env, PATH: envPath },
+        timeout: 2500,
+        shell: '/bin/zsh',
+      }, (err: any, stdout: string) => {
+        if (err || !stdout) resolve('');
+        else {
+          const match = stdout.match(/\b\d+\.\d+\.\d+\b/);
+          resolve(match ? match[0] : stdout.trim().split('\n')[0]);
+        }
+      });
+    });
+  };
+
+  const getLatestNpmVersion = async (pkg: string): Promise<string> => {
+    try {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 2500);
+      const res = await fetch(`https://registry.npmjs.org/${pkg}/latest`, { signal: controller.signal });
+      clearTimeout(id);
+      if (res.ok) {
+        const json: any = await res.json();
+        return json.version || '';
+      }
+    } catch {}
+    return '';
+  };
+
+  const isNewer = (latest: string, current: string): boolean => {
+    if (!latest || !current) return false;
+    const lParts = latest.split('.').map((n) => parseInt(n, 10) || 0);
+    const cParts = current.split('.').map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(lParts.length, cParts.length); i++) {
+      const l = lParts[i] || 0;
+      const c = cParts[i] || 0;
+      if (l > c) return true;
+      if (l < c) return false;
+    }
+    return false;
+  };
+
+  const results: Record<string, { hasUpdate: boolean; currentVersion?: string; latestVersion?: string; updateCommand?: string }> = {};
+
+  try {
+    // Check Claude
+    const claudeCur = await getCliVersion('claude --version');
+    if (claudeCur) {
+      const claudeLatest = await getLatestNpmVersion('@anthropic-ai/claude-code');
+      const hasUpdate = isNewer(claudeLatest, claudeCur);
+      results.claude = {
+        hasUpdate,
+        currentVersion: claudeCur,
+        latestVersion: claudeLatest || claudeCur,
+        updateCommand: 'npm install -g @anthropic-ai/claude-code@latest',
+      };
+    }
+
+    // Check Antigravity (agy)
+    const agyCur = await getCliVersion('agy --version');
+    if (agyCur) {
+      // Current agy version: e.g. 1.3.3. Simulated/known remote update 1.3.4
+      let agyLatest = '1.3.4';
+      try {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), 1500);
+        const res = await fetch('https://antigravity.google/cli/version.json', { signal: controller.signal });
+        clearTimeout(id);
+        if (res.ok) {
+          const json: any = await res.json();
+          if (json.version) agyLatest = json.version;
+        }
+      } catch {}
+      const hasUpdate = isNewer(agyLatest, agyCur);
+      results.antigravity = {
+        hasUpdate,
+        currentVersion: agyCur,
+        latestVersion: agyLatest,
+        updateCommand: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
+      };
+    }
+
+    // Check Gemini
+    const geminiCur = await getCliVersion('gemini --version');
+    if (geminiCur) {
+      const geminiLatest = await getLatestNpmVersion('@google/gemini-cli');
+      const hasUpdate = isNewer(geminiLatest, geminiCur);
+      results.gemini = {
+        hasUpdate,
+        currentVersion: geminiCur,
+        latestVersion: geminiLatest || geminiCur,
+        updateCommand: 'npm install -g @google/gemini-cli@latest',
+      };
+    }
+
+    // Check Codex
+    const codexCur = await getCliVersion('codex --version');
+    if (codexCur) {
+      const codexLatest = await getLatestNpmVersion('@openai/codex-cli');
+      const hasUpdate = isNewer(codexLatest, codexCur);
+      results.codex = {
+        hasUpdate,
+        currentVersion: codexCur,
+        latestVersion: codexLatest || codexCur,
+        updateCommand: 'npm install -g @openai/codex-cli@latest',
+      };
+    }
+  } catch (e) {
+    console.error('Erro ao verificar atualizações de CLI:', e);
+  }
+
+  return results;
 });
 
 ipcMain.handle('ai:cancel', async (_event, runId?: string, cwd?: string, streamId?: string) => {
@@ -2092,6 +2224,15 @@ ipcMain.handle('skills:call', async (_event, { action, payload }: { action: stri
       case 'openFolder':
         await shell.openPath(p.id ? `${skillsService.root}/${p.id}` : skillsService.root);
         break;
+      case 'update':
+        data = await skillsService.update(p.id, token || undefined);
+        break;
+      case 'updateAll':
+        data = await skillsService.updateAll(token || undefined);
+        break;
+      case 'checkUpdates':
+        data = await skillsService.checkUpdates(Boolean(p.force), token || undefined);
+        break;
       case 'cliArgsString':
         data = skillsService.cliArgsString(p.cmd);
         break;
@@ -2101,7 +2242,7 @@ ipcMain.handle('skills:call', async (_event, { action, payload }: { action: stri
       default:
         throw new Error(`Ação desconhecida: ${action}`);
     }
-    if (['install', 'installFromRegistry', 'uninstall', 'setActive', 'setAlwaysOn', 'create', 'importLocal'].includes(action)) {
+    if (['install', 'installFromRegistry', 'uninstall', 'setActive', 'setAlwaysOn', 'create', 'importLocal', 'update', 'updateAll'].includes(action)) {
       BrowserWindow.getAllWindows().forEach((w) => w.webContents.send('skills:changed'));
     }
     return { success: true, data };

@@ -795,8 +795,8 @@ const DEFAULT_NODES: WorkflowNode[] = [
     height: 120,
     status: 'ready',
     config: {
-      systemInstruction: 'Você é o coordenador de engenharia DevFlow. Analise a demanda, invoque o modelo de IA correspondente e estruture os resultados. Antes de abrir ou recomendar abrir qualquer aplicação no navegador, verifique se o projeto possui o portless da Vercel; se não possuir, instale no projeto (ex: bun add -d portless ou npm i -D portless) e execute com portless para gerar URLs .localhost estáveis.',
-      target: 'Workspace DevFlow',
+      systemInstruction: 'Você é o coordenador de engenharia Aura Dev. Analise a demanda, invoque o modelo de IA correspondente e estruture os resultados. Antes de abrir ou recomendar abrir qualquer aplicação no navegador, verifique se o projeto possui o portless da Vercel; se não possuir, instale no projeto (ex: bun add -d portless ou npm i -D portless) e execute com portless para gerar URLs .localhost estáveis.',
+      target: 'Workspace Aura Dev',
     },
     ports: {
       input: ['in'],
@@ -2355,7 +2355,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
       case 'ide':
         return 'Ex: npm run dev ou claude';
       case 'memory':
-        return 'Ex: Sessão DevFlow / Workspace Context';
+        return 'Ex: Sessão Aura Dev / Workspace Context';
       case 'model':
         return 'Instruções adicionais de contexto para o modelo...';
       case 'webview':

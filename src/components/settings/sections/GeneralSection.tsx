@@ -3,6 +3,8 @@ import { Copy, ExternalLink, Globe, Info, Lock, Sliders, Star, GitFork } from 'l
 import { Panel, Pill, SmallButton, inputStyle, openUrl, selectStyle } from '../../team/teamUi';
 import { Field, Notice, Segmented, Toggle, ghSettings, ignoredMessage, patchRepoVerified, type SectionProps } from '../settingsUi';
 
+import { logSystemActivity } from '../../../utils/brainService';
+
 export const GeneralSection: React.FC<SectionProps & { branches: string[] }> = ({ ctx, owner, repo, repoInfo, isAdmin, reloadRepo, settings, update, showToast, confirm, branches }) => {
   const { theme, accentColor } = ctx;
   const [draft, setDraft] = useState({ description: '', homepage: '', topics: '', defaultBranch: '' });
@@ -39,6 +41,7 @@ export const GeneralSection: React.FC<SectionProps & { branches: string[] }> = (
         .map((t) => t.trim().toLowerCase())
         .filter(Boolean);
       if (topics.join(',') !== (repoInfo.topics || []).join(',')) await ghSettings('setTopics', { owner, repo, names: topics });
+      logSystemActivity('configuracoes_projeto', 'atualizar_detalhes', `${owner}/${repo}`, { patch, topics });
       showToast('Repositório atualizado no GitHub.');
       await reloadRepo();
     } catch (e: any) {
@@ -51,6 +54,7 @@ export const GeneralSection: React.FC<SectionProps & { branches: string[] }> = (
   const patchRepo = async (patch: any, ok: string) => {
     try {
       const { ignored } = await patchRepoVerified(owner, repo, patch);
+      logSystemActivity('configuracoes_projeto', 'alterar_parametro', `${owner}/${repo}`, patch);
       showToast(ignored.length ? ignoredMessage(ignored) : ok);
       await reloadRepo();
     } catch (e: any) {
@@ -59,12 +63,12 @@ export const GeneralSection: React.FC<SectionProps & { branches: string[] }> = (
   };
 
   const stat = (icon: React.ReactNode, label: string, value: React.ReactNode) => (
-    <div style={{ background: theme.controlBg, borderRadius: 8, padding: '8px 10px', minWidth: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, color: theme.textMuted }}>
+    <div style={{ background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg, borderRadius: 8, padding: '8px 10px', minWidth: 0, border: 'none', boxShadow: 'none' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, color: theme.textSecondary }}>
         {icon}
         {label}
       </div>
-      <div style={{ fontSize: 12.5, color: theme.textPrimary, fontWeight: 500, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
+      <div style={{ fontSize: 12.5, color: theme.textPrimary, fontWeight: 400, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
     </div>
   );
 
@@ -115,7 +119,7 @@ export const GeneralSection: React.FC<SectionProps & { branches: string[] }> = (
         <Field ctx={ctx} label="Topics" hint="Separe por vírgula. Minúsculas, sem espaços." wide>
           <input disabled={!isAdmin} value={draft.topics} onChange={(e) => setDraft({ ...draft, topics: e.target.value })} style={inputStyle(ctx)} placeholder="flutter, supabase, app" />
         </Field>
-        <Field ctx={ctx} label="Branch padrão" hint="Base para novos PRs e para o clone.">
+        <Field ctx={ctx} label="Branch padrão" hint="Base para PRs e clone.">
           <select disabled={!isAdmin} value={draft.defaultBranch} onChange={(e) => setDraft({ ...draft, defaultBranch: e.target.value })} style={selectStyle(ctx)}>
             {(branches.length ? branches : [draft.defaultBranch]).map((b) => (
               <option key={b} value={b}>
@@ -124,7 +128,7 @@ export const GeneralSection: React.FC<SectionProps & { branches: string[] }> = (
             ))}
           </select>
         </Field>
-        <Field ctx={ctx} label="Visibilidade" hint="Tornar público expõe todo o código e histórico.">
+        <Field ctx={ctx} label="Visibilidade" hint="Tornar público expõe o código.">
           <Segmented
             ctx={ctx}
             disabled={!isAdmin || !repoInfo}
@@ -147,30 +151,50 @@ export const GeneralSection: React.FC<SectionProps & { branches: string[] }> = (
       </Panel>
 
       <Panel ctx={ctx} title="Funcionalidades do GitHub">
-        {(
-          [
-            ['has_issues', 'Issues', 'Base de Tarefas, Issues e Sprints no DevFlow.'],
-            ['has_projects', 'Projects', 'Necessário para o quadro Kanban com Project V2.'],
-            ['has_wiki', 'Wiki', 'Documentação do repositório no GitHub.'],
-            ['has_discussions', 'Discussions', 'Fórum de perguntas e anúncios.'],
-          ] as const
-        ).map(([key, label, hint]) => (
-          <Field key={key} ctx={ctx} label={label} hint={hint}>
-            <Toggle
-              ctx={ctx}
-              disabled={!isAdmin || !repoInfo}
-              checked={Boolean(repoInfo?.[key])}
-              onChange={(v) => {
-                if (key === 'has_issues' && !v)
-                  confirm({ title: 'Desativar Issues', message: 'As issues deixam de aparecer no GitHub e no DevFlow (os dados não são apagados).', confirmLabel: 'Desativar', onConfirm: () => patchRepo({ [key]: v }, `${label} desativado.`) });
-                else patchRepo({ [key]: v }, `${label} ${v ? 'ativado' : 'desativado'}.`);
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          {(
+            [
+              ['has_issues', 'Issues', 'Base de Tarefas, Issues e Sprints.'],
+              ['has_projects', 'Projects', 'Necessário para Kanban com Project V2.'],
+              ['has_wiki', 'Wiki', 'Documentação do repositório no GitHub.'],
+              ['has_discussions', 'Discussions', 'Fórum de perguntas e anúncios.'],
+            ] as const
+          ).map(([key, label, hint]) => (
+            <div
+              key={key}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '8px 10px',
+                borderRadius: 6,
+                background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg,
+                gap: 8,
+                border: 'none',
+                boxShadow: 'none',
+                transition: 'all 0.15s ease',
               }}
-            />
-          </Field>
-        ))}
+            >
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 12, fontWeight: 400, color: theme.textPrimary }}>{label}</div>
+                <div style={{ fontSize: 10.5, color: theme.textSecondary, lineHeight: 1.3, marginTop: 1 }}>{hint}</div>
+              </div>
+              <Toggle
+                ctx={ctx}
+                disabled={!isAdmin || !repoInfo}
+                checked={Boolean(repoInfo?.[key])}
+                onChange={(v) => {
+                  if (key === 'has_issues' && !v)
+                    confirm({ title: 'Desativar Issues', message: 'As issues deixam de aparecer no GitHub e no Aura Dev (os dados não são apagados).', confirmLabel: 'Desativar', onConfirm: () => patchRepo({ [key]: v }, `${label} desativado.`) });
+                  else patchRepo({ [key]: v }, `${label} ${v ? 'ativado' : 'desativado'}.`);
+                }}
+              />
+            </div>
+          ))}
+        </div>
       </Panel>
 
-      <Panel ctx={ctx} title="Preferências do DevFlow">
+      <Panel ctx={ctx} title="Preferências do Aura Dev">
         <Field ctx={ctx} label="Visualização padrão" hint="Como as tarefas abrem ao entrar no projeto.">
           <Segmented
             ctx={ctx}
@@ -180,11 +204,21 @@ export const GeneralSection: React.FC<SectionProps & { branches: string[] }> = (
               { id: 'timeline', label: 'Timeline' },
               { id: 'spreadsheet', label: 'Tabela' },
             ]}
-            onChange={(v) => update((s) => ({ ...s, prefs: { ...s.prefs, defaultView: v as any } }))}
+            onChange={(v) => {
+              logSystemActivity('configuracoes_projeto', 'alterar_visualizacao_padrao', `${owner}/${repo}`, { view: v });
+              update((s) => ({ ...s, prefs: { ...s.prefs, defaultView: v as any } }));
+            }}
           />
         </Field>
         <Field ctx={ctx} label="Sugestões de IA na Daily" hint="Mostra tarefas sugeridas com base nos commits recentes.">
-          <Toggle ctx={ctx} checked={settings.prefs.dailyAi} onChange={(v) => update((s) => ({ ...s, prefs: { ...s.prefs, dailyAi: v } }))} />
+          <Toggle
+            ctx={ctx}
+            checked={settings.prefs.dailyAi}
+            onChange={(v) => {
+              logSystemActivity('configuracoes_projeto', 'toggle_daily_ai', `${owner}/${repo}`, { dailyAi: v });
+              update((s) => ({ ...s, prefs: { ...s.prefs, dailyAi: v } }));
+            }}
+          />
         </Field>
         {repoInfo?.archived && <Pill color="#f59e0b">Este repositório está arquivado (somente leitura)</Pill>}
       </Panel>

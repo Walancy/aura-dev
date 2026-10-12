@@ -94,6 +94,8 @@ interface DailySchedulerViewProps {
   onSelectWorkspace?: (path: string) => void;
   installedClis?: Record<string, boolean>;
   activeModels?: Record<string, any>;
+  onSelectAiProvider?: (providerId: string) => void;
+  onSelectModel?: (modelItem: { id: string; label: string } | string, providerId?: string) => void;
   onToast?: (msg: string) => void;
   activeProject?: HeaderActiveProjectInfo | null;
   availableProjects?: HeaderProjectItem[];
@@ -242,6 +244,9 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
   isEffectiveDark = true,
   selectedAiProvider = 'claude',
   selectedModel = 'sonnet',
+  activeModels,
+  onSelectAiProvider,
+  onSelectModel,
   onToast = (msg: string) => console.log(msg),
   activeProject,
   availableProjects: propsAvailableProjects,
@@ -2036,6 +2041,9 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
               }}
               selectedAiProvider={selectedAiProvider}
               selectedModel={selectedModel}
+              activeModels={activeModels}
+              onSelectAiProvider={onSelectAiProvider}
+              onSelectModel={onSelectModel}
               onToast={onToast}
             />
             ) : (

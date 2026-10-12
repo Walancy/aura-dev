@@ -2777,9 +2777,10 @@ export default function DesignCanvas({
           userGuides.map((g) => {
             const vertical = g.axis === 'x';
             const common = { x1: vertical ? g.pos : -100000, x2: vertical ? g.pos : 100000, y1: vertical ? -100000 : g.pos, y2: vertical ? 100000 : g.pos };
+            const guideCol = isEffectiveDark ? '#00b8ff' : '#0284c7';
             return (
               <g key={g.id}>
-                <line {...common} stroke="#00b8ff" strokeWidth={1 / zoom} pointerEvents="none" />
+                <line {...common} stroke={guideCol} strokeWidth={1 / zoom} pointerEvents="none" />
                 {!readOnly && (
                   <line
                     {...common}
@@ -2802,8 +2803,8 @@ export default function DesignCanvas({
           })}
         {drag.kind === 'guide' && draggingGuidePos !== null && (
           <g transform={`translate(${drag.axis === 'x' ? draggingGuidePos : (-pan.x + 30) / zoom}, ${drag.axis === 'y' ? draggingGuidePos : (-pan.y + 30) / zoom}) scale(${1 / zoom})`} pointerEvents="none">
-            <rect x={6} y={-9} width={46} height={16} rx={4} fill="#00b8ff" />
-            <text x={29} y={3} fontSize={10} fill="#001018" textAnchor="middle" fontFamily="'Poppins', sans-serif" fontWeight={600}>
+            <rect x={6} y={-9} width={46} height={16} rx={4} fill={isEffectiveDark ? '#00b8ff' : '#0284c7'} />
+            <text x={29} y={3} fontSize={10} fill="#ffffff" textAnchor="middle" fontFamily="'Poppins', sans-serif" fontWeight={400}>
               {Math.round((draggingGuidePos - (drag.axis === 'x' ? rulerOriginPoint.x : rulerOriginPoint.y)) * 100) / 100}
             </text>
           </g>
@@ -2893,7 +2894,15 @@ export default function DesignCanvas({
         const selBoxes = selectedShapes.map((x) => ({ x: x.x, y: x.y, width: x.width, height: x.height }));
         const rangeX = selectionRange(selBoxes, 'x', origin.x);
         const rangeY = selectionRange(selBoxes, 'y', origin.y);
-        const bg = 'rgba(24,24,24,0.96)';
+        // Cores da régua adaptáveis ao tema (Dark / Light)
+        const rulerBg = isEffectiveDark ? 'rgba(24, 24, 24, 0.96)' : 'rgba(248, 250, 252, 0.96)';
+        const rulerTextCol = isEffectiveDark ? '#9a9a9a' : '#64748b';
+        const rulerTickMajorCol = isEffectiveDark ? '#737373' : '#94a3b8';
+        const rulerTickMinorCol = isEffectiveDark ? '#525252' : '#cbd5e1';
+        const rulerDividerCol = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
+        const rulerRangeOpacity = isEffectiveDark ? 0.28 : 0.2;
+        const rulerGuideMarkerCol = isEffectiveDark ? '#00b8ff' : '#0284c7';
+
         const startGuide = (axis: 'x' | 'y') => (e: React.MouseEvent) => {
           if (e.button !== 0 || readOnly) return;
           e.stopPropagation();
@@ -2901,23 +2910,28 @@ export default function DesignCanvas({
           setDrag({ kind: 'guide', id: newGuideId(), axis });
         };
         return (
-          <g fontFamily="'Poppins', sans-serif" fontSize={9} fill="#9a9a9a">
-            <rect x={RULER_SIZE} y={0} width="100%" height={RULER_SIZE} fill={bg} style={{ cursor: 'row-resize' }} onMouseDown={startGuide('y')} />
-            <rect x={0} y={RULER_SIZE} width={RULER_SIZE} height="100%" fill={bg} style={{ cursor: 'col-resize' }} onMouseDown={startGuide('x')} />
-            <rect x={0} y={0} width={RULER_SIZE} height={RULER_SIZE} fill={bg} pointerEvents="none" />
+          <g fontFamily="'Poppins', sans-serif" fontSize={9} fill={rulerTextCol}>
+            <rect x={RULER_SIZE} y={0} width="100%" height={RULER_SIZE} fill={rulerBg} style={{ cursor: 'row-resize' }} onMouseDown={startGuide('y')} />
+            <rect x={0} y={RULER_SIZE} width={RULER_SIZE} height="100%" fill={rulerBg} style={{ cursor: 'col-resize' }} onMouseDown={startGuide('x')} />
+            <rect x={0} y={0} width={RULER_SIZE} height={RULER_SIZE} fill={rulerBg} pointerEvents="none" />
+
+            {/* Linhas divisórias das réguas com o canvas (baixa opacidade) */}
+            <line x1={0} x2="100%" y1={RULER_SIZE} y2={RULER_SIZE} stroke={rulerDividerCol} strokeWidth={1} />
+            <line x1={RULER_SIZE} x2={RULER_SIZE} y1={0} y2="100%" stroke={rulerDividerCol} strokeWidth={1} />
+
             <g pointerEvents="none">
               {rangeX && (
                 <g>
-                  <rect x={pan.x + rangeX.start * zoom} y={0} width={Math.max(1, (rangeX.end - rangeX.start) * zoom)} height={RULER_SIZE} fill={accentColor} opacity={0.28} />
-                  <text x={pan.x + rangeX.start * zoom - 2} y={RULER_SIZE - 5} textAnchor="end" fill={accentColor} fontWeight={600}>{rangeX.startLabel}</text>
-                  <text x={pan.x + rangeX.end * zoom + 2} y={RULER_SIZE - 5} fill={accentColor} fontWeight={600}>{rangeX.endLabel}</text>
+                  <rect x={pan.x + rangeX.start * zoom} y={0} width={Math.max(1, (rangeX.end - rangeX.start) * zoom)} height={RULER_SIZE} fill={accentColor} opacity={rulerRangeOpacity} />
+                  <text x={pan.x + rangeX.start * zoom - 2} y={RULER_SIZE - 5} textAnchor="end" fill={accentColor} fontWeight={400}>{rangeX.startLabel}</text>
+                  <text x={pan.x + rangeX.end * zoom + 2} y={RULER_SIZE - 5} fill={accentColor} fontWeight={400}>{rangeX.endLabel}</text>
                 </g>
               )}
               {rangeY && (
                 <g>
-                  <rect x={0} y={pan.y + rangeY.start * zoom} width={RULER_SIZE} height={Math.max(1, (rangeY.end - rangeY.start) * zoom)} fill={accentColor} opacity={0.28} />
-                  <text transform={`translate(${RULER_SIZE - 5}, ${pan.y + rangeY.start * zoom - 2}) rotate(-90)`} textAnchor="start" fill={accentColor} fontWeight={600}>{rangeY.startLabel}</text>
-                  <text transform={`translate(${RULER_SIZE - 5}, ${pan.y + rangeY.end * zoom + 2}) rotate(-90)`} textAnchor="end" fill={accentColor} fontWeight={600}>{rangeY.endLabel}</text>
+                  <rect x={0} y={pan.y + rangeY.start * zoom} width={RULER_SIZE} height={Math.max(1, (rangeY.end - rangeY.start) * zoom)} fill={accentColor} opacity={rulerRangeOpacity} />
+                  <text transform={`translate(${RULER_SIZE - 5}, ${pan.y + rangeY.start * zoom - 2}) rotate(-90)`} textAnchor="start" fill={accentColor} fontWeight={400}>{rangeY.startLabel}</text>
+                  <text transform={`translate(${RULER_SIZE - 5}, ${pan.y + rangeY.end * zoom + 2}) rotate(-90)`} textAnchor="end" fill={accentColor} fontWeight={400}>{rangeY.endLabel}</text>
                 </g>
               )}
               {ticksX.map((t) => {
@@ -2925,8 +2939,8 @@ export default function DesignCanvas({
                 if (x < RULER_SIZE) return null;
                 return (
                   <g key={`rx-${t.value}`}>
-                    <line x1={x} x2={x} y1={t.major ? 7 : 12} y2={RULER_SIZE} stroke="#6a6a6a" />
-                    {t.label !== undefined && <text x={x + 3} y={9}>{t.label}</text>}
+                    <line x1={x} x2={x} y1={t.major ? 7 : 12} y2={RULER_SIZE} stroke={t.major ? rulerTickMajorCol : rulerTickMinorCol} strokeWidth={1} />
+                    {t.label !== undefined && <text x={x + 3} y={9} fill={rulerTextCol} fontWeight={400}>{t.label}</text>}
                   </g>
                 );
               })}
@@ -2935,24 +2949,24 @@ export default function DesignCanvas({
                 if (y < RULER_SIZE) return null;
                 return (
                   <g key={`ry-${t.value}`}>
-                    <line y1={y} y2={y} x1={t.major ? 7 : 12} x2={RULER_SIZE} stroke="#6a6a6a" />
-                    {t.label !== undefined && <text transform={`translate(9, ${y - 3}) rotate(-90)`}>{t.label}</text>}
+                    <line y1={y} y2={y} x1={t.major ? 7 : 12} x2={RULER_SIZE} stroke={t.major ? rulerTickMajorCol : rulerTickMinorCol} strokeWidth={1} />
+                    {t.label !== undefined && <text transform={`translate(9, ${y - 3}) rotate(-90)`} fill={rulerTextCol} fontWeight={400}>{t.label}</text>}
                   </g>
                 );
               })}
               {pointerScreen && (
                 <g>
-                  <line x1={pointerScreen.x} x2={pointerScreen.x} y1={0} y2={RULER_SIZE} stroke="#f24822" />
-                  <line y1={pointerScreen.y} y2={pointerScreen.y} x1={0} x2={RULER_SIZE} stroke="#f24822" />
+                  <line x1={pointerScreen.x} x2={pointerScreen.x} y1={0} y2={RULER_SIZE} stroke="#f24822" strokeWidth={1} />
+                  <line y1={pointerScreen.y} y2={pointerScreen.y} x1={0} x2={RULER_SIZE} stroke="#f24822" strokeWidth={1} />
                 </g>
               )}
               {/* guias também aparecem como marcas coloridas nas réguas */}
               {showUserGuides &&
                 userGuides.map((g) =>
                   g.axis === 'x' ? (
-                    <rect key={`gm-${g.id}`} x={pan.x + g.pos * zoom - 1} y={0} width={2} height={RULER_SIZE} fill="#00b8ff" />
+                    <rect key={`gm-${g.id}`} x={pan.x + g.pos * zoom - 1} y={0} width={2} height={RULER_SIZE} fill={rulerGuideMarkerCol} />
                   ) : (
-                    <rect key={`gm-${g.id}`} x={0} y={pan.y + g.pos * zoom - 1} width={RULER_SIZE} height={2} fill="#00b8ff" />
+                    <rect key={`gm-${g.id}`} x={0} y={pan.y + g.pos * zoom - 1} width={RULER_SIZE} height={2} fill={rulerGuideMarkerCol} />
                   )
                 )}
             </g>

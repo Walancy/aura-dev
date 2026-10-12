@@ -18,6 +18,8 @@ import {
   X,
   Sparkles,
 } from 'lucide-react';
+import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
+import { logSystemActivity } from '../../utils/brainService';
 
 function GithubIcon({ size = 15, color = 'currentColor' }: { size?: number; color?: string }) {
   return (
@@ -65,7 +67,7 @@ function getServiceInfo(url: string, label: string) {
     return { name: 'Vercel', color: '#000000', icon: Server, category: 'deploy' };
   }
   if (low.includes('github.com')) {
-    return { name: 'GitHub', color: '#8b949e', icon: GithubIcon, category: 'repo' };
+    return { name: 'GitHub', color: '#a3a3a3', icon: GithubIcon, category: 'repo' };
   }
   if (low.includes('swagger') || low.includes('postman') || low.includes('/docs') || low.includes('api-doc')) {
     return { name: 'API Docs', color: '#10b981', icon: Terminal, category: 'docs' };
@@ -102,20 +104,43 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
   const [newCategory, setNewCategory] = useState<'deploy' | 'design' | 'docs' | 'tools' | 'other'>('deploy');
   const [newDesc, setNewDesc] = useState('');
 
-  // Paleta neutra consistente com o DevFlow
+  // Paleta de cores 100% neutra monocromática (R = G = B, ZERO tom azulado ou slate) alinhada à aba Marcos
   const c = useMemo(() => {
+    if (isEffectiveDark) {
+      return {
+        shelf: '#101010',
+        card: '#161616',
+        cardSecondary: '#1e1e1e',
+        cardHover: '#242424',
+        cardSelected: '#2a2a2a',
+        pillBg: '#202020',
+        pillActive: '#2a2a2a',
+        inputBg: '#202020',
+        divider: 'rgba(255, 255, 255, 0.07)',
+        borderSubtle: 'rgba(255, 255, 255, 0.07)',
+        textPrimary: '#ffffff',
+        textSecondary: '#a3a3a3',
+        textMuted: '#737373',
+        success: '#10b981',
+        warning: '#f59e0b',
+        danger: '#ef4444',
+        info: '#3b82f6',
+      };
+    }
     return {
-      shelf: isEffectiveDark ? '#0e0e0e' : '#f4f4f5',
-      card: isEffectiveDark ? '#141414' : '#ffffff',
-      cardSecondary: isEffectiveDark ? '#1a1a1a' : '#f9fafb',
-      cardHover: isEffectiveDark ? '#1e1e1e' : '#f3f4f6',
-      textPrimary: isEffectiveDark ? '#f4f4f5' : '#18181b',
-      textSecondary: isEffectiveDark ? '#a1a1aa' : '#71717a',
-      textMuted: isEffectiveDark ? '#71717a' : '#a1a1aa',
-      inputBg: isEffectiveDark ? '#181818' : '#f4f4f5',
-      pillBg: isEffectiveDark ? '#1c1c1c' : '#e4e4e7',
-      pillActive: isEffectiveDark ? '#27272a' : '#ffffff',
-      borderSubtle: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+      shelf: '#f5f5f5',
+      card: '#ffffff',
+      cardSecondary: '#fafafa',
+      cardHover: '#f0f0f0',
+      cardSelected: '#e5e5e5',
+      pillBg: '#eeeeee',
+      pillActive: '#ffffff',
+      inputBg: '#f0f0f0',
+      divider: 'rgba(0, 0, 0, 0.05)',
+      borderSubtle: 'rgba(0, 0, 0, 0.05)',
+      textPrimary: '#111111',
+      textSecondary: '#777777',
+      textMuted: '#999999',
       success: '#10b981',
       warning: '#f59e0b',
       danger: '#ef4444',
@@ -195,6 +220,9 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
     });
   }, [customLinks, searchQuery, selectedCategory]);
 
+  const [deletingLink, setDeletingLink] = useState<CustomLinkItem | null>(null);
+  const [isDeletingLink, setIsDeletingLink] = useState(false);
+
   const handleCopy = (text: string, label: string) => {
     navigator.clipboard?.writeText(text);
     showToast(`${label} copiado.`);
@@ -224,6 +252,12 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
       description: newDesc.trim() || undefined,
     });
 
+    logSystemActivity('links', 'adicionar_link', repoFullName || 'projeto', {
+      label: newLabel.trim(),
+      url: finalUrl,
+      category: newCategory,
+    });
+
     setNewLabel('');
     setNewUrl('');
     setNewDesc('');
@@ -238,11 +272,11 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
         height: '100%',
         display: 'flex',
         flexDirection: 'column',
-        gap: 6,
-        padding: 6,
+        gap: 5,
+        padding: 5,
         boxSizing: 'border-box',
         background: c.shelf,
-        borderRadius: 10,
+        borderRadius: 8,
         border: 'none',
         flex: 1,
         minHeight: 0,
@@ -250,57 +284,85 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
       }}
     >
       {/* ========================================================================= */}
-      {/* 1. CABEÇALHO DO PROJETO & FILTROS                                         */}
+      {/* 1. BARRA FUNCIONAL: FILTROS À ESQUERDA, BUSCA E AÇÃO À DIREITA              */}
       {/* ========================================================================= */}
       <div
         style={{
           background: c.card,
           borderRadius: 8,
-          padding: '10px 14px',
+          padding: '6px 8px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          gap: 12,
+          gap: 8,
           flexShrink: 0,
-          flexWrap: 'wrap',
+          border: 'none',
+          boxShadow: 'none',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 7,
-              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Link2 size={18} color={accentColor} />
-          </div>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: c.textPrimary }}>
-              Central de Links & Ambientes
-            </div>
-            <div style={{ fontSize: 11, color: c.textSecondary }}>
-              {selectedProject?.title || repoFullName || 'Repositório'} · {repoOfficialLinks.length + customLinks.length} atalhos rápidos
-            </div>
-          </div>
+        {/* Lado Esquerdo: Categorias em Pílula */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            background: c.pillBg,
+            borderRadius: 6,
+            padding: 2,
+            gap: 2,
+          }}
+        >
+          {[
+            { id: 'all', label: 'Todos' },
+            { id: 'repo', label: 'Git' },
+            { id: 'deploy', label: 'Deploy' },
+            { id: 'design', label: 'Design' },
+            { id: 'docs', label: 'Docs' },
+          ].map((cat) => {
+            const isSelected = selectedCategory === cat.id;
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => setSelectedCategory(cat.id as CategoryFilter)}
+                style={{
+                  height: 28,
+                  background: isSelected ? c.pillActive : 'transparent',
+                  color: isSelected ? c.textPrimary : c.textSecondary,
+                  border: 'none',
+                  borderRadius: 4,
+                  padding: '0 10px',
+                  fontSize: 11.5,
+                  fontWeight: 400,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'background 0.15s ease, color 0.15s ease',
+                  boxShadow: 'none',
+                }}
+              >
+                {cat.label}
+              </button>
+            );
+          })}
         </div>
 
-        {/* Controles: Busca, Categorias & Botão Novo Link */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {/* Lado Direito: Busca e Botão Novo Link */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {/* Campo de Busca */}
           <div
             style={{
+              height: 28,
+              boxSizing: 'border-box',
               display: 'flex',
               alignItems: 'center',
               gap: 6,
               background: c.inputBg,
               borderRadius: 6,
-              padding: '5px 9px',
-              width: 170,
+              padding: '0 8px',
+              width: 190,
+              border: 'none',
+              boxShadow: 'none',
             }}
           >
             <Search size={12} color={c.textSecondary} />
@@ -315,7 +377,9 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                 outline: 'none',
                 color: c.textPrimary,
                 fontSize: 11.5,
+                fontWeight: 400,
                 width: '100%',
+                boxShadow: 'none',
               }}
             />
             {searchQuery && (
@@ -328,63 +392,26 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
             )}
           </div>
 
-          {/* Categorias em Pílula */}
-          <div
-            style={{
-              display: 'flex',
-              background: c.pillBg,
-              borderRadius: 6,
-              padding: 2,
-              gap: 2,
-            }}
-          >
-            {[
-              { id: 'all', label: 'Todos' },
-              { id: 'repo', label: 'Git' },
-              { id: 'deploy', label: 'Deploy' },
-              { id: 'design', label: 'Design' },
-              { id: 'docs', label: 'Docs' },
-            ].map((cat) => {
-              const isSelected = selectedCategory === cat.id;
-              return (
-                <button
-                  key={cat.id}
-                  type="button"
-                  onClick={() => setSelectedCategory(cat.id as CategoryFilter)}
-                  style={{
-                    background: isSelected ? c.pillActive : 'transparent',
-                    color: isSelected ? c.textPrimary : c.textSecondary,
-                    border: 'none',
-                    borderRadius: 4,
-                    padding: '3px 8px',
-                    fontSize: 11,
-                    fontWeight: isSelected ? 500 : 400,
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  {cat.label}
-                </button>
-              );
-            })}
-          </div>
-
           {/* Botão Novo Link */}
           <button
             type="button"
             onClick={() => setIsModalOpen(true)}
             style={{
-              display: 'flex',
+              height: 28,
+              boxSizing: 'border-box',
+              display: 'inline-flex',
               alignItems: 'center',
               gap: 5,
               background: accentColor,
               color: accentContrastText,
               border: 'none',
               borderRadius: 6,
-              padding: '5px 12px',
+              padding: '0 12px',
               fontSize: 11.5,
-              fontWeight: 500,
+              fontWeight: 400,
               cursor: 'pointer',
+              transition: 'opacity 0.15s ease',
+              boxShadow: 'none',
             }}
           >
             <Plus size={13} />
@@ -409,15 +436,15 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
       >
         {/* SEÇÃO 1: RECURSOS DO REPOSITÓRIO GITHUB */}
         {filteredOfficialLinks.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, padding: '2px 4px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <div style={{ fontSize: 11, fontWeight: 400, color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, padding: '2px 4px' }}>
               Recursos do Repositório & Git
             </div>
             <div
               style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-                gap: 6,
+                gap: 5,
               }}
             >
               {filteredOfficialLinks.map((link) => {
@@ -433,8 +460,12 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       gap: 10,
+                      border: 'none',
+                      boxShadow: 'none',
                       transition: 'background 0.15s ease',
                     }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = c.cardHover)}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = c.card)}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
                       <div
@@ -442,17 +473,19 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                           width: 28,
                           height: 28,
                           borderRadius: 6,
-                          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
+                          background: c.cardSecondary,
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
                           flexShrink: 0,
+                          border: 'none',
+                          boxShadow: 'none',
                         }}
                       >
                         <IconComponent size={14} color={accentColor} />
                       </div>
                       <div style={{ minWidth: 0, flex: 1 }}>
-                        <div style={{ fontSize: 12, fontWeight: 500, color: c.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <div style={{ fontSize: 12, fontWeight: 400, color: c.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {link.label}
                         </div>
                         <div style={{ fontSize: 10.5, color: c.textSecondary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -470,6 +503,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                         style={{
                           background: 'transparent',
                           border: 'none',
+                          boxShadow: 'none',
                           color: c.textSecondary,
                           cursor: 'pointer',
                           padding: 4,
@@ -487,6 +521,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                           style={{
                             background: 'transparent',
                             border: 'none',
+                            boxShadow: 'none',
                             color: c.textSecondary,
                             cursor: 'pointer',
                             padding: 4,
@@ -506,8 +541,8 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
         )}
 
         {/* SEÇÃO 2: ATALHOS PERSONALIZADOS & AMBIENTES */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, padding: '2px 4px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 400, color: c.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, padding: '2px 4px' }}>
             Ambientes, Design & Ferramentas do Projeto
           </div>
 
@@ -522,10 +557,12 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                 flexDirection: 'column',
                 alignItems: 'center',
                 gap: 8,
+                border: 'none',
+                boxShadow: 'none',
               }}
             >
               <Link2 size={24} color={c.textMuted} />
-              <div style={{ fontSize: 12.5, fontWeight: 500, color: c.textPrimary }}>
+              <div style={{ fontSize: 12.5, fontWeight: 400, color: c.textPrimary }}>
                 Nenhum link personalizado cadastrado
               </div>
               <div style={{ fontSize: 11, color: c.textSecondary, maxWidth: 320 }}>
@@ -536,17 +573,20 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                 onClick={() => setIsModalOpen(true)}
                 style={{
                   marginTop: 4,
+                  height: 28,
                   background: accentColor,
                   color: accentContrastText,
                   border: 'none',
+                  boxShadow: 'none',
                   borderRadius: 6,
-                  padding: '5px 12px',
-                  fontSize: 11,
-                  fontWeight: 500,
+                  padding: '0 12px',
+                  fontSize: 11.5,
+                  fontWeight: 400,
                   cursor: 'pointer',
-                  display: 'flex',
+                  display: 'inline-flex',
                   alignItems: 'center',
                   gap: 4,
+                  transition: 'opacity 0.15s ease',
                 }}
               >
                 <Plus size={12} />
@@ -558,7 +598,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
               style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-                gap: 6,
+                gap: 5,
               }}
             >
               {filteredCustomLinks.map((link) => {
@@ -576,8 +616,12 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       gap: 10,
+                      border: 'none',
+                      boxShadow: 'none',
                       transition: 'background 0.15s ease',
                     }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = c.cardHover)}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = c.card)}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
                       <div
@@ -585,29 +629,32 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                           width: 28,
                           height: 28,
                           borderRadius: 6,
-                          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
+                          background: c.cardSecondary,
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
                           flexShrink: 0,
+                          border: 'none',
+                          boxShadow: 'none',
                         }}
                       >
                         <IconComp size={14} color={svc.color} />
                       </div>
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ fontSize: 12, fontWeight: 500, color: c.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          <span style={{ fontSize: 12, fontWeight: 400, color: c.textPrimary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {link.label}
                           </span>
                           <span
                             style={{
-                              fontSize: 9,
-                              fontWeight: 500,
-                              padding: '1px 5px',
+                              fontSize: 9.5,
+                              fontWeight: 400,
+                              padding: '1.5px 6px',
                               borderRadius: 4,
-                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+                              background: c.cardSecondary,
                               color: c.textSecondary,
                               flexShrink: 0,
+                              border: 'none',
                             }}
                           >
                             {svc.name}
@@ -628,6 +675,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                         style={{
                           background: 'transparent',
                           border: 'none',
+                          boxShadow: 'none',
                           color: c.textSecondary,
                           cursor: 'pointer',
                           padding: 4,
@@ -644,6 +692,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                         style={{
                           background: 'transparent',
                           border: 'none',
+                          boxShadow: 'none',
                           color: c.textSecondary,
                           cursor: 'pointer',
                           padding: 4,
@@ -655,11 +704,12 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                       </button>
                       <button
                         type="button"
-                        onClick={() => onRemoveCustomLink(link.id)}
+                        onClick={() => setDeletingLink(link)}
                         title="Excluir link"
                         style={{
                           background: 'transparent',
                           border: 'none',
+                          boxShadow: 'none',
                           color: '#ef4444',
                           cursor: 'pointer',
                           padding: 4,
@@ -703,36 +753,37 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
           <div
             style={{
               background: c.card,
-              borderRadius: 10,
+              borderRadius: 8,
               width: 420,
               maxWidth: '100%',
-              padding: 18,
-              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
+              padding: 16,
+              boxShadow: 'none',
+              border: 'none',
               display: 'flex',
               flexDirection: 'column',
-              gap: 14,
+              gap: 12,
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Plus size={16} color={accentColor} />
-                <span style={{ fontSize: 13.5, fontWeight: 600, color: c.textPrimary }}>
+                <span style={{ fontSize: 13, fontWeight: 400, color: c.textPrimary }}>
                   Adicionar Link ao Projeto
                 </span>
               </div>
               <button
                 type="button"
                 onClick={() => setIsModalOpen(false)}
-                style={{ background: 'transparent', border: 'none', color: c.textSecondary, cursor: 'pointer', padding: 2 }}
+                style={{ background: 'transparent', border: 'none', boxShadow: 'none', color: c.textSecondary, cursor: 'pointer', padding: 2 }}
               >
                 <X size={15} />
               </button>
             </div>
 
-            <form onSubmit={handleSaveNewLink} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <form onSubmit={handleSaveNewLink} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {/* Nome do Atalho */}
               <div>
-                <label style={{ fontSize: 11, fontWeight: 500, color: c.textSecondary, display: 'block', marginBottom: 4 }}>
+                <label style={{ fontSize: 11, fontWeight: 400, color: c.textSecondary, display: 'block', marginBottom: 4 }}>
                   Nome do Atalho / Serviço
                 </label>
                 <input
@@ -743,11 +794,14 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                   onChange={(e) => setNewLabel(e.target.value)}
                   style={{
                     width: '100%',
+                    height: 32,
                     background: c.inputBg,
                     border: 'none',
+                    boxShadow: 'none',
                     borderRadius: 6,
-                    padding: '8px 10px',
+                    padding: '0 10px',
                     fontSize: 12,
+                    fontWeight: 400,
                     color: c.textPrimary,
                     outline: 'none',
                     boxSizing: 'border-box',
@@ -757,7 +811,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
 
               {/* URL */}
               <div>
-                <label style={{ fontSize: 11, fontWeight: 500, color: c.textSecondary, display: 'block', marginBottom: 4 }}>
+                <label style={{ fontSize: 11, fontWeight: 400, color: c.textSecondary, display: 'block', marginBottom: 4 }}>
                   URL do Link
                 </label>
                 <input
@@ -768,11 +822,14 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                   onChange={(e) => setNewUrl(e.target.value)}
                   style={{
                     width: '100%',
+                    height: 32,
                     background: c.inputBg,
                     border: 'none',
+                    boxShadow: 'none',
                     borderRadius: 6,
-                    padding: '8px 10px',
+                    padding: '0 10px',
                     fontSize: 12,
+                    fontWeight: 400,
                     color: c.textPrimary,
                     outline: 'none',
                     boxSizing: 'border-box',
@@ -782,7 +839,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
 
               {/* Categoria */}
               <div>
-                <label style={{ fontSize: 11, fontWeight: 500, color: c.textSecondary, display: 'block', marginBottom: 4 }}>
+                <label style={{ fontSize: 11, fontWeight: 400, color: c.textSecondary, display: 'block', marginBottom: 4 }}>
                   Categoria
                 </label>
                 <select
@@ -790,11 +847,14 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                   onChange={(e) => setNewCategory(e.target.value as any)}
                   style={{
                     width: '100%',
+                    height: 32,
                     background: c.inputBg,
                     border: 'none',
+                    boxShadow: 'none',
                     borderRadius: 6,
-                    padding: '8px 10px',
+                    padding: '0 10px',
                     fontSize: 12,
+                    fontWeight: 400,
                     color: c.textPrimary,
                     outline: 'none',
                     boxSizing: 'border-box',
@@ -810,16 +870,19 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
               </div>
 
               {/* Ações */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
                   style={{
+                    height: 30,
                     background: 'transparent',
                     border: 'none',
+                    boxShadow: 'none',
                     color: c.textSecondary,
-                    padding: '6px 12px',
+                    padding: '0 12px',
                     fontSize: 12,
+                    fontWeight: 400,
                     cursor: 'pointer',
                   }}
                 >
@@ -829,15 +892,18 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                   type="submit"
                   disabled={!newLabel.trim() || !newUrl.trim()}
                   style={{
+                    height: 30,
                     background: accentColor,
                     color: accentContrastText,
                     border: 'none',
+                    boxShadow: 'none',
                     borderRadius: 6,
-                    padding: '6px 14px',
+                    padding: '0 14px',
                     fontSize: 12,
-                    fontWeight: 500,
+                    fontWeight: 400,
                     cursor: 'pointer',
                     opacity: !newLabel.trim() || !newUrl.trim() ? 0.5 : 1,
+                    transition: 'opacity 0.15s ease',
                   }}
                 >
                   Salvar Link
@@ -847,6 +913,35 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* ========================================================================= */}
+      {/* MODAL DE CONFIRMAÇÃO DE EXCLUSÃO (REGRA OBRIGATÓRIA AGENTS.md)             */}
+      {/* ========================================================================= */}
+      <ConfirmDeleteModal
+        isOpen={Boolean(deletingLink)}
+        title="Excluir Link"
+        message={`Tem certeza que deseja excluir o atalho "${deletingLink?.label}"?`}
+        itemDescription="Este link será removido da lista de atalhos rápidos do projeto."
+        confirmLabel="Excluir Link"
+        isDeleting={isDeletingLink}
+        accentColor={accentColor}
+        onConfirm={async () => {
+          if (!deletingLink) return;
+          setIsDeletingLink(true);
+          try {
+            await onRemoveCustomLink(deletingLink.id);
+            logSystemActivity('links', 'remover_link', repoFullName || 'projeto', {
+              id: deletingLink.id,
+              label: deletingLink.label,
+            });
+            showToast('Link removido com sucesso.');
+          } finally {
+            setIsDeletingLink(false);
+            setDeletingLink(null);
+          }
+        }}
+        onClose={() => setDeletingLink(null)}
+      />
     </div>
   );
 };

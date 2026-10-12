@@ -1,5 +1,5 @@
-import React from 'react';
-import { Settings, X, GaugeCircle, Palette, Code, SquareTerminal, Bot, Keyboard, Folder, GitBranch } from 'lucide-react';
+import React, { useRef } from 'react';
+import { Settings, X, GaugeCircle, Palette, Code, SquareTerminal, Bot, Keyboard, Folder, GitBranch, LayoutTemplate, FileCode, ListTodo } from 'lucide-react';
 import { hexToRgba } from '../../utils/color';
 import type { ThemeTokens } from '../../types/ide';
 import type { AiMode } from '../../constants/ai';
@@ -9,8 +9,24 @@ import { EditorSettingsTab } from './settings/EditorSettingsTab';
 import { TerminalSettingsTab } from './settings/TerminalSettingsTab';
 import { AiAgentsSettingsTab } from './settings/AiAgentsSettingsTab';
 import { ShortcutsSettingsTab } from './settings/ShortcutsSettingsTab';
+import { LayoutSettingsTab } from './settings/LayoutSettingsTab';
+import { SnippetsSettingsTab } from './settings/SnippetsSettingsTab';
+import { TasksSettingsTab } from './settings/TasksSettingsTab';
+import { WorkspaceSettingsTab } from './settings/WorkspaceSettingsTab';
+import { logSystemActivity } from '../../utils/brainService';
+import type { GitBranchItem } from '../../types/ide';
 
-export type SettingsTabId = 'general' | 'appearance' | 'editor' | 'terminal' | 'ai' | 'shortcuts';
+export type SettingsTabId =
+  | 'general'
+  | 'appearance'
+  | 'editor'
+  | 'terminal'
+  | 'ai'
+  | 'layout'
+  | 'snippets'
+  | 'tasks'
+  | 'shortcuts'
+  | 'workspace';
 
 export interface SettingsModalProps {
   themeTokens: ThemeTokens;
@@ -21,7 +37,17 @@ export interface SettingsModalProps {
   setSettingsActiveTab: (tab: SettingsTabId) => void;
   workspacePath: string;
   currentBranch: string;
-  onOpenBranchManager: () => void;
+  onOpenBranchManager?: () => void;
+
+  // Workspace & Git management
+  gitRepoName?: string;
+  branchesList?: GitBranchItem[];
+  onCheckoutBranch?: (name: string) => void;
+  onCreateBranch?: (name: string) => void;
+  isCreatingBranch?: boolean;
+  onSyncGit?: () => void;
+  isSyncingGit?: boolean;
+  onRefreshBranches?: () => void;
 
   // General tab
   sidebarPosition: 'left' | 'right';
@@ -34,6 +60,12 @@ export interface SettingsModalProps {
   setConfirmBeforeClosingUnsaved: (value: boolean) => void;
   autoRefreshGitStatus: boolean;
   setAutoRefreshGitStatus: (value: boolean) => void;
+  panelAlignment?: 'left' | 'right' | 'center' | 'justify';
+  setPanelAlignment?: (value: 'left' | 'right' | 'center' | 'justify') => void;
+  showActivityBar?: boolean;
+  setShowActivityBar?: (value: boolean) => void;
+  showStatusBar?: boolean;
+  setShowStatusBar?: (value: boolean) => void;
 
   // Appearance tab
   setAccentColor: (color: string) => void;
@@ -59,6 +91,24 @@ export interface SettingsModalProps {
   setEditorBracketColorization: (value: boolean) => void;
   editorRenderWhitespace: boolean;
   setEditorRenderWhitespace: (value: boolean) => void;
+  editorFontFamily?: string;
+  setEditorFontFamily?: (value: string) => void;
+  editorLineHeight?: number;
+  setEditorLineHeight?: (value: number) => void;
+  editorCursorStyle?: 'line' | 'block' | 'underline' | 'line-thin' | 'block-outline';
+  setEditorCursorStyle?: (value: 'line' | 'block' | 'underline' | 'line-thin' | 'block-outline') => void;
+  editorCursorBlinking?: 'blink' | 'smooth' | 'phase' | 'expand' | 'solid';
+  setEditorCursorBlinking?: (value: 'blink' | 'smooth' | 'phase' | 'expand' | 'solid') => void;
+  editorGuides?: boolean;
+  setEditorGuides?: (value: boolean) => void;
+  editorAutoClosingBrackets?: boolean;
+  setEditorAutoClosingBrackets?: (value: boolean) => void;
+  editorHighlightActiveLine?: 'all' | 'line' | 'none';
+  setEditorHighlightActiveLine?: (value: 'all' | 'line' | 'none') => void;
+  editorFormatOnSave?: boolean;
+  setEditorFormatOnSave?: (value: boolean) => void;
+  editorCodeFolding?: boolean;
+  setEditorCodeFolding?: (value: boolean) => void;
 
   // Terminal tab
   terminalFontSize: number;
@@ -71,6 +121,18 @@ export interface SettingsModalProps {
   setTerminalCursorBlink: (value: boolean) => void;
   terminalCopyOnSelect: boolean;
   setTerminalCopyOnSelect: (value: boolean) => void;
+  terminalFontFamily?: string;
+  setTerminalFontFamily?: (value: string) => void;
+  terminalLineHeight?: number;
+  setTerminalLineHeight?: (value: number) => void;
+  terminalThemePreset?: string;
+  setTerminalThemePreset?: (value: string) => void;
+  terminalCursorWidth?: number;
+  setTerminalCursorWidth?: (value: number) => void;
+  terminalScrollOnUserInput?: boolean;
+  setTerminalScrollOnUserInput?: (value: boolean) => void;
+  terminalDrawBoldTextInBrightColors?: boolean;
+  setTerminalDrawBoldTextInBrightColors?: (value: boolean) => void;
 
   // AI & Agents tab
   selectedAiProvider: string;
@@ -85,6 +147,35 @@ export interface SettingsModalProps {
   onOpenSkills?: () => void;
   activeSkillsCount?: number;
 
+  // Additional system options
+  pinnedAis?: string[];
+  setPinnedAis?: (pinned: string[]) => void;
+  useAiSystemAccent?: boolean;
+  setUseAiSystemAccent?: (value: boolean) => void;
+  devForce?: boolean;
+  setDevForce?: (value: boolean) => void;
+  aiAutoUpdate?: boolean;
+  setAiAutoUpdate?: (value: boolean) => void;
+  rainbow?: { on: boolean; stops: string[]; speed: number };
+  setRainbow?: (value: { on: boolean; stops: string[]; speed: number }) => void;
+
+  // Layout tab options
+  showExplorer?: boolean;
+  setShowExplorer?: (value: boolean) => void;
+  showAiPanel?: boolean;
+  setShowAiPanel?: (value: boolean) => void;
+  isTerminalCollapsed?: boolean;
+  setIsTerminalCollapsed?: (value: boolean) => void;
+  quickInputPosition?: 'top' | 'center';
+  setQuickInputPosition?: (value: 'top' | 'center') => void;
+  onToggleFullscreen?: () => void;
+  onToggleZenMode?: () => void;
+  isZenMode?: boolean;
+  onResetLayout?: () => void;
+
+  // Tasks tab options
+  onOpenTasksDock?: () => void;
+  onToast?: (msg: string) => void;
 }
 
 const SETTINGS_TABS: Array<{ id: SettingsTabId; label: string; icon: React.ReactNode }> = [
@@ -93,11 +184,12 @@ const SETTINGS_TABS: Array<{ id: SettingsTabId; label: string; icon: React.React
   { id: 'editor', label: 'Configurações Editor', icon: <Code size={15} /> },
   { id: 'terminal', label: 'Terminal', icon: <SquareTerminal size={15} /> },
   { id: 'ai', label: 'IA & Agentes', icon: <Bot size={15} /> },
+  { id: 'layout', label: 'Personalizar Layout', icon: <LayoutTemplate size={15} /> },
+  { id: 'snippets', label: 'Configurar Snippets', icon: <FileCode size={15} /> },
+  { id: 'tasks', label: 'Tarefas', icon: <ListTodo size={15} /> },
   { id: 'shortcuts', label: 'Atalhos de Teclado', icon: <Keyboard size={15} /> },
 ];
 
-// Settings modal shell: backdrop, dialog frame, header, sidebar nav, and composes
-// whichever tab is active from src/components/modals/settings/*.
 export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
   const {
     themeTokens,
@@ -111,11 +203,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
     onOpenBranchManager,
   } = props;
 
+  const isMouseDownOnBackdrop = useRef(false);
+
   return (
     <>
       {/* Backdrop */}
       <div
-        onClick={onClose}
+        onMouseDown={(e) => {
+          isMouseDownOnBackdrop.current = e.target === e.currentTarget;
+        }}
+        onMouseUp={(e) => {
+          if (isMouseDownOnBackdrop.current && e.target === e.currentTarget) {
+            onClose();
+          }
+          isMouseDownOnBackdrop.current = false;
+        }}
         style={{
           position: 'fixed',
           inset: 0,
@@ -134,15 +236,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: 920,
-          maxWidth: 'calc(100vw - 32px)',
-          height: '82vh',
-          minHeight: 560,
-          maxHeight: 'calc(100vh - 48px)',
+          width: 'min(1180px, calc(100vw - 32px))',
+          height: 'min(820px, calc(100vh - 32px))',
           background: isEffectiveDark ? '#141416' : '#ffffff',
-          border: `1px solid ${themeTokens.border}`,
-          borderRadius: 10,
-          boxShadow: '0 24px 64px rgba(0, 0, 0, 0.85)',
+          border: 'none',
+          borderRadius: 12,
+          boxShadow: 'none',
           zIndex: 999999,
           display: 'flex',
           flexDirection: 'column',
@@ -150,7 +249,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
           boxSizing: 'border-box',
           animation: 'fadeIn 0.12s ease-out',
           color: themeTokens.textPrimary,
-          fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          fontFamily: "'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
         }}
       >
         {/* Header */}
@@ -159,49 +258,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '14px 18px',
-            borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
-            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
+            padding: '12px 18px',
+            borderBottom: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.05)' : '1px solid rgba(0, 0, 0, 0.05)',
+            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.015)' : 'rgba(0, 0, 0, 0.015)',
             flexShrink: 0,
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 8,
-                background: hexToRgba(accentColor, 0.12),
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Settings size={17} color={accentColor} />
-            </div>
             <div>
-              <div style={{ fontWeight: 600, fontSize: 14, color: themeTokens.textPrimary }}>
+              <div style={{ fontWeight: 400, fontSize: 13, color: themeTokens.textPrimary }}>
                 Configurações
               </div>
-              <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>
-                Estilização, editor e atalhos do Aura Dev
+              <div style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>
+                Estilização, editor, atalhos e agentes do Aura Dev
               </div>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             style={{
-              background: 'none',
+              width: 28,
+              height: 28,
+              background: 'transparent',
               border: 'none',
               cursor: 'pointer',
               color: themeTokens.textSecondary,
-              padding: 4,
               display: 'flex',
-              borderRadius: 4,
-              transition: 'background 0.15s ease',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 6,
+              transition: 'color 0.15s ease',
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            onMouseEnter={(e) => (e.currentTarget.style.color = isEffectiveDark ? '#ffffff' : '#000000')}
+            onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textSecondary)}
             title="Fechar (Esc)"
           >
             <X size={16} />
@@ -213,76 +303,101 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
           {/* Left Sidebar Tabs */}
           <div
             style={{
-              width: 230,
+              width: 220,
               flexShrink: 0,
-              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.015)' : 'rgba(0, 0, 0, 0.015)',
-              borderRight: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'}`,
+              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.01)' : 'rgba(0, 0, 0, 0.01)',
+              borderRight: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.05)' : '1px solid rgba(0, 0, 0, 0.05)',
               padding: '14px 10px',
               display: 'flex',
               flexDirection: 'column',
               overflowY: 'auto',
             }}
           >
-            <div style={{ fontSize: 10, fontWeight: 700, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6, padding: '0 10px', marginBottom: 6 }}>
-              Configurações
+            <div style={{ fontSize: 10.5, fontWeight: 500, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, padding: '0 10px', marginBottom: 6 }}>
+              Preferências
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               {SETTINGS_TABS.map((tab) => {
                 const active = settingsActiveTab === tab.id;
                 return (
                   <div
                     key={tab.id}
-                    onClick={() => setSettingsActiveTab(tab.id)}
+                    onClick={() => {
+                      logSystemActivity('configuracoes', 'trocar_aba', tab.label, { tab: tab.id });
+                      setSettingsActiveTab(tab.id);
+                    }}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: 9,
-                      padding: '8px 12px',
+                      height: 28,
+                      padding: '0 10px',
                       borderRadius: 6,
                       cursor: 'pointer',
-                      fontSize: 12.5,
-                      fontWeight: active ? 600 : 400,
-                      color: active ? themeTokens.textPrimary : themeTokens.textSecondary,
+                      fontSize: 11.5,
+                      fontWeight: 400,
+                      color: active ? accentColor : themeTokens.textSecondary,
                       background: active ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)') : 'transparent',
                       transition: 'all 0.12s ease',
+                      border: 'none',
+                      boxShadow: 'none',
                     }}
                   >
-                    <div style={{ color: 'inherit' }}>{tab.icon}</div>
+                    <div style={{ color: active ? accentColor : 'inherit' }}>{tab.icon}</div>
                     <span>{tab.label}</span>
                   </div>
                 );
               })}
             </div>
 
-            {/* Workspace group (real, live data — not decorative) */}
+            {/* Workspace group */}
             {workspacePath && (
               <>
-                <div style={{ fontSize: 10, fontWeight: 700, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6, padding: '0 10px', marginTop: 18, marginBottom: 6 }}>
+                <div style={{ fontSize: 10, fontWeight: 500, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6, padding: '0 10px', marginTop: 18, marginBottom: 6 }}>
                   Workspace
                 </div>
                 <div
-                  onClick={onOpenBranchManager}
+                  onClick={() => {
+                    logSystemActivity('configuracoes', 'trocar_aba', 'Workspace', { tab: 'workspace' });
+                    setSettingsActiveTab('workspace');
+                    props.onRefreshBranches?.();
+                  }}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
                     gap: 9,
-                    padding: '8px 12px',
+                    padding: '8px 10px',
                     borderRadius: 6,
                     cursor: 'pointer',
-                    fontSize: 12,
-                    color: themeTokens.textSecondary,
+                    fontSize: 11.5,
+                    fontWeight: 400,
+                    color: settingsActiveTab === 'workspace' ? accentColor : themeTokens.textSecondary,
+                    background: settingsActiveTab === 'workspace'
+                      ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)')
+                      : 'transparent',
+                    border: 'none',
+                    boxShadow: 'none',
+                    transition: 'all 0.12s ease',
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                  title="Abrir gerenciador de branches"
+                  onMouseEnter={(e) => {
+                    if (settingsActiveTab !== 'workspace') {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (settingsActiveTab !== 'workspace') {
+                      e.currentTarget.style.background = 'transparent';
+                    }
+                  }}
+                  title="Configurações e Branches do Workspace"
                 >
-                  <Folder size={14} />
+                  <Folder size={14} color={settingsActiveTab === 'workspace' ? accentColor : undefined} />
                   <div style={{ minWidth: 0, overflow: 'hidden' }}>
-                    <div style={{ color: themeTokens.textPrimary, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <div style={{ color: settingsActiveTab === 'workspace' ? accentColor : themeTokens.textPrimary, fontWeight: 400, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {workspacePath.split('/').filter(Boolean).pop()}
                     </div>
                     {currentBranch && (
-                      <div style={{ fontSize: 10.5, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <div style={{ fontSize: 10, display: 'flex', alignItems: 'center', gap: 4, marginTop: 1, color: settingsActiveTab === 'workspace' ? accentColor : themeTokens.textSecondary }}>
                         <GitBranch size={9} />
                         {currentBranch}
                       </div>
@@ -295,20 +410,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
             <div style={{ flex: 1 }} />
 
             {/* Footer */}
-            <div style={{ borderTop: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'}`, paddingTop: 10, marginTop: 10, padding: '10px 10px 0 10px' }}>
-              <div style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>Aura Dev • v1.0.0</div>
+            <div style={{ borderTop: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.05)' : '1px solid rgba(0, 0, 0, 0.05)', paddingTop: 8, marginTop: 8, padding: '8px 10px 0 10px' }}>
+              <div style={{ fontSize: 10, color: themeTokens.textSecondary }}>Aura Dev • v1.0.0</div>
             </div>
           </div>
 
           {/* Right Content Pane */}
-          <div style={{ flex: 1, padding: '22px 26px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 26 }}>
+          <div style={{ flex: 1, padding: '20px 24px', overflowY: 'auto' }}>
             {settingsActiveTab === 'general' && (
               <GeneralSettingsTab
                 themeTokens={themeTokens}
                 isEffectiveDark={isEffectiveDark}
                 accentColor={accentColor}
-                sidebarPosition={props.sidebarPosition}
-                setSidebarPosition={props.setSidebarPosition}
                 isCenteredLayout={props.isCenteredLayout}
                 setIsCenteredLayout={props.setIsCenteredLayout}
                 restoreLastWorkspace={props.restoreLastWorkspace}
@@ -317,6 +430,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
                 setConfirmBeforeClosingUnsaved={props.setConfirmBeforeClosingUnsaved}
                 autoRefreshGitStatus={props.autoRefreshGitStatus}
                 setAutoRefreshGitStatus={props.setAutoRefreshGitStatus}
+                showActivityBar={props.showActivityBar}
+                setShowActivityBar={props.setShowActivityBar}
+                showStatusBar={props.showStatusBar}
+                setShowStatusBar={props.setShowStatusBar}
               />
             )}
 
@@ -331,6 +448,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
                 selectedAiProvider={props.selectedAiProvider}
                 useAiChatThemeColor={props.useAiChatThemeColor}
                 setUseAiChatThemeColor={props.setUseAiChatThemeColor}
+                useAiSystemAccent={props.useAiSystemAccent}
+                setUseAiSystemAccent={props.setUseAiSystemAccent}
+                rainbow={props.rainbow}
+                setRainbow={props.setRainbow}
               />
             )}
 
@@ -355,6 +476,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
                 setEditorBracketColorization={props.setEditorBracketColorization}
                 editorRenderWhitespace={props.editorRenderWhitespace}
                 setEditorRenderWhitespace={props.setEditorRenderWhitespace}
+                editorFontFamily={props.editorFontFamily}
+                setEditorFontFamily={props.setEditorFontFamily}
+                editorLineHeight={props.editorLineHeight}
+                setEditorLineHeight={props.setEditorLineHeight}
+                editorCursorStyle={props.editorCursorStyle}
+                setEditorCursorStyle={props.setEditorCursorStyle}
+                editorCursorBlinking={props.editorCursorBlinking}
+                setEditorCursorBlinking={props.setEditorCursorBlinking}
+                editorGuides={props.editorGuides}
+                setEditorGuides={props.setEditorGuides}
+                editorAutoClosingBrackets={props.editorAutoClosingBrackets}
+                setEditorAutoClosingBrackets={props.setEditorAutoClosingBrackets}
+                editorHighlightActiveLine={props.editorHighlightActiveLine}
+                setEditorHighlightActiveLine={props.setEditorHighlightActiveLine}
+                editorFormatOnSave={props.editorFormatOnSave}
+                setEditorFormatOnSave={props.setEditorFormatOnSave}
+                editorCodeFolding={props.editorCodeFolding}
+                setEditorCodeFolding={props.setEditorCodeFolding}
               />
             )}
 
@@ -373,6 +512,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
                 setTerminalCursorBlink={props.setTerminalCursorBlink}
                 terminalCopyOnSelect={props.terminalCopyOnSelect}
                 setTerminalCopyOnSelect={props.setTerminalCopyOnSelect}
+                terminalFontFamily={props.terminalFontFamily}
+                setTerminalFontFamily={props.setTerminalFontFamily}
+                terminalLineHeight={props.terminalLineHeight}
+                setTerminalLineHeight={props.setTerminalLineHeight}
+                terminalThemePreset={props.terminalThemePreset}
+                setTerminalThemePreset={props.setTerminalThemePreset}
+                terminalCursorWidth={props.terminalCursorWidth}
+                setTerminalCursorWidth={props.setTerminalCursorWidth}
+                terminalScrollOnUserInput={props.terminalScrollOnUserInput}
+                setTerminalScrollOnUserInput={props.setTerminalScrollOnUserInput}
+                terminalDrawBoldTextInBrightColors={props.terminalDrawBoldTextInBrightColors}
+                setTerminalDrawBoldTextInBrightColors={props.setTerminalDrawBoldTextInBrightColors}
               />
             )}
 
@@ -392,11 +543,91 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
                 onOpenAiGlobalRules={props.onOpenAiGlobalRules}
                 onOpenSkills={props.onOpenSkills}
                 activeSkillsCount={props.activeSkillsCount}
+                pinnedAis={props.pinnedAis}
+                setPinnedAis={props.setPinnedAis}
+                useAiSystemAccent={props.useAiSystemAccent}
+                setUseAiSystemAccent={props.setUseAiSystemAccent}
+                useAiChatThemeColor={props.useAiChatThemeColor}
+                setUseAiChatThemeColor={props.setUseAiChatThemeColor}
+                devForce={props.devForce}
+                setDevForce={props.setDevForce}
+                aiAutoUpdate={props.aiAutoUpdate}
+                setAiAutoUpdate={props.setAiAutoUpdate}
+              />
+            )}
+
+            {settingsActiveTab === 'layout' && (
+              <LayoutSettingsTab
+                themeTokens={themeTokens}
+                isEffectiveDark={isEffectiveDark}
+                accentColor={accentColor}
+                showActivityBar={props.showActivityBar}
+                setShowActivityBar={props.setShowActivityBar}
+                showExplorer={props.showExplorer}
+                setShowExplorer={props.setShowExplorer}
+                showAiPanel={props.showAiPanel}
+                setShowAiPanel={props.setShowAiPanel}
+                isTerminalCollapsed={props.isTerminalCollapsed}
+                setIsTerminalCollapsed={props.setIsTerminalCollapsed}
+                showStatusBar={props.showStatusBar}
+                setShowStatusBar={props.setShowStatusBar}
+                sidebarPosition={props.sidebarPosition}
+                setSidebarPosition={props.setSidebarPosition}
+                panelAlignment={props.panelAlignment}
+                setPanelAlignment={props.setPanelAlignment}
+                quickInputPosition={props.quickInputPosition}
+                setQuickInputPosition={props.setQuickInputPosition}
+                onToggleFullscreen={props.onToggleFullscreen}
+                onToggleZenMode={props.onToggleZenMode}
+                isZenMode={props.isZenMode}
+                isCenteredLayout={props.isCenteredLayout}
+                setIsCenteredLayout={props.setIsCenteredLayout}
+                onResetLayout={props.onResetLayout}
+              />
+            )}
+
+            {settingsActiveTab === 'snippets' && (
+              <SnippetsSettingsTab
+                themeTokens={themeTokens}
+                isEffectiveDark={isEffectiveDark}
+                accentColor={accentColor}
+              />
+            )}
+
+            {settingsActiveTab === 'tasks' && (
+              <TasksSettingsTab
+                themeTokens={themeTokens}
+                isEffectiveDark={isEffectiveDark}
+                accentColor={accentColor}
+                onOpenTasksDock={props.onOpenTasksDock}
+                onToast={props.onToast}
               />
             )}
 
             {settingsActiveTab === 'shortcuts' && (
               <ShortcutsSettingsTab themeTokens={themeTokens} isEffectiveDark={isEffectiveDark} />
+            )}
+
+            {settingsActiveTab === 'workspace' && (
+              <WorkspaceSettingsTab
+                themeTokens={themeTokens}
+                isEffectiveDark={isEffectiveDark}
+                accentColor={accentColor}
+                workspacePath={workspacePath}
+                currentBranch={currentBranch}
+                gitRepoName={props.gitRepoName}
+                branchesList={props.branchesList || []}
+                onCheckoutBranch={props.onCheckoutBranch}
+                onCreateBranch={props.onCreateBranch}
+                isCreatingBranch={props.isCreatingBranch}
+                onSyncGit={props.onSyncGit}
+                isSyncingGit={props.isSyncingGit}
+                onRefreshBranches={props.onRefreshBranches}
+                restoreLastWorkspace={props.restoreLastWorkspace}
+                setRestoreLastWorkspace={props.setRestoreLastWorkspace}
+                autoRefreshGitStatus={props.autoRefreshGitStatus}
+                setAutoRefreshGitStatus={props.setAutoRefreshGitStatus}
+              />
             )}
           </div>
         </div>

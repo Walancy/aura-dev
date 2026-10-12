@@ -1,3 +1,5 @@
+import { logSystemActivity } from './brainService';
+
 /**
  * Git Projects Discovery and Clone Utility
  * Unifies GitHub repositories with locally cloned repositories,
@@ -203,5 +205,59 @@ export async function cloneGitRepository(
     return { success: false, error: 'API do Git não disponível na aplicação Electron.' };
   }
 
-  return await window.electronAPI.git.clone(cloneUrl, targetDir);
+  logSystemActivity('git', 'Iniciando clone de repositório', project.name, {
+    fullName: project.fullName,
+    cloneUrl,
+    targetDir,
+  });
+
+  const res = await window.electronAPI.git.clone(cloneUrl, targetDir);
+
+  if (res?.success) {
+    logSystemActivity('git', 'Repositório clonado com sucesso', project.name, {
+      repoPath: res.repoPath,
+    });
+  } else {
+    logSystemActivity('git', 'Falha ao clonar repositório', project.name, {
+      error: res?.error,
+    });
+  }
+
+  return res;
+}
+
+/**
+ * Shared Project Health Score calculation.
+ * Ensures strict consistency between Project Cards, Scheduler Views and Executive Reports.
+ * Weights:
+ * - 40% Completion Rate (percentual de conclusão de tarefas)
+ * - 35% Bug/Defect Stability Score (100 - bugRate * 2.2)
+ * - 25% Balance Score (tarefas concluídas + em progresso balanceadas em relação ao total)
+ * Bounded between 20% and 100%.
+ */
+export function computeProjectHealthScore(
+  issues: any[] = [],
+  doneCount?: number,
+  inProgressCount?: number,
+  totalCount?: number,
+  percentValue?: number
+): number {
+  const total = totalCount != null && totalCount > 0 ? totalCount : issues.length;
+  const done = doneCount != null && doneCount >= 0 ? doneCount : issues.filter((i) => i.status === 'Concluído').length;
+  const inProgress = inProgressCount != null && inProgressCount >= 0 ? inProgressCount : issues.filter((i) => i.status === 'Em Progresso').length;
+  const completionPercent = total > 0 ? (percentValue != null && percentValue >= 0 ? percentValue : Math.round((done / total) * 100)) : (percentValue || 0);
+
+  let bugCount = 0;
+  issues.forEach((i: any) => {
+    const isBug =
+      /bug|fix|corre|erro|falha/i.test(i.tag || '') ||
+      (i.rawLabels && Array.isArray(i.rawLabels) && i.rawLabels.some((l: string) => /bug|fix/i.test(l)));
+    if (isBug) bugCount++;
+  });
+
+  const bugRate = total > 0 ? Math.round((bugCount / total) * 100) : 0;
+  const bugScore = Math.max(0, 100 - bugRate * 2.2);
+  const balanceScore = total > 0 ? Math.min(100, Math.round(((done + inProgress * 0.7) / total) * 100)) : 100;
+  const healthScore = Math.round(completionPercent * 0.4 + bugScore * 0.35 + balanceScore * 0.25);
+  return Math.min(100, Math.max(20, healthScore || 85));
 }

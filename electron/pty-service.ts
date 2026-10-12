@@ -83,6 +83,20 @@ export interface NativePtySession {
   aiCheckedAt?: number;
 }
 
+/** O spawn-helper do node-pty precisa de permissão de execução: instalações e empacotamentos às vezes o deixam sem ela ("posix_spawnp failed", terminal em branco) */
+function ensureSpawnHelperExecutable(): void {
+  try {
+    const pkgDir = path.dirname(require.resolve('node-pty/package.json')).replace('app.asar', 'app.asar.unpacked').replace('node_modules.asar', 'node_modules.asar.unpacked');
+    const candidates = [path.join(pkgDir, 'build', 'Release', 'spawn-helper'), path.join(pkgDir, 'build', 'Debug', 'spawn-helper'), path.join(pkgDir, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper')];
+    for (const file of candidates) {
+      if (fs.existsSync(file) && (fs.statSync(file).mode & 0o111) === 0) fs.chmodSync(file, 0o755);
+    }
+  } catch (err) {
+    console.warn('[Native PTY] Could not ensure spawn-helper permissions:', err);
+  }
+}
+ensureSpawnHelperExecutable();
+
 export class NativePtyService extends EventEmitter {
   private sessions: Map<string, NativePtySession> = new Map();
   private sessionHistories: Map<string, string[]> = new Map();
@@ -352,7 +366,7 @@ export class NativePtyService extends EventEmitter {
       const session: NativePtySession = {
         id,
         type: 'ai-stream',
-        title: 'DevFlow IA CLI',
+        title: 'Aura Dev IA CLI',
         cwd: cleanCwd,
         term: mockTerm,
         buffer: [],
@@ -530,13 +544,16 @@ export class NativePtyService extends EventEmitter {
 
               // Clean text from ANSI escape codes and extract recent snippet
               const rawBuffer = session.buffer.slice(-30).join('');
-              const cleanText = rawBuffer
-                .replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '')
-                .trim();
-              const lines = cleanText
+              const stripped = this.stripAnsi(rawBuffer);
+              const lines = stripped
                 .split('\n')
-                .map((l) => l.trim())
-                .filter((l) => l.length > 0);
+                .map((l) => {
+                  const parts = l.split('\r').map((p) => p.trim()).filter((p) => p.length > 0);
+                  return parts.length > 0 ? parts[parts.length - 1] : '';
+                })
+                .filter((l) => l.length > 0)
+                .filter((l, idx, arr) => idx === 0 || l !== arr[idx - 1]);
+              const cleanText = lines.join('\n');
               const lastFew = lines
                 .slice(-6)
                 .filter((l) => !l.startsWith('❯') && !l.startsWith('agy>') && !l.startsWith('╭') && !l.startsWith('╰') && !l.startsWith('│'));
@@ -634,7 +651,12 @@ export class NativePtyService extends EventEmitter {
   }
 
   private stripAnsi(t: string): string {
-    return t.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
+    return t
+      .replace(
+        /[\u001b\u009b](?:\[[\d:;<=>?]*[ !\"#$%&'()*+,-./]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|[P_X^][^\u001b]*(?:\u001b\\|\u0007)?|[()#%*+-./][0-9A-Za-z]|[@-Z\\-_])/g,
+        ''
+      )
+      .replace(/[\u0000-\u0008\u000b-\u000c\u000e-\u001f\u007f]/g, '');
   }
 
   // Aguarda a TUI da CLI estar pronta: sem saída recente e com a caixa de entrada/rodapé visível.

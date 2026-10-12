@@ -3,6 +3,7 @@ import { ExternalLink, KeyRound, Link2, PlayCircle, RefreshCw, Webhook } from 'l
 import { EmptyState, Panel, Pill, SmallButton, inputStyle, openUrl } from '../../team/teamUi';
 import { relativeTime } from '../../team/teamTypes';
 import { Field, Notice, ghSettings, type SectionProps } from '../settingsUi';
+import { logSystemActivity } from '../../../utils/brainService';
 
 export interface CustomLink {
   id: string;
@@ -20,7 +21,7 @@ const DEFAULT_LINKS = [
   { slot: 'docs', label: 'Documentação', placeholder: 'https://notion.so/…', category: 'docs' },
 ];
 
-const RUN_COLOR: Record<string, string> = { success: '#22c55e', failure: '#ef4444', cancelled: '#94a3b8', skipped: '#94a3b8', timed_out: '#ef4444', action_required: '#f59e0b' };
+const RUN_COLOR: Record<string, string> = { success: '#22c55e', failure: '#ef4444', cancelled: '#a3a3a3', skipped: '#a3a3a3', timed_out: '#ef4444', action_required: '#f59e0b' };
 
 export const IntegrationsSection: React.FC<SectionProps & { customLinks: CustomLink[]; onSaveCustomLinks: (links: CustomLink[]) => void }> = ({
   ctx,
@@ -71,6 +72,7 @@ export const IntegrationsSection: React.FC<SectionProps & { customLinks: CustomL
       else if (url && existing) next = next.map((l) => (l === existing ? { ...l, url } : l));
       else if (url) next.push({ id: `${Date.now()}_${s.slot}`, label: s.label, url, category: s.category, defaultSlot: s.slot });
     });
+    logSystemActivity('configuracoes_projeto', 'salvar_links', `${owner}/${repo}`, { count: next.length });
     onSaveCustomLinks(next);
     showToast('Links salvos — aparecem na aba Links.');
   };
@@ -82,13 +84,61 @@ export const IntegrationsSection: React.FC<SectionProps & { customLinks: CustomL
       <Panel ctx={ctx} icon={<Link2 size={14} color={accentColor} />} title="Links do projeto" right={linksDirty ? <SmallButton ctx={ctx} primary onClick={saveLinks}>Salvar links</SmallButton> : undefined}>
         {DEFAULT_LINKS.map((s) => (
           <Field key={s.slot} ctx={ctx} label={s.label}>
-            <input value={linkDraft[s.slot] || ''} onChange={(e) => setLinkDraft({ ...linkDraft, [s.slot]: e.target.value })} placeholder={s.placeholder} style={{ ...inputStyle(ctx), width: 320 }} />
+            <input value={linkDraft[s.slot] || ''} onChange={(e) => setLinkDraft({ ...linkDraft, [s.slot]: e.target.value })} placeholder={s.placeholder} style={{ ...inputStyle(ctx), width: 220 }} />
             <SmallButton ctx={ctx} disabled={!linkDraft[s.slot]} onClick={() => openUrl(linkDraft[s.slot])}>
               <ExternalLink size={11} />
             </SmallButton>
           </Field>
         ))}
       </Panel>
+
+      <Panel ctx={ctx} icon={<KeyRound size={14} color={accentColor} />} title="Secrets do Actions" right={<SmallButton ctx={ctx} onClick={() => openUrl(`https://github.com/${owner}/${repo}/settings/secrets/actions`)}>Gerenciar</SmallButton>}>
+            {secrets === null ? (
+              <span style={{ fontSize: 11.5, color: theme.textMuted }}>{isAdmin ? 'Carregando…' : 'Somente admins podem listar os secrets.'}</span>
+            ) : secrets.length === 0 ? (
+              <EmptyState ctx={ctx} text="Nenhum secret configurado." />
+            ) : (
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {secrets.map((s) => (
+                  <Pill key={s.name} color={theme.textSecondary} title={`Atualizado ${relativeTime(s.updatedAt)}`}>
+                    {s.name}
+                  </Pill>
+                ))}
+              </div>
+            )}
+            <div style={{ fontSize: 10.5, color: theme.textMuted }}>O GitHub nunca expõe os valores — só os nomes.</div>
+          </Panel>
+
+          <Panel ctx={ctx} icon={<Webhook size={14} color={accentColor} />} title="Webhooks" right={<SmallButton ctx={ctx} onClick={() => openUrl(`https://github.com/${owner}/${repo}/settings/hooks`)}>Gerenciar</SmallButton>}>
+            {hooksError && <Notice ctx={ctx} tone="warning">{hooksError}</Notice>}
+            {hooks && hooks.length === 0 && !hooksError && <EmptyState ctx={ctx} text="Nenhum webhook configurado." />}
+            {hooks?.map((h) => {
+              const code = h.lastResponse?.code;
+              const ok = code && code >= 200 && code < 300;
+              return (
+                <div key={h.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderTop: `1px solid ${theme.tableBorder}`, fontSize: 12 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: !h.active ? theme.textMuted : ok ? '#22c55e' : code ? '#ef4444' : '#a3a3a3', flexShrink: 0 }} />
+                  <code style={{ flex: 1, minWidth: 0, color: theme.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5 }}>{h.url}</code>
+                  <span style={{ fontSize: 10.5, color: theme.textMuted }}>{(h.events || []).slice(0, 3).join(', ')}{h.events?.length > 3 ? '…' : ''}</span>
+                  {code && <Pill color={ok ? '#22c55e' : '#ef4444'}>{code}</Pill>}
+                  <SmallButton
+                    ctx={ctx}
+                    onClick={async () => {
+                      try {
+                        await ghSettings('pingHook', { owner, repo, hookId: h.id });
+                        logSystemActivity('configuracoes_projeto', 'ping_webhook', `${owner}/${repo}`, { hookId: h.id });
+                        showToast('Ping enviado.');
+                      } catch (e: any) {
+                        showToast(`Falhou: ${e.message}`);
+                      }
+                    }}
+                  >
+                    Testar
+                  </SmallButton>
+                </div>
+              );
+            })}
+          </Panel>
 
       <Panel
         ctx={ctx}
@@ -118,7 +168,7 @@ export const IntegrationsSection: React.FC<SectionProps & { customLinks: CustomL
               <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderTop: `1px solid ${theme.tableBorder}`, fontSize: 12 }}>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flexShrink: 0 }} />
                 <span onClick={() => openUrl(r.url)} style={{ flex: 1, minWidth: 0, cursor: 'pointer', color: theme.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  <b style={{ fontWeight: 500 }}>{r.name}</b> <span style={{ color: theme.textSecondary }}>{r.title}</span>
+                  <span style={{ fontWeight: 400 }}>{r.name}</span> <span style={{ color: theme.textSecondary }}>{r.title}</span>
                 </span>
                 <Pill color={theme.textSecondary}>{r.branch}</Pill>
                 <Pill color={color}>{state}</Pill>
@@ -143,53 +193,6 @@ export const IntegrationsSection: React.FC<SectionProps & { customLinks: CustomL
             );
           })
         )}
-      </Panel>
-
-      <Panel ctx={ctx} icon={<KeyRound size={14} color={accentColor} />} title="Secrets do Actions" right={<SmallButton ctx={ctx} onClick={() => openUrl(`https://github.com/${owner}/${repo}/settings/secrets/actions`)}>Gerenciar no GitHub</SmallButton>}>
-        {secrets === null ? (
-          <span style={{ fontSize: 11.5, color: theme.textMuted }}>{isAdmin ? 'Carregando…' : 'Somente admins podem listar os secrets.'}</span>
-        ) : secrets.length === 0 ? (
-          <EmptyState ctx={ctx} text="Nenhum secret configurado." />
-        ) : (
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            {secrets.map((s) => (
-              <Pill key={s.name} color={theme.textSecondary} title={`Atualizado ${relativeTime(s.updatedAt)}`}>
-                {s.name}
-              </Pill>
-            ))}
-          </div>
-        )}
-        <div style={{ fontSize: 10.5, color: theme.textMuted }}>O GitHub nunca expõe os valores — só os nomes.</div>
-      </Panel>
-
-      <Panel ctx={ctx} icon={<Webhook size={14} color={accentColor} />} title="Webhooks" right={<SmallButton ctx={ctx} onClick={() => openUrl(`https://github.com/${owner}/${repo}/settings/hooks`)}>Gerenciar no GitHub</SmallButton>}>
-        {hooksError && <Notice ctx={ctx} tone="warning">{hooksError}</Notice>}
-        {hooks && hooks.length === 0 && !hooksError && <EmptyState ctx={ctx} text="Nenhum webhook configurado." />}
-        {hooks?.map((h) => {
-          const code = h.lastResponse?.code;
-          const ok = code && code >= 200 && code < 300;
-          return (
-            <div key={h.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderTop: `1px solid ${theme.tableBorder}`, fontSize: 12 }}>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: !h.active ? theme.textMuted : ok ? '#22c55e' : code ? '#ef4444' : '#94a3b8', flexShrink: 0 }} />
-              <code style={{ flex: 1, minWidth: 0, color: theme.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5 }}>{h.url}</code>
-              <span style={{ fontSize: 10.5, color: theme.textMuted }}>{(h.events || []).slice(0, 3).join(', ')}{h.events?.length > 3 ? '…' : ''}</span>
-              {code && <Pill color={ok ? '#22c55e' : '#ef4444'}>{code}</Pill>}
-              <SmallButton
-                ctx={ctx}
-                onClick={async () => {
-                  try {
-                    await ghSettings('pingHook', { owner, repo, hookId: h.id });
-                    showToast('Ping enviado.');
-                  } catch (e: any) {
-                    showToast(`Falhou: ${e.message}`);
-                  }
-                }}
-              >
-                Testar
-              </SmallButton>
-            </div>
-          );
-        })}
       </Panel>
     </div>
   );

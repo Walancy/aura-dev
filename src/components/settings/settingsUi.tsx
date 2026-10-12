@@ -68,11 +68,11 @@ export const Field: React.FC<{ ctx: TeamUiCtx; label: React.ReactNode; hint?: Re
       justifyContent: 'space-between',
       gap: wide ? 6 : 16,
       padding: '8px 0',
-      borderTop: `1px solid ${ctx.theme.tableBorder}`,
+      borderTop: `1px solid ${ctx.isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'}`,
     }}
   >
     <div style={{ minWidth: 0, flex: wide ? undefined : 1 }}>
-      <div style={{ fontSize: 12.5, color: ctx.theme.textPrimary, fontWeight: 500 }}>{label}</div>
+      <div style={{ fontSize: 12.5, color: ctx.theme.textPrimary, fontWeight: 400 }}>{label}</div>
       {hint && <div style={{ fontSize: 11, color: ctx.theme.textSecondary, lineHeight: 1.4, marginTop: 1 }}>{hint}</div>}
     </div>
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, flexWrap: 'wrap', justifyContent: wide ? 'flex-start' : 'flex-end' }}>{children}</div>
@@ -94,14 +94,15 @@ export const Toggle: React.FC<{ ctx: TeamUiCtx; checked: boolean; onChange: (v: 
       padding: 2,
       cursor: disabled ? 'not-allowed' : 'pointer',
       opacity: disabled ? 0.5 : 1,
-      background: checked ? ctx.accentColor : ctx.isEffectiveDark ? '#333' : '#cbd5e1',
+      background: checked ? ctx.accentColor : ctx.isEffectiveDark ? '#2a2a2a' : '#d4d4d4',
       display: 'flex',
       justifyContent: checked ? 'flex-end' : 'flex-start',
       transition: 'background 0.15s ease',
       flexShrink: 0,
+      boxShadow: 'none',
     }}
   >
-    <span style={{ width: 15, height: 15, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,0.3)' }} />
+    <span style={{ width: 15, height: 15, borderRadius: '50%', background: '#fff', boxShadow: 'none' }} />
   </button>
 );
 
@@ -112,7 +113,7 @@ export const Segmented: React.FC<{ ctx: TeamUiCtx; value: string; options: Array
   onChange,
   disabled,
 }) => (
-  <div style={{ display: 'flex', background: ctx.theme.controlBg, borderRadius: 7, padding: 2, gap: 2 }}>
+  <div style={{ display: 'flex', background: ctx.isEffectiveDark ? '#1c1c1c' : ctx.theme.controlBg, borderRadius: 7, padding: 2, gap: 2 }}>
     {options.map((o) => (
       <button
         key={o.id}
@@ -123,13 +124,14 @@ export const Segmented: React.FC<{ ctx: TeamUiCtx; value: string; options: Array
           border: 'none',
           borderRadius: 5,
           padding: '0 10px',
-          height: 24,
+          height: 28,
           fontSize: 11.5,
           fontFamily: 'inherit',
           cursor: disabled ? 'not-allowed' : 'pointer',
-          background: value === o.id ? (ctx.isEffectiveDark ? '#2a2a2a' : '#e2e8f0') : 'transparent',
+          background: value === o.id ? (ctx.isEffectiveDark ? '#2a2a2a' : '#e5e5e5') : 'transparent',
           color: value === o.id ? ctx.theme.textPrimary : ctx.theme.textSecondary,
-          fontWeight: value === o.id ? 500 : 400,
+          fontWeight: 400,
+          transition: 'all 0.15s ease',
         }}
       >
         {o.label}
@@ -165,9 +167,10 @@ export const NumberInput: React.FC<{ ctx: TeamUiCtx; value: number; onChange: (v
         padding: '0 8px',
         fontSize: 12,
         fontFamily: 'inherit',
-        background: ctx.theme.modalInputBg || ctx.theme.controlBg,
+        background: ctx.isEffectiveDark ? '#1c1c1c' : ctx.theme.controlBg,
         color: ctx.theme.textPrimary,
         outline: 'none',
+        boxShadow: 'none',
       }}
     />
     {suffix && <span style={{ fontSize: 11.5, color: ctx.theme.textSecondary }}>{suffix}</span>}
@@ -190,9 +193,10 @@ export const textareaStyle = (ctx: TeamUiCtx, minHeight = 140): React.CSSPropert
   fontSize: 12,
   lineHeight: 1.5,
   fontFamily: "'JetBrains Mono', 'SF Mono', Menlo, monospace",
-  background: ctx.theme.modalInputBg || ctx.theme.controlBg,
+  background: ctx.isEffectiveDark ? '#1c1c1c' : ctx.theme.controlBg,
   color: ctx.theme.textPrimary,
   outline: 'none',
+  boxShadow: 'none',
 });
 
 export const WEEKDAYS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];

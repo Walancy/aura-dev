@@ -46,7 +46,7 @@ export const OutputDockTab: React.FC<OutputDockTabProps> = ({
   // Channels definition
   const channels = [
     { id: 'all', label: 'Todos os Canais' },
-    { id: 'devflow', label: 'DevFlow & Atividades' },
+    { id: 'devflow', label: 'Aura Dev & Atividades' },
     { id: 'tarefas', label: 'Tarefas & GitHub' },
     { id: 'git', label: 'Git & Versionamento' },
     { id: 'build', label: 'Build & Diagnósticos' },

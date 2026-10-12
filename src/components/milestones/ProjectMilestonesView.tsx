@@ -17,6 +17,8 @@ import {
   CheckSquare,
   Layers,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   ArrowUpDown,
   Check,
   X,
@@ -177,18 +179,18 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
   const c = useMemo(() => {
     if (isEffectiveDark) {
       return {
-        shelf: '#000000',
-        card: '#141414',
-        cardSecondary: '#1c1c1c',
+        shelf: '#101010',
+        card: '#161616',
+        cardSecondary: '#1e1e1e',
         cardHover: '#242424',
         cardSelected: '#2a2a2a',
-        pillBg: '#1c1c1c',
+        pillBg: '#202020',
         pillActive: '#2a2a2a',
-        inputBg: '#1c1c1c',
-        divider: 'rgba(255, 255, 255, 0.05)',
+        inputBg: '#202020',
+        divider: 'rgba(255, 255, 255, 0.07)',
         textPrimary: '#ffffff',
-        textSecondary: '#888888',
-        textMuted: '#555555',
+        textSecondary: '#a3a3a3',
+        textMuted: '#737373',
         success: '#10b981',
         successBg: 'rgba(16, 185, 129, 0.15)',
         danger: '#ef4444',
@@ -268,6 +270,49 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
   // Release Notes gerado com IA
   const [generatedChangelog, setGeneratedChangelog] = useState<string>('');
   const [isGeneratingChangelog, setIsGeneratingChangelog] = useState(false);
+  const [isReleaseNotesCollapsed, setIsReleaseNotesCollapsed] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('milestone_release_notes_collapsed');
+      return saved !== null ? saved === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+  const [isReleaseNotesVisible, setIsReleaseNotesVisible] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('milestone_release_notes_visible');
+      return saved !== null ? saved === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleReleaseNotesCollapse = () => {
+    setIsReleaseNotesCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('milestone_release_notes_collapsed', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleCloseReleaseNotes = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsReleaseNotesVisible(false);
+    try {
+      localStorage.setItem('milestone_release_notes_visible', 'false');
+    } catch {}
+  };
+
+  const handleRestoreReleaseNotes = () => {
+    setIsReleaseNotesVisible(true);
+    setIsReleaseNotesCollapsed(true);
+    try {
+      localStorage.setItem('milestone_release_notes_visible', 'true');
+      localStorage.setItem('milestone_release_notes_collapsed', 'true');
+    } catch {}
+  };
 
   // Quality Gates (DoD) persistidos localmente
   const storageKey = `devflow_milestone_dod_${repoName.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
@@ -1145,8 +1190,8 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                     borderRadius: 8,
                     cursor: 'pointer',
                     background: isSelected
-                      ? (isEffectiveDark ? '#262629' : '#e4e7eb')
-                      : (isEffectiveDark ? '#141416' : '#ffffff'),
+                      ? (isEffectiveDark ? '#262626' : '#e5e5e5')
+                      : (isEffectiveDark ? '#1e1e1e' : '#ffffff'),
                     border: 'none',
                     boxShadow: 'none',
                     transition: 'all 0.15s ease',
@@ -1157,12 +1202,12 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                   }}
                   onMouseEnter={(e) => {
                     if (!isSelected) {
-                      e.currentTarget.style.background = isEffectiveDark ? '#1e1e21' : '#f1f5f9';
+                      e.currentTarget.style.background = isEffectiveDark ? '#242424' : '#f5f5f5';
                     }
                   }}
                   onMouseLeave={(e) => {
                     if (!isSelected) {
-                      e.currentTarget.style.background = isEffectiveDark ? '#141416' : '#ffffff';
+                      e.currentTarget.style.background = isEffectiveDark ? '#1e1e1e' : '#ffffff';
                     }
                   }}
                 >
@@ -1770,7 +1815,6 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <ListChecks size={14} color={accentColor} />
                     <span style={{ fontSize: 12.5, fontWeight: 500, color: c.textPrimary }}>Tarefas do Marco</span>
                     <span
                       style={{
@@ -2162,8 +2206,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <CheckSquare size={13} color={accentColor} />
+                    <div>
                       <span style={{ fontSize: 12, fontWeight: 500, color: c.textPrimary }}>Critérios DoD</span>
                     </div>
                     <span style={{ fontSize: 10.5, fontWeight: 500, color: c.textSecondary }}>
@@ -2332,7 +2375,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                   }}
                 />
 
-                {/* 2. Card de Equipe & Alocação */}
+                {/* 2. Card de Equipe & Alocação (Expande para preencher o espaço livre quando Release Notes está contraído) */}
                 <div
                   style={{
                     background: c.card,
@@ -2343,13 +2386,13 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                     gap: 6,
                     border: 'none',
                     boxShadow: 'none',
-                    flex: `${panelRatios.team} 1 0px`,
+                    flex: `${isReleaseNotesVisible && !isReleaseNotesCollapsed ? panelRatios.team : (panelRatios.team + panelRatios.release)} 1 0px`,
                     minHeight: 70,
                     overflow: 'hidden',
+                    transition: 'all 0.15s ease',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                    <Users size={13} color={accentColor} />
+                  <div style={{ flexShrink: 0 }}>
                     <span style={{ fontSize: 12, fontWeight: 500, color: c.textPrimary }}>Equipe & Alocação</span>
                   </div>
 
@@ -2434,126 +2477,260 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                   </div>
                 </div>
 
-                {/* Resizer 2: Entre Equipe e Release Notes */}
-                <div
-                  data-testid="resizer-team-release"
-                  className={`resizer-row ${activeDragSplitter === 'team-release' ? 'dragging' : ''}`}
-                  onMouseDown={startResizeTeamRelease}
-                  onDoubleClick={resetPanelRatios}
-                  title="Arraste para redimensionar verticalmente (Duplo clique para restaurar)"
-                  style={{
-                    height: 8,
-                    margin: '-1px 0',
-                    cursor: 'row-resize',
-                    position: 'relative',
-                    zIndex: 20,
-                    userSelect: 'none',
-                    flexShrink: 0,
-                  }}
-                />
+                {/* Resizer 2: Entre Equipe e Release Notes (visível apenas quando expandido) */}
+                {isReleaseNotesVisible && !isReleaseNotesCollapsed && (
+                  <div
+                    data-testid="resizer-team-release"
+                    className={`resizer-row ${activeDragSplitter === 'team-release' ? 'dragging' : ''}`}
+                    onMouseDown={startResizeTeamRelease}
+                    onDoubleClick={resetPanelRatios}
+                    title="Arraste para redimensionar verticalmente (Duplo clique para restaurar)"
+                    style={{
+                      height: 8,
+                      margin: '-1px 0',
+                      cursor: 'row-resize',
+                      position: 'relative',
+                      zIndex: 20,
+                      userSelect: 'none',
+                      flexShrink: 0,
+                    }}
+                  />
+                )}
 
-                {/* 3. Card de Release Notes IA */}
-                <div
-                  style={{
-                    background: c.card,
-                    borderRadius: 8,
-                    padding: '10px 12px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 6,
-                    border: 'none',
-                    boxShadow: 'none',
-                    flex: `${panelRatios.release} 1 0px`,
-                    minHeight: 80,
-                    overflow: 'hidden',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <Sparkles size={13} color={accentColor} />
-                      <span style={{ fontSize: 12, fontWeight: 500, color: c.textPrimary }}>Release Notes (IA)</span>
+                {/* 3. Card de Release Notes IA (Contraível / Removível) */}
+                {isReleaseNotesVisible ? (
+                  <div
+                    style={{
+                      background: c.card,
+                      borderRadius: 8,
+                      padding: isReleaseNotesCollapsed ? 8 : 10,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: isReleaseNotesCollapsed ? 8 : 10,
+                      border: 'none',
+                      boxShadow: 'none',
+                      flex: isReleaseNotesCollapsed ? '0 0 auto' : `${panelRatios.release} 1 0px`,
+                      minHeight: isReleaseNotesCollapsed ? 'auto' : 80,
+                      overflow: 'hidden',
+                      transition: 'all 0.15s ease',
+                      marginTop: isReleaseNotesCollapsed ? 6 : 0,
+                    }}
+                  >
+                    {/* Header Clicável */}
+                    <div
+                      onClick={toggleReleaseNotesCollapse}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        flexShrink: 0,
+                        cursor: 'pointer',
+                        userSelect: 'none',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Sparkles size={12} color={accentColor} />
+                        <span style={{ fontSize: 12, fontWeight: 400, color: c.textPrimary }}>
+                          Release Notes (IA)
+                        </span>
+                        {generatedChangelog ? (
+                          <span
+                            style={{
+                              fontSize: 9,
+                              color: c.success,
+                              background: 'rgba(34, 197, 94, 0.12)',
+                              padding: '1px 5px',
+                              borderRadius: 3,
+                              fontWeight: 400,
+                            }}
+                          >
+                            Gerado
+                          </span>
+                        ) : isReleaseNotesCollapsed && (
+                          <span
+                            style={{
+                              fontSize: 9,
+                              color: c.textMuted,
+                              background: c.cardSecondary,
+                              padding: '1px 5px',
+                              borderRadius: 3,
+                              fontWeight: 400,
+                            }}
+                          >
+                            Contraído
+                          </span>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        {generatedChangelog && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCopyChangelog();
+                            }}
+                            title="Copiar Markdown"
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 3,
+                              background: 'transparent',
+                              border: 'none',
+                              color: c.textSecondary,
+                              fontSize: 10.5,
+                              fontWeight: 400,
+                              cursor: 'pointer',
+                              padding: '2px 5px',
+                              borderRadius: 4,
+                              height: 22,
+                              transition: 'all 0.15s ease',
+                            }}
+                          >
+                            <Copy size={11} />
+                            <span>Copiar</span>
+                          </button>
+                        )}
+
+                        {/* Botão de alternar expansão */}
+                        <div
+                          title={isReleaseNotesCollapsed ? 'Expandir Release Notes' : 'Contrair Release Notes'}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            width: 22,
+                            height: 22,
+                            borderRadius: 4,
+                            color: c.textSecondary,
+                            background: c.cardSecondary,
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
+                          {isReleaseNotesCollapsed ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                        </div>
+
+                        {/* Botão de fechar/remover */}
+                        <div
+                          onClick={handleCloseReleaseNotes}
+                          title="Remover painel de Release Notes"
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            width: 22,
+                            height: 22,
+                            borderRadius: 4,
+                            color: c.textMuted,
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
+                          <X size={12} />
+                        </div>
+                      </div>
                     </div>
 
-                    {generatedChangelog && (
-                      <button
-                        type="button"
-                        onClick={handleCopyChangelog}
-                        title="Copiar Markdown"
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 3,
-                          background: 'transparent',
-                          border: 'none',
-                          color: c.textSecondary,
-                          fontSize: 10.5,
-                          cursor: 'pointer',
-                          padding: 0,
-                        }}
-                      >
-                        <Copy size={11} />
-                        <span>Copiar</span>
-                      </button>
+                    {/* Conteúdo Expansível */}
+                    {!isReleaseNotesCollapsed && (
+                      <>
+                        {!generatedChangelog ? (
+                          <div
+                            style={{
+                              flex: 1,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 8,
+                              padding: 8,
+                              textAlign: 'center',
+                            }}
+                          >
+                            <span style={{ fontSize: 11, color: c.textSecondary, lineHeight: 1.4, fontWeight: 400 }}>
+                              Sintetize tarefas entregues em um changelog formatado em Markdown.
+                            </span>
+                            <button
+                              type="button"
+                              onClick={handleGenerateChangelog}
+                              disabled={isGeneratingChangelog}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 5,
+                                background: accentColor,
+                                color: accentContrastText,
+                                border: 'none',
+                                borderRadius: 5,
+                                padding: '4px 10px',
+                                fontSize: 11,
+                                fontWeight: 400,
+                                cursor: 'pointer',
+                                height: 24,
+                                transition: 'all 0.15s ease',
+                              }}
+                            >
+                              <Sparkles size={12} />
+                              <span>{isGeneratingChangelog ? 'Gerando...' : 'Gerar com IA'}</span>
+                            </button>
+                          </div>
+                        ) : (
+                          <div
+                            style={{
+                              flex: 1,
+                              minHeight: 0,
+                              background: c.cardSecondary,
+                              borderRadius: 6,
+                              padding: 8,
+                              fontSize: 11,
+                              fontFamily: 'monospace',
+                              color: c.textPrimary,
+                              overflowY: 'auto',
+                              whiteSpace: 'pre-wrap',
+                              fontWeight: 400,
+                            }}
+                          >
+                            {generatedChangelog}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
-
-                  {!generatedChangelog ? (
-                    <div
+                ) : (
+                  <div
+                    style={{
+                      marginTop: 4,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '4px 8px',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={handleRestoreReleaseNotes}
                       style={{
-                        flex: 1,
                         display: 'flex',
-                        flexDirection: 'column',
                         alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 8,
-                        padding: 10,
-                        textAlign: 'center',
+                        gap: 4,
+                        background: 'transparent',
+                        border: 'none',
+                        color: c.textMuted,
+                        fontSize: 10,
+                        fontWeight: 400,
+                        cursor: 'pointer',
+                        padding: '2px 6px',
+                        borderRadius: 4,
+                        transition: 'all 0.15s ease',
                       }}
                     >
-                      <span style={{ fontSize: 11, color: c.textSecondary, lineHeight: 1.4 }}>
-                        Sintetize tarefas entregues em um changelog formatado em Markdown.
-                      </span>
-                      <button
-                        type="button"
-                        onClick={handleGenerateChangelog}
-                        disabled={isGeneratingChangelog}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 5,
-                          background: accentColor,
-                          color: accentContrastText,
-                          border: 'none',
-                          borderRadius: 5,
-                          padding: '5px 12px',
-                          fontSize: 11,
-                          fontWeight: 500,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        <Sparkles size={12} />
-                        <span>{isGeneratingChangelog ? 'Gerando...' : 'Gerar com IA'}</span>
-                      </button>
-                    </div>
-                  ) : (
-                    <div
-                      style={{
-                        flex: 1,
-                        minHeight: 0,
-                        background: c.cardSecondary,
-                        borderRadius: 6,
-                        padding: 8,
-                        fontSize: 11,
-                        fontFamily: 'monospace',
-                        color: c.textPrimary,
-                        overflowY: 'auto',
-                        whiteSpace: 'pre-wrap',
-                      }}
-                    >
-                      {generatedChangelog}
-                    </div>
-                  )}
-                </div>
+                      <Sparkles size={10} color={accentColor} />
+                      <span>Exibir Release Notes (IA)</span>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </>

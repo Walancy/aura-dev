@@ -65,11 +65,11 @@ export const RiskMatrixView: React.FC<RiskMatrixViewProps> = ({
   theme,
   isEffectiveDark,
 }) => {
-  const textPrimary = theme.textPrimary || (isEffectiveDark ? '#ffffff' : '#0f172a');
-  const textSecondary = theme.textSecondary || (isEffectiveDark ? '#888888' : '#64748b');
-  const cardBg = theme.viewCardBg || (isEffectiveDark ? '#181818' : '#ffffff');
-  const cardHoverBg = theme.viewCardHoverBg || (isEffectiveDark ? '#242424' : '#f1f5f9');
-  const headerBg = isEffectiveDark ? '#1c1c1c' : '#f1f5f9';
+  const textPrimary = isEffectiveDark ? '#ffffff' : '#111111';
+  const textSecondary = isEffectiveDark ? '#888888' : '#777777';
+  const cardBg = isEffectiveDark ? '#141414' : '#ffffff';
+  const cardHoverBg = isEffectiveDark ? '#242424' : '#f0f0f0';
+  const headerBg = isEffectiveDark ? '#1c1c1c' : '#fafafa';
 
   // Organizar itens por célula [impact][prob]
   const itemsByCell: Record<string, CellItem[]> = {};
@@ -112,7 +112,7 @@ export const RiskMatrixView: React.FC<RiskMatrixViewProps> = ({
           borderRadius: 8,
           background: cardBg,
           border: 'none',
-          boxShadow: isEffectiveDark ? 'none' : '0 1px 2px rgba(0,0,0,0.03)',
+          boxShadow: 'none',
           flexWrap: 'wrap',
           gap: 10,
         }}
@@ -283,7 +283,7 @@ export const RiskMatrixView: React.FC<RiskMatrixViewProps> = ({
                             borderRadius: 5,
                             padding: '5px 7px',
                             border: 'none',
-                            boxShadow: isEffectiveDark ? 'none' : '0 1px 2px rgba(0,0,0,0.04)',
+                            boxShadow: 'none',
                             cursor: 'pointer',
                             display: 'flex',
                             flexDirection: 'column',

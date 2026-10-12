@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BookOpen,
   Check,
@@ -16,7 +16,9 @@ import {
   ShieldCheck,
   Sparkles,
   X,
+  ChevronDown,
 } from 'lucide-react';
+import { renderAiIcon } from '../icons/AiProviderIcons';
 import { logSystemActivity } from '../../utils/brainService';
 
 export interface AiGlobalRuleProvider {
@@ -192,6 +194,7 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
   const [fileExists, setFileExists] = useState<boolean>(false);
   const [resolvedPath, setResolvedPath] = useState<string>('');
   const [showPresets, setShowPresets] = useState<boolean>(false);
+  const [isAiDropdownOpen, setIsAiDropdownOpen] = useState<boolean>(false);
 
   // Sync active tab with selected provider when opened
   useEffect(() => {
@@ -330,6 +333,8 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
 
   const isDirty = fileContent !== originalContent;
 
+  const isMouseDownOnBackdrop = useRef(false);
+
   if (!isOpen) return null;
 
   return (
@@ -345,17 +350,23 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
         justifyContent: 'center',
         padding: 16,
       }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+      onMouseDown={(e) => {
+        isMouseDownOnBackdrop.current = e.target === e.currentTarget;
+      }}
+      onMouseUp={(e) => {
+        if (isMouseDownOnBackdrop.current && e.target === e.currentTarget) {
+          onClose();
+        }
+        isMouseDownOnBackdrop.current = false;
       }}
     >
       <div
         style={{
           width: '100%',
-          maxWidth: 880,
-          height: 'min(780px, 90vh)',
+          maxWidth: 1120,
+          height: 'min(800px, calc(100vh - 32px))',
           background: isEffectiveDark ? '#161618' : '#ffffff',
-          borderRadius: 10,
+          borderRadius: 12,
           border: 'none',
           boxShadow: 'none',
           display: 'flex',
@@ -365,125 +376,159 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Top Functional Bar (Tabs on the Left, Actions on the Right - No ViewHeader) */}
+        {/* Top Functional Bar */}
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '12px',
+            padding: '10px 16px',
             gap: 12,
-            borderBottom: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.06)' : '1px solid rgba(0, 0, 0, 0.06)',
+            borderBottom: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.05)' : '1px solid rgba(0, 0, 0, 0.05)',
             background: isEffectiveDark ? '#19191b' : '#f8fafc',
             flexShrink: 0,
           }}
         >
-          {/* Tabs on the Left */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-              overflowX: 'auto',
-              minWidth: 0,
-              flex: 1,
-            }}
-            className="no-scrollbar"
-          >
-            {GLOBAL_PROVIDERS.map((p) => {
-              const isActive = p.id === activeProviderId;
-              const isHeaderSelected = p.id === selectedAiProvider;
+          {/* AI Selector Dropdown on the Left */}
+          <div style={{ position: 'relative' }}>
+            <button
+              type="button"
+              onClick={() => setIsAiDropdownOpen((v) => !v)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                height: 28,
+                padding: '0 10px',
+                borderRadius: 6,
+                border: 'none',
+                boxShadow: 'none',
+                background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
+                color: isEffectiveDark ? '#ffffff' : '#18181b',
+                cursor: 'pointer',
+                fontSize: 12,
+                fontWeight: 500,
+                transition: 'all 0.15s ease',
+              }}
+              title="Selecionar Inteligência Artificial"
+            >
+              {renderAiIcon(activeProvider.id, 15)}
+              <span>{activeProvider.name}</span>
+              <ChevronDown
+                size={13}
+                style={{
+                  opacity: 0.6,
+                  transform: isAiDropdownOpen ? 'rotate(180deg)' : 'none',
+                  transition: 'transform 0.15s ease',
+                }}
+              />
+            </button>
 
-              return (
-                <button
-                  key={p.id}
-                  onClick={() => setActiveProviderId(p.id)}
+            {isAiDropdownOpen && (
+              <>
+                <div
+                  style={{ position: 'fixed', inset: 0, zIndex: 100000 }}
+                  onClick={() => setIsAiDropdownOpen(false)}
+                />
+                <div
                   style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    padding: '6px 12px',
-                    borderRadius: 6,
-                    fontSize: 12,
-                    fontWeight: 400,
-                    cursor: 'pointer',
+                    position: 'absolute',
+                    top: 'calc(100% + 4px)',
+                    left: 0,
+                    zIndex: 100001,
+                    minWidth: 220,
+                    background: isEffectiveDark ? '#1f1f22' : '#ffffff',
+                    borderRadius: 8,
                     border: 'none',
                     boxShadow: 'none',
-                    background: isActive
-                      ? isEffectiveDark
-                        ? 'rgba(255, 255, 255, 0.12)'
-                        : 'rgba(0, 0, 0, 0.08)'
-                      : 'transparent',
-                    color: isActive
-                      ? isEffectiveDark
-                        ? '#ffffff'
-                        : '#09090b'
-                      : isEffectiveDark
-                      ? '#a1a1aa'
-                      : '#64748b',
-                    transition: 'all 0.15s ease',
-                    whiteSpace: 'nowrap',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isActive) {
-                      e.currentTarget.style.background = isEffectiveDark
-                        ? 'rgba(255, 255, 255, 0.05)'
-                        : 'rgba(0, 0, 0, 0.04)';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isActive) {
-                      e.currentTarget.style.background = 'transparent';
-                    }
+                    padding: 4,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 2,
                   }}
                 >
-                  <ScrollText size={13} color={isActive ? accentColor : 'currentColor'} />
-                  <span>{p.name}</span>
-                  {isHeaderSelected && (
-                    <span
-                      style={{
-                        fontSize: 9,
-                        fontWeight: 400,
-                        padding: '1px 5px',
-                        borderRadius: 4,
-                        background: isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.07)',
-                        color: accentColor,
-                      }}
-                      title="IA atualmente selecionada na barra superior"
-                    >
-                      Header
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+                  {GLOBAL_PROVIDERS.map((provider) => {
+                    const isSelected = provider.id === activeProviderId;
+                    return (
+                      <div
+                        key={provider.id}
+                        onClick={() => {
+                          logSystemActivity('regras_globais', 'selecionar_provedor', provider.name, { provider: provider.id });
+                          setActiveProviderId(provider.id);
+                          setIsAiDropdownOpen(false);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          padding: '6px 10px',
+                          borderRadius: 6,
+                          cursor: 'pointer',
+                          fontSize: 12,
+                          fontWeight: isSelected ? 500 : 400,
+                          color: isSelected ? accentColor : isEffectiveDark ? '#e4e4e7' : '#27272a',
+                          background: isSelected
+                            ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)')
+                            : 'transparent',
+                          transition: 'background 0.12s ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isSelected) {
+                            e.currentTarget.style.background = isEffectiveDark
+                              ? 'rgba(255, 255, 255, 0.05)'
+                              : 'rgba(0, 0, 0, 0.04)';
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isSelected) {
+                            e.currentTarget.style.background = 'transparent';
+                          }
+                        }}
+                      >
+                        {renderAiIcon(provider.id, 15)}
+                        <span style={{ flex: 1 }}>{provider.name}</span>
+                        <span style={{ fontSize: 10, color: isEffectiveDark ? '#71717a' : '#a1a1aa', fontFamily: 'monospace' }}>
+                          {provider.fileName}
+                        </span>
+                        {isSelected && <Check size={12} color={accentColor} />}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
 
           {/* Action Buttons on the Right */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-            {/* Quick Presets Dropdown Trigger */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            {/* Diretrizes Button (Icon only, no color, with tooltip) */}
             <div style={{ position: 'relative' }}>
               <button
+                type="button"
                 onClick={() => setShowPresets((v) => !v)}
                 style={{
+                  width: 28,
+                  height: 28,
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 5,
-                  padding: '6px 10px',
+                  justifyContent: 'center',
                   borderRadius: 6,
-                  fontSize: 11.5,
-                  fontWeight: 400,
                   cursor: 'pointer',
                   border: 'none',
                   boxShadow: 'none',
-                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
-                  color: isEffectiveDark ? '#d4d4d8' : '#3f3f46',
+                  background: 'transparent',
+                  color: showPresets ? accentColor : isEffectiveDark ? '#a1a1aa' : '#71717a',
                   transition: 'all 0.15s ease',
                 }}
-                title="Inserir diretrizes prontas"
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = isEffectiveDark ? '#ffffff' : '#000000';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = showPresets ? accentColor : isEffectiveDark ? '#a1a1aa' : '#71717a';
+                }}
+                title="Diretrizes"
               >
-                <Sparkles size={12} color={accentColor} />
-                <span>Diretrizes</span>
+                <Sparkles size={15} />
               </button>
 
               {showPresets && (
@@ -567,42 +612,49 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
               )}
             </div>
 
-            {/* Open in IDE Editor */}
+            {/* Abrir no Editor Button (Icon only, no color, with tooltip) */}
             <button
+              type="button"
               onClick={handleOpenInEditor}
               style={{
+                width: 28,
+                height: 28,
                 display: 'flex',
                 alignItems: 'center',
-                gap: 5,
-                padding: '6px 11px',
+                justifyContent: 'center',
                 borderRadius: 6,
-                fontSize: 11.5,
-                fontWeight: 400,
                 cursor: 'pointer',
                 border: 'none',
                 boxShadow: 'none',
-                background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
-                color: isEffectiveDark ? '#f4f4f5' : '#18181b',
+                background: 'transparent',
+                color: isEffectiveDark ? '#a1a1aa' : '#71717a',
                 transition: 'all 0.15s ease',
               }}
-              title="Abrir arquivo completo em aba no editor"
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = isEffectiveDark ? '#ffffff' : '#000000';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = isEffectiveDark ? '#a1a1aa' : '#71717a';
+              }}
+              title="Abrir no Editor"
             >
-              <ExternalLink size={12} />
-              <span>Abrir no Editor</span>
+              <ExternalLink size={15} />
             </button>
 
-            {/* Save Button */}
+            {/* Save Button (Always "Salvar", height 28px) */}
             <button
+              type="button"
               onClick={handleSave}
               disabled={isSaving}
               style={{
-                display: 'flex',
+                height: 28,
+                display: 'inline-flex',
                 alignItems: 'center',
                 gap: 6,
-                padding: '6px 14px',
+                padding: '0 12px',
                 borderRadius: 6,
                 fontSize: 11.5,
-                fontWeight: 400,
+                fontWeight: 500,
                 cursor: isSaving ? 'not-allowed' : 'pointer',
                 border: 'none',
                 boxShadow: 'none',
@@ -617,11 +669,12 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
               ) : (
                 <Save size={12} />
               )}
-              <span>{isDirty ? 'Salvar *' : 'Salvo'}</span>
+              <span>{isSaving ? 'Salvando...' : 'Salvar'}</span>
             </button>
 
             {/* Close Button */}
             <button
+              type="button"
               onClick={onClose}
               style={{
                 width: 28,
@@ -638,13 +691,9 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
                 transition: 'all 0.15s ease',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = isEffectiveDark
-                  ? 'rgba(255, 255, 255, 0.08)'
-                  : 'rgba(0, 0, 0, 0.06)';
                 e.currentTarget.style.color = isEffectiveDark ? '#ffffff' : '#000000';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent';
                 e.currentTarget.style.color = isEffectiveDark ? '#a1a1aa' : '#71717a';
               }}
               title="Fechar (Esc)"

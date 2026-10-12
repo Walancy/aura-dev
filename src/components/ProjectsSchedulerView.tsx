@@ -9,11 +9,14 @@ import {
   Kanban as KanbanIcon,
   Filter,
   ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   Plus,
   MoreVertical,
   X,
   CheckCircle2,
   Clock,
+  Activity,
   AlertCircle,
   GitPullRequest,
   GitBranch,
@@ -99,6 +102,8 @@ import { ProjectSettingsView } from './settings/ProjectSettingsView';
 import { getLanguageSvgUrl } from './FileIcon';
 import { ProjectIconModal } from './modals/ProjectIconModal';
 import { logSystemActivity } from '../utils/brainService';
+import { computeProjectHealthScore } from '../utils/gitProjects';
+export { computeProjectHealthScore };
 
 export interface ProjectsSchedulerViewProps {
   workspacePath?: string;
@@ -164,6 +169,7 @@ export interface ProjectCardData {
   issuesDone: number;
   issuesOpen: number;
   issuesInProgress: number;
+  healthScore?: number;
   alertStatus?: 'alerta' | 'critico' | null;
   org?: string;
   // Real GitHub repo backing this card
@@ -449,59 +455,66 @@ export function issueBelongsToSprint(
   sprint: Pick<SprintOption, 'number' | 'iterationId' | 'isProjectIteration' | 'isVirtual' | 'title'>
 ): boolean {
   // 1. Se ambos tiverem iterationId, bate direto por id
-  if (sprint.iterationId && issue.iterationId && sprint.iterationId === issue.iterationId) {
+  if (sprint.iterationId && issue.iterationId && String(sprint.iterationId) === String(issue.iterationId)) {
     return true;
   }
   // 2. Se ambos tiverem milestone number válido
-  if (sprint.number && sprint.number > 0 && issue.milestoneNumber === sprint.number) {
+  if (sprint.number && sprint.number > 0 && issue.milestoneNumber != null && Number(issue.milestoneNumber) === Number(sprint.number)) {
     return true;
   }
-  // 3. Comparação de títulos (normalizado)
-  const spTitle = (sprint.title || '').toLowerCase().trim();
-  const itTitle = (issue.iterationTitle || '').toLowerCase().trim();
-  const msTitle = (issue.milestoneTitle || '').toLowerCase().trim();
+  // 3. Comparação de títulos (normalizado com remoção de acentos e espaços extras)
+  const cleanTitle = (s?: string) =>
+    (s || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const spTitle = cleanTitle(sprint.title);
+  const itTitle = cleanTitle(issue.iterationTitle);
+  const msTitle = cleanTitle(issue.milestoneTitle);
+
   if (spTitle) {
+    if (itTitle) {
+      if (itTitle === spTitle || (itTitle.length >= 4 && (itTitle.includes(spTitle) || spTitle.includes(itTitle)))) {
+        return true;
+      }
+    }
+
+    if (msTitle) {
+      if (msTitle === spTitle || (msTitle.length >= 4 && (msTitle.includes(spTitle) || spTitle.includes(msTitle)))) {
+        return true;
+      }
+    }
+
     const getSprintNum = (s: string) => {
       const m = s.match(/sprint\s*([0-9]+(?:-[0-9]+)?)/i);
       return m ? m[1] : null;
     };
     const spNum = getSprintNum(spTitle);
 
-    if (itTitle) {
-      if (itTitle === spTitle) return true;
-      const itNum = getSprintNum(itTitle);
-      if (spNum && itNum) {
-        if (spNum === itNum) return true;
-      } else if (!spNum && !itNum && (itTitle.startsWith(spTitle) || spTitle.startsWith(itTitle))) {
+    if (spNum) {
+      if (itTitle && getSprintNum(itTitle) === spNum) return true;
+      if (msTitle && getSprintNum(msTitle) === spNum) return true;
+      if (issue.title && getSprintNum(cleanTitle(issue.title)) === spNum) return true;
+      if (/^\d+$/.test(spNum) && issue.milestoneNumber != null && Number(issue.milestoneNumber) === parseInt(spNum, 10)) {
         return true;
       }
     }
 
-    if (msTitle) {
-      if (msTitle === spTitle) return true;
-      const msNum = getSprintNum(msTitle);
-      if (spNum && msNum) {
-        if (spNum === msNum) return true;
-      } else if (!spNum && !msNum && (msTitle.startsWith(spTitle) || spTitle.startsWith(msTitle))) {
-        return true;
-      }
-    }
-
-    // 4. Comparação por número de sprint no título da issue (ex: 'Sprint13 — ...')
-    if (spNum && issue.title) {
-      const titleNum = getSprintNum(issue.title);
-      if (titleNum && titleNum === spNum) return true;
-    }
-
-    // Comparação por número de milestone numérico
-    if (spNum && /^\d+$/.test(spNum) && issue.milestoneNumber === parseInt(spNum, 10)) {
-      return true;
+    if (Array.isArray((issue as any).rawLabels) && spTitle) {
+      const hasSprintLabel = (issue as any).rawLabels.some((l: string) => {
+        const norm = cleanTitle(l).replace(/^(sprint|milestone|marco)[:\s-]*/i, '').trim();
+        return norm && (norm === spTitle || (norm.length >= 4 && (norm.includes(spTitle) || spTitle.includes(norm))));
+      });
+      if (hasSprintLabel) return true;
     }
   }
 
-  // 5. Fallback para iterationId exclusivo se nada mais bateu
+  // 4. Fallback para iterationId exclusivo se nada mais bateu
   if (sprint.isProjectIteration || sprint.iterationId) {
-    return Boolean(sprint.iterationId && issue.iterationId === sprint.iterationId);
+    return Boolean(sprint.iterationId && issue.iterationId && String(sprint.iterationId) === String(issue.iterationId));
   }
 
   return false;
@@ -650,9 +663,16 @@ export function buildUnifiedProjectCards(params: {
     const doneCount = cached ? cached.issues.filter((i: any) => i.status === 'Concluído').length : 0;
     const inProgressCount = cached ? cached.issues.filter((i: any) => i.status === 'Em Progresso').length : 0;
     const openCount = cached ? cached.issues.filter((i: any) => i.status === 'A Fazer').length : repo.open_issues_count;
-    const total = cached ? cached.issues.length : 0;
+    const total = (cached && cached.issues?.length > 0) ? cached.issues.length : (doneCount + inProgressCount + openCount);
     const percentValue = total > 0 ? Math.round((doneCount / total) * 100) : 0;
     const currentSprint = resolveCurrentSprint(cached);
+    const healthScore = computeProjectHealthScore(
+      cached?.issues || [],
+      doneCount,
+      inProgressCount,
+      total,
+      percentValue
+    );
 
     list.push({
       id: repo.id,
@@ -673,6 +693,7 @@ export function buildUnifiedProjectCards(params: {
       issuesDone: doneCount,
       issuesOpen: openCount,
       issuesInProgress: inProgressCount,
+      healthScore,
       alertStatus: null,
       org: repo.owner?.login,
       fullName: repo.full_name,
@@ -723,9 +744,16 @@ export function buildUnifiedProjectCards(params: {
     const doneCount = cached ? cached.issues.filter((i: any) => i.status === 'Concluído').length : 0;
     const inProgressCount = cached ? cached.issues.filter((i: any) => i.status === 'Em Progresso').length : 0;
     const openCount = cached ? cached.issues.filter((i: any) => i.status === 'A Fazer').length : 0;
-    const total = cached ? cached.issues.length : 0;
+    const total = (cached && cached.issues?.length > 0) ? cached.issues.length : (doneCount + inProgressCount + openCount);
     const percentValue = total > 0 ? Math.round((doneCount / total) * 100) : 0;
     const currentSprint = resolveCurrentSprint(cached);
+    const healthScore = computeProjectHealthScore(
+      cached?.issues || [],
+      doneCount,
+      inProgressCount,
+      total,
+      percentValue
+    );
 
     const locOwnerAvatar =
       (owner && orgs.find((o) => o.login.toLowerCase() === owner.toLowerCase())?.avatarUrl) ||
@@ -750,6 +778,7 @@ export function buildUnifiedProjectCards(params: {
       issuesDone: doneCount,
       issuesOpen: openCount,
       issuesInProgress: inProgressCount,
+      healthScore,
       alertStatus: null,
       org: owner || undefined,
       fullName,
@@ -797,9 +826,16 @@ export function buildUnifiedProjectCards(params: {
     const doneCount = cached ? cached.issues.filter((i: any) => i.status === 'Concluído').length : 0;
     const inProgressCount = cached ? cached.issues.filter((i: any) => i.status === 'Em Progresso').length : 0;
     const openCount = cached ? cached.issues.filter((i: any) => i.status === 'A Fazer').length : 0;
-    const total = cached ? cached.issues.length : 0;
+    const total = (cached && cached.issues?.length > 0) ? cached.issues.length : (doneCount + inProgressCount + openCount);
     const percentValue = total > 0 ? Math.round((doneCount / total) * 100) : 0;
     const currentSprint = resolveCurrentSprint(cached);
+    const healthScore = computeProjectHealthScore(
+      cached?.issues || [],
+      doneCount,
+      inProgressCount,
+      total,
+      percentValue
+    );
 
     const wsOwnerAvatar =
       (owner && orgs.find((o) => o.login.toLowerCase() === owner.toLowerCase())?.avatarUrl) ||
@@ -824,6 +860,7 @@ export function buildUnifiedProjectCards(params: {
       issuesDone: doneCount,
       issuesOpen: openCount,
       issuesInProgress: inProgressCount,
+      healthScore,
       alertStatus: null,
       org: owner || undefined,
       fullName,
@@ -1162,7 +1199,7 @@ const SAMPLE_GITHUB_ISSUES: ProjectIssue[] = [
     milestoneNumber: 1,
     milestoneTitle: 'Sprint1 - Setup Inicial e Arquitetura',
     tag: 'docs',
-    tagColor: { bg: 'rgba(107, 114, 128, 0.15)', text: '#9ca3af' },
+    tagColor: { bg: 'rgba(255, 255, 255, 0.08)', text: '#a3a3a3' },
     priority: 'Baixa',
     priorityColor: '#22c55e',
     status: 'Concluído',
@@ -1688,8 +1725,14 @@ export function mapGithubIssueToProjectIssue(gh: any, projectId: number | string
 
   // Datas de início/término vêm da sprint (milestone) atribuída à issue, não da própria issue.
   const milestone = gh.milestone;
-  const milestoneTitle = typeof milestone === 'string' ? milestone : milestone?.title;
-  const milestoneNumber = milestone?.number;
+  const milestoneTitle =
+    typeof milestone === 'string'
+      ? milestone
+      : milestone?.title || gh.milestone_title || gh.milestoneTitle;
+  const milestoneNumber =
+    typeof milestone === 'number'
+      ? milestone
+      : milestone?.number ?? (typeof gh.milestone_number === 'number' ? gh.milestone_number : undefined);
   const milestoneDue = milestone?.due_on || milestone?.dueOn;
   const startDateIso = milestone?.description ? parseSprintStart(milestone.description) : undefined;
   const dueDateIso = milestoneDue ? toIsoDateOnly(milestoneDue) : undefined;
@@ -1932,8 +1975,8 @@ export class ProjectsViewErrorBoundary extends React.Component<
             justifyContent: 'center',
             padding: 32,
             gap: 16,
-            background: isDark ? '#101010' : '#f8fafc',
-            color: isDark ? '#ffffff' : '#0f172a',
+            background: isDark ? '#101010' : '#f5f5f5',
+            color: isDark ? '#ffffff' : '#111111',
             fontFamily: "'Poppins', sans-serif",
           }}
         >
@@ -2155,42 +2198,67 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
   const isAccentContrastDark = accentContrastText === '#000000';
 
   const theme = {
-    bgApp: themeTokens?.bgApp || (isEffectiveDark ? '#000000' : '#eaedf1'),
-    bgShelf: isEffectiveDark ? '#101010' : '#ffffff',
+    bgApp: themeTokens?.bgApp || (isEffectiveDark ? '#0a0a0a' : '#f5f5f5'),
+    bgShelf: isEffectiveDark ? '#101010' : '#f5f5f5',
     shelfBorder: 'none',
-    shelfShadow: isEffectiveDark ? 'none' : '0 1px 3px rgba(0, 0, 0, 0.05)',
-    cardBg: isEffectiveDark ? '#181818' : '#f1f5f9',
-    cardHoverBg: isEffectiveDark ? '#242424' : '#e2e8f0',
+    shelfShadow: 'none',
+    cardBg: isEffectiveDark ? '#181818' : '#ffffff',
+    cardHoverBg: isEffectiveDark ? '#222222' : '#f0f0f0',
     cardBorder: 'none',
-    controlBg: isEffectiveDark ? '#181818' : '#ffffff',
-    controlHoverBg: isEffectiveDark ? '#242424' : '#f8fafc',
+    controlBg: isEffectiveDark ? '#1e1e1e' : '#f0f0f0',
+    controlHoverBg: isEffectiveDark ? '#262626' : '#e5e5e5',
     controlBorder: 'none',
+    controlShadow: 'none',
     dropdownBg: isEffectiveDark ? '#181818' : '#ffffff',
-    dropdownShadow: isEffectiveDark ? '0 10px 25px rgba(0, 0, 0, 0.6)' : '0 10px 25px rgba(0, 0, 0, 0.1)',
+    dropdownShadow: 'none',
     dropdownBorder: 'none',
-    dropdownItemHover: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)',
-    textPrimary: themeTokens?.textPrimary || (isEffectiveDark ? '#ffffff' : '#0f172a'),
-    textSecondary: themeTokens?.textSecondary || (isEffectiveDark ? '#888888' : '#64748b'),
-    textMuted: themeTokens?.textMuted || (isEffectiveDark ? '#555555' : '#94a3b8'),
-    viewContainerBg: isEffectiveDark ? '#101010' : '#ffffff',
-    viewCanvasBg: isEffectiveDark ? '#141414' : '#f8fafc',
+    dropdownItemHover: isEffectiveDark ? '#242424' : '#f0f0f0',
+    textPrimary: themeTokens?.textPrimary || (isEffectiveDark ? '#ffffff' : '#111111'),
+    textSecondary: themeTokens?.textSecondary || (isEffectiveDark ? '#888888' : '#777777'),
+    textMuted: themeTokens?.textMuted || (isEffectiveDark ? '#555555' : '#999999'),
+    viewContainerBg: isEffectiveDark ? '#101010' : '#f5f5f5',
+    viewCanvasBg: isEffectiveDark ? '#141414' : '#f5f5f5',
     viewCardBg: isEffectiveDark ? '#181818' : '#ffffff',
-    viewCardHoverBg: isEffectiveDark ? '#242424' : '#f1f5f9',
+    viewCardHoverBg: isEffectiveDark ? '#222222' : '#f0f0f0',
     viewCardBorder: 'none',
-    viewCardShadow: isEffectiveDark ? 'none' : '0 1px 2px rgba(0, 0, 0, 0.04)',
-    tableHeaderBg: isEffectiveDark ? '#181818' : '#f8fafc',
-    tableBorder: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.06)',
+    viewCardShadow: 'none',
+    tableHeaderBg: isEffectiveDark ? '#1e1e1e' : '#f0f0f0',
+    tableBorder: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
     modalOverlay: isEffectiveDark ? 'rgba(0, 0, 0, 0.75)' : 'rgba(0, 0, 0, 0.45)',
-    modalBg: isEffectiveDark ? '#161616' : '#ffffff',
+    modalBg: isEffectiveDark ? '#181818' : '#ffffff',
     modalBorder: 'none',
-    modalShadow: isEffectiveDark ? '0 20px 50px rgba(0, 0, 0, 0.9)' : '0 20px 50px rgba(0, 0, 0, 0.15)',
-    modalInputBg: isEffectiveDark ? '#1f1f1f' : '#f8fafc',
+    modalShadow: 'none',
+    modalInputBg: isEffectiveDark ? '#1e1e1e' : '#f0f0f0',
     modalInputBorder: 'none',
     avatarBorder: isEffectiveDark ? '#181818' : '#ffffff',
   };
   const [hoveredCardId, setHoveredCardId] = useState<number | string | null>(null);
   const [selectedCardId, setSelectedCardId] = useState<number | string | null>(null);
   const [projectLayoutMode, setProjectLayoutMode] = useState<'grid' | 'list'>('grid');
+  type TableSortField = 'index' | 'project' | 'language' | 'progress' | 'done' | 'inProgress' | 'open' | 'health' | 'updatedAt';
+  const [tableSortField, setTableSortField] = useState<TableSortField | null>(null);
+  const [tableSortDirection, setTableSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  const handleTableSort = useCallback((field: TableSortField) => {
+    let nextDirection: 'asc' | 'desc' = 'asc';
+
+    if (tableSortField === field) {
+      // Inverte a direção: asc (de baixo pra cima) <-> desc (de cima pra baixo)
+      nextDirection = tableSortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+      // Primeira ordenação no campo: inicia em 'asc' para texto/índice ou em 'desc' para métricas
+      nextDirection = field === 'project' || field === 'language' || field === 'index' ? 'asc' : 'desc';
+    }
+
+    setTableSortField(field);
+    setTableSortDirection(nextDirection);
+
+    logSystemActivity('projects', 'sort_table_column', field, {
+      field,
+      direction: nextDirection,
+    });
+  }, [tableSortField, tableSortDirection]);
+
   const isGridMode = selectedCardId === null;
   // Quando um projeto estiver selecionado, deve mostrar a view em cards ('grid') e não em lista
   const effectiveProjectLayoutMode = isGridMode ? projectLayoutMode : 'grid';
@@ -3360,6 +3428,10 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
             fetchRepoDetails(fullName, true);
             showToast(`Sincronizando ${card.title || card.name} com o GitHub...`);
           }
+        } else {
+          logSystemActivity('projects', 'deselect_project_card', card.title || card.name, {
+            cardId: card.id,
+          });
         }
         return next;
       });
@@ -3815,10 +3887,86 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
     return 0;
   });
 
-  // Se o card selecionado atualmente não estiver visível nos cards filtrados (ex: mudou organização),
+  // Ordenação personalizada para a visualização em tabela ao clicar no cabeçalho das colunas
+  const sortedTableCards = useMemo(() => {
+    if (!tableSortField) return filteredCards;
+
+    return [...filteredCards].sort((a, b) => {
+      let comparison = 0;
+
+      switch (tableSortField) {
+        case 'index': {
+          const aBadge = a.badge != null ? a.badge : filteredCards.findIndex((c) => c.id === a.id);
+          const bBadge = b.badge != null ? b.badge : filteredCards.findIndex((c) => c.id === b.id);
+          comparison = aBadge - bBadge;
+          break;
+        }
+        case 'project': {
+          const aTitle = (a.title || a.name || a.repoName || '').toLowerCase();
+          const bTitle = (b.title || b.name || b.repoName || '').toLowerCase();
+          comparison = aTitle.localeCompare(bTitle, 'pt-BR');
+          break;
+        }
+        case 'language': {
+          const aLang = (a.language || a.sprint || '').toLowerCase();
+          const bLang = (b.language || b.sprint || '').toLowerCase();
+          comparison = aLang.localeCompare(bLang, 'pt-BR');
+          break;
+        }
+        case 'progress': {
+          const aTotal = a.issuesDone + a.issuesInProgress + a.issuesOpen;
+          const aPercent = aTotal > 0 ? Math.round((a.issuesDone / aTotal) * 100) : (a.percentValue ?? 0);
+          const bTotal = b.issuesDone + b.issuesInProgress + b.issuesOpen;
+          const bPercent = bTotal > 0 ? Math.round((b.issuesDone / bTotal) * 100) : (b.percentValue ?? 0);
+          comparison = aPercent - bPercent;
+          break;
+        }
+        case 'done': {
+          comparison = (a.issuesDone || 0) - (b.issuesDone || 0);
+          break;
+        }
+        case 'inProgress': {
+          comparison = (a.issuesInProgress || 0) - (b.issuesInProgress || 0);
+          break;
+        }
+        case 'open': {
+          comparison = (a.issuesOpen || 0) - (b.issuesOpen || 0);
+          break;
+        }
+        case 'health': {
+          const getHealth = (card: ProjectCardData) => {
+            const total = card.issuesDone + card.issuesInProgress + card.issuesOpen;
+            const percent = total > 0 ? Math.round((card.issuesDone / total) * 100) : (card.percentValue ?? 0);
+            const cached =
+              repoDetailsCache[card.fullName || ''] ||
+              (card.owner && card.repoName ? repoDetailsCache[`${card.owner}/${card.repoName}`] : undefined) ||
+              repoDetailsCache[card.name || ''] ||
+              repoDetailsCache[card.title || ''] ||
+              Object.entries(repoDetailsCache).find(
+                ([k]) => k.toLowerCase() === card.fullName?.toLowerCase() || (card.repoName && k.toLowerCase().endsWith(`/${card.repoName.toLowerCase()}`))
+              )?.[1];
+            const issues = cached?.issues || [];
+            return computeProjectHealthScore(issues, card.issuesDone, card.issuesInProgress, total, percent);
+          };
+          comparison = getHealth(a) - getHealth(b);
+          break;
+        }
+        case 'updatedAt': {
+          const aTime = a.updatedAtIso ? new Date(a.updatedAtIso).getTime() : 0;
+          const bTime = b.updatedAtIso ? new Date(b.updatedAtIso).getTime() : 0;
+          comparison = aTime - bTime;
+          break;
+        }
+      }
+
+      return tableSortDirection === 'asc' ? comparison : -comparison;
+    });
+  }, [filteredCards, tableSortField, tableSortDirection, repoDetailsCache]);
+
+  // Se o card selecionado atualmente não for nulo e não estiver visível nos cards filtrados (ex: mudou organização),
   // seleciona automaticamente o primeiro card da lista filtrada para carregar tarefas, issues e roadmap do projeto
   useEffect(() => {
-    if (filteredCards.length === 0) return;
+    if (selectedCardId === null || filteredCards.length === 0) return;
     const isCurrentStillVisible = filteredCards.some((c) => c.id === selectedCardId);
     if (!isCurrentStillVisible) {
       setSelectedCardId(filteredCards[0].id);
@@ -5427,20 +5575,20 @@ Formate com seções bem organizadas:
 
   const sprintDetailTasks = useMemo(() => {
     if (!openedSprint || openedSprint.number === -1 || (openedSprintId == null && combinedSprints.some((s) => s.number === -1))) {
-      return rawProjectIssues.filter(
+      return combinedGithubIssues.filter(
         (i) => (!i.milestoneNumber || i.milestoneNumber === 0 || i.milestoneNumber === -1) && !i.iterationId && !i.iterationTitle
       );
     }
-    return rawProjectIssues.filter((i) => issueBelongsToSprint(i, openedSprint));
-  }, [rawProjectIssues, openedSprintId, openedSprint, combinedSprints]);
+    return combinedGithubIssues.filter((i) => issueBelongsToSprint(i, openedSprint));
+  }, [combinedGithubIssues, openedSprintId, openedSprint, combinedSprints]);
 
   const tasksAvailableToAddToSprint = useMemo(() => {
     if (!openedSprint || openedSprint.number === -1) {
       return [];
     }
     const currentDetailTaskIds = new Set(sprintDetailTasks.map((t) => t.id));
-    return rawProjectIssues.filter((i) => !currentDetailTaskIds.has(i.id));
-  }, [rawProjectIssues, openedSprintId, openedSprint, sprintDetailTasks]);
+    return combinedGithubIssues.filter((i) => !currentDetailTaskIds.has(i.id));
+  }, [combinedGithubIssues, openedSprintId, openedSprint, sprintDetailTasks]);
 
   // Visibilidade e dimensões da barra de sprints e contêiner central da sprint (estilo IDE)
   const [isSprintSidebarVisible, setIsSprintSidebarVisible] = useState<boolean>(() => {
@@ -5452,6 +5600,9 @@ Formate com seções bem organizadas:
     setIsSprintSidebarVisible((prev) => {
       const next = !prev;
       localStorage.setItem('sprint_sidebar_visible', String(next));
+      if (!next) {
+        setSelectedCalendarDayIso(null);
+      }
       return next;
     });
   }, []);
@@ -5544,6 +5695,7 @@ Formate com seções bem organizadas:
 
   const handleOpenSprintDetail = (sprintId: string) => {
     setOpenedSprintId(sprintId);
+    setSelectedCalendarDayIso(null);
     setSprintDetailViewMode('issues');
     setIsEditingSprintDates(false);
     setIsAddExistingTaskOpen(false);
@@ -5559,6 +5711,7 @@ Formate com seções bem organizadas:
 
   const handleCloseSprintDetail = () => {
     setOpenedSprintId(null);
+    setSelectedCalendarDayIso(null);
     setIsEditingSprintDates(false);
     setIsAddExistingTaskOpen(false);
   };
@@ -6073,11 +6226,11 @@ Formate com seções bem organizadas:
         height: '100%',
         padding: isGridMode
           ? 'clamp(28px, 3.5vh, 44px) clamp(16px, 2vw, 28px) 32px clamp(16px, 2vw, 28px)'
-          : '12px clamp(16px, 2vw, 28px) 12px clamp(16px, 2vw, 28px)',
+          : 5,
         background: theme.bgApp,
         display: 'flex',
         flexDirection: 'column',
-        justifyContent: isGridMode ? 'center' : 'flex-start',
+        justifyContent: 'flex-start',
         alignItems: 'center',
         overflowX: 'hidden',
         overflowY: isGridMode ? 'auto' : 'hidden',
@@ -6104,10 +6257,10 @@ Formate com seções bem organizadas:
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'stretch',
-          justifyContent: isGridMode ? 'center' : 'flex-start',
+          justifyContent: 'flex-start',
           gap: isGridMode ? 16 : 5,
           boxSizing: 'border-box',
-          margin: isGridMode ? 'auto auto' : '0 auto',
+          margin: isGridMode ? '0 auto' : '0 auto',
           flex: 1,
           minHeight: 0,
           height: '100%',
@@ -6126,7 +6279,7 @@ Formate com seções bem organizadas:
             display: 'flex',
             flexDirection: 'column',
             gap: isGridMode ? 10 : 6,
-            padding: '0 4px',
+            padding: isGridMode ? '0 4px' : '0 clamp(11px, calc(2vw - 5px), 23px)',
             border: 'none',
             boxSizing: 'border-box',
             transition: 'all 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
@@ -7186,12 +7339,12 @@ Formate com seções bem organizadas:
         style={{
           position: 'relative',
           zIndex: 1,
-          width: isGridMode ? 'calc(100% - 48px)' : '100%',
+          width: isGridMode ? 'calc(100% - 48px)' : 'calc(100% - 2 * clamp(11px, calc(2vw - 5px), 23px))',
           maxWidth: isGridMode ? 1860 : '100%',
           margin: isProjectsShelfCollapsed
-            ? (isGridMode ? '-16px auto 0' : '-5px 0 0')
-            : (isGridMode ? '0 auto' : '0'),
-          alignSelf: isGridMode ? 'center' : 'stretch',
+            ? (isGridMode ? '-16px auto 0' : '-5px auto 0')
+            : '0 auto',
+          alignSelf: 'center',
           height: isProjectsShelfCollapsed ? 0 : isGridMode ? 'auto' : 190,
           minHeight: isProjectsShelfCollapsed ? 0 : isGridMode ? 'auto' : 190,
           maxHeight: isProjectsShelfCollapsed ? 0 : isGridMode ? 'calc(100vh - 220px)' : 190,
@@ -7202,8 +7355,8 @@ Formate com seções bem organizadas:
           padding: isProjectsShelfCollapsed ? 0 : effectiveProjectLayoutMode === 'list' ? 0 : 5,
           background: theme.bgShelf,
           borderRadius: 10,
-          border: isProjectsShelfCollapsed ? 'none' : theme.shelfBorder,
-          boxShadow: isProjectsShelfCollapsed ? 'none' : theme.shelfShadow,
+          border: 'none',
+          boxShadow: 'none',
           justifyContent: isGridMode ? undefined : 'flex-start',
           alignItems: 'stretch',
           alignContent: isGridMode ? 'start' : undefined,
@@ -7226,19 +7379,70 @@ Formate com seções bem organizadas:
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: 780 }}>
               <thead>
                 <tr style={{ background: theme.tableHeaderBg, borderBottom: `1px solid ${theme.tableBorder}`, position: 'sticky', top: 0, zIndex: 2 }}>
-                  <th style={{ padding: '9px 12px', fontSize: 11.5, color: theme.textSecondary, fontWeight: '400', width: 44, textAlign: 'center' }}>#</th>
-                  <th style={{ padding: '9px 12px', fontSize: 11.5, color: theme.textSecondary, fontWeight: '400' }}>Projeto</th>
-                  <th style={{ padding: '9px 12px', fontSize: 11.5, color: theme.textSecondary, fontWeight: '400', width: 130 }}>Linguagem</th>
-                  <th style={{ padding: '9px 12px', fontSize: 11.5, color: theme.textSecondary, fontWeight: '400', width: 180 }}>Progresso</th>
-                  <th style={{ padding: '9px 12px', fontSize: 11.5, color: theme.textSecondary, fontWeight: '400', width: 100, textAlign: 'center' }}>Concluídas</th>
-                  <th style={{ padding: '9px 12px', fontSize: 11.5, color: theme.textSecondary, fontWeight: '400', width: 110, textAlign: 'center' }}>Em progresso</th>
-                  <th style={{ padding: '9px 12px', fontSize: 11.5, color: theme.textSecondary, fontWeight: '400', width: 100, textAlign: 'center' }}>Abertas</th>
-                  <th style={{ padding: '9px 12px', fontSize: 11.5, color: theme.textSecondary, fontWeight: '400', width: 120, textAlign: 'right' }}>Atualizado</th>
+                  {[
+                    { id: 'index' as TableSortField, label: '#', width: 44, align: 'center' },
+                    { id: 'project' as TableSortField, label: 'Projeto', align: 'left' },
+                    { id: 'language' as TableSortField, label: 'Linguagem', width: 130, align: 'left' },
+                    { id: 'progress' as TableSortField, label: 'Progresso', width: 180, align: 'left' },
+                    { id: 'done' as TableSortField, label: 'Concluídas', width: 90, align: 'center' },
+                    { id: 'inProgress' as TableSortField, label: 'Em Andamento', width: 105, align: 'center' },
+                    { id: 'open' as TableSortField, label: 'Abertas', width: 90, align: 'center' },
+                    { id: 'health' as TableSortField, label: 'Saúde', width: 80, align: 'center' },
+                    { id: 'updatedAt' as TableSortField, label: 'Atualizado', width: 120, align: 'right' },
+                  ].map((col) => {
+                    const isSorted = tableSortField === col.id;
+                    const isAsc = isSorted && tableSortDirection === 'asc';
+
+                    return (
+                      <th
+                        key={col.id}
+                        onClick={() => handleTableSort(col.id)}
+                        style={{
+                          padding: '9px 12px',
+                          fontSize: 11.5,
+                          color: isSorted ? accentColor : theme.textSecondary,
+                          fontWeight: 400,
+                          width: col.width,
+                          textAlign: col.align as any,
+                          cursor: 'pointer',
+                          userSelect: 'none',
+                          transition: 'color 0.15s ease',
+                        }}
+                        title={`Clique para ordenar por ${col.label}`}
+                      >
+                        <div
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            justifyContent:
+                              col.align === 'center'
+                                ? 'center'
+                                : col.align === 'right'
+                                ? 'flex-end'
+                                : 'flex-start',
+                            width: '100%',
+                          }}
+                        >
+                          <span>{col.label}</span>
+                          {isSorted ? (
+                            isAsc ? (
+                              <ArrowUp size={11} color={accentColor} style={{ flexShrink: 0 }} />
+                            ) : (
+                              <ArrowDown size={11} color={accentColor} style={{ flexShrink: 0 }} />
+                            )
+                          ) : (
+                            <ArrowUpDown size={10} style={{ opacity: 0.25, flexShrink: 0 }} />
+                          )}
+                        </div>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
-                {filteredCards.length > 0 ? (
-                  filteredCards.map((card, idx) => {
+                {sortedTableCards.length > 0 ? (
+                  sortedTableCards.map((card, idx) => {
                     const isSelected = selectedCardId === card.id;
                     const isHovered = hoveredCardId === card.id;
                     const rowBg = isSelected
@@ -7251,8 +7455,31 @@ Formate com seções bem organizadas:
                     const doneGrow = card.issuesDone;
                     const inProgressGrow = card.issuesInProgress;
                     const openGrow = totalTasksForBar > 0 ? card.issuesOpen : 1;
+                    const effectivePercent = totalTasksForBar > 0
+                      ? Math.round((card.issuesDone / totalTasksForBar) * 100)
+                      : (card.percentValue ?? 0);
+                    const cardCached =
+                      repoDetailsCache[card.fullName || ''] ||
+                      (card.owner && card.repoName ? repoDetailsCache[`${card.owner}/${card.repoName}`] : undefined) ||
+                      repoDetailsCache[card.name || ''] ||
+                      repoDetailsCache[card.title || ''] ||
+                      Object.entries(repoDetailsCache).find(
+                        ([k]) => k.toLowerCase() === card.fullName?.toLowerCase() || (card.repoName && k.toLowerCase().endsWith(`/${card.repoName.toLowerCase()}`))
+                      )?.[1];
+                    const cardIssues = cardCached?.issues || [];
+                    const cardHealth = computeProjectHealthScore(cardIssues, card.issuesDone, card.issuesInProgress, totalTasksForBar, effectivePercent);
 
                     const isCardActiveWorkspace = activeWorkspaceMatchingCard?.id === card.id;
+
+                    const badgeBg = isSelected
+                      ? accentColor
+                      : (isHovered
+                          ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
+                          : (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)'));
+
+                    const badgeColor = isSelected
+                      ? (isAccentContrastDark ? '#000000' : '#ffffff')
+                      : theme.textPrimary;
 
                     return (
                       <tr
@@ -7279,25 +7506,70 @@ Formate com seções bem organizadas:
                                 : (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'),
                               color: isSelected ? accentContrastText : theme.textPrimary,
                               fontSize: 11,
-                              fontWeight: 600,
+                              fontWeight: 400,
                               display: 'inline-flex',
                               alignItems: 'center',
                               justifyContent: 'center',
                             }}
                           >
-                            {idx + 1}
+                            {card.badge || idx + 1}
                           </div>
                         </td>
                         <td style={{ padding: '9px 12px' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                               {card.fullName && pinnedProjectFullNames.includes(card.fullName) && (
                                 <Pin size={11} color={accentColor} style={{ transform: 'rotate(45deg)', flexShrink: 0 }} />
                               )}
+                              <div
+                                style={{
+                                  width: 22,
+                                  height: 22,
+                                  borderRadius: 5,
+                                  overflow: 'hidden',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  flexShrink: 0,
+                                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
+                                  position: 'relative',
+                                  border: 'none',
+                                  boxShadow: 'none',
+                                }}
+                              >
+                                {card.alertStatus && (
+                                  <div
+                                    style={{
+                                      position: 'absolute',
+                                      top: -1,
+                                      left: -1,
+                                      width: 5,
+                                      height: 5,
+                                      borderRadius: '50%',
+                                      background: card.alertStatus === 'critico' ? '#ef4444' : '#f59e0b',
+                                      border: 'none',
+                                      boxShadow: 'none',
+                                      zIndex: 3,
+                                    }}
+                                    title={card.alertStatus === 'critico' ? 'Status: Crítico' : 'Status: Alerta'}
+                                  />
+                                )}
+                                <ProjectIconBadge
+                                  card={card}
+                                  customIcon={
+                                    customProjectIcons[card.fullName || ''] ||
+                                    customProjectIcons[card.title] ||
+                                    customProjectIcons[String(card.id)]
+                                  }
+                                  badgeBg={badgeBg}
+                                  badgeColor={badgeColor}
+                                  size={18}
+                                />
+                              </div>
                               <span
                                 style={{
                                   fontSize: 13,
-                                  fontWeight: isSelected ? 600 : 500,
+                                  fontWeight: 400,
                                   color: isSelected ? accentColor : theme.textPrimary,
                                 }}
                               >
@@ -7308,7 +7580,7 @@ Formate com seções bem organizadas:
                                   title="Projeto atualmente ativo no editor / header"
                                   style={{
                                     fontSize: 9.5,
-                                    fontWeight: 600,
+                                    fontWeight: 400,
                                     textTransform: 'uppercase',
                                     letterSpacing: '0.04em',
                                     padding: '1.5px 5px',
@@ -7338,6 +7610,7 @@ Formate com seções bem organizadas:
                                   textOverflow: 'ellipsis',
                                   whiteSpace: 'nowrap',
                                   maxWidth: 360,
+                                  paddingLeft: 29,
                                 }}
                                 title={card.description}
                               >
@@ -7388,21 +7661,51 @@ Formate com seções bem organizadas:
                                 color: theme.textSecondary,
                                 minWidth: 28,
                                 textAlign: 'right',
-                                fontWeight: 500,
+                                fontWeight: 400,
                               }}
                             >
                               {card.percentValue ?? card.progressPercent ?? 0}%
                             </span>
                           </div>
                         </td>
-                        <td style={{ padding: '9px 12px', textAlign: 'center', fontSize: 12.5, fontWeight: 500, color: theme.textPrimary }}>
+                        <td style={{ padding: '9px 12px', textAlign: 'center', fontSize: 12.5, fontWeight: '400', color: theme.textPrimary }}>
                           {card.issuesDone}
                         </td>
-                        <td style={{ padding: '9px 12px', textAlign: 'center', fontSize: 12.5, fontWeight: 500, color: theme.textPrimary }}>
+                        <td style={{ padding: '9px 12px', textAlign: 'center', fontSize: 12.5, fontWeight: '400', color: theme.textPrimary }}>
                           {card.issuesInProgress}
                         </td>
-                        <td style={{ padding: '9px 12px', textAlign: 'center', fontSize: 12.5, fontWeight: 500, color: theme.textPrimary }}>
+                        <td style={{ padding: '9px 12px', textAlign: 'center', fontSize: 12.5, fontWeight: '400', color: theme.textPrimary }}>
                           {card.issuesOpen}
+                        </td>
+                        <td
+                          style={{ padding: '9px 12px', textAlign: 'center', fontSize: 12.5, fontWeight: '400', color: theme.textPrimary, cursor: 'pointer' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSelectProjectById(card.id, true);
+                            setSelectedSection('relatorio');
+                            logSystemActivity('projects', 'open_project_reports_from_health_kpi', card.title || card.name, {
+                              cardId: card.id,
+                              healthScore: cardHealth,
+                            });
+                            showToast(`Abrindo relatório de ${card.title || card.name}...`);
+                          }}
+                          title={`Saúde: ${cardHealth}% (${cardHealth >= 80 ? 'Excelente' : cardHealth >= 60 ? 'Estável' : 'Alerta'}) — Clique para abrir o Relatório`}
+                        >
+                          <span
+                            style={{
+                              padding: '2px 8px',
+                              borderRadius: 4,
+                              background: cardHealth < 60
+                                ? (isEffectiveDark ? 'rgba(239, 68, 68, 0.22)' : 'rgba(239, 68, 68, 0.14)')
+                                : (isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)'),
+                              color: cardHealth < 60
+                                ? (isEffectiveDark ? '#fca5a5' : '#b91c1c')
+                                : theme.textPrimary,
+                              transition: 'background 0.15s ease',
+                            }}
+                          >
+                            {cardHealth}%
+                          </span>
                         </td>
                         <td style={{ padding: '9px 12px', textAlign: 'right', fontSize: 11.5, color: theme.textSecondary }}>
                           {card.updatedAtIso ? new Date(card.updatedAtIso).toLocaleDateString('pt-BR') : '—'}
@@ -7412,7 +7715,7 @@ Formate com seções bem organizadas:
                   })
                 ) : (
                   <tr>
-                    <td colSpan={8} style={{ padding: '32px 16px', textAlign: 'center', color: theme.textSecondary, fontSize: 12.5 }}>
+                    <td colSpan={9} style={{ padding: '32px 16px', textAlign: 'center', color: theme.textSecondary, fontSize: 12.5 }}>
                       Nenhum projeto encontrado.
                     </td>
                   </tr>
@@ -7467,14 +7770,14 @@ Formate com seções bem organizadas:
             const progressSolidBg = isSelected
               ? accentColor
               : isHovered
-              ? (isEffectiveDark ? '#eaeaea' : '#475569')
-              : (isEffectiveDark ? '#D9D9D9' : '#94a3b8');
+              ? (isEffectiveDark ? '#eaeaea' : '#525252')
+              : (isEffectiveDark ? '#D9D9D9' : '#a3a3a3');
 
             const inProgressPattern = isSelected
               ? `radial-gradient(circle, ${accentColor} 1px, transparent 1px)`
               : isEffectiveDark
               ? 'radial-gradient(circle, #ffffff 1px, transparent 1px)'
-              : 'radial-gradient(circle, #0f172a 1px, transparent 1px)';
+              : 'radial-gradient(circle, #111111 1px, transparent 1px)';
 
             const progressFaintBg = isHovered
               ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.18)' : 'rgba(0, 0, 0, 0.14)')
@@ -7485,6 +7788,19 @@ Formate com seções bem organizadas:
             const doneGrow = card.issuesDone;
             const inProgressGrow = card.issuesInProgress;
             const openGrow = totalTasksForBar > 0 ? card.issuesOpen : 1;
+            const effectivePercent = totalTasksForBar > 0
+              ? Math.round((card.issuesDone / totalTasksForBar) * 100)
+              : (card.percentValue ?? 0);
+            const cardCached =
+              repoDetailsCache[card.fullName || ''] ||
+              (card.owner && card.repoName ? repoDetailsCache[`${card.owner}/${card.repoName}`] : undefined) ||
+              repoDetailsCache[card.name || ''] ||
+              repoDetailsCache[card.title || ''] ||
+              Object.entries(repoDetailsCache).find(
+                ([k]) => k.toLowerCase() === card.fullName?.toLowerCase() || (card.repoName && k.toLowerCase().endsWith(`/${card.repoName.toLowerCase()}`))
+              )?.[1];
+            const cardIssues = cardCached?.issues || [];
+            const cardHealth = computeProjectHealthScore(cardIssues, card.issuesDone, card.issuesInProgress, totalTasksForBar, effectivePercent);
 
             return (
               <div
@@ -7888,144 +8204,276 @@ Formate com seções bem organizadas:
                   </div>
                 </div>
 
-                {/* Bottom Metrics Row */}
-                {/* Bottom Metrics Row: Grid responsivo de 3 colunas mantendo a estrutura interna */}
+                {/* Bottom Metrics Row: Grid de 4 cardzinhos com fundo cinza individual, centralizados e com dimensões harmônicas */}
                 <div
                   style={{
                     alignSelf: 'stretch',
                     display: 'grid',
-                    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-                    gap: 4,
+                    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+                    gap: 5,
+                    padding: 0,
+                    background: 'transparent',
+                    borderRadius: 0,
                     minWidth: 0,
                     width: '100%',
                     border: 'none',
+                    boxShadow: 'none',
+                    boxSizing: 'border-box',
                   }}
                 >
-                  {/* Tarefas concluídas */}
+                  {/* Concluídas */}
                   <div
                     style={{
-                      flexDirection: 'column',
-                      justifyContent: 'flex-start',
-                      alignItems: 'flex-start',
-                      gap: 2,
+                      background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
+                      borderRadius: 6,
+                      padding: '6px 4px',
                       display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 3,
                       minWidth: 0,
                       overflow: 'hidden',
                       border: 'none',
+                      boxShadow: 'none',
+                      transition: 'background 0.15s ease',
                     }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.05)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)';
+                    }}
+                    title={`Concluídas: ${card.issuesDone}`}
                   >
                     <span
                       style={{
                         color: secondaryTextColor,
-                        fontSize: 'clamp(8px, 0.62vw, 10.5px)',
-                        fontWeight: '300',
+                        fontSize: 10,
+                        fontWeight: 400,
                         lineHeight: 1,
                         whiteSpace: 'nowrap',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
-                        maxWidth: '100%',
-                        transition: 'color 0.18s ease',
+                        textAlign: 'center',
                       }}
-                      title="Tarefas concluídas"
                     >
-                      Tarefas concluídas
+                      Concluídas
                     </span>
                     <span
                       style={{
                         color: theme.textPrimary,
-                        fontSize: 'clamp(16px, 1.4vw, 24px)',
-                        fontWeight: '300',
+                        fontSize: 13.5,
+                        fontWeight: 400,
                         lineHeight: 1.1,
-                        letterSpacing: '-0.02em',
+                        textAlign: 'center',
                       }}
                     >
                       {card.issuesDone}
                     </span>
                   </div>
 
-                  {/* Em progresso (no meio) */}
+                  {/* Progresso */}
                   <div
                     style={{
-                      flexDirection: 'column',
-                      justifyContent: 'flex-start',
-                      alignItems: 'flex-start',
-                      gap: 2,
+                      background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
+                      borderRadius: 6,
+                      padding: '6px 4px',
                       display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 3,
                       minWidth: 0,
                       overflow: 'hidden',
                       border: 'none',
+                      boxShadow: 'none',
+                      transition: 'background 0.15s ease',
                     }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.05)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)';
+                    }}
+                    title={`Em andamento: ${card.issuesInProgress}`}
                   >
                     <span
                       style={{
                         color: secondaryTextColor,
-                        fontSize: 'clamp(8px, 0.62vw, 10.5px)',
-                        fontWeight: '300',
+                        fontSize: 10,
+                        fontWeight: 400,
                         lineHeight: 1,
                         whiteSpace: 'nowrap',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
-                        maxWidth: '100%',
-                        transition: 'color 0.18s ease',
+                        textAlign: 'center',
                       }}
-                      title="Em progresso"
                     >
-                      Em progresso
+                      Progresso
                     </span>
                     <span
                       style={{
                         color: theme.textPrimary,
-                        fontSize: 'clamp(16px, 1.4vw, 24px)',
-                        fontWeight: '300',
+                        fontSize: 13.5,
+                        fontWeight: 400,
                         lineHeight: 1.1,
-                        letterSpacing: '-0.02em',
+                        textAlign: 'center',
                       }}
                     >
                       {card.issuesInProgress}
                     </span>
                   </div>
 
-                  {/* Tarefas abertas */}
+                  {/* Abertas */}
                   <div
                     style={{
-                      flexDirection: 'column',
-                      justifyContent: 'flex-start',
-                      alignItems: 'flex-start',
-                      gap: 2,
+                      background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
+                      borderRadius: 6,
+                      padding: '6px 4px',
                       display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 3,
                       minWidth: 0,
                       overflow: 'hidden',
                       border: 'none',
+                      boxShadow: 'none',
+                      transition: 'background 0.15s ease',
                     }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.05)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)';
+                    }}
+                    title={`Abertas: ${card.issuesOpen}`}
                   >
                     <span
                       style={{
                         color: secondaryTextColor,
-                        fontSize: 'clamp(8px, 0.62vw, 10.5px)',
-                        fontWeight: '300',
+                        fontSize: 10,
+                        fontWeight: 400,
                         lineHeight: 1,
                         whiteSpace: 'nowrap',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
-                        maxWidth: '100%',
-                        transition: 'color 0.18s ease',
+                        textAlign: 'center',
                       }}
-                      title="Tarefas abertas"
                     >
-                      Tarefas abertas
+                      Abertas
                     </span>
                     <span
                       style={{
                         color: theme.textPrimary,
-                        fontSize: 'clamp(16px, 1.4vw, 24px)',
-                        fontWeight: '300',
+                        fontSize: 13.5,
+                        fontWeight: 400,
                         lineHeight: 1.1,
-                        letterSpacing: '-0.02em',
+                        textAlign: 'center',
                       }}
                     >
                       {card.issuesOpen}
                     </span>
                   </div>
+
+                  {/* Saúde */}
+                  {(() => {
+                    const isHealthAlert = cardHealth < 60;
+                    const healthBg = isHealthAlert
+                      ? (isEffectiveDark ? 'rgba(239, 68, 68, 0.22)' : 'rgba(239, 68, 68, 0.14)')
+                      : (isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)');
+                    const healthHoverBg = isHealthAlert
+                      ? (isEffectiveDark ? 'rgba(239, 68, 68, 0.32)' : 'rgba(239, 68, 68, 0.22)')
+                      : (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)');
+                    const healthLabelColor = isHealthAlert
+                      ? (isEffectiveDark ? '#fca5a5' : '#b91c1c')
+                      : secondaryTextColor;
+                    const healthValueColor = isHealthAlert
+                      ? (isEffectiveDark ? '#ffffff' : '#991b1b')
+                      : theme.textPrimary;
+                    const healthStatusText = cardHealth >= 80 ? 'Excelente' : cardHealth >= 60 ? 'Estável' : 'Alerta';
+                    const healthStatusColor = cardHealth >= 80 ? '#22c55e' : cardHealth >= 60 ? '#f59e0b' : '#ef4444';
+
+                    return (
+                      <div
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSelectProjectById(card.id, true);
+                          setSelectedSection('relatorio');
+                          logSystemActivity('projects', 'open_project_reports_from_health_kpi', card.title || card.name, {
+                            cardId: card.id,
+                            healthScore: cardHealth,
+                          });
+                          showToast(`Abrindo relatório de ${card.title || card.name}...`);
+                        }}
+                        style={{
+                          background: healthBg,
+                          borderRadius: 6,
+                          padding: '6px 4px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 3,
+                          minWidth: 0,
+                          overflow: 'hidden',
+                          border: 'none',
+                          boxShadow: 'none',
+                          cursor: 'pointer',
+                          transition: 'background 0.15s ease, transform 0.15s ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = healthHoverBg;
+                          e.currentTarget.style.transform = 'scale(1.02)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = healthBg;
+                          e.currentTarget.style.transform = 'scale(1)';
+                        }}
+                        title={`Saúde: ${cardHealth}% (${healthStatusText}) — Clique para abrir o Relatório`}
+                      >
+                        <span
+                          style={{
+                            color: healthLabelColor,
+                            fontSize: 10,
+                            fontWeight: 400,
+                            lineHeight: 1,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            textAlign: 'center',
+                          }}
+                        >
+                          Saúde
+                        </span>
+                        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 4, maxWidth: '100%', minWidth: 0 }}>
+                          <span
+                            style={{
+                              color: healthValueColor,
+                              fontSize: 13.5,
+                              fontWeight: 400,
+                              lineHeight: 1.1,
+                              textAlign: 'center',
+                            }}
+                          >
+                            {cardHealth}%
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 9,
+                              fontWeight: 400,
+                              color: healthStatusColor,
+                              whiteSpace: 'nowrap',
+                              lineHeight: 1,
+                            }}
+                          >
+                            {healthStatusText}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             );
@@ -8072,12 +8520,13 @@ Formate com seções bem organizadas:
           >
           <div
             style={{
-              width: '100%',
+              width: 'calc(100% - 2 * clamp(11px, calc(2vw - 5px), 23px))',
+              alignSelf: 'center',
               padding: 5,
               background: theme.bgShelf,
               borderRadius: 10,
-              border: theme.shelfBorder,
-              boxShadow: theme.shelfShadow,
+              border: 'none',
+              boxShadow: 'none',
               display: 'flex',
               alignItems: 'stretch',
               gap: 5,
@@ -8093,7 +8542,7 @@ Formate com seções bem organizadas:
             const Icon = section.icon;
             const opacity = isSelected ? 1 : isHovered ? 0.8 : 0.5;
             const iconColor = isSelected ? accentColor : theme.textPrimary;
-            const labelColor = isSelected ? (isEffectiveDark ? '#ffffff' : '#0f172a') : theme.textPrimary;
+            const labelColor = isSelected ? (isEffectiveDark ? '#ffffff' : '#111111') : theme.textPrimary;
             return (
               <div
                 key={section.id}
@@ -8153,7 +8602,7 @@ Formate com seções bem organizadas:
               padding: 5,
               boxSizing: 'border-box',
               flex: 1,
-              minHeight: 360,
+              minHeight: 0,
             }}
           >
             {/* ----------------------------------------------------------------- */}
@@ -9086,7 +9535,34 @@ Formate com seções bem organizadas:
                   className="no-scrollbar"
                 >
                   {(() => {
-                    const topLevelGithubIssues = filteredGithubIssues.filter((issue) => !childIssueIdSet.has(issue.id));
+                    const parentChildIdsInList = new Set<string>();
+                    const parentChildNumbersInList = new Set<number>();
+                    filteredGithubIssues.forEach((parent) => {
+                      const subs = extractSubIssuesForIssue(parent, allIssuesMap);
+                      subs.forEach((s) => {
+                        if (s.linkedIssue?.id && s.linkedIssue.id !== parent.id) {
+                          parentChildIdsInList.add(s.linkedIssue.id);
+                        }
+                        if (s.issueNumber && s.issueNumber !== parent.githubNumber) {
+                          parentChildNumbersInList.add(s.issueNumber);
+                        }
+                      });
+                      if (parent.subIssueNumbers && parent.subIssueNumbers.length > 0) {
+                        parent.subIssueNumbers.forEach((num) => {
+                          if (num !== parent.githubNumber) {
+                            parentChildNumbersInList.add(num);
+                          }
+                        });
+                      }
+                    });
+
+                    const rawTopLevelGithubIssues = filteredGithubIssues.filter((issue) => {
+                      const hasParentInList =
+                        parentChildIdsInList.has(issue.id) ||
+                        (issue.githubNumber != null && parentChildNumbersInList.has(issue.githubNumber));
+                      return !hasParentInList;
+                    });
+                    const topLevelGithubIssues = rawTopLevelGithubIssues.length > 0 ? rawTopLevelGithubIssues : filteredGithubIssues;
 
                     if (topLevelGithubIssues.length === 0) {
                       return (
@@ -9704,7 +10180,7 @@ Formate com seções bem organizadas:
                 onCancelEditSprintDates={() => setIsEditingSprintDates(false)}
                 onSaveSprintDates={handleSaveSprintDates}
                 sprintDetailTasks={sprintDetailTasks}
-                allProjectIssues={rawProjectIssues}
+                allProjectIssues={combinedGithubIssues}
                 tasksAvailableToAddToSprint={tasksAvailableToAddToSprint}
                 isAddExistingTaskOpen={isAddExistingTaskOpen}
                 setIsAddExistingTaskOpen={setIsAddExistingTaskOpen}
@@ -9848,15 +10324,17 @@ Formate com seções bem organizadas:
               width: '100%',
               background: theme.bgShelf,
               borderRadius: 10,
-              border: theme.shelfBorder,
-              boxShadow: theme.shelfShadow,
+              border: 'none',
+              boxShadow: 'none',
               display: 'flex',
               flexDirection: 'column',
               gap: 5,
               padding: 5,
               boxSizing: 'border-box',
               flex: 1,
-              minHeight: 360,
+              minHeight: 0,
+              height: '100%',
+              overflow: 'hidden',
             }}
           >
             <TeamWorkspaceView
@@ -9943,7 +10421,7 @@ Formate com seções bem organizadas:
             boxSizing: 'border-box',
             overflow: 'hidden',
             flex: 1,
-            minHeight: 360,
+            minHeight: 0,
           }}
         >
           {/* Barra Superior de Controles: Seletor de visualização + Ações (direto no card, sem div interna) */}
@@ -10133,8 +10611,10 @@ Formate com seções bem organizadas:
                 borderRadius: 8,
                 padding: '0 12px',
                 height: 32,
+                boxSizing: 'border-box',
                 width: 190,
-                border: theme.controlBorder,
+                border: 'none',
+                boxShadow: 'none',
               }}
             >
               <Search size={13} color={theme.textSecondary} />
@@ -10177,13 +10657,18 @@ Formate com seções bem organizadas:
                   display: 'flex',
                   alignItems: 'center',
                   gap: 6,
+                  height: 32,
+                  boxSizing: 'border-box',
                   background: theme.controlBg,
-                  border: theme.controlBorder,
+                  border: 'none',
+                  outline: 'none',
+                  boxShadow: 'none',
                   borderRadius: 8,
-                  padding: '6px 12px',
+                  padding: '0 12px',
                   color: selectedPriorityFilter !== 'Todas' ? accentColor : theme.textPrimary,
                   fontSize: 12,
-                  fontWeight: '300',
+                  fontWeight: 400,
+                  fontFamily: 'inherit',
                   cursor: 'pointer',
                   transition: 'all 0.15s ease',
                 }}
@@ -10226,7 +10711,7 @@ Formate com seções bem organizadas:
                         padding: '6px 10px',
                         borderRadius: 6,
                         fontSize: 12,
-                        fontWeight: '300',
+                        fontWeight: 400,
                         color: theme.textPrimary,
                         cursor: 'pointer',
                         display: 'flex',
@@ -10260,13 +10745,18 @@ Formate com seções bem organizadas:
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
+                height: 32,
+                boxSizing: 'border-box',
                 background: theme.controlBg,
-                border: theme.controlBorder,
+                border: 'none',
+                outline: 'none',
+                boxShadow: 'none',
                 borderRadius: 8,
-                padding: '6px 12px',
+                padding: '0 12px',
                 color: sortMode !== 'default' ? accentColor : theme.textPrimary,
                 fontSize: 12,
-                fontWeight: '300',
+                fontWeight: 400,
+                fontFamily: 'inherit',
                 cursor: 'pointer',
                 transition: 'all 0.15s ease',
               }}
@@ -10286,13 +10776,18 @@ Formate com seções bem organizadas:
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
+                height: 32,
+                boxSizing: 'border-box',
                 background: accentColor,
                 border: 'none',
+                outline: 'none',
+                boxShadow: 'none',
                 borderRadius: 8,
-                padding: '6px 14px',
+                padding: '0 14px',
                 color: accentContrastText,
                 fontSize: 12,
-                fontWeight: '400',
+                fontWeight: 500,
+                fontFamily: 'inherit',
                 cursor: 'pointer',
                 transition: 'all 0.15s ease',
               }}
@@ -10394,7 +10889,7 @@ Formate com seções bem organizadas:
                           <span
                             style={{
                               fontWeight: '400',
-                              color: isCurrent ? (isEffectiveDark ? '#ffffff' : accentColor) : (isEffectiveDark ? '#aaaaaa' : '#475569'),
+                              color: isCurrent ? (isEffectiveDark ? '#ffffff' : accentColor) : (isEffectiveDark ? '#aaaaaa' : '#525252'),
                             }}
                           >
                             {d.getDate()}
@@ -13896,11 +14391,11 @@ Formate com seções bem organizadas:
               bottom: 30,
               left: '50%',
               transform: 'translateX(-50%)',
-              background: isEffectiveDark ? '#1e1e1e' : '#0f172a',
+              background: isEffectiveDark ? '#1e1e1e' : '#111111',
               color: '#ffffff',
               padding: '10px 18px',
               borderRadius: 8,
-              boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)',
+              boxShadow: 'none',
               display: 'flex',
               alignItems: 'center',
               gap: 10,
@@ -14103,17 +14598,95 @@ function SprintDetailPanel(props: {
     return map;
   }, [allProjectIssues]);
 
-  // Conjunto de IDs de issues que são filhas (sub-issues) de outra issue existente
-  const childIssueIdSet = useMemo(() => {
-    const set = new Set<string>();
-    (allProjectIssues || []).forEach((issue) => {
-      const subs = extractSubIssuesForIssue(issue, allIssuesMap);
-      subs.forEach((s) => {
-        if (s.linkedIssue) set.add(s.linkedIssue.id);
+  // Filtro de tarefas da sprint (dropdown inspirado no GitHub)
+  type SprintTaskFilter = 'all' | 'assigned' | 'created' | 'mentioned' | 'recent';
+  const [sprintTaskFilter, setSprintTaskFilter] = useState<SprintTaskFilter>('all');
+  const [isSprintTaskFilterOpen, setIsSprintTaskFilterOpen] = useState(false);
+
+  const me = (currentUser?.login || '').toLowerCase();
+
+  // Tarefas filtradas conforme seleção do dropdown
+  const displayedTasks = useMemo(() => {
+    let list = sprintDetailTasks;
+    if (sprintTaskFilter === 'assigned') {
+      list = list.filter((t) =>
+        t.assignees?.some((a) => (a.name || '').toLowerCase().includes(me) || (a.name || '').toLowerCase() === me)
+      );
+    } else if (sprintTaskFilter === 'created') {
+      list = list.filter((t) =>
+        (t.author || '').toLowerCase().includes(me) || (t.author || '').toLowerCase() === me
+      );
+    } else if (sprintTaskFilter === 'mentioned') {
+      list = list.filter((t) =>
+        (t.commentsCount || 0) > 0 || (t.description || '').toLowerCase().includes(`@${me}`)
+      );
+    } else if (sprintTaskFilter === 'recent') {
+      list = [...list].sort((a, b) => {
+        const da = new Date(a.createdAtIso || a.dateStr).getTime() || 0;
+        const db = new Date(b.createdAtIso || b.dateStr).getTime() || 0;
+        return db - da;
       });
-    });
-    return set;
-  }, [allProjectIssues, allIssuesMap]);
+    }
+
+    if (selectedCalendarDayIso && isSprintSidebarVisible) {
+      list = list.filter((t) => {
+        const raw = t.createdAtIso || t.dateStr || (t as any).updatedAtIso;
+        if (!raw) return false;
+        return raw.slice(0, 10) === selectedCalendarDayIso;
+      });
+    }
+
+    return list;
+  }, [sprintDetailTasks, sprintTaskFilter, me, selectedCalendarDayIso, isSprintSidebarVisible]);
+
+  const sprintFilterOptions: {
+    key: SprintTaskFilter;
+    label: string;
+    icon: React.ComponentType<{ size?: number; color?: string; style?: React.CSSProperties }>;
+    iconActiveColor?: string;
+    count?: number;
+  }[] = [
+    {
+      key: 'all',
+      label: 'Todas as Issues',
+      icon: CircleDot,
+      iconActiveColor: '#f97316',
+      count: sprintDetailTasks.length,
+    },
+    {
+      key: 'assigned',
+      label: 'Atribuídas a mim',
+      icon: UserCheck,
+      count: sprintDetailTasks.filter((t) =>
+        t.assignees?.some((a) => (a.name || '').toLowerCase().includes(me) || (a.name || '').toLowerCase() === me)
+      ).length,
+    },
+    {
+      key: 'created',
+      label: 'Criadas por mim',
+      icon: Smile,
+      count: sprintDetailTasks.filter((t) =>
+        (t.author || '').toLowerCase().includes(me) || (t.author || '').toLowerCase() === me
+      ).length,
+    },
+    {
+      key: 'mentioned',
+      label: 'Mencionado',
+      icon: AtSign,
+      count: sprintDetailTasks.filter((t) =>
+        (t.commentsCount || 0) > 0 || (t.description || '').toLowerCase().includes(`@${me}`)
+      ).length,
+    },
+    {
+      key: 'recent',
+      label: 'Atividade recente',
+      icon: Clock,
+    },
+  ];
+
+  const activeFilterOption = sprintFilterOptions.find((opt) => opt.key === sprintTaskFilter) || sprintFilterOptions[0];
+  const ActiveFilterIcon = activeFilterOption.icon;
+
 
   // Alternar checkbox de checklist de sub-issue dentro da descrição da issue pai
   const handleToggleChecklistSubIssue = useCallback(
@@ -14261,12 +14834,12 @@ function SprintDetailPanel(props: {
   };
 
   const openIssuesCount = useMemo(
-    () => sprintDetailTasks.filter((t) => t.status !== 'Concluído').length,
-    [sprintDetailTasks]
+    () => displayedTasks.filter((t) => t.status !== 'Concluído').length,
+    [displayedTasks]
   );
   const closedIssuesCount = useMemo(
-    () => sprintDetailTasks.filter((t) => t.status === 'Concluído').length,
-    [sprintDetailTasks]
+    () => displayedTasks.filter((t) => t.status === 'Concluído').length,
+    [displayedTasks]
   );
 
   const distinctAuthors = useMemo(() => {
@@ -14774,95 +15347,6 @@ function SprintDetailPanel(props: {
     return combinedSprints;
   }, [combinedSprints, sprintSidebarFilter]);
 
-  // Filtro de tarefas da sprint (dropdown inspirado no GitHub)
-  type SprintTaskFilter = 'all' | 'assigned' | 'created' | 'mentioned' | 'recent';
-  const [sprintTaskFilter, setSprintTaskFilter] = useState<SprintTaskFilter>('all');
-  const [isSprintTaskFilterOpen, setIsSprintTaskFilterOpen] = useState(false);
-
-  const me = (currentUser?.login || '').toLowerCase();
-
-  // Tarefas filtradas conforme seleção do dropdown
-  const displayedTasks = useMemo(() => {
-    let list = sprintDetailTasks;
-    if (sprintTaskFilter === 'assigned') {
-      list = list.filter((t) =>
-        t.assignees?.some((a) => (a.name || '').toLowerCase().includes(me) || (a.name || '').toLowerCase() === me)
-      );
-    } else if (sprintTaskFilter === 'created') {
-      list = list.filter((t) =>
-        (t.author || '').toLowerCase().includes(me) || (t.author || '').toLowerCase() === me
-      );
-    } else if (sprintTaskFilter === 'mentioned') {
-      list = list.filter((t) =>
-        (t.commentsCount || 0) > 0 || (t.description || '').toLowerCase().includes(`@${me}`)
-      );
-    } else if (sprintTaskFilter === 'recent') {
-      list = [...list].sort((a, b) => {
-        const da = new Date(a.createdAtIso || a.dateStr).getTime() || 0;
-        const db = new Date(b.createdAtIso || b.dateStr).getTime() || 0;
-        return db - da;
-      });
-    }
-
-    if (selectedCalendarDayIso) {
-      list = list.filter((t) => {
-        const raw = t.createdAtIso || t.dateStr || (t as any).updatedAtIso;
-        if (!raw) return false;
-        return raw.slice(0, 10) === selectedCalendarDayIso;
-      });
-    }
-
-    return list;
-  }, [sprintDetailTasks, sprintTaskFilter, me, selectedCalendarDayIso]);
-
-  const sprintFilterOptions: {
-    key: SprintTaskFilter;
-    label: string;
-    icon: React.ComponentType<{ size?: number; color?: string; style?: React.CSSProperties }>;
-    iconActiveColor?: string;
-    count?: number;
-  }[] = [
-    {
-      key: 'all',
-      label: 'Todas as Issues',
-      icon: CircleDot,
-      iconActiveColor: '#f97316',
-      count: sprintDetailTasks.length,
-    },
-    {
-      key: 'assigned',
-      label: 'Atribuídas a mim',
-      icon: UserCheck,
-      count: sprintDetailTasks.filter((t) =>
-        t.assignees?.some((a) => (a.name || '').toLowerCase().includes(me) || (a.name || '').toLowerCase() === me)
-      ).length,
-    },
-    {
-      key: 'created',
-      label: 'Criadas por mim',
-      icon: Smile,
-      count: sprintDetailTasks.filter((t) =>
-        (t.author || '').toLowerCase().includes(me) || (t.author || '').toLowerCase() === me
-      ).length,
-    },
-    {
-      key: 'mentioned',
-      label: 'Mencionado',
-      icon: AtSign,
-      count: sprintDetailTasks.filter((t) =>
-        (t.commentsCount || 0) > 0 || (t.description || '').toLowerCase().includes(`@${me}`)
-      ).length,
-    },
-    {
-      key: 'recent',
-      label: 'Atividade recente',
-      icon: Clock,
-    },
-  ];
-
-  const activeFilterOption = sprintFilterOptions.find((opt) => opt.key === sprintTaskFilter) || sprintFilterOptions[0];
-  const ActiveFilterIcon = activeFilterOption.icon;
-
   // Badge do status da sprint aberta
   const statusBadge = openedSprint
     ? openedSprint.status === 'Current'
@@ -14971,7 +15455,7 @@ function SprintDetailPanel(props: {
         style={{
           width: 48,
           flexShrink: 0,
-          background: isEffectiveDark ? '#141416' : '#f8fafc',
+          background: isEffectiveDark ? '#161616' : '#f5f5f5',
           borderRadius: 8,
           border: 'none',
           display: 'flex',
@@ -15006,7 +15490,7 @@ function SprintDetailPanel(props: {
                 cursor: 'pointer',
                 borderRadius: 6,
                 border: 'none',
-                background: isEffectiveDark ? '#18181b' : '#ffffff',
+                background: isEffectiveDark ? '#1e1e1e' : '#ffffff',
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
@@ -15015,10 +15499,10 @@ function SprintDetailPanel(props: {
                 transition: 'background 0.15s, border-color 0.15s',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = isEffectiveDark ? '#222225' : '#f1f5f9';
+                e.currentTarget.style.background = isEffectiveDark ? '#262626' : '#f0f0f0';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = isEffectiveDark ? '#18181b' : '#ffffff';
+                e.currentTarget.style.background = isEffectiveDark ? '#1e1e1e' : '#ffffff';
               }}
             >
               <Calendar size={13} style={{ color: theme.textSecondary }} />
@@ -15070,7 +15554,7 @@ function SprintDetailPanel(props: {
                         ? (isEffectiveDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.1)')
                         : isToday
                         ? (isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')
-                        : (isEffectiveDark ? '#18181b' : '#ffffff'),
+                        : (isEffectiveDark ? '#1e1e1e' : '#ffffff'),
                       border: 'none',
                       color: isSelected || isToday
                         ? theme.textPrimary
@@ -15084,14 +15568,14 @@ function SprintDetailPanel(props: {
                     }}
                     onMouseEnter={(e) => {
                       if (!isSelected) {
-                        e.currentTarget.style.background = isEffectiveDark ? '#222' : '#f1f5f9';
+                        e.currentTarget.style.background = isEffectiveDark ? '#262626' : '#f0f0f0';
                       }
                     }}
                     onMouseLeave={(e) => {
                       if (!isSelected) {
                         e.currentTarget.style.background = isToday
                           ? (isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')
-                          : (isEffectiveDark ? '#18181b' : '#ffffff');
+                          : (isEffectiveDark ? '#1e1e1e' : '#ffffff');
                       }
                     }}
                   >
@@ -15377,8 +15861,8 @@ function SprintDetailPanel(props: {
                     borderRadius: 8,
                     cursor: 'pointer',
                     background: isSelected
-                      ? (isEffectiveDark ? '#2a2a2e' : '#e9ecf0')
-                      : isEffectiveDark ? '#18181b' : '#ffffff',
+                      ? (isEffectiveDark ? '#262626' : '#e5e5e5')
+                      : isEffectiveDark ? '#1e1e1e' : '#ffffff',
                     border: 'none',
                     boxShadow: 'none',
                     transition: 'all 0.15s ease',
@@ -15389,12 +15873,12 @@ function SprintDetailPanel(props: {
                   }}
                   onMouseEnter={(e) => {
                     if (!isSelected) {
-                      e.currentTarget.style.background = isEffectiveDark ? '#222225' : '#f8fafc';
+                      e.currentTarget.style.background = isEffectiveDark ? '#232323' : '#f5f5f5';
                     }
                   }}
                   onMouseLeave={(e) => {
                     if (!isSelected) {
-                      e.currentTarget.style.background = isEffectiveDark ? '#18181b' : '#ffffff';
+                      e.currentTarget.style.background = isEffectiveDark ? '#1e1e1e' : '#ffffff';
                     }
                   }}
                 >
@@ -15517,7 +16001,7 @@ function SprintDetailPanel(props: {
                       style={{
                         height: '100%',
                         width: `${progressPercent}%`,
-                        background: isSelected ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.6)' : 'rgba(0, 0, 0, 0.45)') : (isEffectiveDark ? 'rgba(255, 255, 255, 0.35)' : 'rgba(0, 0, 0, 0.25)'),
+                        background: isSelected ? accentColor : (isEffectiveDark ? 'rgba(255, 255, 255, 0.25)' : 'rgba(0, 0, 0, 0.2)'),
                         transition: 'width 0.25s ease, background 0.15s ease',
                       }}
                     />
@@ -15593,32 +16077,33 @@ function SprintDetailPanel(props: {
                 title="Exibir lista e calendário de sprints"
                 style={{
                   position: 'absolute',
-                  top: 14,
-                  left: 20,
-                  background: accentColor,
+                  top: 12,
+                  left: 12,
+                  background: 'transparent',
                   border: 'none',
-                  borderRadius: 7,
-                  width: 32,
-                  height: 32,
+                  borderRadius: 6,
+                  width: 24,
+                  height: 24,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   cursor: 'pointer',
-                  color: accentContrastText,
-                  boxShadow: `0 2px 8px ${hexToRgba(accentColor, 0.35)}`,
-                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                  color: accentColor,
+                  boxShadow: 'none',
+                  transition: 'transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
                   transform: 'scale(1)',
+                  padding: 0,
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'scale(1.08)';
-                  e.currentTarget.style.boxShadow = `0 4px 14px ${hexToRgba(accentColor, 0.5)}`;
+                  e.currentTarget.style.transform = 'scale(1.15)';
+                  e.currentTarget.style.opacity = '0.85';
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.transform = 'scale(1)';
-                  e.currentTarget.style.boxShadow = `0 2px 8px ${hexToRgba(accentColor, 0.35)}`;
+                  e.currentTarget.style.opacity = '1';
                 }}
               >
-                <PanelLeftOpen size={16} />
+                <PanelLeftOpen size={18} />
               </button>
             )}
             <Repeat size={32} style={{ opacity: 0.4 }} />
@@ -15660,45 +16145,46 @@ function SprintDetailPanel(props: {
             {/* Cabeçalho da Sprint Ativa (direto no fundo, fora da div de tarefas) */}
             <div
               style={{
-                padding: '14px 24px',
+                padding: '12px 14px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                gap: 16,
+                gap: 14,
                 flexWrap: 'wrap',
                 flexShrink: 0,
                 borderBottom: `1px solid ${hexToRgba(theme.textSecondary, isEffectiveDark ? 0.08 : 0.06)}`,
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                {/* Botão com ícone à esquerda da sprint: LARANJA com animação suave in/out */}
+                {/* Botão com ícone à esquerda da sprint: apenas o ícone colorido, sem fundo e sem brilho */}
                 <button
                   type="button"
                   onClick={toggleSprintSidebar}
                   title={isSprintSidebarVisible ? 'Ocultar lista e calendário de sprints' : 'Exibir lista e calendário de sprints'}
                   style={{
-                    background: accentColor,
+                    background: 'transparent',
                     border: 'none',
-                    borderRadius: 7,
-                    width: 32,
-                    height: 32,
+                    borderRadius: 6,
+                    width: 24,
+                    height: 24,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     cursor: 'pointer',
-                    color: accentContrastText,
-                    boxShadow: `0 2px 8px ${hexToRgba(accentColor, 0.35)}`,
-                    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                    color: accentColor,
+                    boxShadow: 'none',
+                    transition: 'transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
                     transform: 'scale(1)',
                     flexShrink: 0,
+                    padding: 0,
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.transform = 'scale(1.08)';
-                    e.currentTarget.style.boxShadow = `0 4px 14px ${hexToRgba(accentColor, 0.5)}`;
+                    e.currentTarget.style.transform = 'scale(1.15)';
+                    e.currentTarget.style.opacity = '0.85';
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.transform = 'scale(1)';
-                    e.currentTarget.style.boxShadow = `0 2px 8px ${hexToRgba(accentColor, 0.35)}`;
+                    e.currentTarget.style.opacity = '1';
                   }}
                 >
                   <div
@@ -15710,7 +16196,7 @@ function SprintDetailPanel(props: {
                       transform: isSprintSidebarVisible ? 'rotate(0deg)' : 'rotate(180deg)',
                     }}
                   >
-                    {isSprintSidebarVisible ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+                    {isSprintSidebarVisible ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
                   </div>
                 </button>
 
@@ -15744,29 +16230,27 @@ function SprintDetailPanel(props: {
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: 6,
-                      padding: '4px 8px',
-                      borderRadius: 6,
+                      padding: '2px 0',
+                      borderRadius: 4,
                       cursor: 'pointer',
-                      border: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
-                      background: isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
-                      transition: 'background 0.15s, border-color 0.15s',
+                      border: 'none',
+                      background: 'transparent',
+                      transition: 'opacity 0.15s ease',
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.borderColor = accentColor;
-                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)';
+                      e.currentTarget.style.opacity = '0.75';
                     }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
-                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)';
+                      e.currentTarget.style.opacity = '1';
                     }}
                   >
                     <Calendar size={13} style={{ color: accentColor }} />
-                    <span style={{ fontSize: 12, fontWeight: 500, color: theme.textSecondary }}>
+                    <span style={{ fontSize: 12, fontWeight: 400, color: theme.textSecondary }}>
                       {openedSprint.dateRangeLabel && openedSprint.dateRangeLabel !== 'Sem datas'
                         ? openedSprint.dateRangeLabel
                         : 'Definir datas da sprint'}
                     </span>
-                    <Pencil size={11} style={{ color: theme.textSecondary, opacity: 0.7, marginLeft: 2 }} />
+                    <Pencil size={11} style={{ color: theme.textSecondary, opacity: 0.6, marginLeft: 2 }} />
                   </div>
                 ) : (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -16144,7 +16628,7 @@ function SprintDetailPanel(props: {
                                 fontSize: 12.5,
                                 cursor: 'pointer',
                                 background: isSelected
-                                  ? (isEffectiveDark ? '#27272a' : '#e2e8f0')
+                                  ? (isEffectiveDark ? '#262626' : '#e5e5e5')
                                   : 'transparent',
                                 color: isSelected ? theme.textPrimary : theme.textSecondary,
                                 transition: 'background 0.12s ease',
@@ -16328,7 +16812,35 @@ function SprintDetailPanel(props: {
                       const target = issueAssigneeFilter.toLowerCase();
                       filteredList = filteredList.filter((t) => t.assignees?.some((a) => (a.name || '').toLowerCase() === target));
                     }
-                    const isAllSelected = filteredList.length > 0 && filteredList.every((t) => selectedIssueIds.includes(t.id));
+                    const parentChildIdsInFiltered = new Set<string>();
+                    const parentChildNumbersInFiltered = new Set<number>();
+                    filteredList.forEach((parent) => {
+                      const subs = extractSubIssuesForIssue(parent, allIssuesMap);
+                      subs.forEach((s) => {
+                        if (s.linkedIssue?.id && s.linkedIssue.id !== parent.id) {
+                          parentChildIdsInFiltered.add(s.linkedIssue.id);
+                        }
+                        if (s.issueNumber && s.issueNumber !== parent.githubNumber) {
+                          parentChildNumbersInFiltered.add(s.issueNumber);
+                        }
+                      });
+                      if (parent.subIssueNumbers && parent.subIssueNumbers.length > 0) {
+                        parent.subIssueNumbers.forEach((num) => {
+                          if (num !== parent.githubNumber) {
+                            parentChildNumbersInFiltered.add(num);
+                          }
+                        });
+                      }
+                    });
+
+                    const rawTopLevelFilteredList = filteredList.filter((task) => {
+                      const hasParentInList =
+                        parentChildIdsInFiltered.has(task.id) ||
+                        (task.githubNumber != null && parentChildNumbersInFiltered.has(task.githubNumber));
+                      return !hasParentInList;
+                    });
+                    const topLevelFilteredList = rawTopLevelFilteredList.length > 0 ? rawTopLevelFilteredList : filteredList;
+                    const isAllSelected = topLevelFilteredList.length > 0 && topLevelFilteredList.every((t) => selectedIssueIds.includes(t.id));
                     const isSomeSelected = selectedIssueIds.length > 0 && !isAllSelected;
                     const selectedTasks = displayedTasks.filter((t) => selectedIssueIds.includes(t.id));
                     const hasOpenSelected = selectedTasks.some((t) => t.status !== 'Concluído');
@@ -16356,7 +16868,7 @@ function SprintDetailPanel(props: {
                             isSomeSelected,
                             () => {
                               if (isAllSelected) setSelectedIssueIds([]);
-                              else setSelectedIssueIds(filteredList.map((t) => t.id));
+                              else setSelectedIssueIds(topLevelFilteredList.map((t) => t.id));
                             },
                             isAllSelected ? 'Desmarcar todas' : 'Selecionar todas as issues visíveis'
                           )}
@@ -16491,6 +17003,34 @@ function SprintDetailPanel(props: {
                                   {closedIssuesCount}
                                 </span>
                               </button>
+
+                              {selectedCalendarDayIso && isSprintSidebarVisible && (
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedCalendarDayIso(null)}
+                                  title="Clique para remover o filtro por dia do calendário"
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 5,
+                                    padding: '3px 8px',
+                                    borderRadius: 20,
+                                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
+                                    border: 'none',
+                                    color: accentColor,
+                                    fontSize: 11,
+                                    cursor: 'pointer',
+                                    fontWeight: 400,
+                                    transition: 'opacity 0.15s ease',
+                                  }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.8')}
+                                  onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                                >
+                                  <Calendar size={11} />
+                                  <span>Dia: {selectedCalendarDayIso}</span>
+                                  <X size={10} />
+                                </button>
+                              )}
                             </>
                           )}
                         </div>
@@ -17218,12 +17758,93 @@ function SprintDetailPanel(props: {
                       });
                     }
 
-                    const topLevelList = list.filter((task) => !childIssueIdSet.has(task.id));
+                    // Apenas oculta do primeiro nível se a issue pai estiver de fato presente nesta lista
+                    const parentChildIdsInList = new Set<string>();
+                    const parentChildNumbersInList = new Set<number>();
+                    list.forEach((parent) => {
+                      const subs = extractSubIssuesForIssue(parent, allIssuesMap);
+                      subs.forEach((s) => {
+                        if (s.linkedIssue?.id && s.linkedIssue.id !== parent.id) {
+                          parentChildIdsInList.add(s.linkedIssue.id);
+                        }
+                        if (s.issueNumber && s.issueNumber !== parent.githubNumber) {
+                          parentChildNumbersInList.add(s.issueNumber);
+                        }
+                      });
+                      if (parent.subIssueNumbers && parent.subIssueNumbers.length > 0) {
+                        parent.subIssueNumbers.forEach((num) => {
+                          if (num !== parent.githubNumber) {
+                            parentChildNumbersInList.add(num);
+                          }
+                        });
+                      }
+                    });
+
+                    const rawTopLevelList = list.filter((task) => {
+                      const hasParentInList =
+                        parentChildIdsInList.has(task.id) ||
+                        (task.githubNumber != null && parentChildNumbersInList.has(task.githubNumber));
+                      return !hasParentInList;
+                    });
+                    const topLevelList = rawTopLevelList.length > 0 ? rawTopLevelList : list;
 
                     if (topLevelList.length === 0) {
+                      const hasActiveFilters =
+                        issueStateFilter !== 'all' ||
+                        Boolean(issueAuthorFilter) ||
+                        Boolean(issueLabelFilter) ||
+                        Boolean(issueAssigneeFilter) ||
+                        sprintTaskFilter !== 'all' ||
+                        Boolean(selectedCalendarDayIso && isSprintSidebarVisible);
+
                       return (
-                        <div style={{ padding: '40px 20px', textAlign: 'center', color: theme.textSecondary, fontSize: 12.5 }}>
-                          Nenhuma issue encontrada com os filtros selecionados.
+                        <div
+                          style={{
+                            padding: 24,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 24,
+                            color: theme.textSecondary,
+                            fontSize: 12.5,
+                            fontWeight: 400,
+                          }}
+                        >
+                          <span>Nenhuma issue encontrada com os filtros selecionados.</span>
+                          {hasActiveFilters && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIssueStateFilter('all');
+                                setIssueAuthorFilter(null);
+                                setIssueLabelFilter(null);
+                                setIssueAssigneeFilter(null);
+                                setSprintTaskFilter('all');
+                                setSelectedCalendarDayIso(null);
+                              }}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 6,
+                                height: 32,
+                                padding: '0 12px',
+                                background: accentColor,
+                                color: '#ffffff',
+                                border: 'none',
+                                borderRadius: 6,
+                                fontSize: 12,
+                                fontWeight: 400,
+                                cursor: 'pointer',
+                                transition: 'opacity 0.15s ease',
+                              }}
+                              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.85')}
+                              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                            >
+                              Limpar todos os filtros
+                            </button>
+                          )}
                         </div>
                       );
                     }

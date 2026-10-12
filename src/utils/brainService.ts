@@ -37,7 +37,7 @@ function readFromLocalStorage(workspacePath: string): ProjectBrainContext | null
  */
 export function logSystemActivity(module: string, action: string, projectName: string, details?: any) {
   const timestamp = new Date().toISOString();
-  console.log(`[DevFlow System Log][${timestamp}][${module}] Acao: ${action} | Projeto: ${projectName}`, details || '');
+  console.log(`[Aura Dev System Log][${timestamp}][${module}] Acao: ${action} | Projeto: ${projectName}`, details || '');
   try {
     const logHistoryKey = 'devflow_system_activity_logs';
     const existing = JSON.parse(localStorage.getItem(logHistoryKey) || '[]');
@@ -531,7 +531,7 @@ export async function scanProjectCodebase(
 
   // Gera sintese de arquitetura e diretrizes padrao
   const summary = pkgJsonData?.description ||
-    `Projeto ${name} configurado no ecossistema DevFlow com ${nodes.length} nós contextuais mapeados e suporte a múltiplos agentes de IA.`;
+    `Projeto ${name} configurado no ecossistema Aura Dev com ${nodes.length} nós contextuais mapeados e suporte a múltiplos agentes de IA.`;
 
   const architectureOverview =
     `Arquitetura modular orientada a ${techStack.slice(0, 4).join(', ')}. ` +
@@ -579,7 +579,7 @@ export function generateBrainAiContext(brain: ProjectBrainContext | null): strin
     .join('\n');
 
   return (
-    `[Contexto do Brain do Projeto (DevFlow OS Context Switch)]:\n` +
+    `[Contexto do Brain do Projeto (Aura Dev OS Context Switch)]:\n` +
     `- Projeto Ativo: ${brain.projectName}\n` +
     `- Diretorio Raiz: ${brain.workspacePath}\n` +
     `- Stack Tecnologica: ${tech}\n` +

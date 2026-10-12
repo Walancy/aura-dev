@@ -129,24 +129,92 @@ export const CodexIcon: React.FC<{ size?: number; style?: React.CSSProperties }>
 );
 
 // Helper to render AI icon by provider ID
-export const renderAiIcon = (providerId: string, size = 16, style?: React.CSSProperties) => {
+export const renderAiIcon = (
+  providerId: string,
+  size = 16,
+  style?: React.CSSProperties,
+  showUpdateBadge?: boolean
+) => {
+  let icon: React.ReactNode;
   switch (providerId) {
     case 'claude':
-      return <ClaudeIcon size={size} style={style} />;
+      icon = <ClaudeIcon size={size} style={style} />;
+      break;
     case 'antigravity':
-      return <AntigravityIcon size={size} style={style} />;
+    case 'agy':
+      icon = <AntigravityIcon size={size} style={style} />;
+      break;
     case 'codex':
-      return <CodexIcon size={size} style={style} />;
+      icon = <CodexIcon size={size} style={style} />;
+      break;
     case 'gemini':
-      return <GeminiIcon size={size} style={style} />;
+      icon = <GeminiIcon size={size} style={style} />;
+      break;
     case 'ollama':
-      return <OllamaIcon size={size} style={style} />;
+      icon = <OllamaIcon size={size} style={style} />;
+      break;
     case 'aura':
     case 'auradev':
     case 'aura-dev':
     case 'maestro':
-      return <AuraDevIcon size={size} style={style} />;
+      icon = <AuraDevIcon size={size} style={style} />;
+      break;
     default:
-      return <ClaudeIcon size={size} style={style} />;
+      icon = <ClaudeIcon size={size} style={style} />;
+      break;
   }
+
+  if (showUpdateBadge) {
+    const badgeSize = Math.max(7, Math.round(size * 0.45));
+    const iconSize = Math.max(5, Math.round(size * 0.32));
+    return (
+      <div
+        style={{
+          position: 'relative',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        {icon}
+        <span
+          style={{
+            position: 'absolute',
+            bottom: -2,
+            right: -2,
+            width: badgeSize,
+            height: badgeSize,
+            borderRadius: '50%',
+            background: '#0284c7',
+            color: '#ffffff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            border: 'none',
+            boxShadow: 'none',
+            pointerEvents: 'none',
+            lineHeight: 1,
+          }}
+          title="Atualização disponível"
+        >
+          <svg
+            width={iconSize}
+            height={iconSize}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <line x1="12" y1="19" x2="12" y2="5" />
+            <polyline points="5 12 12 5 19 12" />
+          </svg>
+        </span>
+      </div>
+    );
+  }
+
+  return icon;
 };
+

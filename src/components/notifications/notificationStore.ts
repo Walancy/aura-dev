@@ -12,6 +12,10 @@ export interface CenterNotification {
   source?: 'ide' | 'cli' | 'design';
   timestamp: number;
   read: boolean;
+  isUpdate?: boolean;
+  updateVersion?: string;
+  updateCommand?: string;
+  patchNotesUrl?: string;
 }
 
 export const STORAGE_KEY = 'devflow_notification_center_v1';

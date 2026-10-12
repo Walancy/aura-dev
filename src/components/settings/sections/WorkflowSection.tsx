@@ -3,8 +3,9 @@ import { Gauge, KanbanSquare, RefreshCw, Workflow, Zap } from 'lucide-react';
 import { Panel, Pill, SmallButton, inputStyle, openUrl, selectStyle } from '../../team/teamUi';
 import { formatSprintName, guessStatusFromName, type IssueStatus } from '../projectSettingsStore';
 import { Field, NumberInput, Notice, Segmented, WEEKDAYS, ghSettings, type SectionProps } from '../settingsUi';
+import { logSystemActivity } from '../../../utils/brainService';
 
-const STATUS_COLORS: Record<IssueStatus, string> = { 'A Fazer': '#94a3b8', 'Em Progresso': '#f59e0b', Concluído: '#22c55e' };
+const STATUS_COLORS: Record<IssueStatus, string> = { 'A Fazer': '#a3a3a3', 'Em Progresso': '#f59e0b', Concluído: '#22c55e' };
 
 export const WorkflowSection: React.FC<SectionProps & { onDataConfigChanged?: () => void }> = ({ ctx, owner, settings, update, showToast, onDataConfigChanged }) => {
   const { theme, accentColor } = ctx;
@@ -45,6 +46,7 @@ export const WorkflowSection: React.FC<SectionProps & { onDataConfigChanged?: ()
   const statusField = singleSelects.find((f) => f.name.toLowerCase() === (wf.statusFieldName || 'status').toLowerCase()) || singleSelects[0];
 
   const setWf = (patch: Partial<typeof wf>, notify = true) => {
+    logSystemActivity('configuracoes_projeto', 'atualizar_workflow', owner, patch);
     update((s) => ({ ...s, workflow: { ...s.workflow, ...patch } }));
     if (notify) onDataConfigChanged?.();
   };
@@ -61,7 +63,7 @@ export const WorkflowSection: React.FC<SectionProps & { onDataConfigChanged?: ()
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
       <Panel ctx={ctx} icon={<KanbanSquare size={14} color={accentColor} />} title="Project V2 vinculado">
-        <Field ctx={ctx} label="Project do GitHub" hint="Quando definido, o DevFlow usa só este Project para status, sprints e estimativas — sem adivinhar pelo nome do repositório.">
+        <Field ctx={ctx} label="Project do GitHub" hint="Quando definido, o Aura Dev usa só este Project para status, sprints e estimativas — sem adivinhar pelo nome do repositório.">
           <select
             value={wf.linkedProject?.number ?? ''}
             onChange={(e) => {
@@ -142,7 +144,7 @@ export const WorkflowSection: React.FC<SectionProps & { onDataConfigChanged?: ()
         }
       >
         <div style={{ fontSize: 11.5, color: theme.textSecondary, lineHeight: 1.45 }}>
-          Diz ao DevFlow o que cada coluna do Project significa. Sem mapeamento, o status é deduzido pelo nome ("progress", "review", "done"…), o que falha com nomes como "Homologação" ou "Aguardando cliente".
+          Diz ao Aura Dev o que cada coluna do Project significa. Sem mapeamento, o status é deduzido pelo nome ("progress", "review", "done"…), o que falha com nomes como "Homologação" ou "Aguardando cliente".
         </div>
         {!statusField ? (
           <Notice ctx={ctx}>Vincule um Project acima para listar as colunas.</Notice>
@@ -177,10 +179,28 @@ export const WorkflowSection: React.FC<SectionProps & { onDataConfigChanged?: ()
 
       <Panel ctx={ctx} icon={<Zap size={14} color={accentColor} />} title="Sprints">
         <Field ctx={ctx} label="Duração padrão" hint="Pré-preenchida ao criar uma sprint.">
-          <NumberInput ctx={ctx} value={settings.sprint.durationDays} min={1} max={60} suffix="dias" onChange={(v) => update((s) => ({ ...s, sprint: { ...s.sprint, durationDays: v } }))} />
+          <NumberInput
+            ctx={ctx}
+            value={settings.sprint.durationDays}
+            min={1}
+            max={60}
+            suffix="dias"
+            onChange={(v) => {
+              logSystemActivity('configuracoes_projeto', 'atualizar_sprint', owner, { durationDays: v });
+              update((s) => ({ ...s, sprint: { ...s.sprint, durationDays: v } }));
+            }}
+          />
         </Field>
         <Field ctx={ctx} label="Dia de início" hint="A próxima sprint começa neste dia da semana.">
-          <select value={settings.sprint.startWeekday} onChange={(e) => update((s) => ({ ...s, sprint: { ...s.sprint, startWeekday: Number(e.target.value) } }))} style={selectStyle(ctx)}>
+          <select
+            value={settings.sprint.startWeekday}
+            onChange={(e) => {
+              const startWeekday = Number(e.target.value);
+              logSystemActivity('configuracoes_projeto', 'atualizar_sprint', owner, { startWeekday });
+              update((s) => ({ ...s, sprint: { ...s.sprint, startWeekday } }));
+            }}
+            style={selectStyle(ctx)}
+          >
             {WEEKDAYS.map((d, i) => (
               <option key={d} value={i}>
                 {d}
@@ -189,9 +209,13 @@ export const WorkflowSection: React.FC<SectionProps & { onDataConfigChanged?: ()
           </select>
         </Field>
         <Field ctx={ctx} label="Padrão de nome" hint={<>Use {'{n}'}, {'{inicio}'} e {'{fim}'}. Prévia: <b>{sprintPreview}</b></>}>
-          <input value={settings.sprint.namePattern} onChange={(e) => update((s) => ({ ...s, sprint: { ...s.sprint, namePattern: e.target.value } }))} style={{ ...inputStyle(ctx), width: 220 }} />
+          <input
+            value={settings.sprint.namePattern}
+            onChange={(e) => update((s) => ({ ...s, sprint: { ...s.sprint, namePattern: e.target.value } }))}
+            style={{ ...inputStyle(ctx), width: 220 }}
+          />
         </Field>
-        <Field ctx={ctx} label="Issues não concluídas ao fechar" hint="Ao encerrar uma sprint pelo DevFlow.">
+        <Field ctx={ctx} label="Issues não concluídas ao fechar" hint="Ao encerrar uma sprint pelo Aura Dev.">
           <Segmented
             ctx={ctx}
             value={settings.sprint.carryOver}
@@ -199,7 +223,10 @@ export const WorkflowSection: React.FC<SectionProps & { onDataConfigChanged?: ()
               { id: 'next', label: 'Mover para a próxima' },
               { id: 'keep', label: 'Manter na sprint' },
             ]}
-            onChange={(v) => update((s) => ({ ...s, sprint: { ...s.sprint, carryOver: v as any } }))}
+            onChange={(v) => {
+              logSystemActivity('configuracoes_projeto', 'atualizar_sprint', owner, { carryOver: v });
+              update((s) => ({ ...s, sprint: { ...s.sprint, carryOver: v as any } }));
+            }}
           />
         </Field>
       </Panel>
@@ -214,7 +241,10 @@ export const WorkflowSection: React.FC<SectionProps & { onDataConfigChanged?: ()
               { id: 'hours', label: 'Horas' },
               { id: 'tshirt', label: 'P / M / G' },
             ]}
-            onChange={(v) => update((s) => ({ ...s, estimates: { ...s.estimates, unit: v as any } }))}
+            onChange={(v) => {
+              logSystemActivity('configuracoes_projeto', 'atualizar_estimativas', owner, { unit: v });
+              update((s) => ({ ...s, estimates: { ...s.estimates, unit: v as any } }));
+            }}
           />
         </Field>
         <Field ctx={ctx} label="Capacidade por pessoa na sprint" hint="Acima disso a pessoa aparece como sobrecarregada na aba Time. Com P/M/G, conta P=1, M=3, G=5.">
@@ -224,7 +254,10 @@ export const WorkflowSection: React.FC<SectionProps & { onDataConfigChanged?: ()
             min={1}
             max={500}
             suffix={settings.estimates.unit === 'hours' ? 'h' : 'pts'}
-            onChange={(v) => update((s) => ({ ...s, estimates: { ...s.estimates, capacityPerPerson: v } }))}
+            onChange={(v) => {
+              logSystemActivity('configuracoes_projeto', 'atualizar_estimativas', owner, { capacityPerPerson: v });
+              update((s) => ({ ...s, estimates: { ...s.estimates, capacityPerPerson: v } }));
+            }}
           />
         </Field>
       </Panel>

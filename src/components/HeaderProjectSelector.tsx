@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { ChevronDown, Search, X, FolderGit2, Check, FolderPlus, DownloadCloud, Building2, Play, HardDrive, Loader2, CheckCircle2, MessageCircleQuestion } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Search, X, FolderGit2, Check, FolderPlus, DownloadCloud, Building2, Play, HardDrive, Loader2, CheckCircle2, MessageCircleQuestion } from 'lucide-react';
 import { ClaudeIcon, AntigravityIcon, GeminiIcon, CodexIcon, OllamaIcon } from './icons/AiProviderIcons';
 import { getLanguageSvgUrl } from './FileIcon';
 import {
@@ -252,6 +252,13 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
   // Dropdown visibility states
   const [isOrgOpen, setIsOrgOpen] = useState(false);
   const [isProjectOpen, setIsProjectOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('header_project_selector_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
 
   // Selected organization filter
   const [selectedOrg, setSelectedOrg] = useState<string>(() => {
@@ -855,8 +862,8 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
             setIsProjectOpen(false);
           }}
           style={{
-            paddingLeft: 12,
-            paddingRight: 12,
+            paddingLeft: isCollapsed ? 7 : 12,
+            paddingRight: isCollapsed ? 7 : 12,
             paddingTop: 5,
             paddingBottom: 5,
             background: isOrgOpen ? (isEffectiveDark ? '#2E2E2E' : '#e4e7eb') : 'transparent',
@@ -878,7 +885,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
           onMouseLeave={(e) => {
             if (!isOrgOpen) e.currentTarget.style.background = 'transparent';
           }}
-          title="Filtrar projetos por organização"
+          title={isCollapsed ? `Organização: ${selectedOrg}` : 'Filtrar projetos por organização'}
         >
           {selectedOrg !== 'Todas' && selectedOrgObj?.avatarUrl ? (
             <img
@@ -889,28 +896,32 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
           ) : (
             <Building2 size={13.5} color={themeTokens.textSecondary} />
           )}
-          <span
-            style={{
-              color: isOrgOpen ? themeTokens.textPrimary : themeTokens.textSecondary,
-              fontSize: 12,
-              fontFamily: 'Poppins, sans-serif',
-              fontWeight: isOrgOpen ? '500' : '400',
-              whiteSpace: 'nowrap',
-              maxWidth: 130,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-            }}
-          >
-            {selectedOrg}
-          </span>
-          <ChevronDown
-            size={12}
-            color={themeTokens.textSecondary}
-            style={{
-              transform: isOrgOpen ? 'rotate(180deg)' : 'none',
-              transition: 'transform 0.15s ease',
-            }}
-          />
+          {!isCollapsed && (
+            <>
+              <span
+                style={{
+                  color: isOrgOpen ? themeTokens.textPrimary : themeTokens.textSecondary,
+                  fontSize: 12,
+                  fontFamily: 'Poppins, sans-serif',
+                  fontWeight: isOrgOpen ? '500' : '400',
+                  whiteSpace: 'nowrap',
+                  maxWidth: 130,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {selectedOrg}
+              </span>
+              <ChevronDown
+                size={12}
+                color={themeTokens.textSecondary}
+                style={{
+                  transform: isOrgOpen ? 'rotate(180deg)' : 'none',
+                  transition: 'transform 0.15s ease',
+                }}
+              />
+            </>
+          )}
         </div>
 
         {/* Popover Dropdown de Organizações */}
@@ -1030,8 +1041,8 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
             setIsOrgOpen(false);
           }}
           style={{
-            paddingLeft: 12,
-            paddingRight: 12,
+            paddingLeft: isCollapsed ? 7 : 12,
+            paddingRight: isCollapsed ? 7 : 12,
             paddingTop: 5,
             paddingBottom: 5,
             background: isProjectOpen ? (isEffectiveDark ? '#2E2E2E' : '#e4e7eb') : 'transparent',
@@ -1053,7 +1064,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
           onMouseLeave={(e) => {
             if (!isProjectOpen) e.currentTarget.style.background = 'transparent';
           }}
-          title="Alternar projeto ativo"
+          title={isCollapsed ? `Projeto: ${currentProjectName}` : 'Alternar projeto ativo'}
         >
           <ProjectHeaderIcon
             project={currentProject}
@@ -1063,41 +1074,45 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
             repos={repos}
             orgs={organizations}
           />
-          <span
-            style={{
-              color: isProjectOpen ? themeTokens.textPrimary : themeTokens.textPrimary,
-              fontSize: 12,
-              fontFamily: 'Poppins, sans-serif',
-              fontWeight: '500',
-              maxWidth: 150,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {currentProjectName}
-          </span>
+          {!isCollapsed && (
+            <>
+              <span
+                style={{
+                  color: isProjectOpen ? themeTokens.textPrimary : themeTokens.textPrimary,
+                  fontSize: 12,
+                  fontFamily: 'Poppins, sans-serif',
+                  fontWeight: '500',
+                  maxWidth: 150,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {currentProjectName}
+              </span>
 
-          {/* IA do projeto atual + UM único indicador: estado da IA ou, se não houver, processo rodando */}
-          {(activeProjectRuntime?.activeAiProvider || activeProjectRuntime?.isRunning || (workspacePath && getProjectAiStatus(workspacePath))) && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 2 }}>
-              {!hideAiProvider && activeProjectRuntime?.activeAiProvider && (
-                <span title={`IA do projeto: ${activeProjectRuntime.activeAiProvider}`} style={{ display: 'flex' }}>
-                  {renderAiIcon(activeProjectRuntime.activeAiProvider, 13)}
-                </span>
+              {/* IA do projeto atual + UM único indicador: estado da IA ou, se não houver, processo rodando */}
+              {(activeProjectRuntime?.activeAiProvider || activeProjectRuntime?.isRunning || (workspacePath && getProjectAiStatus(workspacePath))) && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 2 }}>
+                  {!hideAiProvider && activeProjectRuntime?.activeAiProvider && (
+                    <span title={`IA do projeto: ${activeProjectRuntime.activeAiProvider}`} style={{ display: 'flex' }}>
+                      {renderAiIcon(activeProjectRuntime.activeAiProvider, 13)}
+                    </span>
+                  )}
+                  {renderProjectIndicator(workspacePath ? getProjectAiStatus(workspacePath) : null, activeProjectRuntime, 12)}
+                </div>
               )}
-              {renderProjectIndicator(workspacePath ? getProjectAiStatus(workspacePath) : null, activeProjectRuntime, 12)}
-            </div>
-          )}
 
-          <ChevronDown
-            size={12}
-            color={themeTokens.textSecondary}
-            style={{
-              transform: isProjectOpen ? 'rotate(180deg)' : 'none',
-              transition: 'transform 0.15s ease',
-            }}
-          />
+              <ChevronDown
+                size={12}
+                color={themeTokens.textSecondary}
+                style={{
+                  transform: isProjectOpen ? 'rotate(180deg)' : 'none',
+                  transition: 'transform 0.15s ease',
+                }}
+              />
+            </>
+          )}
         </div>
 
         {/* Popover Dropdown de Seleção de Projetos */}
@@ -1531,6 +1546,46 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
             </div>
           </div>
         )}
+      </div>
+
+      {/* 3. BOTÃO DE RECOLHER / EXPANDIR (SETA NA DIREITA) */}
+      <div
+        onClick={(e) => {
+          e.stopPropagation();
+          const next = !isCollapsed;
+          setIsCollapsed(next);
+          try {
+            localStorage.setItem('header_project_selector_collapsed', String(next));
+          } catch {}
+          logSystemActivity('header', next ? 'ocultar_seletor_projeto' : 'expandir_seletor_projeto', currentProjectName);
+        }}
+        title={isCollapsed ? 'Expandir seletor de projeto' : 'Recolher seletor de projeto'}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 18,
+          height: 24,
+          borderRadius: 4,
+          cursor: 'pointer',
+          color: themeTokens.textSecondary,
+          background: 'transparent',
+          border: 'none',
+          boxShadow: 'none',
+          transition: 'all 0.15s ease',
+          flexShrink: 0,
+          userSelect: 'none',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+          e.currentTarget.style.color = themeTokens.textPrimary;
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'transparent';
+          e.currentTarget.style.color = themeTokens.textSecondary;
+        }}
+      >
+        {isCollapsed ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
       </div>
     </div>
   );

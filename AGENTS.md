@@ -1,4 +1,4 @@
-# Diretrizes e Regras do Projeto DevFlow
+# Diretrizes e Regras do Projeto Aura Dev
 
 ## Regra Obrigatória: Modal de Confirmação para Ações de Exclusão
 

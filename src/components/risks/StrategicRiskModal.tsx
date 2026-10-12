@@ -90,8 +90,8 @@ export const StrategicRiskModal: React.FC<StrategicRiskModalProps> = ({
 
   const bgModal = theme.modalBg || (isEffectiveDark ? '#181818' : '#ffffff');
   const inputBg = theme.modalInputBg || (isEffectiveDark ? '#222222' : '#f1f5f9');
-  const textPrimary = theme.textPrimary || (isEffectiveDark ? '#ffffff' : '#0f172a');
-  const textSecondary = theme.textSecondary || (isEffectiveDark ? '#888888' : '#64748b');
+  const textPrimary = theme.textPrimary || (isEffectiveDark ? '#ffffff' : '#111111');
+  const textSecondary = theme.textSecondary || (isEffectiveDark ? '#a8a8a8' : '#666666');
 
   return (
     <div

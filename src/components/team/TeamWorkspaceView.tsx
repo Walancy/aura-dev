@@ -23,6 +23,7 @@ import {
 import { EmptyState, SmallButton, type TeamUiCtx } from './teamUi';
 import { useTeamWorkspace } from './useTeamWorkspace';
 import { getProjectSettings, subscribeProjectSettings } from '../settings/projectSettingsStore';
+import { logSystemActivity } from '../../utils/brainService';
 
 type SectionId = 'overview' | 'membros' | 'times' | 'acesso' | 'auditoria' | 'matriz' | 'historico' | 'ia';
 
@@ -189,7 +190,7 @@ export const TeamWorkspaceView: React.FC<Props> = ({
   const renderSection = () => {
     if (!raw || !metrics || !repoFullName) {
       return (
-        <div style={{ background: theme.viewCanvasBg, borderRadius: 8, flex: 1 }}>
+        <div style={{ background: isEffectiveDark ? '#161616' : '#ffffff', borderRadius: 8, flex: 1, border: 'none', boxShadow: 'none' }}>
           {ws.loading || !ws.error ? (
             <EmptyState ctx={ctx} icon={<Loader2 size={22} color={accentColor} style={{ animation: 'spin 1s linear infinite' }} />} text="Carregando pessoas, times, PRs e commits do GitHub…" />
           ) : (
@@ -358,13 +359,27 @@ export const TeamWorkspaceView: React.FC<Props> = ({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'stretch', gap: 5, width: '100%', minHeight: 360, boxSizing: 'border-box', fontFamily: "'Poppins', -apple-system, sans-serif" }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'row',
+        alignItems: 'stretch',
+        gap: 5,
+        width: '100%',
+        height: '100%',
+        minHeight: 0,
+        flex: 1,
+        overflow: 'hidden',
+        boxSizing: 'border-box',
+        fontFamily: "'Poppins', -apple-system, sans-serif",
+      }}
+    >
       {/* Sidebar */}
       <div
         style={{
           width: 'clamp(160px, 20%, 220px)',
           minWidth: 160,
-          background: theme.viewCanvasBg,
+          background: isEffectiveDark ? '#161616' : '#ffffff',
           borderRadius: 8,
           padding: '8px 6px',
           display: 'flex',
@@ -372,18 +387,26 @@ export const TeamWorkspaceView: React.FC<Props> = ({
           gap: 2,
           boxSizing: 'border-box',
           flexShrink: 0,
+          height: '100%',
+          overflowY: 'auto',
+          border: 'none',
+          boxShadow: 'none',
         }}
+        className="no-scrollbar"
       >
         {sections.map((g) => (
           <React.Fragment key={g.group}>
-            <div style={{ fontSize: 10, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '8px 10px 4px' }}>{g.group}</div>
+            <div style={{ fontSize: 10, fontWeight: 400, color: theme.textSecondary, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '8px 10px 4px' }}>{g.group}</div>
             {g.items.map((tab) => {
               const isActive = section === tab.id;
               const Icon = tab.icon;
               return (
                 <div
                   key={tab.id}
-                  onClick={() => setSection(tab.id)}
+                  onClick={() => {
+                    setSection(tab.id);
+                    logSystemActivity('time_workspace', 'trocar_secao', tab.label, { secao: tab.id, repo: repoFullName });
+                  }}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -391,14 +414,14 @@ export const TeamWorkspaceView: React.FC<Props> = ({
                     padding: '7px 10px',
                     borderRadius: 6,
                     cursor: 'pointer',
-                    background: isActive ? (isEffectiveDark ? '#242424' : '#e2e8f0') : 'transparent',
+                    background: isActive ? (isEffectiveDark ? '#2a2a2a' : '#e5e5e5') : 'transparent',
                     color: isActive ? theme.textPrimary : theme.textSecondary,
-                    fontWeight: isActive ? 500 : 400,
-                    fontSize: 12.5,
+                    fontWeight: 400,
+                    fontSize: 12,
                     transition: 'all 0.15s ease',
                   }}
                   onMouseEnter={(e) => {
-                    if (!isActive) e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
+                    if (!isActive) e.currentTarget.style.background = isEffectiveDark ? '#242424' : '#f0f0f0';
                   }}
                   onMouseLeave={(e) => {
                     if (!isActive) e.currentTarget.style.background = 'transparent';
@@ -409,7 +432,7 @@ export const TeamWorkspaceView: React.FC<Props> = ({
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tab.label}</span>
                   </div>
                   {tab.count != null && (
-                    <span style={{ fontSize: 11, fontWeight: 500, color: tab.tone || (isActive ? accentColor : theme.textSecondary), padding: '1px 6px', borderRadius: 10, background: isActive ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.06)') : 'transparent', flexShrink: 0 }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 400, color: tab.tone || (isActive ? accentColor : theme.textSecondary), padding: '1px 6px', borderRadius: 10, background: isActive ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)') : 'transparent', flexShrink: 0 }}>
                       {tab.count}
                     </span>
                   )}
@@ -420,7 +443,7 @@ export const TeamWorkspaceView: React.FC<Props> = ({
         ))}
         <div style={{ flex: 1 }} />
         <div style={{ padding: '8px 10px 2px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <span style={{ fontSize: 10.5, color: theme.textMuted }}>{ws.loading ? 'Sincronizando…' : ws.fetchedAt ? `Atualizado ${relativeTime(new Date(ws.fetchedAt).toISOString())}` : ''}</span>
+          <span style={{ fontSize: 10.5, color: theme.textSecondary }}>{ws.loading ? 'Sincronizando…' : ws.fetchedAt ? `Atualizado ${relativeTime(new Date(ws.fetchedAt).toISOString())}` : ''}</span>
           <SmallButton ctx={ctx} onClick={() => ws.refresh(true)} disabled={ws.loading}>
             <RefreshCw size={11} style={ws.loading ? { animation: 'spin 1s linear infinite' } : undefined} /> Atualizar
           </SmallButton>
@@ -428,9 +451,21 @@ export const TeamWorkspaceView: React.FC<Props> = ({
       </div>
 
       {/* Conteúdo */}
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 5,
+          overflowY: 'auto',
+        }}
+        className="no-scrollbar"
+      >
         {raw && raw.errors.length > 0 && (
-          <div style={{ background: theme.viewCanvasBg, borderRadius: 8, padding: '6px 12px', fontSize: 11.5, color: '#f59e0b' }}>{raw.errors.join(' ')}</div>
+          <div style={{ background: isEffectiveDark ? '#161616' : '#ffffff', borderRadius: 8, padding: '6px 12px', fontSize: 11.5, color: '#f59e0b', flexShrink: 0, border: 'none', boxShadow: 'none' }}>{raw.errors.join(' ')}</div>
         )}
         {renderSection()}
       </div>

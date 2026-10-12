@@ -3,6 +3,7 @@ import { FilePlus2, FileStack, Wand2 } from 'lucide-react';
 import { EmptyState, Panel, SmallButton, inputStyle } from '../../team/teamUi';
 import { Notice, ghSettings, type SectionProps } from '../settingsUi';
 import { RepoFileEditor } from './RepoFileEditor';
+import { logSystemActivity } from '../../../utils/brainService';
 
 const DIR = '.github/ISSUE_TEMPLATE';
 
@@ -117,13 +118,16 @@ export const TemplatesSection: React.FC<SectionProps> = ({ ctx, owner, repo, isA
     for (const [name, content] of Object.entries(DEFAULT_ISSUE_TEMPLATES)) {
       if (files?.some((f) => f.name === name)) continue;
       try {
-        await ghSettings('putFile', { owner, repo, path: `${DIR}/${name}`, content, message: `chore: adiciona template de issue ${name} via DevFlow` });
+        await ghSettings('putFile', { owner, repo, path: `${DIR}/${name}`, content, message: `chore: adiciona template de issue ${name} via Aura Dev` });
         ok++;
       } catch (e: any) {
         showToast(`Falhou em ${name}: ${e.message}`);
       }
     }
-    if (ok) showToast(`${ok} template(s) criados.`);
+    if (ok) {
+      logSystemActivity('configuracoes_projeto', 'criar_templates_padrao', `${owner}/${repo}`, { count: ok });
+      showToast(`${ok} template(s) criados.`);
+    }
     setBusy(false);
     load();
   };
@@ -196,7 +200,8 @@ export const TemplatesSection: React.FC<SectionProps> = ({ ctx, owner, repo, isA
               confirmLabel: 'Excluir',
               onConfirm: async () => {
                 try {
-                  await ghSettings('deleteFile', { owner, repo, path: selected, sha, message: `chore: remove ${selected} via DevFlow` });
+                  await ghSettings('deleteFile', { owner, repo, path: selected, sha, message: `chore: remove ${selected} via Aura Dev` });
+                  logSystemActivity('configuracoes_projeto', 'excluir_template', `${owner}/${repo}`, { path: selected });
                   showToast('Template excluído.');
                   setSelected(null);
                   load();

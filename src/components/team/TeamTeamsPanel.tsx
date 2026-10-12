@@ -22,18 +22,18 @@ interface Props {
 const MetricsRow: React.FC<{ ctx: TeamUiCtx; metrics: TeamMetrics }> = ({ ctx, metrics }) => {
   const { theme, accentColor } = ctx;
   const cell = (label: string, value: React.ReactNode, tone?: string) => (
-    <div style={{ background: theme.controlBg, borderRadius: 6, padding: '6px 8px', minWidth: 0 }}>
-      <div style={{ fontSize: 10, color: theme.textMuted }}>{label}</div>
-      <div style={{ fontSize: 13, fontWeight: 600, color: tone || theme.textPrimary }}>{value}</div>
+    <div style={{ background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg, borderRadius: 6, padding: '6px 8px', minWidth: 0, border: 'none', boxShadow: 'none' }}>
+      <div style={{ fontSize: 10, color: theme.textSecondary }}>{label}</div>
+      <div style={{ fontSize: 13, fontWeight: 400, color: tone || theme.textPrimary }}>{value}</div>
     </div>
   );
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr', gap: 4 }}>
-      <div style={{ background: theme.controlBg, borderRadius: 6, padding: '6px 8px', minWidth: 0 }}>
-        <div style={{ fontSize: 10, color: theme.textMuted }}>Throughput (8 sem.)</div>
+      <div style={{ background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg, borderRadius: 6, padding: '6px 8px', minWidth: 0, border: 'none', boxShadow: 'none' }}>
+        <div style={{ fontSize: 10, color: theme.textSecondary }}>Throughput (8 sem.)</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: theme.textPrimary }}>{metrics.weeklyThroughput.reduce((a, b) => a + b, 0)}</span>
-          <Sparkline values={metrics.weeklyThroughput} color={accentColor} muted={theme.textMuted} width={70} height={20} />
+          <span style={{ fontSize: 13, fontWeight: 400, color: theme.textPrimary }}>{metrics.weeklyThroughput.reduce((a, b) => a + b, 0)}</span>
+          <Sparkline values={metrics.weeklyThroughput} color={accentColor} muted={theme.textSecondary} width={70} height={20} />
         </div>
       </div>
       {cell('Lead time PR', formatHours(metrics.leadTimeHours))}
@@ -152,8 +152,8 @@ export const TeamTeamsPanel: React.FC<Props> = ({ ctx, raw, owner, repoFullName,
               {isOpen && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 6, marginTop: 2 }}>
                   {/* Membros */}
-                  <div style={{ background: theme.controlBg, borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: theme.textSecondary, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Membros</div>
+                  <div style={{ background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg, borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 4, border: 'none', boxShadow: 'none' }}>
+                    <div style={{ fontSize: 11, fontWeight: 400, color: theme.textSecondary, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Membros</div>
                     {team.members.map((mm) => {
                       const st = memberByLogin.get(mm.login.toLowerCase());
                       return (
@@ -174,8 +174,8 @@ export const TeamTeamsPanel: React.FC<Props> = ({ ctx, raw, owner, repoFullName,
                   </div>
 
                   {/* Repositórios */}
-                  <div style={{ background: theme.controlBg, borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: theme.textSecondary, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Repositórios ({team.repos.length})</div>
+                  <div style={{ background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg, borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 4, border: 'none', boxShadow: 'none' }}>
+                    <div style={{ fontSize: 11, fontWeight: 400, color: theme.textSecondary, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Repositórios ({team.repos.length})</div>
                     {team.repos.slice(0, 14).map((r) => (
                       <div key={r.fullName} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
                         <span style={{ flex: 1, color: r.fullName === repoFullName ? accentColor : theme.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.fullName.split('/')[1]}</span>
@@ -186,8 +186,8 @@ export const TeamTeamsPanel: React.FC<Props> = ({ ctx, raw, owner, repoFullName,
                   </div>
 
                   {/* Time × milestone */}
-                  <div style={{ background: theme.controlBg, borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: theme.textSecondary, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Participação nas sprints/marcos</div>
+                  <div style={{ background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg, borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 6, border: 'none', boxShadow: 'none' }}>
+                    <div style={{ fontSize: 11, fontWeight: 400, color: theme.textSecondary, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Participação nas sprints/marcos</div>
                     {metrics.milestoneShare.length === 0 ? (
                       <span style={{ fontSize: 11.5, color: theme.textMuted }}>Nenhum marco aberto com issues.</span>
                     ) : (

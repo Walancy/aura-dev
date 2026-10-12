@@ -5,6 +5,8 @@ import {
   Link2,
   Users,
   Shield,
+  ShieldCheck,
+  CheckCircle2,
   Plus,
   Edit2,
   Trash2,
@@ -18,6 +20,7 @@ import type { RiskItem, StrategicRisk, ProjectHealthMetrics } from './types';
 import { StrategicRiskModal } from './StrategicRiskModal';
 import { RiskMatrixView } from './RiskMatrixView';
 import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
+import { logSystemActivity } from '../../utils/brainService';
 
 interface ProjectRisksDashboardProps {
   issues: ProjectIssue[];
@@ -361,18 +364,22 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
     [autoRisks]
   );
 
-  const canvasBg = theme.viewCanvasBg || (isEffectiveDark ? '#141414' : '#f8fafc');
-  const cardBg = theme.viewCardBg || (isEffectiveDark ? '#181818' : '#ffffff');
-  const cardHoverBg = theme.viewCardHoverBg || (isEffectiveDark ? '#242424' : '#f1f5f9');
-  const textPrimary = theme.textPrimary || (isEffectiveDark ? '#ffffff' : '#0f172a');
-  const textSecondary = theme.textSecondary || (isEffectiveDark ? '#888888' : '#64748b');
+  const canvasBg = isEffectiveDark ? '#0e0e0e' : '#f5f5f5';
+  const cardBg = isEffectiveDark ? '#1a1a1a' : '#ffffff';
+  const cardSecondary = isEffectiveDark ? '#222222' : '#f4f5f7';
+  const cardHoverBg = isEffectiveDark ? '#282828' : '#eceff1';
+  const textPrimary = isEffectiveDark ? '#ffffff' : '#111111';
+  const textSecondary = isEffectiveDark ? '#9ca3af' : '#4b5563';
+  const textMuted = isEffectiveDark ? '#6b7280' : '#9ca3af';
+  const borderSubtle = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)';
 
   // Métricas adicionais para os 2 novos cards da coluna lateral
   const sideCardStats = useMemo(() => {
     const totalIssues = issues.length;
     const closedIssues = issues.filter((i) => i.status === 'Concluído' || i.rawState === 'closed').length;
-    const openIssues = totalIssues - closedIssues;
     const inProgressIssues = issues.filter((i) => i.status === 'Em Progresso').length;
+    const todoIssues = Math.max(0, totalIssues - closedIssues - inProgressIssues);
+    const openIssues = totalIssues - closedIssues;
     const urgentCount = issues.filter(
       (i) => (i.priority === 'Urgente' || i.priority === 'Alta') && i.status !== 'Concluído' && i.rawState !== 'closed'
     ).length;
@@ -383,23 +390,34 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
     const completionRate = totalIssues > 0 ? Math.round((closedIssues / totalIssues) * 100) : 0;
     const assignmentRate = openIssues > 0 ? Math.round((assignedCount / openIssues) * 100) : 100;
 
-    const activeCollaborators = new Set<string>();
+    const devWorkloadMap = new Map<string, { name: string; avatarUrl?: string; activeCount: number }>();
     issues.forEach((i) => {
-      if (i.status !== 'Concluído' && i.rawState !== 'closed' && i.assignees && i.assignees[0]?.name) {
-        activeCollaborators.add(i.assignees[0].name);
+      if (i.status !== 'Concluído' && i.rawState !== 'closed' && i.assignees && i.assignees.length > 0) {
+        i.assignees.forEach((ass) => {
+          const name = ass.name || ass.login;
+          if (name) {
+            const cur = devWorkloadMap.get(name) || { name, avatarUrl: ass.avatarUrl, activeCount: 0 };
+            cur.activeCount += 1;
+            if (ass.avatarUrl && !cur.avatarUrl) cur.avatarUrl = ass.avatarUrl;
+            devWorkloadMap.set(name, cur);
+          }
+        });
       }
     });
+    const topDevs = Array.from(devWorkloadMap.values()).sort((a, b) => b.activeCount - a.activeCount).slice(0, 3);
 
     return {
       totalIssues,
       closedIssues,
       openIssues,
       inProgressIssues,
+      todoIssues,
       urgentCount,
       unassignedCount,
       completionRate,
       assignmentRate,
-      activeCollaboratorsCount: activeCollaborators.size,
+      activeCollaboratorsCount: devWorkloadMap.size,
+      topDevs,
     };
   }, [issues]);
 
@@ -427,15 +445,16 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
             maxWidth: 340,
             display: 'flex',
             flexDirection: 'column',
-            gap: 5,
+            gap: 8,
             alignSelf: 'stretch',
+            height: '100%',
             maxHeight: '100%',
             overflowY: 'auto',
             flexShrink: 0,
-            flexGrow: 0,
             boxSizing: 'border-box',
             paddingRight: 2,
           }}
+          className="no-scrollbar"
         >
           {/* 1. HERO CARD: SAÚDE DO PROJETO (REORGANIZADO & COMPACTO) */}
           <div
@@ -454,7 +473,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
               alignSelf: 'start',
               flexShrink: 0,
               flexGrow: 0,
-              boxShadow: '0 4px 14px rgba(0,0,0,0.12)',
+              boxShadow: 'none',
               gap: 8,
               color: '#ffffff',
               boxSizing: 'border-box',
@@ -577,459 +596,536 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
             )}
           </div>
 
-          {/* 2. CARD DE DADOS: DEMANDAS (COMPACTO E REORGANIZADO) */}
+          {/* 2. CARD DE DADOS: DEMANDAS (NOVA UI) */}
           <div
             style={{
               width: '100%',
-              background: isEffectiveDark ? '#141416' : theme.bgShelf,
-              borderRadius: 10,
-              border: theme.shelfBorder,
-              boxShadow: theme.shelfShadow,
-              padding: '12px 14px',
+              background: cardBg,
+              borderRadius: 8,
+              border: 'none',
+              boxShadow: 'none',
+              padding: 10,
               display: 'flex',
               flexDirection: 'column',
-              gap: 8,
+              justifyContent: 'space-between',
+              gap: 10,
+              flex: 1,
+              minHeight: 0,
               boxSizing: 'border-box',
               color: textPrimary,
               fontWeight: 400,
             }}
           >
-            {/* Header: Título + Badges e Ações */}
+            {/* Header: Titulo + Badge Sprint + Contador Total */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 13, fontWeight: 500, color: textPrimary, letterSpacing: -0.2 }}>
+                <span style={{ fontSize: 12, fontWeight: 400, color: textPrimary, letterSpacing: -0.2 }}>
                   Demandas
                 </span>
                 <span
                   style={{
                     fontSize: 9.5,
                     color: textSecondary,
-                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
-                    padding: '1px 6px',
+                    background: cardSecondary,
+                    padding: '2px 7px',
                     borderRadius: 4,
+                    border: 'none',
+                    height: 20,
+                    display: 'flex',
+                    alignItems: 'center',
+                    fontWeight: 400,
                   }}
                 >
                   Sprint Ativo
                 </span>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <div
-                  style={{
-                    width: 20,
-                    height: 20,
-                    borderRadius: 4,
-                    border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
-                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: textSecondary,
-                    cursor: 'pointer',
-                  }}
-                  title="Editar fluxo"
-                >
-                  <Edit2 size={10} />
+              <span style={{ fontSize: 10, color: textMuted, fontWeight: 400 }}>
+                {sideCardStats.totalIssues} no total
+              </span>
+            </div>
+
+            {/* Grid 3 colunas de status: A Fazer / Em Curso / Concluidas */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+              <div
+                style={{
+                  background: cardSecondary,
+                  borderRadius: 6,
+                  padding: 8,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  border: 'none',
+                  boxShadow: 'none',
+                }}
+              >
+                <span style={{ fontSize: 9.5, color: textSecondary, fontWeight: 400 }}>A Fazer</span>
+                <div style={{ fontSize: 17, fontWeight: 400, color: textPrimary, lineHeight: 1 }}>
+                  {sideCardStats.todoIssues}
                 </div>
-                <div
-                  style={{
-                    width: 20,
-                    height: 20,
-                    borderRadius: 4,
-                    border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
-                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: textSecondary,
-                    cursor: 'pointer',
-                  }}
-                  title="Visualizar repositório"
-                >
-                  <ExternalLink size={10} />
+                <span style={{ fontSize: 9, color: textMuted, fontWeight: 400 }}>
+                  {sideCardStats.totalIssues > 0 ? Math.round((sideCardStats.todoIssues / sideCardStats.totalIssues) * 100) : 0}%
+                </span>
+              </div>
+
+              <div
+                style={{
+                  background: cardSecondary,
+                  borderRadius: 6,
+                  padding: 8,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  border: 'none',
+                  boxShadow: 'none',
+                }}
+              >
+                <span style={{ fontSize: 9.5, color: accentColor, fontWeight: 400 }}>Em Curso</span>
+                <div style={{ fontSize: 17, fontWeight: 400, color: accentColor, lineHeight: 1 }}>
+                  {sideCardStats.inProgressIssues}
                 </div>
+                <span style={{ fontSize: 9, color: textMuted, fontWeight: 400 }}>
+                  {sideCardStats.totalIssues > 0 ? Math.round((sideCardStats.inProgressIssues / sideCardStats.totalIssues) * 100) : 0}%
+                </span>
+              </div>
+
+              <div
+                style={{
+                  background: cardSecondary,
+                  borderRadius: 6,
+                  padding: 8,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  border: 'none',
+                  boxShadow: 'none',
+                }}
+              >
+                <span style={{ fontSize: 9.5, color: '#22c55e', fontWeight: 400 }}>Concluídas</span>
+                <div style={{ fontSize: 17, fontWeight: 400, color: '#22c55e', lineHeight: 1 }}>
+                  {sideCardStats.closedIssues}
+                </div>
+                <span style={{ fontSize: 9, color: textMuted, fontWeight: 400 }}>
+                  {sideCardStats.completionRate}%
+                </span>
               </div>
             </div>
 
-            {/* Linha 1: Sprint Ativo (Métrica Principal + Inline Sub-métricas + Medidor Circular) */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                background: isEffectiveDark ? 'rgba(255, 255, 255, 0.025)' : 'rgba(0, 0, 0, 0.02)',
-                borderRadius: 8,
-                padding: '7px 10px',
-                border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)'}`,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div>
-                  <div style={{ fontSize: 22, fontWeight: 300, lineHeight: 1, color: textPrimary, letterSpacing: -0.6 }}>
-                    {sideCardStats.openIssues}
-                  </div>
-                  <div style={{ fontSize: 9.5, color: textSecondary, marginTop: 2, whiteSpace: 'nowrap' }}>
-                    A revisar
-                  </div>
-                </div>
-
-                <div style={{ height: 22, width: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)' }} />
-
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <div>
-                    <span style={{ fontSize: 13, fontWeight: 400, color: textPrimary }}>{sideCardStats.inProgressIssues}</span>
-                    <span style={{ fontSize: 9.5, color: textSecondary, marginLeft: 4 }}>Em curso</span>
-                  </div>
-                  <div>
-                    <span style={{ fontSize: 13, fontWeight: 400, color: textPrimary }}>{sideCardStats.closedIssues}</span>
-                    <span style={{ fontSize: 9.5, color: textSecondary, marginLeft: 4 }}>Concluídas</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Medidor Circular com cor de destaque */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                <div style={{ position: 'relative', width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <svg width="28" height="28" viewBox="0 0 28 28">
-                    <circle
-                      cx="14"
-                      cy="14"
-                      r="11"
-                      fill="none"
-                      stroke={isEffectiveDark ? 'rgba(255, 255, 255, 0.09)' : 'rgba(0, 0, 0, 0.08)'}
-                      strokeWidth="2.5"
-                    />
-                    <circle
-                      cx="14"
-                      cy="14"
-                      r="11"
-                      fill="none"
-                      stroke={accentColor}
-                      strokeWidth="2.5"
-                      strokeDasharray={69.1}
-                      strokeDashoffset={69.1 - (69.1 * Math.min(100, Math.max(0, sideCardStats.completionRate))) / 100}
-                      strokeLinecap="round"
-                      transform="rotate(-90 14 14)"
-                    />
-                  </svg>
-                  <span style={{ position: 'absolute', fontSize: 8, fontWeight: 600, color: textPrimary }}>
-                    {sideCardStats.completionRate}%
-                  </span>
-                </div>
-
-                <span
+            {/* Barra Segmentada de Distribuicao */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              <div
+                style={{
+                  width: '100%',
+                  height: 6,
+                  borderRadius: 3,
+                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
+                  display: 'flex',
+                  overflow: 'hidden',
+                }}
+              >
+                <div
                   style={{
+                    width: `${sideCardStats.totalIssues > 0 ? (sideCardStats.closedIssues / sideCardStats.totalIssues) * 100 : 0}%`,
+                    background: '#22c55e',
+                    height: '100%',
+                    transition: 'width 0.3s ease',
+                  }}
+                  title={`Concluidas: ${sideCardStats.closedIssues}`}
+                />
+                <div
+                  style={{
+                    width: `${sideCardStats.totalIssues > 0 ? (sideCardStats.inProgressIssues / sideCardStats.totalIssues) * 100 : 0}%`,
                     background: accentColor,
-                    color: accentContrastText,
-                    fontSize: 8.5,
-                    fontWeight: 600,
-                    padding: '2px 5px',
-                    borderRadius: 3,
-                    letterSpacing: -0.2,
+                    height: '100%',
+                    transition: 'width 0.3s ease',
                   }}
-                >
-                  {sideCardStats.completionRate >= 50 ? `+${sideCardStats.completionRate}%` : `-${100 - sideCardStats.completionRate}%`}
-                </span>
+                  title={`Em Curso: ${sideCardStats.inProgressIssues}`}
+                />
+                <div
+                  style={{
+                    width: `${sideCardStats.totalIssues > 0 ? (sideCardStats.todoIssues / sideCardStats.totalIssues) * 100 : 100}%`,
+                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.12)',
+                    height: '100%',
+                    transition: 'width 0.3s ease',
+                  }}
+                  title={`A Fazer: ${sideCardStats.todoIssues}`}
+                />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 9.5 }}>
+                <span style={{ color: textSecondary, fontWeight: 400 }}>Progresso do fluxo</span>
+                <span style={{ color: textPrimary, fontWeight: 400 }}>{sideCardStats.completionRate}% entregue</span>
               </div>
             </div>
 
-            {/* Linha 2: Atenção Operacional (Alta Prioridade + Estagnadas / Atrasos + Status Pill) */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                background: isEffectiveDark ? 'rgba(255, 255, 255, 0.025)' : 'rgba(0, 0, 0, 0.02)',
-                borderRadius: 8,
-                padding: '7px 10px',
-                border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)'}`,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div>
-                  <div style={{ fontSize: 22, fontWeight: 300, lineHeight: 1, color: textPrimary, letterSpacing: -0.6 }}>
-                    {sideCardStats.urgentCount}
-                  </div>
-                  <div style={{ fontSize: 9.5, color: textSecondary, marginTop: 2, whiteSpace: 'nowrap' }}>
-                    Alta prioridade
-                  </div>
+            {/* Indicadores de Atencao Operacional */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  background: cardSecondary,
+                  borderRadius: 6,
+                  padding: '6px 8px',
+                  border: 'none',
+                  boxShadow: 'none',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <AlertTriangle size={12} color={sideCardStats.urgentCount > 0 ? '#ef4444' : textSecondary} />
+                  <span style={{ fontSize: 9.5, color: textPrimary, fontWeight: 400 }}>Prioridade Alta / Urgente</span>
                 </div>
-
-                <div style={{ height: 22, width: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)' }} />
-
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <div>
-                    <span style={{ fontSize: 13, fontWeight: 400, color: textPrimary }}>{metrics.staleCount}</span>
-                    <span style={{ fontSize: 9.5, color: textSecondary, marginLeft: 4 }}>Estagnadas</span>
-                  </div>
-                  <div>
-                    <span style={{ fontSize: 13, fontWeight: 400, color: textPrimary }}>{metrics.overdueCount}</span>
-                    <span style={{ fontSize: 9.5, color: textSecondary, marginLeft: 4 }}>Atrasadas</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Status Pill & Barrinhas em Destaque */}
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
                 <span
                   style={{
-                    background: sideCardStats.unassignedCount > 0 ? '#ef4444' : accentColor,
-                    color: sideCardStats.unassignedCount > 0 ? '#ffffff' : accentContrastText,
-                    fontSize: 8.5,
-                    fontWeight: 600,
-                    padding: '2px 6px',
-                    borderRadius: 3,
-                    letterSpacing: -0.2,
+                    fontSize: 9.5,
+                    fontWeight: 400,
+                    color: sideCardStats.urgentCount > 0 ? '#ef4444' : textSecondary,
+                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
+                    padding: '1px 6px',
+                    borderRadius: 4,
                   }}
                 >
-                  {sideCardStats.unassignedCount > 0 ? `${sideCardStats.unassignedCount} s/ dono` : 'Estável'}
+                  {sideCardStats.urgentCount}
                 </span>
+              </div>
 
-                {/* Micro-barras */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 2, width: 44, height: 3 }}>
-                  <div
-                    style={{
-                      flex: 1,
-                      height: '100%',
-                      borderRadius: 1,
-                      background: sideCardStats.urgentCount > 0 ? '#ef4444' : (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.1)'),
-                    }}
-                    title="Prioridade urgente"
-                  />
-                  <div
-                    style={{
-                      flex: 1,
-                      height: '100%',
-                      borderRadius: 1,
-                      background: metrics.staleCount > 0 ? '#eab308' : (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.1)'),
-                    }}
-                    title="Estagnadas"
-                  />
-                  <div
-                    style={{
-                      flex: 1,
-                      height: '100%',
-                      borderRadius: 1,
-                      background: accentColor,
-                    }}
-                    title="Status estável"
-                  />
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  background: cardSecondary,
+                  borderRadius: 6,
+                  padding: '6px 8px',
+                  border: 'none',
+                  boxShadow: 'none',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Clock size={12} color={(metrics.overdueCount + metrics.staleCount) > 0 ? '#eab308' : textSecondary} />
+                  <span style={{ fontSize: 9.5, color: textPrimary, fontWeight: 400 }}>Atrasadas ou Estagnadas</span>
                 </div>
+                <span
+                  style={{
+                    fontSize: 9.5,
+                    fontWeight: 400,
+                    color: (metrics.overdueCount + metrics.staleCount) > 0 ? '#eab308' : textSecondary,
+                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
+                    padding: '1px 6px',
+                    borderRadius: 4,
+                  }}
+                >
+                  {metrics.overdueCount + metrics.staleCount}
+                </span>
               </div>
             </div>
           </div>
 
-          {/* 3. CARD DE DADOS: ENTREGAS & RITMO (COMPACTO COM ACCENT COLOR) */}
+          {/* 3. CARD DE DADOS: ENTREGAS & EQUIPE (NOVA UI) */}
           <div
             style={{
               width: '100%',
-              background: isEffectiveDark ? '#141416' : theme.bgShelf,
-              borderRadius: 10,
-              border: theme.shelfBorder,
-              boxShadow: theme.shelfShadow,
-              padding: '12px 14px',
+              background: cardBg,
+              borderRadius: 8,
+              border: 'none',
+              boxShadow: 'none',
+              padding: 10,
               display: 'flex',
               flexDirection: 'column',
-              gap: 10,
+              gap: 8,
+              flex: 1.15,
+              minHeight: 0,
               boxSizing: 'border-box',
               color: textPrimary,
               fontWeight: 400,
+              overflow: 'hidden',
             }}
           >
-            {/* Header: Título + Pill Dropdown ("Este ciclo ▾") */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 13, fontWeight: 500, color: textPrimary, letterSpacing: -0.2 }}>
-                Entregas & Equipe
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 400, color: textPrimary, letterSpacing: -0.2 }}>
+                  Entregas & Equipe
+                </span>
+                <span
+                  style={{
+                    fontSize: 9.5,
+                    color: textSecondary,
+                    background: cardSecondary,
+                    padding: '2px 7px',
+                    borderRadius: 4,
+                    border: 'none',
+                    height: 20,
+                    display: 'flex',
+                    alignItems: 'center',
+                    fontWeight: 400,
+                  }}
+                >
+                  Ciclo Atual
+                </span>
+              </div>
+              <span style={{ fontSize: 10, color: textMuted, fontWeight: 400 }}>
+                {sideCardStats.activeCollaboratorsCount} ativos
               </span>
+            </div>
+
+            {/* KPIs de Atribuicao e Entrega (Compactos) */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6, flexShrink: 0 }}>
               <div
                 style={{
-                  fontSize: 9.5,
-                  color: textSecondary,
-                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
-                  border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
-                  padding: '2px 7px',
-                  borderRadius: 4,
+                  background: cardSecondary,
+                  borderRadius: 6,
+                  padding: '6px 8px',
                   display: 'flex',
-                  alignItems: 'center',
+                  flexDirection: 'column',
                   gap: 3,
-                  cursor: 'pointer',
+                  border: 'none',
+                  boxShadow: 'none',
                 }}
               >
-                Este ciclo <ChevronDown size={10} />
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 9.5, color: textSecondary, fontWeight: 400 }}>Atribuição</span>
+                  <Users size={11} color={accentColor} />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 4 }}>
+                  <span style={{ fontSize: 14, fontWeight: 400, color: textPrimary, lineHeight: 1 }}>
+                    {sideCardStats.assignmentRate}%
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 8.5,
+                      color: sideCardStats.unassignedCount > 0 ? '#ef4444' : textMuted,
+                      fontWeight: 400,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {sideCardStats.unassignedCount > 0 ? `${sideCardStats.unassignedCount} sem dono` : 'Todas atribuídas'}
+                  </span>
+                </div>
               </div>
-            </div>
 
-            {/* Métrica Principal + Gráfico Stepped Columns em Degraus */}
-            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
-              <div>
-                <div style={{ fontSize: 10, color: textSecondary, marginBottom: 2, fontWeight: 400 }}>
-                  Taxa de cobertura
+              <div
+                style={{
+                  background: cardSecondary,
+                  borderRadius: 6,
+                  padding: '6px 8px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 3,
+                  border: 'none',
+                  boxShadow: 'none',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: 9.5, color: textSecondary, fontWeight: 400 }}>Conclusão</span>
+                  <CheckCircle2 size={11} color="#22c55e" />
                 </div>
-                <div style={{ fontSize: 26, fontWeight: 300, lineHeight: 1, color: textPrimary, letterSpacing: -0.8 }}>
-                  {sideCardStats.assignmentRate}%
-                </div>
-                <div style={{ fontSize: 10, color: textSecondary, marginTop: 3, fontWeight: 400 }}>
-                  {sideCardStats.activeCollaboratorsCount}{' '}
-                  {sideCardStats.activeCollaboratorsCount === 1 ? 'membro ativo' : 'membros ativos'}
-                </div>
-              </div>
-
-              {/* Degraus em Escadinha (Stepped Columns) */}
-              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 48, paddingBottom: 2 }}>
-                {/* Coluna 1 (baixa, sólida em cor de destaque) */}
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                  <span style={{ fontSize: 8, color: textSecondary, fontWeight: 400 }}>
-                    {sideCardStats.activeCollaboratorsCount} dev
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 4 }}>
+                  <span style={{ fontSize: 14, fontWeight: 400, color: textPrimary, lineHeight: 1 }}>
+                    {sideCardStats.completionRate}%
                   </span>
-                  <div
-                    style={{
-                      width: 22,
-                      height: 16,
-                      background: accentColor,
-                      borderRadius: '2px 2px 0 0',
-                    }}
-                  />
-                </div>
-
-                {/* Coluna 2 (média, hachurada com linhas verticais finas) */}
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                  <span style={{ fontSize: 8, color: textSecondary, fontWeight: 400 }}>
-                    {sideCardStats.inProgressIssues} ativas
+                  <span style={{ fontSize: 8.5, color: textMuted, fontWeight: 400, whiteSpace: 'nowrap' }}>
+                    {sideCardStats.closedIssues} de {sideCardStats.totalIssues} feitas
                   </span>
-                  <div
-                    style={{
-                      width: 26,
-                      height: 28,
-                      background: `repeating-linear-gradient(90deg, ${isEffectiveDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.2)'} 0px, ${isEffectiveDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.2)'} 1px, transparent 1px, transparent 3px)`,
-                      borderTop: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.4)'}`,
-                      borderRadius: '2px 2px 0 0',
-                    }}
-                  />
-                </div>
-
-                {/* Coluna 3 (alta, hachurada com linhas verticais finas) */}
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                  <span style={{ fontSize: 8, color: textSecondary, fontWeight: 400 }}>
-                    {sideCardStats.openIssues} total
-                  </span>
-                  <div
-                    style={{
-                      width: 26,
-                      height: 42,
-                      background: `repeating-linear-gradient(90deg, ${isEffectiveDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.2)'} 0px, ${isEffectiveDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.2)'} 1px, transparent 1px, transparent 3px)`,
-                      borderTop: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.4)'}`,
-                      borderRadius: '2px 2px 0 0',
-                    }}
-                  />
                 </div>
               </div>
             </div>
 
-            {/* Régua de Tracinhos / Timeline */}
+            {/* Secao de Carga de Trabalho dos Colaboradores com Scroll */}
             <div
               style={{
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 5,
-                paddingTop: 8,
-                borderTop: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'}`,
+                flex: 1,
+                minHeight: 0,
+                overflow: 'hidden',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 10 }}>
-                <span style={{ color: textSecondary }}>Ciclo de entrega</span>
-                <span style={{ color: textPrimary, fontWeight: 400, fontSize: 12, letterSpacing: -0.2 }}>
-                  {sideCardStats.completionRate}%
-                </span>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+                <span style={{ fontSize: 9.5, color: textSecondary, fontWeight: 400 }}>Carga por Membro</span>
+                <span style={{ fontSize: 9, color: textMuted, fontWeight: 400 }}>Tarefas ativas</span>
               </div>
 
-              {/* Régua com tracinhos e ponto na cor de destaque */}
-              <div style={{ position: 'relative', width: '100%', height: 14 }}>
+              {sideCardStats.topDevs.length > 0 ? (
                 <div
                   style={{
                     display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    width: '100%',
-                    height: 8,
-                    opacity: isEffectiveDark ? 0.35 : 0.45,
+                    flexDirection: 'column',
+                    gap: 4,
+                    flex: 1,
+                    minHeight: 0,
+                    overflowY: 'auto',
+                    paddingRight: 2,
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.15) transparent' : 'rgba(0, 0, 0, 0.15) transparent',
                   }}
+                  className="no-scrollbar"
                 >
-                  {Array.from({ length: 28 }).map((_, idx) => (
+                  {sideCardStats.topDevs.map((dev, idx) => (
                     <div
                       key={idx}
                       style={{
-                        width: 1,
-                        height: idx % 4 === 0 ? 7 : 3.5,
-                        background: idx % 4 === 0 ? textPrimary : textSecondary,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        background: cardSecondary,
+                        borderRadius: 5,
+                        padding: '4px 7px',
+                        border: 'none',
+                        boxShadow: 'none',
+                        flexShrink: 0,
+                        transition: 'all 0.15s ease',
                       }}
-                    />
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                        {dev.avatarUrl ? (
+                          <img
+                            src={dev.avatarUrl}
+                            alt={dev.name}
+                            style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+                          />
+                        ) : (
+                          <div
+                            style={{
+                              width: 18,
+                              height: 18,
+                              borderRadius: '50%',
+                              background: accentColor,
+                              color: accentContrastText,
+                              fontSize: 8.5,
+                              fontWeight: 400,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              flexShrink: 0,
+                            }}
+                          >
+                            {dev.name.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <span
+                          style={{
+                            fontSize: 10,
+                            color: textPrimary,
+                            fontWeight: 400,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            maxWidth: 130,
+                          }}
+                        >
+                          {dev.name}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+                        <span
+                          style={{
+                            fontSize: 9,
+                            color: textSecondary,
+                            fontWeight: 400,
+                            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
+                            padding: '1px 5px',
+                            borderRadius: 3,
+                          }}
+                        >
+                          {dev.activeCount}
+                        </span>
+                      </div>
+                    </div>
                   ))}
                 </div>
-                {/* Marcador flutuante na régua na cor de destaque */}
+              ) : (
                 <div
                   style={{
-                    position: 'absolute',
-                    top: 1,
-                    left: `${Math.min(92, Math.max(8, sideCardStats.completionRate))}%`,
-                    width: 6,
-                    height: 6,
-                    borderRadius: '50%',
-                    background: accentColor,
-                    boxShadow: `0 0 6px ${accentColor}`,
-                    transform: 'translateX(-50%)',
+                    background: cardSecondary,
+                    borderRadius: 5,
+                    padding: 8,
+                    textAlign: 'center',
+                    fontSize: 9.5,
+                    color: textMuted,
+                    fontWeight: 400,
                   }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 9.5, color: textSecondary }}>
-                <span>{metrics.overdueCount > 0 ? `${metrics.overdueCount} atrasos` : '0 atrasos'}</span>
-                <span>Meta: 100% concluído</span>
-              </div>
+                >
+                  Nenhuma demanda atribuída no momento
+                </div>
+              )}
             </div>
 
-            {/* Destaque / Banner na cor de destaque */}
+            {/* Card de Saude Operacional Integrado (Substitui o botao azul estridente) */}
             <div
               style={{
-                background: accentColor,
-                color: accentContrastText,
+                background: cardSecondary,
                 borderRadius: 6,
-                padding: '8px 10px',
+                border: 'none',
+                boxShadow: 'none',
+                padding: '6px 8px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 gap: 8,
+                flexShrink: 0,
+                transition: 'all 0.15s ease',
               }}
             >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: -0.2 }}>
-                  {metrics.overdueCount > 0
-                    ? 'Atenção aos prazos'
-                    : metrics.staleCount > 0
-                    ? 'Demandas estagnadas'
-                    : 'Fluxo em ritmo saudável'}
-                </div>
-                <div style={{ fontSize: 9, opacity: 0.85, marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {metrics.overdueCount > 0
-                    ? `${metrics.overdueCount} itens precisam de replanejamento urgente.`
-                    : metrics.staleCount > 0
-                    ? `${metrics.staleCount} tarefas sem movimentação há 14 dias.`
-                    : 'Nenhum gargalo detectado na equipe.'}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                {metrics.overdueCount > 0 ? (
+                  <AlertTriangle size={14} color="#ef4444" style={{ flexShrink: 0 }} />
+                ) : (
+                  <ShieldCheck size={14} color="#22c55e" style={{ flexShrink: 0 }} />
+                )}
+                <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                  <span
+                    style={{
+                      fontSize: 10.5,
+                      fontWeight: 400,
+                      color: textPrimary,
+                      letterSpacing: -0.2,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {metrics.overdueCount > 0
+                      ? 'Atenção aos Prazos'
+                      : metrics.staleCount > 0
+                      ? 'Demandas Estagnadas'
+                      : 'Fluxo em Ritmo Saudável'}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 9,
+                      color: textSecondary,
+                      fontWeight: 400,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {metrics.overdueCount > 0
+                      ? `${metrics.overdueCount} itens atrasados`
+                      : metrics.staleCount > 0
+                      ? `${metrics.staleCount} tarefas estagnadas`
+                      : 'Nenhum gargalo detectado'}
+                  </span>
                 </div>
               </div>
-              <div
+
+              <span
                 style={{
-                  width: 20,
-                  height: 20,
+                  fontSize: 9,
+                  fontWeight: 400,
+                  color: metrics.overdueCount > 0 ? '#ef4444' : '#22c55e',
+                  background: metrics.overdueCount > 0 ? 'rgba(239, 68, 68, 0.12)' : 'rgba(34, 197, 94, 0.12)',
+                  padding: '2px 6px',
                   borderRadius: 4,
-                  border: `1px solid ${accentContrastText === '#ffffff' ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.25)'}`,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
                   flexShrink: 0,
-                  cursor: 'pointer',
                 }}
               >
-                <ArrowRight size={11} color={accentContrastText} />
-              </div>
+                {metrics.overdueCount > 0 ? 'Atenção' : 'Estável'}
+              </span>
             </div>
           </div>
         </div>
@@ -1041,8 +1137,8 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
             minWidth: 0,
             background: theme.bgShelf,
             borderRadius: 10,
-            border: theme.shelfBorder,
-            boxShadow: theme.shelfShadow,
+            border: 'none',
+            boxShadow: 'none',
             padding: 5,
             boxSizing: 'border-box',
             display: 'flex',
@@ -1054,9 +1150,9 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
           <div
             style={{
               flex: 1,
-              background: theme.viewCanvasBg,
+              background: isEffectiveDark ? '#111111' : theme.viewCanvasBg,
               borderRadius: 8,
-              padding: 14,
+              padding: 12,
               display: 'flex',
               flexDirection: 'column',
               gap: 12,
@@ -1072,7 +1168,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                background: isEffectiveDark ? '#1a1a1a' : '#eaecef',
+                background: isEffectiveDark ? '#1c1c1c' : '#eaecef',
                 borderRadius: 6,
                 padding: 2,
                 gap: 2,
@@ -1086,7 +1182,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                   borderRadius: 5,
                   fontSize: 11.5,
                   fontWeight: 400,
-                  background: viewMode === 'alerts' ? (isEffectiveDark ? '#262626' : '#ffffff') : 'transparent',
+                  background: viewMode === 'alerts' ? (isEffectiveDark ? '#2b2b2b' : '#ffffff') : 'transparent',
                   color: viewMode === 'alerts' ? textPrimary : textSecondary,
                   border: 'none',
                   cursor: 'pointer',
@@ -1103,7 +1199,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                   borderRadius: 5,
                   fontSize: 11.5,
                   fontWeight: 400,
-                  background: viewMode === 'matrix' ? (isEffectiveDark ? '#262626' : '#ffffff') : 'transparent',
+                  background: viewMode === 'matrix' ? (isEffectiveDark ? '#2b2b2b' : '#ffffff') : 'transparent',
                   color: viewMode === 'matrix' ? textPrimary : textSecondary,
                   border: 'none',
                   cursor: 'pointer',
@@ -1120,7 +1216,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                   borderRadius: 5,
                   fontSize: 11.5,
                   fontWeight: 400,
-                  background: viewMode === 'strategic' ? (isEffectiveDark ? '#262626' : '#ffffff') : 'transparent',
+                  background: viewMode === 'strategic' ? (isEffectiveDark ? '#2b2b2b' : '#ffffff') : 'transparent',
                   color: viewMode === 'strategic' ? textPrimary : textSecondary,
                   border: 'none',
                   cursor: 'pointer',
@@ -1159,7 +1255,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
             </button>
           </div>
 
-          {/* Grid de Filtros Rápidos (5 Cards) */}
+          {/* Grid de Filtros Rápidos (5 Cards com Contraste Acentuado) */}
           <div
             style={{
               display: 'grid',
@@ -1183,32 +1279,33 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                   onClick={() => {
                     setViewMode('alerts');
                     setActiveFilter(item.key);
+                    logSystemActivity('riscos', 'filtrar_riscos', item.label);
                   }}
                   style={{
-                    background: isActive ? (isEffectiveDark ? '#262626' : '#e2e8f0') : cardBg,
+                    background: isActive ? (isEffectiveDark ? '#2e2e2e' : '#e4e4e7') : (isEffectiveDark ? '#1a1a1a' : '#ffffff'),
                     borderRadius: 8,
                     border: 'none',
-                    padding: '8px 10px',
+                    padding: '10px 12px',
                     cursor: 'pointer',
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
-                    minHeight: 52,
-                    boxShadow: isEffectiveDark ? 'none' : '0 1px 2px rgba(0,0,0,0.03)',
+                    minHeight: 56,
+                    boxShadow: 'none',
                     transition: 'all 0.15s ease',
                   }}
                   onMouseEnter={(e) => {
-                    if (!isActive) e.currentTarget.style.background = cardHoverBg;
+                    if (!isActive) e.currentTarget.style.background = isEffectiveDark ? '#242424' : '#f4f4f5';
                   }}
                   onMouseLeave={(e) => {
-                    if (!isActive) e.currentTarget.style.background = cardBg;
+                    if (!isActive) e.currentTarget.style.background = isEffectiveDark ? '#1a1a1a' : '#ffffff';
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: 10.5, color: textSecondary, fontWeight: 400 }}>{item.label}</span>
-                    <Icon size={12} color={item.color} />
+                    <span style={{ fontSize: 11, color: isActive ? textPrimary : textSecondary, fontWeight: 400 }}>{item.label}</span>
+                    <Icon size={13} color={item.color} />
                   </div>
-                  <div style={{ fontSize: 16, fontWeight: 400, color: item.color }}>
+                  <div style={{ fontSize: 17, fontWeight: 400, color: item.color }}>
                     {item.count}
                   </div>
                 </div>
@@ -1221,17 +1318,29 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
             filteredAlerts.length === 0 ? (
               <div
                 style={{
-                  background: cardBg,
+                  background: isEffectiveDark ? '#181818' : '#ffffff',
                   borderRadius: 8,
                   border: 'none',
-                  padding: '32px 20px',
+                  padding: '36px 20px',
                   textAlign: 'center',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
                   color: textSecondary,
                   fontSize: 12,
                   fontWeight: 400,
+                  boxShadow: 'none',
                 }}
               >
-                Nenhuma pendência neste filtro.
+                <ShieldCheck size={22} color={accentColor} />
+                <span style={{ color: textPrimary, fontSize: 13, fontWeight: 400 }}>
+                  Nenhuma pendência neste filtro
+                </span>
+                <span style={{ color: textSecondary, fontSize: 11 }}>
+                  Todas as condições de risco monitoradas estão saudáveis.
+                </span>
               </div>
             ) : (
               <div

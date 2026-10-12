@@ -379,7 +379,7 @@ export const ProjectBrainModal: React.FC<ProjectBrainModalProps> = ({
                   color: colors.textPrimary,
                 }}
               >
-                DevFlow Brain
+                Aura Dev Brain
               </span>
               <span
                 style={{

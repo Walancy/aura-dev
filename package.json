@@ -1,7 +1,7 @@
 {
-  "name": "devflow-desktop",
+  "name": "aura-dev",
   "version": "1.0.0",
-  "description": "Native Project Management & IDE Desktop App with Claude and AGY CLI",
+  "description": "Aura Dev - Native Project Management & IDE Desktop App with Claude and AGY CLI",
   "main": "dist-electron/main.js",
   "scripts": {
     "build:orchestrator": "cargo build --release --manifest-path rust/orchestrator/Cargo.toml && node scripts/copy-orchestrator.js",

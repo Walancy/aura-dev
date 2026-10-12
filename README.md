@@ -1,4 +1,4 @@
-# devflow-desktop
+# aura-dev
 
 To install dependencies:
 

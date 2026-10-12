@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   BarChart3,
   TrendingUp,
@@ -37,7 +37,10 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import type { ProjectIssue } from '../ProjectsSchedulerView';
+import { logSystemActivity } from '../../utils/brainService';
+import { computeProjectHealthScore } from '../../utils/gitProjects';
 import { ThroughputTrendCard } from './ThroughputTrendCard';
+import { ProjectHealthReasonsCard } from './ProjectHealthReasonsCard';
 
 export interface ProjectReportsViewProps {
   selectedProject?: any;
@@ -85,7 +88,7 @@ const MemberAvatar: React.FC<{
         background: effectiveBg,
         color: '#ffffff',
         fontSize: Math.max(8, Math.round(size * 0.44)),
-        fontWeight: 600,
+        fontWeight: 400,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -125,31 +128,121 @@ export const ProjectReportsView: React.FC<ProjectReportsViewProps> = ({
   const [timeRange, setTimeRange] = useState<TimeRangeFilter>('all');
   const [scopeFilter, setScopeFilter] = useState<ScopeFilterType>('all');
   const [selectedMemberLogin, setSelectedMemberLogin] = useState<string | null>(null);
+  const [teamTab, setTeamTab] = useState<'tasks' | 'workload'>('tasks');
   const [aiTab, setAiTab] = useState<AiTabMode>('diagnosis');
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [customAiInsight, setCustomAiInsight] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  // Paleta de tokens neutros alinhada estritamente ao DevFlow
+  // Redimensionamento horizontal da sidebar (estilo Marcos)
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('aura_project_reports_sidebar_width');
+      if (saved) {
+        const val = Number(saved);
+        if (!isNaN(val) && val >= 180 && val <= 450) return val;
+      }
+    } catch {}
+    return 240;
+  });
+  const [isDraggingLeftSidebar, setIsDraggingLeftSidebar] = useState(false);
+
+  const startResizeLeftSidebar = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDraggingLeftSidebar(true);
+      document.body.classList.add('resizing-col');
+
+      const startX = e.clientX;
+      const initialWidth = leftSidebarWidth;
+
+      const onMouseMove = (moveEvent: MouseEvent) => {
+        const deltaX = moveEvent.clientX - startX;
+        const newWidth = Math.max(180, Math.min(450, initialWidth + deltaX));
+        setLeftSidebarWidth(newWidth);
+        try {
+          localStorage.setItem('aura_project_reports_sidebar_width', String(newWidth));
+        } catch {}
+      };
+
+      const onMouseUp = () => {
+        setIsDraggingLeftSidebar(false);
+        document.body.classList.remove('resizing-col');
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mouseup', onMouseUp);
+      };
+
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+    },
+    [leftSidebarWidth],
+  );
+
+  const resetLeftSidebarWidth = useCallback(() => {
+    setLeftSidebarWidth(240);
+    try {
+      localStorage.setItem('aura_project_reports_sidebar_width', '240');
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      document.body.classList.remove('resizing-col');
+    };
+  }, []);
+
+  // Paleta de cores 100% neutra monocromática (R = G = B, ZERO tom azulado ou slate) alinhada à aba Marcos
   const c = useMemo(() => {
+    if (isEffectiveDark) {
+      return {
+        shelf: '#101010',
+        card: '#161616',
+        cardSecondary: '#1e1e1e',
+        cardHover: '#242424',
+        cardSelected: '#2a2a2a',
+        pillBg: '#202020',
+        pillActive: '#2a2a2a',
+        inputBg: '#202020',
+        divider: 'rgba(255, 255, 255, 0.07)',
+        borderSubtle: 'rgba(255, 255, 255, 0.07)',
+        textPrimary: '#ffffff',
+        textSecondary: '#a3a3a3',
+        textMuted: '#737373',
+        success: '#10b981',
+        successBg: 'rgba(16, 185, 129, 0.15)',
+        danger: '#ef4444',
+        dangerBg: 'rgba(239, 68, 68, 0.15)',
+        warning: '#f59e0b',
+        warningBg: 'rgba(245, 158, 11, 0.15)',
+        info: '#3b82f6',
+        purple: '#a855f7',
+      };
+    }
     return {
-      shelf: theme?.bgShelf || (isEffectiveDark ? '#0d0d0d' : '#f4f4f5'),
-      card: theme?.viewCardBg || (isEffectiveDark ? '#141414' : '#ffffff'),
-      cardSecondary: isEffectiveDark ? '#191919' : '#f8fafc',
-      cardHover: isEffectiveDark ? '#202020' : '#f1f5f9',
-      textPrimary: isEffectiveDark ? '#f4f4f5' : '#0f172a',
-      textSecondary: isEffectiveDark ? '#a1a1aa' : '#64748b',
-      textMuted: isEffectiveDark ? '#71717a' : '#94a3b8',
-      borderSubtle: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
-      pillBg: isEffectiveDark ? '#1a1a1a' : '#e2e8f0',
-      pillActive: isEffectiveDark ? '#27272a' : '#ffffff',
+      shelf: '#f5f5f5',
+      card: '#ffffff',
+      cardSecondary: '#fafafa',
+      cardHover: '#f0f0f0',
+      cardSelected: '#e5e5e5',
+      pillBg: '#eeeeee',
+      pillActive: '#ffffff',
+      inputBg: '#f0f0f0',
+      divider: 'rgba(0, 0, 0, 0.05)',
+      borderSubtle: 'rgba(0, 0, 0, 0.05)',
+      textPrimary: '#111111',
+      textSecondary: '#777777',
+      textMuted: '#999999',
       success: '#10b981',
-      warning: '#f59e0b',
+      successBg: 'rgba(16, 185, 129, 0.12)',
       danger: '#ef4444',
+      dangerBg: 'rgba(239, 68, 68, 0.12)',
+      warning: '#f59e0b',
+      warningBg: 'rgba(245, 158, 11, 0.12)',
       info: '#3b82f6',
       purple: '#a855f7',
     };
-  }, [isEffectiveDark, theme]);
+  }, [isEffectiveDark]);
 
   // Resolução de avatar com GitHub fallback
   const resolveAvatar = (nameOrLogin: string, explicitUrl?: string) => {
@@ -244,10 +337,14 @@ export const ProjectReportsView: React.FC<ProjectReportsViewProps> = ({
     const avgLeadTimeDays =
       doneWithDatesCount > 0 ? (totalDaysToDone / doneWithDatesCount).toFixed(1) : '12.0';
 
-    // Health Score
-    const bugScore = Math.max(0, 100 - bugRate * 2.2);
-    const balanceScore = total > 0 ? Math.min(100, Math.round(((done + inProgress * 0.7) / total) * 100)) : 100;
-    const healthScore = Math.round(completionPercent * 0.4 + bugScore * 0.35 + balanceScore * 0.25);
+    // Health Score (utiliza a mesma função unificada computeProjectHealthScore)
+    const healthScore = computeProjectHealthScore(
+      timeFilteredIssues,
+      done,
+      inProgress,
+      total,
+      completionPercent
+    );
 
     // Prioridades
     const priorityCounts = { Urgente: 0, Alta: 0, Média: 0, Baixa: 0 };
@@ -274,7 +371,7 @@ export const ProjectReportsView: React.FC<ProjectReportsViewProps> = ({
       otherCount,
       bugRate,
       avgLeadTimeDays,
-      healthScore: Math.min(100, Math.max(20, healthScore || 85)),
+      healthScore,
       priorityCounts,
       releaseReadinessScore,
     };
@@ -638,17 +735,19 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
       {/* ========================================================================= */}
       <div
         style={{
-          width: 240,
-          minWidth: 220,
-          maxWidth: 260,
+          width: leftSidebarWidth,
+          minWidth: 180,
+          maxWidth: 450,
           flexShrink: 0,
           background: c.card,
           borderRadius: 8,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          padding: '10px 8px',
-          gap: 8,
+          padding: 10,
+          gap: 7,
+          border: 'none',
+          boxShadow: 'none',
         }}
       >
         {/* Header da Sidebar */}
@@ -669,14 +768,14 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: c.textPrimary }}>Relatórios</span>
+              <span style={{ fontSize: 13, fontWeight: 400, color: c.textPrimary }}>Relatórios</span>
               <span
                 style={{
                   fontSize: 9.5,
-                  fontWeight: 600,
+                  fontWeight: 400,
                   padding: '1px 5px',
                   borderRadius: 10,
-                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
+                  background: c.cardSecondary,
                   color: c.textSecondary,
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
@@ -722,7 +821,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                   borderRadius: 5,
                   padding: '3px 0',
                   fontSize: 10,
-                  fontWeight: isSelected ? 600 : 500,
+                  fontWeight: 400,
                   cursor: 'pointer',
                   transition: 'all 0.15s ease',
                   textAlign: 'center',
@@ -760,6 +859,16 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                     setSelectedMemberLogin(null);
                   }
                 }}
+                onMouseEnter={(e) => {
+                  if (!isSelected) {
+                    e.currentTarget.style.background = c.cardHover;
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isSelected) {
+                    e.currentTarget.style.background = 'transparent';
+                  }
+                }}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -767,11 +876,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                   padding: '7px 8px',
                   borderRadius: 6,
                   border: 'none',
-                  background: isSelected
-                    ? isEffectiveDark
-                      ? 'rgba(255, 255, 255, 0.08)'
-                      : 'rgba(0, 0, 0, 0.05)'
-                    : 'transparent',
+                  background: isSelected ? c.cardSelected : 'transparent',
                   color: isSelected ? c.textPrimary : c.textSecondary,
                   cursor: 'pointer',
                   transition: 'all 0.12s ease',
@@ -802,7 +907,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                   style={{
                     flex: 1,
                     fontSize: 11.5,
-                    fontWeight: isSelected ? 600 : 500,
+                    fontWeight: 400,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
@@ -814,14 +919,14 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                   <span
                     style={{
                       fontSize: 9.5,
-                      fontWeight: 600,
+                      fontWeight: 400,
                       padding: '1px 5px',
                       borderRadius: 10,
                       background: sec.badgeColor
                         ? `${sec.badgeColor}22`
-                        : isEffectiveDark
-                        ? 'rgba(255, 255, 255, 0.08)'
-                        : 'rgba(0, 0, 0, 0.05)',
+                        : isSelected
+                        ? c.cardHover
+                        : c.cardSecondary,
                       color: sec.badgeColor || (isSelected ? c.textPrimary : c.textMuted),
                     }}
                   >
@@ -846,6 +951,8 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
           <button
             type="button"
             onClick={() => handleCopy(aiExecutiveSummary.stakeholdersText, 'sidebar-copy')}
+            onMouseEnter={(e) => (e.currentTarget.style.background = c.cardHover)}
+            onMouseLeave={(e) => (e.currentTarget.style.background = c.cardSecondary)}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -853,11 +960,11 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
               gap: 6,
               padding: '6px 8px',
               borderRadius: 6,
-              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
+              background: c.cardSecondary,
               color: c.textSecondary,
               border: 'none',
               fontSize: 10.5,
-              fontWeight: 500,
+              fontWeight: 400,
               cursor: 'pointer',
               transition: 'all 0.15s ease',
             }}
@@ -878,6 +985,8 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
           <button
             type="button"
             onClick={handleDownloadMarkdown}
+            onMouseEnter={(e) => (e.currentTarget.style.background = c.cardHover)}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -889,7 +998,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
               color: c.textMuted,
               border: 'none',
               fontSize: 10.5,
-              fontWeight: 500,
+              fontWeight: 400,
               cursor: 'pointer',
               transition: 'all 0.15s ease',
             }}
@@ -899,6 +1008,28 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
           </button>
         </div>
       </div>
+
+      {/* ========================================================================= */}
+      {/* DIVISOR REDIMENSIONÁVEL ESTILO MARCOS                                    */}
+      {/* ========================================================================= */}
+      <div
+        data-testid="resizer-reports-left"
+        className={`resizer-col ${isDraggingLeftSidebar ? 'dragging' : ''}`}
+        onMouseDown={startResizeLeftSidebar}
+        onDoubleClick={resetLeftSidebarWidth}
+        title="Arraste para redimensionar (Duplo clique para restaurar 240px)"
+        style={{
+          width: 7,
+          marginLeft: -6,
+          marginRight: -6,
+          cursor: 'col-resize',
+          position: 'relative',
+          zIndex: 25,
+          userSelect: 'none',
+          alignSelf: 'stretch',
+          flexShrink: 0,
+        }}
+      />
 
       {/* ========================================================================= */}
       {/* 2. ÁREA PRINCIPAL: HEADER, SHELF INTEGRADO E WORKSPACE MODULAR            */}
@@ -913,30 +1044,40 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
           overflow: 'hidden',
         }}
       >
-        {/* Header Superior da Visão Atual */}
+        {/* LINHA SUPERIOR: Card de Informações da Seção + 4 Cards de Métricas Modulares (Estilo Marcos) */}
         <div
           style={{
-            background: c.card,
-            borderRadius: 8,
-            padding: '9px 14px',
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 10,
+            gap: 5,
+            alignItems: 'stretch',
             flexShrink: 0,
           }}
         >
-          {/* Título & Contexto da Seção */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div>
+          {/* Card 1: Contexto e Ações da Seção */}
+          <div
+            style={{
+              flex: 1.3,
+              minWidth: 0,
+              background: c.card,
+              borderRadius: 8,
+              padding: '9px 14px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              border: 'none',
+              boxShadow: 'none',
+            }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                <span style={{ fontSize: 13.5, fontWeight: 600, color: c.textPrimary }}>
+                <span style={{ fontSize: 13.5, fontWeight: 400, color: c.textPrimary }}>
                   {getSectionTitle()}
                 </span>
                 <span
                   style={{
                     fontSize: 9.5,
-                    fontWeight: 600,
+                    fontWeight: 400,
                     padding: '1.5px 6px',
                     borderRadius: 10,
                     background: `${accentColor}18`,
@@ -946,134 +1087,162 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                   {timeRange === 'all' ? 'Histórico Completo' : `Últimos ${timeRange}`}
                 </span>
               </div>
-              <div style={{ fontSize: 10.5, color: c.textMuted, marginTop: 1 }}>
+              <div style={{ fontSize: 10.5, color: c.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {repoName} · {metrics.total} tarefas monitoradas · {metrics.done} concluídas ({metrics.completionPercent}%) · Lead Time {metrics.avgLeadTimeDays}d
               </div>
             </div>
-          </div>
 
-          {/* Botões de Ação na Direita */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <button
-              type="button"
-              onClick={() => handleCopy(aiExecutiveSummary.stakeholdersText, 'header-copy')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 5,
-                background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
-                color: c.textSecondary,
-                border: 'none',
-                borderRadius: 6,
-                padding: '5px 9px',
-                fontSize: 11,
-                fontWeight: 500,
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              {copiedKey === 'header-copy' ? (
-                <>
-                  <Check size={12} color={c.success} />
-                  <span style={{ color: c.success }}>Copiado</span>
-                </>
-              ) : (
-                <>
-                  <Copy size={12} />
-                  <span>Copiar</span>
-                </>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={handleDownloadMarkdown}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 5,
-                background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
-                color: c.textSecondary,
-                border: 'none',
-                borderRadius: 6,
-                padding: '5px 9px',
-                fontSize: 11,
-                fontWeight: 500,
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <Download size={12} />
-              <span>Exportar .md</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleTriggerAiRefresh}
-              disabled={isGeneratingAi}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 5,
-                background: accentColor,
-                color: accentContrastText,
-                border: 'none',
-                borderRadius: 6,
-                padding: '5px 10px',
-                fontSize: 11,
-                fontWeight: 600,
-                cursor: isGeneratingAi ? 'default' : 'pointer',
-                opacity: isGeneratingAi ? 0.7 : 1,
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <Sparkles size={12} className={isGeneratingAi ? 'spin-animation' : ''} />
-              <span>{isGeneratingAi ? 'Analisando...' : 'IA Insights'}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Shelf de Métricas Integrado Padrão DevFlow (Estilo Marcos / Sprints) */}
-        <div
-          style={{
-            background: c.card,
-            borderRadius: 8,
-            padding: '8px 14px',
-            display: 'grid',
-            gridTemplateColumns: 'repeat(6, 1fr)',
-            gap: 12,
-            alignItems: 'center',
-            flexShrink: 0,
-          }}
-        >
-          {/* KPI 1: Saúde do Projeto */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <div style={{ fontSize: 9.5, fontWeight: 600, color: c.textMuted, letterSpacing: '0.04em' }}>
-              SAÚDE DO PROJETO
-            </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-              <span style={{ fontSize: 16, fontWeight: 700, color: c.textPrimary }}>
-                {metrics.healthScore}%
-              </span>
-              <span
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  handleCopy(aiExecutiveSummary.stakeholdersText, 'header-copy');
+                  logSystemActivity('relatorios', 'copiar_relatorio', repoName);
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = c.cardHover)}
+                onMouseLeave={(e) => (e.currentTarget.style.background = c.cardSecondary)}
                 style={{
-                  fontSize: 9,
-                  fontWeight: 600,
-                  color: metrics.healthScore >= 80 ? c.success : c.warning,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  background: c.cardSecondary,
+                  color: c.textSecondary,
+                  border: 'none',
+                  borderRadius: 6,
+                  height: 28,
+                  padding: '0 9px',
+                  fontSize: 11,
+                  fontWeight: 400,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  boxShadow: 'none',
                 }}
               >
-                {metrics.healthScore >= 80 ? 'Excelente' : 'Estável'}
+                {copiedKey === 'header-copy' ? (
+                  <>
+                    <Check size={12} color={c.success} />
+                    <span style={{ color: c.success }}>Copiado</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy size={12} />
+                    <span>Copiar</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  handleDownloadMarkdown();
+                  logSystemActivity('relatorios', 'exportar_markdown', repoName);
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = c.cardHover)}
+                onMouseLeave={(e) => (e.currentTarget.style.background = c.cardSecondary)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  background: c.cardSecondary,
+                  color: c.textSecondary,
+                  border: 'none',
+                  borderRadius: 6,
+                  height: 28,
+                  padding: '0 9px',
+                  fontSize: 11,
+                  fontWeight: 400,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  boxShadow: 'none',
+                }}
+              >
+                <Download size={12} />
+                <span>Exportar .md</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  handleTriggerAiRefresh();
+                  logSystemActivity('relatorios', 'ia_insights', repoName);
+                }}
+                disabled={isGeneratingAi}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  background: accentColor,
+                  color: accentContrastText,
+                  border: 'none',
+                  borderRadius: 6,
+                  height: 28,
+                  padding: '0 10px',
+                  fontSize: 11,
+                  fontWeight: 400,
+                  cursor: isGeneratingAi ? 'default' : 'pointer',
+                  opacity: isGeneratingAi ? 0.7 : 1,
+                  transition: 'all 0.15s ease',
+                  boxShadow: 'none',
+                }}
+              >
+                <Sparkles size={12} className={isGeneratingAi ? 'spin-animation' : ''} />
+                <span>{isGeneratingAi ? 'Analisando...' : 'IA Insights'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Card 2: Saúde do Projeto */}
+          <div
+            style={{
+              background: metrics.healthScore < 60
+                ? (isEffectiveDark ? 'rgba(239, 68, 68, 0.22)' : 'rgba(239, 68, 68, 0.14)')
+                : c.card,
+              borderRadius: 8,
+              padding: '8px 12px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              gap: 2,
+              minWidth: 100,
+              border: 'none',
+              boxShadow: 'none',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: metrics.healthScore < 60 ? (isEffectiveDark ? '#fca5a5' : '#b91c1c') : c.textMuted }}>
+              <Activity size={11} color={metrics.healthScore >= 80 ? c.success : metrics.healthScore >= 60 ? c.warning : c.danger} />
+              <span>Saúde</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+              <span style={{ fontSize: 15, fontWeight: 400, color: metrics.healthScore < 60 ? (isEffectiveDark ? '#ffffff' : '#991b1b') : c.textPrimary, lineHeight: 1.2 }}>
+                {metrics.healthScore}%
+              </span>
+              <span style={{ fontSize: 9.5, fontWeight: 400, color: metrics.healthScore >= 80 ? c.success : metrics.healthScore >= 60 ? c.warning : c.danger }}>
+                {metrics.healthScore >= 80 ? 'Excelente' : metrics.healthScore >= 60 ? 'Estável' : 'Alerta'}
               </span>
             </div>
           </div>
 
-          {/* KPI 2: Progresso & Vazão */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <div style={{ fontSize: 9.5, fontWeight: 600, color: c.textMuted, letterSpacing: '0.04em' }}>
-              VAZÃO DE ENTREGAS
+          {/* Card 3: Vazão de Entregas */}
+          <div
+            style={{
+              background: c.card,
+              borderRadius: 8,
+              padding: '8px 12px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              gap: 2,
+              minWidth: 120,
+              border: 'none',
+              boxShadow: 'none',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: c.textMuted }}>
+              <CheckCircle2 size={11} color={c.success} />
+              <span>Vazão</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
-              <span style={{ fontSize: 16, fontWeight: 700, color: c.textPrimary }}>
+              <span style={{ fontSize: 15, fontWeight: 400, color: c.textPrimary, lineHeight: 1.2 }}>
                 {metrics.done}
               </span>
               <span style={{ fontSize: 10.5, color: c.textSecondary }}>
@@ -1085,8 +1254,9 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                 width: '100%',
                 height: 3,
                 borderRadius: 2,
-                background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
+                background: c.cardSecondary,
                 overflow: 'hidden',
+                marginTop: 1,
               }}
             >
               <div
@@ -1101,74 +1271,60 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
             </div>
           </div>
 
-          {/* KPI 3: Lead Time Médio */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <div style={{ fontSize: 9.5, fontWeight: 600, color: c.textMuted, letterSpacing: '0.04em' }}>
-              LEAD TIME MÉDIO
+          {/* Card 4: Lead Time Médio */}
+          <div
+            style={{
+              background: c.card,
+              borderRadius: 8,
+              padding: '8px 12px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              gap: 2,
+              minWidth: 100,
+              border: 'none',
+              boxShadow: 'none',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: c.textMuted }}>
+              <Clock size={11} color={c.info} />
+              <span>Lead Time</span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-              <span style={{ fontSize: 16, fontWeight: 700, color: c.textPrimary }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+              <span style={{ fontSize: 15, fontWeight: 400, color: c.textPrimary, lineHeight: 1.2 }}>
                 {metrics.avgLeadTimeDays}d
               </span>
-              <span style={{ fontSize: 9, fontWeight: 600, color: c.info }}>
-                Ágil (≤ 14d)
+              <span style={{ fontSize: 9.5, fontWeight: 400, color: c.info }}>
+                Ágil (≤14d)
               </span>
             </div>
           </div>
 
-          {/* KPI 4: Taxa de Bugs */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <div style={{ fontSize: 9.5, fontWeight: 600, color: c.textMuted, letterSpacing: '0.04em' }}>
-              TAXA DE RETRABALHO
+          {/* Card 5: Taxa de Retrabalho / Bugs */}
+          <div
+            style={{
+              background: c.card,
+              borderRadius: 8,
+              padding: '8px 12px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              gap: 2,
+              minWidth: 100,
+              border: 'none',
+              boxShadow: 'none',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: c.textMuted }}>
+              <Bug size={11} color={metrics.bugRate <= 15 ? c.success : c.danger} />
+              <span>Retrabalho</span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-              <span style={{ fontSize: 16, fontWeight: 700, color: c.textPrimary }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+              <span style={{ fontSize: 15, fontWeight: 400, color: c.textPrimary, lineHeight: 1.2 }}>
                 {metrics.bugRate}%
               </span>
-              <span
-                style={{
-                  fontSize: 9,
-                  fontWeight: 600,
-                  color: metrics.bugRate <= 15 ? c.success : c.danger,
-                }}
-              >
-                {metrics.bugCount} bugs / {metrics.featCount} feats
-              </span>
-            </div>
-          </div>
-
-          {/* KPI 5: WIP em Andamento */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <div style={{ fontSize: 9.5, fontWeight: 600, color: c.textMuted, letterSpacing: '0.04em' }}>
-              WIP EM ANDAMENTO
-            </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-              <span style={{ fontSize: 16, fontWeight: 700, color: c.textPrimary }}>
-                {metrics.inProgress}
-              </span>
-              <span style={{ fontSize: 9, fontWeight: 600, color: c.success }}>
-                Fluxo Saudável
-              </span>
-            </div>
-          </div>
-
-          {/* KPI 6: Prontidão de Release */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <div style={{ fontSize: 9.5, fontWeight: 600, color: c.textMuted, letterSpacing: '0.04em' }}>
-              PRONTIDÃO RELEASE
-            </div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-              <span style={{ fontSize: 16, fontWeight: 700, color: c.textPrimary }}>
-                {metrics.releaseReadinessScore}%
-              </span>
-              <span
-                style={{
-                  fontSize: 9,
-                  fontWeight: 600,
-                  color: metrics.releaseReadinessScore >= 80 ? c.success : c.warning,
-                }}
-              >
-                {metrics.releaseReadinessScore >= 80 ? 'Homologação' : 'Em Progresso'}
+              <span style={{ fontSize: 9.5, fontWeight: 400, color: metrics.bugRate <= 15 ? c.success : c.danger }}>
+                {metrics.bugCount} bugs
               </span>
             </div>
           </div>
@@ -1194,7 +1350,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: '1.2fr 0.8fr',
+                gridTemplateColumns: 'minmax(0, 1fr) clamp(280px, 24vw, 330px)',
                 gap: 5,
                 flex: 1,
                 minHeight: 0,
@@ -1219,9 +1375,8 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <CheckCircle2 size={13} color={c.success} />
-                      <span style={{ fontSize: 12, fontWeight: 600, color: c.textPrimary }}>
+                    <div>
+                      <span style={{ fontSize: 12, fontWeight: 400, color: c.textPrimary }}>
                         Feed de Entregas Concluídas
                       </span>
                     </div>
@@ -1244,7 +1399,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                             borderRadius: 4,
                             padding: '2px 6px',
                             fontSize: 9.5,
-                            fontWeight: 500,
+                            fontWeight: 400,
                             cursor: 'pointer',
                           }}
                         >
@@ -1297,7 +1452,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                             }}
                           >
                             <CheckCircle2 size={13} color={c.success} style={{ flexShrink: 0 }} />
-                            <span style={{ fontSize: 10, color: c.textMuted, fontWeight: 500, flexShrink: 0 }}>
+                            <span style={{ fontSize: 10, color: c.textMuted, fontWeight: 400, flexShrink: 0 }}>
                               #{num}
                             </span>
                             <span
@@ -1305,7 +1460,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                                 flex: 1,
                                 fontSize: 11,
                                 color: c.textPrimary,
-                                fontWeight: 500,
+                                fontWeight: 400,
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
                                 whiteSpace: 'nowrap',
@@ -1317,10 +1472,10 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                               <span
                                 style={{
                                   fontSize: 9,
-                                  fontWeight: 600,
+                                  fontWeight: 400,
                                   padding: '1.5px 5px',
                                   borderRadius: 4,
-                                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
+                                  background: c.cardHover,
                                   color: c.textSecondary,
                                   flexShrink: 0,
                                 }}
@@ -1343,22 +1498,38 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
               </div>
 
               {/* Coluna Direita: Tech Lead Copilot IA & Prontidão de Release */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minHeight: 0 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minHeight: 0, overflowY: 'auto' }}>
+                {/* Card Explicativo: Motivos da Saúde do Projeto */}
+                <ProjectHealthReasonsCard
+                  healthScore={metrics.healthScore}
+                  total={metrics.total}
+                  done={metrics.done}
+                  inProgress={metrics.inProgress}
+                  todo={metrics.todo}
+                  completionPercent={metrics.completionPercent}
+                  bugCount={metrics.bugCount}
+                  bugRate={metrics.bugRate}
+                  isEffectiveDark={isEffectiveDark}
+                  c={c}
+                  projectName={selectedProject?.name || repoName}
+                />
+
                 {/* Tech Lead Copilot IA */}
                 <div
                   style={{
                     background: c.card,
                     borderRadius: 8,
-                    padding: '10px 12px',
+                    padding: 10,
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 8,
+                    gap: 10,
+                    border: 'none',
+                    boxShadow: 'none',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <Sparkles size={13} color={accentColor} />
-                      <span style={{ fontSize: 12, fontWeight: 600, color: c.textPrimary }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, flexWrap: 'wrap' }}>
+                    <div>
+                      <span style={{ fontSize: 12, fontWeight: 400, color: c.textPrimary }}>
                         Tech Lead Copilot
                       </span>
                     </div>
@@ -1381,7 +1552,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                             borderRadius: 4,
                             padding: '2px 6px',
                             fontSize: 9.5,
-                            fontWeight: 500,
+                            fontWeight: 400,
                             cursor: 'pointer',
                           }}
                         >
@@ -1397,8 +1568,8 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                       {customAiInsight && (
                         <div
                           style={{
-                            background: 'rgba(56, 139, 253, 0.1)',
-                            border: '1px solid rgba(56, 139, 253, 0.3)',
+                            background: c.cardSecondary,
+                            border: 'none',
                             borderRadius: 6,
                             padding: '8px 10px',
                             display: 'flex',
@@ -1407,8 +1578,8 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <Sparkles size={12} color="#58a6ff" />
-                            <span style={{ fontSize: 11, fontWeight: 600, color: '#58a6ff' }}>
+                            <Sparkles size={12} color={accentColor} />
+                            <span style={{ fontSize: 11, fontWeight: 400, color: accentColor }}>
                               Diagnóstico Copilot IA
                             </span>
                           </div>
@@ -1435,7 +1606,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                           >
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                               <Icon size={12} color={statusColor} />
-                              <span style={{ fontSize: 11, fontWeight: 600, color: c.textPrimary }}>
+                              <span style={{ fontSize: 11, fontWeight: 400, color: c.textPrimary }}>
                                 {d.title}
                               </span>
                             </div>
@@ -1468,7 +1639,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                               <span
                                 style={{
                                   fontSize: 8.5,
-                                  fontWeight: 600,
+                                  fontWeight: 400,
                                   padding: '1px 5px',
                                   borderRadius: 4,
                                   background: `${accentColor}22`,
@@ -1536,7 +1707,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                           color: accentColor,
                           border: 'none',
                           fontSize: 10.5,
-                          fontWeight: 600,
+                          fontWeight: 400,
                           cursor: 'pointer',
                         }}
                       >
@@ -1552,23 +1723,46 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                   style={{
                     background: c.card,
                     borderRadius: 8,
-                    padding: '10px 12px',
+                    padding: 10,
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 8,
+                    gap: 10,
                     flex: 1,
+                    border: 'none',
+                    boxShadow: 'none',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <Award size={13} color={accentColor} />
-                      <span style={{ fontSize: 12, fontWeight: 600, color: c.textPrimary }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                    <div>
+                      <span style={{ fontSize: 12, fontWeight: 400, color: c.textPrimary }}>
                         Critérios de Homologação (DoD)
                       </span>
                     </div>
-                    <span style={{ fontSize: 10.5, fontWeight: 600, color: c.success }}>
-                      {metrics.releaseReadinessScore}% Aprovado
-                    </span>
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        background: isEffectiveDark ? 'rgba(16, 185, 129, 0.16)' : 'rgba(16, 185, 129, 0.12)',
+                        borderRadius: 4,
+                        padding: '2px 7px',
+                        border: 'none',
+                        boxShadow: 'none',
+                        flexShrink: 0,
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 400,
+                          color: c.success,
+                          lineHeight: 1.2,
+                        }}
+                      >
+                        {metrics.releaseReadinessScore}% Aprovado
+                      </span>
+                    </div>
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -1603,6 +1797,9 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                           padding: '6px 8px',
                           borderRadius: 5,
                           background: c.cardSecondary,
+                          border: 'none',
+                          boxShadow: 'none',
+                          transition: 'background 0.15s ease',
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -1611,11 +1808,27 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                           ) : (
                             <AlertCircle size={13} color={c.warning} />
                           )}
-                          <span style={{ fontSize: 10.5, color: c.textPrimary, fontWeight: 500 }}>
+                          <span style={{ fontSize: 10.5, color: c.textPrimary, fontWeight: 400 }}>
                             {item.label}
                           </span>
                         </div>
-                        <span style={{ fontSize: 9.5, color: item.status ? c.success : c.textMuted }}>
+                        <span
+                          style={{
+                            fontSize: 9.5,
+                            fontWeight: 400,
+                            color: item.status ? c.success : c.warning,
+                            background: item.status
+                              ? (isEffectiveDark ? 'rgba(16, 185, 129, 0.16)' : 'rgba(16, 185, 129, 0.12)')
+                              : (isEffectiveDark ? 'rgba(245, 158, 11, 0.16)' : 'rgba(245, 158, 11, 0.12)'),
+                            padding: '2px 6px',
+                            borderRadius: 4,
+                            lineHeight: 1.2,
+                            flexShrink: 0,
+                            border: 'none',
+                            boxShadow: 'none',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
                           {item.detail}
                         </span>
                       </div>
@@ -1630,40 +1843,394 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
           {/* ABA 2: MATRIZ DA EQUIPE                                                 */}
           {/* ----------------------------------------------------------------------- */}
           {activeSection === 'team' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5, flex: 1, minHeight: 0 }}>
-              {/* Tabela de Throughput & Carga por Membro */}
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                flex: 1,
+                minHeight: 0,
+              }}
+            >
+              {/* Barra de Tabs Superior da Matriz da Equipe */}
               <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  padding: '0 2px',
+                }}
+              >
+                {/* Tabs à esquerda */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 3,
+                    background: c.pillBg,
+                    borderRadius: 6,
+                    padding: 3,
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTeamTab('tasks');
+                      logSystemActivity('relatorios', 'alternar_aba_equipe', `${repoName} - tarefas`);
+                    }}
+                    style={{
+                      background: teamTab === 'tasks' ? c.pillActive : 'transparent',
+                      color: teamTab === 'tasks' ? c.textPrimary : c.textMuted,
+                      border: 'none',
+                      borderRadius: 4,
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      fontWeight: 400,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <span>
+                      {selectedMemberLogin
+                        ? `Tarefas de @${selectedMemberLogin}`
+                        : 'Todas as Tarefas dos Colaboradores'}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 400,
+                        padding: '1px 5px',
+                        borderRadius: 10,
+                        background: teamTab === 'tasks' ? c.cardSecondary : 'rgba(255, 255, 255, 0.05)',
+                        color: teamTab === 'tasks' ? c.textPrimary : c.textMuted,
+                      }}
+                    >
+                      {memberFilteredIssues.length}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTeamTab('workload');
+                      logSystemActivity('relatorios', 'alternar_aba_equipe', `${repoName} - alocacao`);
+                    }}
+                    style={{
+                      background: teamTab === 'workload' ? c.pillActive : 'transparent',
+                      color: teamTab === 'workload' ? c.textPrimary : c.textMuted,
+                      border: 'none',
+                      borderRadius: 4,
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      fontWeight: 400,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <span>Produtividade & Alocação</span>
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontWeight: 400,
+                        padding: '1px 5px',
+                        borderRadius: 10,
+                        background: teamTab === 'workload' ? c.cardSecondary : 'rgba(255, 255, 255, 0.05)',
+                        color: teamTab === 'workload' ? c.textPrimary : c.textMuted,
+                      }}
+                    >
+                      {teamWorkload.length} engenheiros
+                    </span>
+                  </button>
+                </div>
+
+                {/* Botões de Ações à direita da div de tabs */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {selectedMemberLogin && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 10.5, color: c.textMuted, fontWeight: 400 }}>
+                        Filtrado por: <span style={{ color: accentColor }}>@{selectedMemberLogin}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedMemberLogin(null);
+                          logSystemActivity('relatorios', 'limpar_filtro_desenvolvedor', repoName);
+                        }}
+                        style={{
+                          background: c.cardSecondary,
+                          border: 'none',
+                          color: c.textSecondary,
+                          fontSize: 10,
+                          fontWeight: 400,
+                          cursor: 'pointer',
+                          padding: '3px 8px',
+                          borderRadius: 4,
+                          transition: 'all 0.15s ease',
+                        }}
+                      >
+                        Limpar filtro
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* CONTEÚDO DA ABA 1: LISTA DE TAREFAS DOS COLABORADORES */}
+              {teamTab === 'tasks' && (
+                <div
+                  style={{
+                    background: c.card,
+                    borderRadius: 8,
+                    padding: 10,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                    flex: 1,
+                    minHeight: 0,
+                    overflow: 'hidden',
+                    border: 'none',
+                    boxShadow: 'none',
+                  }}
+                >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 400, color: c.textPrimary }}>
+                      {selectedMemberLogin
+                        ? `Tarefas Atribuídas a @${selectedMemberLogin}`
+                        : 'Todas as Tarefas dos Colaboradores'}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 9.5,
+                        fontWeight: 400,
+                        padding: '1px 6px',
+                        borderRadius: 10,
+                        background: c.cardSecondary,
+                        color: c.textSecondary,
+                      }}
+                    >
+                      {memberFilteredIssues.length}
+                    </span>
+                  </div>
+                  {selectedMemberLogin && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedMemberLogin(null);
+                        logSystemActivity('relatorios', 'limpar_filtro_desenvolvedor', repoName);
+                      }}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: accentColor,
+                        fontSize: 10.5,
+                        fontWeight: 400,
+                        cursor: 'pointer',
+                        padding: '2px 6px',
+                        borderRadius: 4,
+                        transition: 'opacity 0.15s ease',
+                      }}
+                    >
+                      Mostrar todos
+                    </button>
+                  )}
+                </div>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                    flex: 1,
+                    minHeight: 0,
+                    overflowY: 'auto',
+                  }}
+                >
+                  {memberFilteredIssues.length === 0 ? (
+                    <div style={{ padding: '24px 10px', textAlign: 'center', color: c.textMuted, fontSize: 11, fontWeight: 400 }}>
+                      Nenhuma tarefa encontrada para este filtro.
+                    </div>
+                  ) : (
+                    memberFilteredIssues.map((iss) => {
+                      const isDone = iss.status === 'Concluído';
+                      const num = iss.githubNumber || (iss as any).number || iss.id.slice(0, 4);
+                      const devName = iss.assignees?.[0]?.name || (iss as any).assignee || iss.author || 'Sem responsável';
+                      const avatarUrl = resolveAvatar(devName, iss.assignees?.[0]?.avatarUrl);
+
+                      return (
+                        <div
+                          key={iss.id}
+                          onClick={() => onOpenIssueDetail?.(iss)}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = c.cardHover)}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = c.cardSecondary)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            padding: '7px 10px',
+                            borderRadius: 5,
+                            background: c.cardSecondary,
+                            cursor: onOpenIssueDetail ? 'pointer' : 'default',
+                            transition: 'background 0.12s ease',
+                            border: 'none',
+                            boxShadow: 'none',
+                          }}
+                        >
+                          {isDone ? (
+                            <CheckCircle2 size={13} color={c.success} style={{ flexShrink: 0 }} />
+                          ) : (
+                            <Circle size={13} color={c.textMuted} style={{ flexShrink: 0 }} />
+                          )}
+                          <span style={{ fontSize: 10, color: c.textMuted, fontWeight: 400, flexShrink: 0 }}>
+                            #{num}
+                          </span>
+                          <span
+                            style={{
+                              flex: 1,
+                              fontSize: 11,
+                              color: isDone ? c.textMuted : c.textPrimary,
+                              textDecoration: isDone ? 'line-through' : 'none',
+                              fontWeight: 400,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {iss.title}
+                          </span>
+
+                          {/* Usuário Responsável com Fotinha/Avatar */}
+                          <div
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 5,
+                              flexShrink: 0,
+                              background: isEffectiveDark
+                                ? 'rgba(255, 255, 255, 0.04)'
+                                : 'rgba(0, 0, 0, 0.04)',
+                              padding: '2px 7px',
+                              borderRadius: 4,
+                              border: 'none',
+                              boxShadow: 'none',
+                            }}
+                          >
+                            <MemberAvatar
+                              name={devName}
+                              avatarUrl={avatarUrl}
+                              size={16}
+                              accentColor={accentColor}
+                            />
+                            <span
+                              style={{
+                                fontSize: 10,
+                                color: devName === 'Sem responsável' ? c.textMuted : c.textSecondary,
+                                fontWeight: 400,
+                                maxWidth: 100,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {devName.replace(/^@/, '')}
+                            </span>
+                          </div>
+
+                          <span
+                            style={{
+                              fontSize: 9,
+                              fontWeight: 400,
+                              padding: '1.5px 6px',
+                              borderRadius: 4,
+                              background:
+                                iss.priority === 'Urgente'
+                                  ? `${c.danger}22`
+                                  : iss.priority === 'Alta'
+                                  ? `${c.warning}22`
+                                  : c.cardHover,
+                              color:
+                                iss.priority === 'Urgente'
+                                  ? c.danger
+                                  : iss.priority === 'Alta'
+                                  ? c.warning
+                                  : c.textSecondary,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {iss.priority}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 9.5,
+                              fontWeight: 400,
+                              color: isDone ? c.success : iss.status === 'Em Progresso' ? accentColor : c.textMuted,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {iss.status}
+                          </span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+              )}
+
+              {/* CONTEÚDO DA ABA 2: PRODUTIVIDADE & ALOCAÇÃO POR DESENVOLVEDOR */}
+              {teamTab === 'workload' && (
+                <div
                 style={{
                   background: c.card,
                   borderRadius: 8,
-                  padding: '10px 14px',
+                  padding: 10,
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: 8,
+                  gap: 10,
+                  flex: 1,
+                  minHeight: 0,
+                  overflow: 'hidden',
+                  border: 'none',
+                  boxShadow: 'none',
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                    <Users size={14} color={accentColor} />
-                    <span style={{ fontSize: 12.5, fontWeight: 600, color: c.textPrimary }}>
+                  <div>
+                    <span style={{ fontSize: 12.5, fontWeight: 400, color: c.textPrimary }}>
                       Produtividade & Alocação por Desenvolvedor
                     </span>
                   </div>
-                  <span style={{ fontSize: 10.5, color: c.textMuted }}>
-                    {teamWorkload.length} engenheiros com tarefas atribuídas
+                  <span style={{ fontSize: 10, color: c.textMuted }}>
+                    {teamWorkload.length} engenheiros
                   </span>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                    flex: 1,
+                    minHeight: 0,
+                    overflowY: 'auto',
+                  }}
+                >
                   {/* Cabeçalho da Tabela */}
                   <div
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: '2fr 1fr 1fr 1fr 1.5fr 1fr',
-                      gap: 8,
+                      gridTemplateColumns: 'minmax(110px, 1.4fr) minmax(50px, 0.7fr) minmax(70px, 0.9fr) minmax(45px, 0.6fr) minmax(80px, 1.1fr) minmax(60px, 0.7fr)',
+                      gap: 6,
                       padding: '4px 8px',
-                      fontSize: 9.5,
-                      fontWeight: 600,
+                      fontSize: 9,
+                      fontWeight: 400,
                       color: c.textMuted,
                       textTransform: 'uppercase',
                       letterSpacing: '0.04em',
@@ -1693,21 +2260,19 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                         key={m.login}
                         style={{
                           display: 'grid',
-                          gridTemplateColumns: '2fr 1fr 1fr 1fr 1.5fr 1fr',
-                          gap: 8,
+                          gridTemplateColumns: 'minmax(110px, 1.4fr) minmax(50px, 0.7fr) minmax(70px, 0.9fr) minmax(45px, 0.6fr) minmax(80px, 1.1fr) minmax(60px, 0.7fr)',
+                          gap: 6,
                           alignItems: 'center',
-                          padding: '8px 10px',
+                          padding: '7px 8px',
                           borderRadius: 6,
-                          background: isSelected
-                            ? isEffectiveDark
-                              ? 'rgba(255, 255, 255, 0.08)'
-                              : 'rgba(0, 0, 0, 0.06)'
-                            : c.cardSecondary,
+                          background: isSelected ? c.cardSelected : c.cardSecondary,
                           transition: 'background 0.12s ease',
+                          border: 'none',
+                          boxShadow: 'none',
                         }}
                       >
                         {/* Desenvolvedor */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
                           <MemberAvatar
                             name={m.name || m.login}
                             avatarUrl={m.avatarUrl}
@@ -1717,8 +2282,8 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                           <div style={{ minWidth: 0, overflow: 'hidden' }}>
                             <div
                               style={{
-                                fontSize: 11.5,
-                                fontWeight: 600,
+                                fontSize: 11,
+                                fontWeight: 400,
                                 color: c.textPrimary,
                                 whiteSpace: 'nowrap',
                                 overflow: 'hidden',
@@ -1727,31 +2292,32 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                             >
                               {m.name || m.login}
                             </div>
-                            <div style={{ fontSize: 9.5, color: c.textMuted }}>@{m.login}</div>
+                            <div style={{ fontSize: 9, color: c.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>@{m.login}</div>
                           </div>
                         </div>
 
                         {/* Concluídas */}
-                        <div style={{ fontSize: 12, fontWeight: 600, color: c.success }}>
+                        <div style={{ fontSize: 11.5, fontWeight: 400, color: c.success }}>
                           {m.done}{' '}
-                          <span style={{ fontSize: 9.5, color: c.textMuted, fontWeight: 400 }}>
+                          <span style={{ fontSize: 9, color: c.textMuted, fontWeight: 400 }}>
                             / {m.total}
                           </span>
                         </div>
 
                         {/* Em Progresso */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ fontSize: 12, fontWeight: 600, color: c.textPrimary }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                          <span style={{ fontSize: 11.5, fontWeight: 400, color: c.textPrimary }}>
                             {m.inProgress}
                           </span>
                           <span
                             style={{
-                              fontSize: 8.5,
-                              fontWeight: 600,
-                              padding: '1px 5px',
+                              fontSize: 8,
+                              fontWeight: 400,
+                              padding: '1px 4px',
                               borderRadius: 4,
                               background: `${loadStatus.color}22`,
                               color: loadStatus.color,
+                              whiteSpace: 'nowrap',
                             }}
                           >
                             {loadStatus.label}
@@ -1759,19 +2325,18 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                         </div>
 
                         {/* A Fazer */}
-                        <div style={{ fontSize: 11.5, color: c.textSecondary }}>{m.todo}</div>
+                        <div style={{ fontSize: 11, color: c.textSecondary }}>{m.todo}</div>
 
                         {/* Barra de Progresso */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                           <div
                             style={{
                               flex: 1,
                               height: 4,
                               borderRadius: 2,
-                              background: isEffectiveDark
-                                ? 'rgba(255, 255, 255, 0.08)'
-                                : 'rgba(0, 0, 0, 0.06)',
+                              background: c.cardHover,
                               overflow: 'hidden',
+                              minWidth: 24,
                             }}
                           >
                             <div
@@ -1783,45 +2348,69 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                               }}
                             />
                           </div>
-                          <span style={{ fontSize: 10.5, fontWeight: 600, color: c.textPrimary, width: 32 }}>
+                          <span style={{ fontSize: 9.5, fontWeight: 400, color: c.textPrimary, width: 28, textAlign: 'right' }}>
                             {pct}%
                           </span>
                         </div>
 
-                        {/* Ação Filtrar */}
-                        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setSelectedMemberLogin(isSelected ? null : m.login)
-                            }
-                            style={{
-                              fontSize: 10,
-                              fontWeight: 600,
-                              padding: '3px 8px',
-                              borderRadius: 4,
-                              border: 'none',
-                              background: isSelected ? accentColor : 'rgba(255, 255, 255, 0.05)',
-                              color: isSelected ? accentContrastText : c.textSecondary,
-                              cursor: 'pointer',
-                              transition: 'all 0.12s ease',
-                            }}
-                          >
-                            {isSelected ? 'Limpar' : 'Ver Tarefas'}
-                          </button>
+                          {/* Ação Filtrar */}
+                          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = isSelected ? null : m.login;
+                                setSelectedMemberLogin(next);
+                                setTeamTab('tasks');
+                                if (next) {
+                                  logSystemActivity('relatorios', 'filtrar_desenvolvedor', `${repoName} - @${next}`);
+                                } else {
+                                  logSystemActivity('relatorios', 'limpar_filtro_desenvolvedor', repoName);
+                                }
+                              }}
+                              style={{
+                                fontSize: 9.5,
+                                fontWeight: 400,
+                                padding: '3px 7px',
+                                borderRadius: 4,
+                                border: 'none',
+                                background: isSelected ? accentColor : c.cardHover,
+                                color: isSelected ? accentContrastText : c.textSecondary,
+                                cursor: 'pointer',
+                                transition: 'all 0.12s ease',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {isSelected ? 'Limpar' : 'Ver Tarefas'}
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
+            </div>
+          )}
 
-              {/* Lista de Tarefas do Desenvolvedor Selecionado (ou Geral) */}
+          {/* ----------------------------------------------------------------------- */}
+          {/* ABA 3: EFICIÊNCIA & FLUXO (SLA)                                         */}
+          {/* ----------------------------------------------------------------------- */}
+          {/* ----------------------------------------------------------------------- */}
+          {/* ABA 3: EFICIÊNCIA & FLUXO (SLA / SLI)                                   */}
+          {/* ----------------------------------------------------------------------- */}
+          {activeSection === 'flow' && (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0, 1fr) clamp(280px, 24vw, 330px)',
+                gap: 8,
+                flex: 1,
+                minHeight: 0,
+              }}
+            >
+              {/* COLUNA ESQUERDA / CENTRAL (MAIOR): CARDS DORA/SLA + AGING WIP */}
               <div
                 style={{
-                  background: c.card,
-                  borderRadius: 8,
-                  padding: '10px 14px',
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 8,
@@ -1829,285 +2418,513 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                   minHeight: 0,
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <FileText size={13} color={accentColor} />
-                    <span style={{ fontSize: 12, fontWeight: 600, color: c.textPrimary }}>
-                      {selectedMemberLogin
-                        ? `Tarefas Atribuídas a @${selectedMemberLogin} (${memberFilteredIssues.length})`
-                        : `Todas as Tarefas dos Colaboradores (${memberFilteredIssues.length})`}
-                    </span>
-                  </div>
-                  {selectedMemberLogin && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedMemberLogin(null)}
-                      style={{
-                        background: 'transparent',
-                        border: 'none',
-                        color: accentColor,
-                        fontSize: 10.5,
-                        fontWeight: 500,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Mostrar todos
-                    </button>
-                  )}
-                </div>
-
-                <div
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 4,
-                    flex: 1,
-                    overflowY: 'auto',
-                  }}
-                >
-                  {memberFilteredIssues.slice(0, 15).map((iss) => {
-                    const isDone = iss.status === 'Concluído';
-                    const num = iss.githubNumber || (iss as any).number || iss.id.slice(0, 4);
-
-                    return (
-                      <div
-                        key={iss.id}
-                        onClick={() => onOpenIssueDetail?.(iss)}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          padding: '6px 10px',
-                          borderRadius: 5,
-                          background: c.cardSecondary,
-                          cursor: onOpenIssueDetail ? 'pointer' : 'default',
-                        }}
-                      >
-                        {isDone ? (
-                          <CheckCircle2 size={13} color={c.success} style={{ flexShrink: 0 }} />
-                        ) : (
-                          <Circle size={13} color={c.textMuted} style={{ flexShrink: 0 }} />
-                        )}
-                        <span style={{ fontSize: 10, color: c.textMuted, fontWeight: 500, flexShrink: 0 }}>
-                          #{num}
-                        </span>
-                        <span
-                          style={{
-                            flex: 1,
-                            fontSize: 11,
-                            color: isDone ? c.textMuted : c.textPrimary,
-                            textDecoration: isDone ? 'line-through' : 'none',
-                            fontWeight: 500,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {iss.title}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: 9,
-                            fontWeight: 600,
-                            padding: '1.5px 6px',
-                            borderRadius: 4,
-                            background:
-                              iss.priority === 'Urgente'
-                                ? `${c.danger}22`
-                                : iss.priority === 'Alta'
-                                ? `${c.warning}22`
-                                : 'rgba(255, 255, 255, 0.05)',
-                            color:
-                              iss.priority === 'Urgente'
-                                ? c.danger
-                                : iss.priority === 'Alta'
-                                ? c.warning
-                                : c.textSecondary,
-                            flexShrink: 0,
-                          }}
-                        >
-                          {iss.priority}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: 9.5,
-                            fontWeight: 600,
-                            color: isDone ? c.success : iss.status === 'Em Progresso' ? accentColor : c.textMuted,
-                            flexShrink: 0,
-                          }}
-                        >
-                          {iss.status}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ----------------------------------------------------------------------- */}
-          {/* ABA 3: EFICIÊNCIA & FLUXO (SLA)                                         */}
-          {/* ----------------------------------------------------------------------- */}
-          {activeSection === 'flow' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5, flex: 1, minHeight: 0 }}>
-              {/* 4 Cards de Métricas DORA & SLA */}
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(4, 1fr)',
-                  gap: 5,
-                }}
-              >
-                {[
-                  {
-                    title: 'CYCLE TIME MÉDIO',
-                    val: `${efficiencyMetrics.cycleTimeDays} dias`,
-                    sub: 'Ativação até Deploy',
-                    color: c.info,
-                  },
-                  {
-                    title: 'LEAD TIME TOTAL',
-                    val: `${metrics.avgLeadTimeDays} dias`,
-                    sub: 'Criação até Conclusão',
-                    color: c.purple,
-                  },
-                  {
-                    title: 'RESOLUÇÃO DE BUGS',
-                    val: `${efficiencyMetrics.bugResolutionDays} dias`,
-                    sub: 'Tempo Médio de Fix',
-                    color: c.success,
-                  },
-                  {
-                    title: 'SLA DE ENTREGA',
-                    val: `${efficiencyMetrics.slaCompliancePercent}%`,
-                    sub: 'Cumprimento de Prazos',
-                    color: accentColor,
-                  },
-                ].map((item, idx) => (
-                  <div
-                    key={idx}
-                    style={{
-                      background: c.card,
-                      borderRadius: 8,
-                      padding: '12px 14px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 4,
-                    }}
-                  >
-                    <div style={{ fontSize: 9.5, fontWeight: 600, color: c.textMuted, letterSpacing: '0.04em' }}>
-                      {item.title}
-                    </div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: item.color }}>
-                      {item.val}
-                    </div>
-                    <div style={{ fontSize: 10, color: c.textSecondary }}>
-                      {item.sub}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Pipeline Visual de Fluxo Contínuo */}
-              <div
-                style={{
-                  background: c.card,
-                  borderRadius: 8,
-                  padding: '12px 14px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 10,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <Activity size={14} color={accentColor} />
-                    <span style={{ fontSize: 12.5, fontWeight: 600, color: c.textPrimary }}>
-                      Distribuição do Pipeline por Estágio
-                    </span>
-                  </div>
-                  <span style={{ fontSize: 10.5, color: c.textMuted }}>
-                    {metrics.total} tarefas monitoradas no fluxo
-                  </span>
-                </div>
-
+                {/* 4 Cards de Métricas DORA & SLA */}
                 <div
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: '1fr auto 1fr auto 1fr',
-                    gap: 10,
-                    alignItems: 'center',
+                    gridTemplateColumns: 'repeat(4, 1fr)',
+                    gap: 6,
                   }}
                 >
-                  {/* Etapa 1: A Fazer */}
-                  <div
-                    style={{
-                      background: c.cardSecondary,
-                      borderRadius: 6,
-                      padding: '10px 12px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 4,
-                    }}
-                  >
-                    <span style={{ fontSize: 10, fontWeight: 600, color: c.textMuted }}>
-                      1. BACKLOG & A FAZER
-                    </span>
-                    <span style={{ fontSize: 16, fontWeight: 700, color: c.textPrimary }}>
-                      {metrics.todo}
-                    </span>
-                    <span style={{ fontSize: 9.5, color: c.textSecondary }}>
-                      {Math.round((metrics.todo / Math.max(1, metrics.total)) * 100)}% do volume total
+                  {[
+                    {
+                      title: 'CYCLE TIME MÉDIO',
+                      val: `${efficiencyMetrics.cycleTimeDays} dias`,
+                      sub: 'Ativação até Deploy',
+                      color: c.info,
+                    },
+                    {
+                      title: 'LEAD TIME TOTAL',
+                      val: `${metrics.avgLeadTimeDays} dias`,
+                      sub: 'Criação até Conclusão',
+                      color: c.purple,
+                    },
+                    {
+                      title: 'RESOLUÇÃO DE BUGS',
+                      val: `${efficiencyMetrics.bugResolutionDays} dias`,
+                      sub: 'Tempo Médio de Fix',
+                      color: c.success,
+                    },
+                    {
+                      title: 'SLA DE ENTREGA',
+                      val: `${efficiencyMetrics.slaCompliancePercent}%`,
+                      sub: 'Cumprimento de Prazos',
+                      color: accentColor,
+                    },
+                  ].map((item, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        background: c.card,
+                        borderRadius: 8,
+                        padding: 10,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 4,
+                        border: 'none',
+                        boxShadow: 'none',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <div style={{ fontSize: 9.5, fontWeight: 400, color: c.textMuted, letterSpacing: '0.04em' }}>
+                        {item.title}
+                      </div>
+                      <div style={{ fontSize: 17, fontWeight: 400, color: item.color }}>
+                        {item.val}
+                      </div>
+                      <div style={{ fontSize: 9.5, color: c.textSecondary }}>
+                        {item.sub}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Aging WIP: Tarefas Ativas no Fluxo */}
+                <div
+                  style={{
+                    background: c.card,
+                    borderRadius: 8,
+                    padding: 10,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                    flex: 1,
+                    minHeight: 0,
+                    overflow: 'hidden',
+                    border: 'none',
+                    boxShadow: 'none',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 400, color: c.textPrimary }}>
+                        Aging WIP · Idade das Tarefas em Andamento
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 9.5,
+                          fontWeight: 400,
+                          padding: '1px 6px',
+                          borderRadius: 10,
+                          background: c.cardSecondary,
+                          color: c.textSecondary,
+                        }}
+                      >
+                        {metrics.inProgress} ativas
+                      </span>
+                    </div>
+                    <span style={{ fontSize: 10, color: c.textMuted }}>
+                      Monitoramento preventivo para evitar extrapolação de SLA
                     </span>
                   </div>
 
-                  <ArrowRight size={14} color={c.textMuted} />
-
-                  {/* Etapa 2: Em Progresso */}
                   <div
                     style={{
-                      background: c.cardSecondary,
-                      borderRadius: 6,
-                      padding: '10px 12px',
                       display: 'flex',
                       flexDirection: 'column',
                       gap: 4,
+                      flex: 1,
+                      minHeight: 0,
+                      overflowY: 'auto',
                     }}
                   >
-                    <span style={{ fontSize: 10, fontWeight: 600, color: accentColor }}>
-                      2. EM DESENVOLVIMENTO
+                    {timeFilteredIssues
+                      .filter((i) => i.status === 'Em Progresso' || (i as any).state === 'in_progress' || (i.rawLabels || []).some((l: any) => String(l.name || l).toLowerCase().includes('progress')))
+                      .map((task, idx) => {
+                        const createdTime = (task as any).createdAt || task.createdAtIso || Date.now();
+                        const daysOld = Math.max(1, Math.round((Date.now() - new Date(createdTime).getTime()) / 86400000));
+                        const isAtRisk = daysOld > 5;
+                        const devName = task.assignees?.[0]?.name || (task as any).assignee || task.author || 'Sem responsável';
+                        const avatarUrl = resolveAvatar(devName, task.assignees?.[0]?.avatarUrl);
+
+                        return (
+                          <div
+                            key={task.id || idx}
+                            onClick={() => onOpenIssueDetail?.(task)}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = c.cardHover)}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = c.cardSecondary)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 8,
+                              padding: '7px 10px',
+                              borderRadius: 5,
+                              background: c.cardSecondary,
+                              cursor: onOpenIssueDetail ? 'pointer' : 'default',
+                              transition: 'background 0.12s ease',
+                              border: 'none',
+                              boxShadow: 'none',
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                              <span style={{ fontSize: 10, color: c.textMuted, fontWeight: 400, flexShrink: 0 }}>
+                                #{task.githubNumber || (task as any).number || task.id.slice(0, 4)}
+                              </span>
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  color: c.textPrimary,
+                                  fontWeight: 400,
+                                  whiteSpace: 'nowrap',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                }}
+                              >
+                                {task.title}
+                              </span>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                              {/* Responsável com Avatar */}
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 5,
+                                  background: isEffectiveDark
+                                    ? 'rgba(255, 255, 255, 0.04)'
+                                    : 'rgba(0, 0, 0, 0.04)',
+                                  padding: '2px 6px',
+                                  borderRadius: 4,
+                                }}
+                              >
+                                <MemberAvatar
+                                  name={devName}
+                                  avatarUrl={avatarUrl}
+                                  size={16}
+                                  accentColor={accentColor}
+                                />
+                                <span
+                                  style={{
+                                    fontSize: 10,
+                                    color: devName === 'Sem responsável' ? c.textMuted : c.textSecondary,
+                                    fontWeight: 400,
+                                    maxWidth: 90,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {devName.replace(/^@/, '')}
+                                </span>
+                              </div>
+
+                              {/* SLA Status Chip */}
+                              <span
+                                style={{
+                                  fontSize: 9.5,
+                                  fontWeight: 400,
+                                  padding: '2px 6px',
+                                  borderRadius: 4,
+                                  background: isAtRisk
+                                    ? (isEffectiveDark ? 'rgba(245, 158, 11, 0.16)' : 'rgba(245, 158, 11, 0.12)')
+                                    : (isEffectiveDark ? 'rgba(16, 185, 129, 0.16)' : 'rgba(16, 185, 129, 0.12)'),
+                                  color: isAtRisk ? c.warning : c.success,
+                                  border: 'none',
+                                  boxShadow: 'none',
+                                }}
+                              >
+                                {daysOld}d no fluxo · {isAtRisk ? 'Atenção' : 'Dentro do SLA'}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                    {timeFilteredIssues.filter((i) => i.status === 'Em Progresso' || (i as any).state === 'in_progress').length === 0 && (
+                      <div
+                        style={{
+                          padding: '24px 12px',
+                          textAlign: 'center',
+                          color: c.textMuted,
+                          fontSize: 11,
+                          fontWeight: 400,
+                          background: c.cardSecondary,
+                          borderRadius: 6,
+                        }}
+                      >
+                        Nenhuma tarefa ativa com envelhecimento excessivo no WIP. Fluxo saudável e controlado.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* COLUNA DIREITA (LARGURA MENOR, ORGANIZADA VERTICALMENTE): */}
+              {/* 1. DISTRIBUIÇÃO DO PIPELINE POR ESTÁGIO */}
+              {/* 2. EFICIÊNCIA DE FLUXO */}
+              {/* 3. CUMPRIMENTO DE SLI / SLA */}
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  minHeight: 0,
+                  overflowY: 'auto',
+                }}
+              >
+                {/* 1. Pipeline Visual de Fluxo Contínuo */}
+                <div
+                  style={{
+                    background: c.card,
+                    borderRadius: 8,
+                    padding: 10,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                    border: 'none',
+                    boxShadow: 'none',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 400, color: c.textPrimary }}>
+                      Distribuição do Pipeline por Estágio
                     </span>
-                    <span style={{ fontSize: 16, fontWeight: 700, color: accentColor }}>
-                      {metrics.inProgress}
-                    </span>
-                    <span style={{ fontSize: 9.5, color: c.textSecondary }}>
-                      WIP Ativo no momento
+                    <span style={{ fontSize: 9.5, color: c.textMuted, flexShrink: 0 }}>
+                      {metrics.total} tarefas
                     </span>
                   </div>
 
-                  <ArrowRight size={14} color={c.textMuted} />
+                  {/* Barra Segmentada do Pipeline */}
+                  <div style={{ display: 'flex', height: 4, borderRadius: 2, overflow: 'hidden', background: c.cardHover, gap: 2 }}>
+                    <div style={{ width: `${Math.round((metrics.todo / Math.max(1, metrics.total)) * 100)}%`, background: isEffectiveDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.25)' }} />
+                    <div style={{ width: `${Math.round((metrics.inProgress / Math.max(1, metrics.total)) * 100)}%`, background: accentColor }} />
+                    <div style={{ width: `${metrics.completionPercent}%`, background: c.success }} />
+                  </div>
 
-                  {/* Etapa 3: Concluído */}
+                  {/* Lista Vertical dos 3 Estágios */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {/* Etapa 1: A Fazer */}
+                    <div
+                      style={{
+                        background: c.cardSecondary,
+                        borderRadius: 6,
+                        padding: '7px 9px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: c.textMuted }} />
+                        <span style={{ fontSize: 10.5, fontWeight: 400, color: c.textPrimary }}>
+                          1. Backlog & A Fazer
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+                        <span style={{ fontSize: 12.5, fontWeight: 400, color: c.textPrimary }}>
+                          {metrics.todo}
+                        </span>
+                        <span style={{ fontSize: 9.5, color: c.textMuted }}>
+                          ({Math.round((metrics.todo / Math.max(1, metrics.total)) * 100)}%)
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Etapa 2: Em Desenvolvimento */}
+                    <div
+                      style={{
+                        background: c.cardSecondary,
+                        borderRadius: 6,
+                        padding: '7px 9px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: accentColor }} />
+                        <span style={{ fontSize: 10.5, fontWeight: 400, color: accentColor }}>
+                          2. Em Desenvolvimento
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+                        <span style={{ fontSize: 12.5, fontWeight: 400, color: accentColor }}>
+                          {metrics.inProgress}
+                        </span>
+                        <span style={{ fontSize: 9.5, color: c.textMuted }}>
+                          WIP ativo
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Etapa 3: Concluído */}
+                    <div
+                      style={{
+                        background: c.cardSecondary,
+                        borderRadius: 6,
+                        padding: '7px 9px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: c.success }} />
+                        <span style={{ fontSize: 10.5, fontWeight: 400, color: c.success }}>
+                          3. Concluído & Deployado
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+                        <span style={{ fontSize: 12.5, fontWeight: 400, color: c.success }}>
+                          {metrics.done}
+                        </span>
+                        <span style={{ fontSize: 9.5, color: c.textMuted }}>
+                          ({metrics.completionPercent}%)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Eficiência de Fluxo */}
+                <div
+                  style={{
+                    background: c.card,
+                    borderRadius: 8,
+                    padding: 10,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                    border: 'none',
+                    boxShadow: 'none',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 12, fontWeight: 400, color: c.textPrimary }}>
+                      Eficiência de Fluxo (Tempo Ativo vs Espera)
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 9.5,
+                        color: accentColor,
+                        fontWeight: 400,
+                        background: `${accentColor}18`,
+                        padding: '2px 6px',
+                        borderRadius: 4,
+                        flexShrink: 0,
+                      }}
+                    >
+                      68% Tempo de Ação
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden', background: c.cardSecondary }}>
+                      <div
+                        style={{
+                          width: '68%',
+                          background: accentColor,
+                          transition: 'width 0.3s ease',
+                        }}
+                        title="Tempo em Desenvolvimento Ativo: 68%"
+                      />
+                      <div
+                        style={{
+                          width: '32%',
+                          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.18)' : 'rgba(0, 0, 0, 0.18)',
+                          transition: 'width 0.3s ease',
+                        }}
+                        title="Tempo em Fila / Revisão / Espera: 32%"
+                      />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9.5, color: c.textSecondary }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: accentColor }} />
+                        Mão na Massa: {(parseFloat(metrics.avgLeadTimeDays) * 0.68 || 2.1).toFixed(1)}d
+                      </span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: isEffectiveDark ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.3)' }} />
+                        Review/Espera: {(parseFloat(metrics.avgLeadTimeDays) * 0.32 || 1.0).toFixed(1)}d
+                      </span>
+                    </div>
+                  </div>
+
                   <div
                     style={{
                       background: c.cardSecondary,
                       borderRadius: 6,
-                      padding: '10px 12px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 4,
+                      padding: '7px 9px',
+                      fontSize: 10,
+                      color: c.textSecondary,
+                      lineHeight: 1.4,
                     }}
                   >
-                    <span style={{ fontSize: 10, fontWeight: 600, color: c.success }}>
-                      3. CONCLUÍDO & DEPLOYADO
+                    O fluxo contínuo opera com cadência ágil. A maior parte do tempo de ciclo está concentrada na resolução técnica, com baixo atrito de filas.
+                  </div>
+                </div>
+
+                {/* 3. Metas de SLA / SLI por Categoria */}
+                <div
+                  style={{
+                    background: c.card,
+                    borderRadius: 8,
+                    padding: 10,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                    border: 'none',
+                    boxShadow: 'none',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 12, fontWeight: 400, color: c.textPrimary }}>
+                      Cumprimento de SLI / SLA por Severidade
                     </span>
-                    <span style={{ fontSize: 16, fontWeight: 700, color: c.success }}>
-                      {metrics.done}
+                    <span
+                      style={{
+                        fontSize: 9.5,
+                        color: c.success,
+                        fontWeight: 400,
+                        background: isEffectiveDark ? 'rgba(16, 185, 129, 0.16)' : 'rgba(16, 185, 129, 0.12)',
+                        padding: '2px 6px',
+                        borderRadius: 4,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {efficiencyMetrics.slaCompliancePercent}% Conformidade
                     </span>
-                    <span style={{ fontSize: 9.5, color: c.textSecondary }}>
-                      {metrics.completionPercent}% taxa de entrega
-                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {[
+                      { nivel: 'Crítico & Bugs', sla: '< 2 dias', conformidade: '100%', cor: c.danger },
+                      { nivel: 'Features & Recursos', sla: '< 7 dias', conformidade: '94%', cor: accentColor },
+                      { nivel: 'Tarefas Gerais', sla: '< 10 dias', conformidade: '98%', cor: c.textSecondary },
+                    ].map((slaItem, idx) => (
+                      <div
+                        key={idx}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '6px 9px',
+                          borderRadius: 6,
+                          background: c.cardSecondary,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: slaItem.cor }} />
+                          <span style={{ fontSize: 10.5, color: c.textPrimary }}>{slaItem.nivel}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 9.5, color: c.textMuted }}>Meta {slaItem.sla}</span>
+                          <span
+                            style={{
+                              fontSize: 9.5,
+                              color: c.success,
+                              fontWeight: 400,
+                              background: isEffectiveDark ? 'rgba(16, 185, 129, 0.14)' : 'rgba(16, 185, 129, 0.10)',
+                              padding: '1px 5px',
+                              borderRadius: 4,
+                            }}
+                          >
+                            {slaItem.conformidade} no prazo
+                          </span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -2146,7 +2963,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                     <Flame size={15} color={c.danger} />
                   </div>
                   <div>
-                    <div style={{ fontSize: 12.5, fontWeight: 600, color: c.textPrimary }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 400, color: c.textPrimary }}>
                       Radar de Tarefas com Maior Tempo em Aberto
                     </div>
                     <div style={{ fontSize: 10.5, color: c.textSecondary }}>
@@ -2160,7 +2977,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                 <span
                   style={{
                     fontSize: 10,
-                    fontWeight: 600,
+                    fontWeight: 400,
                     padding: '2px 8px',
                     borderRadius: 4,
                     background: bottleneckIssues.length > 0 ? `${c.danger}22` : `${c.success}22`,
@@ -2192,7 +3009,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                     gap: 8,
                     padding: '4px 8px',
                     fontSize: 9.5,
-                    fontWeight: 600,
+                    fontWeight: 400,
                     color: c.textMuted,
                     textTransform: 'uppercase',
                     letterSpacing: '0.04em',
@@ -2249,7 +3066,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                           <span
                             style={{
                               fontSize: 9,
-                              fontWeight: 600,
+                              fontWeight: 400,
                               padding: '1.5px 6px',
                               borderRadius: 4,
                               background:
@@ -2272,13 +3089,13 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
 
                           {/* Título */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                            <span style={{ fontSize: 10, color: c.textMuted, fontWeight: 500, flexShrink: 0 }}>
+                            <span style={{ fontSize: 10, color: c.textMuted, fontWeight: 400, flexShrink: 0 }}>
                               #{num}
                             </span>
                             <span
                               style={{
                                 fontSize: 11,
-                                fontWeight: 500,
+                                fontWeight: 400,
                                 color: c.textPrimary,
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
@@ -2295,7 +3112,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                             <span
                               style={{
                                 fontSize: 11,
-                                fontWeight: 600,
+                                fontWeight: 400,
                                 color: iss.daysOpen >= 7 ? c.danger : c.warning,
                               }}
                             >
@@ -2325,7 +3142,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                           </div>
 
                           {/* Status */}
-                          <span style={{ fontSize: 10.5, fontWeight: 500, color: c.textSecondary }}>
+                          <span style={{ fontSize: 10.5, fontWeight: 400, color: c.textSecondary }}>
                             {iss.status}
                           </span>
 
@@ -2336,13 +3153,11 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                               onClick={() => onOpenIssueDetail?.(iss)}
                               style={{
                                 fontSize: 10,
-                                fontWeight: 600,
+                                fontWeight: 400,
                                 padding: '3px 8px',
                                 borderRadius: 4,
                                 border: 'none',
-                                background: isEffectiveDark
-                                  ? 'rgba(255, 255, 255, 0.08)'
-                                  : 'rgba(0, 0, 0, 0.06)',
+                                background: c.cardHover,
                                 color: c.textPrimary,
                                 cursor: 'pointer',
                               }}
@@ -2376,9 +3191,8 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <Layers size={14} color={accentColor} />
-                    <span style={{ fontSize: 12.5, fontWeight: 600, color: c.textPrimary }}>
+                  <div>
+                    <span style={{ fontSize: 12.5, fontWeight: 400, color: c.textPrimary }}>
                       Distribuição de Tipologia & Escopo
                     </span>
                   </div>
@@ -2395,7 +3209,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                     borderRadius: 4,
                     display: 'flex',
                     overflow: 'hidden',
-                    background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
+                    background: c.cardSecondary,
                   }}
                 >
                   <div
@@ -2436,10 +3250,10 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                       gap: 2,
                     }}
                   >
-                    <span style={{ fontSize: 10, fontWeight: 600, color: accentColor }}>
+                    <span style={{ fontSize: 10, fontWeight: 400, color: accentColor }}>
                       FEATURES & RECURSOS
                     </span>
-                    <span style={{ fontSize: 16, fontWeight: 700, color: c.textPrimary }}>
+                    <span style={{ fontSize: 16, fontWeight: 400, color: c.textPrimary }}>
                       {metrics.featCount}
                     </span>
                     <span style={{ fontSize: 9.5, color: c.textMuted }}>
@@ -2457,10 +3271,10 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                       gap: 2,
                     }}
                   >
-                    <span style={{ fontSize: 10, fontWeight: 600, color: c.danger }}>
+                    <span style={{ fontSize: 10, fontWeight: 400, color: c.danger }}>
                       BUGS & CORREÇÕES
                     </span>
-                    <span style={{ fontSize: 16, fontWeight: 700, color: c.textPrimary }}>
+                    <span style={{ fontSize: 16, fontWeight: 400, color: c.textPrimary }}>
                       {metrics.bugCount}
                     </span>
                     <span style={{ fontSize: 9.5, color: c.textMuted }}>
@@ -2478,10 +3292,10 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                       gap: 2,
                     }}
                   >
-                    <span style={{ fontSize: 10, fontWeight: 600, color: c.info }}>
+                    <span style={{ fontSize: 10, fontWeight: 400, color: c.info }}>
                       INFRAESTRUTURA & TAREFAS
                     </span>
-                    <span style={{ fontSize: 16, fontWeight: 700, color: c.textPrimary }}>
+                    <span style={{ fontSize: 16, fontWeight: 400, color: c.textPrimary }}>
                       {metrics.otherCount}
                     </span>
                     <span style={{ fontSize: 9.5, color: c.textMuted }}>
@@ -2491,135 +3305,169 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                 </div>
               </div>
 
-              {/* Pirâmide de Prioridades & Módulos */}
+              {/* Pirâmide Visual de Prioridades */}
               <div
                 style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 1fr',
-                  gap: 5,
+                  background: c.card,
+                  borderRadius: 8,
+                  padding: '16px 20px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 16,
                   flex: 1,
                   minHeight: 0,
                 }}
               >
-                {/* Pirâmide de Prioridades */}
-                <div
-                  style={{
-                    background: c.card,
-                    borderRadius: 8,
-                    padding: '12px 14px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 8,
-                  }}
-                >
-                  <span style={{ fontSize: 12, fontWeight: 600, color: c.textPrimary }}>
-                    Pirâmide de Prioridades
-                  </span>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {[
-                      { label: 'Urgente', count: metrics.priorityCounts.Urgente, color: c.danger },
-                      { label: 'Alta', count: metrics.priorityCounts.Alta, color: c.warning },
-                      { label: 'Média', count: metrics.priorityCounts.Média, color: c.info },
-                      { label: 'Baixa', count: metrics.priorityCounts.Baixa, color: c.textMuted },
-                    ].map((p, idx) => {
-                      const pct = Math.round((p.count / Math.max(1, metrics.total)) * 100);
-                      return (
-                        <div
-                          key={idx}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            padding: '6px 10px',
-                            borderRadius: 6,
-                            background: c.cardSecondary,
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <div
-                              style={{
-                                width: 8,
-                                height: 8,
-                                borderRadius: '50%',
-                                background: p.color,
-                              }}
-                            />
-                            <span style={{ fontSize: 11, fontWeight: 500, color: c.textPrimary }}>
-                              {p.label}
-                            </span>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontSize: 10.5, color: c.textMuted }}>{pct}%</span>
-                            <span style={{ fontSize: 11.5, fontWeight: 600, color: p.color }}>
-                              {p.count}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span style={{ fontSize: 13, fontWeight: 400, color: c.textPrimary }}>
+                      Pirâmide de Prioridades
+                    </span>
+                    <span style={{ fontSize: 10.5, color: c.textMuted }}>
+                      Hierarquia de severidade e alocação do backlog de engenharia
+                    </span>
                   </div>
+                  <span style={{ fontSize: 11, color: c.textSecondary }}>
+                    Total: {metrics.total} demandas categorizadas
+                  </span>
                 </div>
 
-                {/* Top Módulos & Etiquetas */}
+                {/* Estrutura Geométrica da Pirâmide */}
                 <div
                   style={{
-                    background: c.card,
-                    borderRadius: 8,
-                    padding: '12px 14px',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 8,
+                    alignItems: 'center',
+                    gap: 6,
+                    width: '100%',
+                    padding: '8px 0',
                   }}
                 >
-                  <span style={{ fontSize: 12, fontWeight: 600, color: c.textPrimary }}>
-                    Módulos & Etiquetas Mais Ativas
-                  </span>
-
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      gap: 6,
-                      alignContent: 'flex-start',
-                    }}
-                  >
-                    {topLabels.length === 0 ? (
-                      <span style={{ fontSize: 11, color: c.textMuted }}>Nenhuma etiqueta mapeada</span>
-                    ) : (
-                      topLabels.map((lbl, idx) => (
-                        <div
-                          key={idx}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 5,
-                            padding: '4px 8px',
-                            borderRadius: 5,
-                            background: c.cardSecondary,
-                            border: `1px solid ${c.borderSubtle}`,
-                          }}
-                        >
-                          <Tag size={10} color={accentColor} />
-                          <span style={{ fontSize: 10.5, fontWeight: 500, color: c.textPrimary }}>
-                            {lbl.name}
-                          </span>
+                  {[
+                    {
+                      label: 'Urgente',
+                      count: metrics.priorityCounts.Urgente,
+                      color: c.danger,
+                      bg: isEffectiveDark ? 'rgba(239, 68, 68, 0.16)' : 'rgba(239, 68, 68, 0.12)',
+                      hoverBg: isEffectiveDark ? 'rgba(239, 68, 68, 0.24)' : 'rgba(239, 68, 68, 0.18)',
+                      width: '38%',
+                      sla: 'SLA < 24h · Bloqueios e Falhas Críticas',
+                    },
+                    {
+                      label: 'Alta',
+                      count: metrics.priorityCounts.Alta,
+                      color: c.warning,
+                      bg: isEffectiveDark ? 'rgba(249, 115, 22, 0.16)' : 'rgba(249, 115, 22, 0.12)',
+                      hoverBg: isEffectiveDark ? 'rgba(249, 115, 22, 0.24)' : 'rgba(249, 115, 22, 0.18)',
+                      width: '56%',
+                      sla: 'SLA < 3 dias · Principais Entregas da Sprint',
+                    },
+                    {
+                      label: 'Média',
+                      count: metrics.priorityCounts.Média,
+                      color: c.info,
+                      bg: isEffectiveDark ? 'rgba(56, 189, 248, 0.16)' : 'rgba(56, 189, 248, 0.12)',
+                      hoverBg: isEffectiveDark ? 'rgba(56, 189, 248, 0.24)' : 'rgba(56, 189, 248, 0.18)',
+                      width: '76%',
+                      sla: 'SLA < 7 dias · Evoluções e Melhorias Contínuas',
+                    },
+                    {
+                      label: 'Baixa',
+                      count: metrics.priorityCounts.Baixa,
+                      color: c.textSecondary,
+                      bg: isEffectiveDark ? 'rgba(148, 163, 184, 0.14)' : 'rgba(148, 163, 184, 0.1)',
+                      hoverBg: isEffectiveDark ? 'rgba(148, 163, 184, 0.22)' : 'rgba(148, 163, 184, 0.16)',
+                      width: '96%',
+                      sla: 'Backlog Geral · Sem criticidade de prazo imediato',
+                    },
+                  ].map((tier, idx) => {
+                    const pct = Math.round((tier.count / Math.max(1, metrics.total)) * 100);
+                    return (
+                      <div
+                        key={idx}
+                        style={{
+                          width: tier.width,
+                          background: tier.bg,
+                          borderRadius: 6,
+                          padding: '10px 18px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 12,
+                          transition: 'all 0.15s ease',
+                          cursor: 'default',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = tier.hoverBg;
+                          e.currentTarget.style.transform = 'translateY(-1px)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = tier.bg;
+                          e.currentTarget.style.transform = 'translateY(0)';
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <span
                             style={{
-                              fontSize: 9,
-                              fontWeight: 600,
-                              padding: '0 4px',
-                              borderRadius: 8,
-                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)',
-                              color: c.textSecondary,
+                              width: 8,
+                              height: 8,
+                              borderRadius: '50%',
+                              background: tier.color,
+                              flexShrink: 0,
                             }}
-                          >
-                            {lbl.count}
+                          />
+                          <span style={{ fontSize: 12, fontWeight: 400, color: c.textPrimary }}>
+                            {tier.label}
                           </span>
                         </div>
-                      ))
-                    )}
+
+                        <span
+                          style={{
+                            fontSize: 10,
+                            color: c.textSecondary,
+                            display: 'inline-block',
+                            textAlign: 'center',
+                          }}
+                        >
+                          {tier.sla}
+                        </span>
+
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexShrink: 0 }}>
+                          <span style={{ fontSize: 13, fontWeight: 400, color: tier.color }}>
+                            {tier.count}
+                          </span>
+                          <span style={{ fontSize: 10, color: c.textMuted }}>
+                            ({pct}%)
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Resumo do Balanço da Pirâmide */}
+                <div
+                  style={{
+                    background: c.cardSecondary,
+                    borderRadius: 6,
+                    padding: '10px 14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <ShieldCheck size={14} color={c.success} />
+                    <span style={{ fontSize: 11, color: c.textSecondary }}>
+                      {metrics.priorityCounts.Urgente === 0
+                        ? 'Pirâmide equilibrada: Nenhuma demanda urgente bloqueando o fluxo de engenharia no momento.'
+                        : `Atenção concentrada: ${metrics.priorityCounts.Urgente} demandas urgentes no topo da pirâmide requerem foco imediato.`}
+                    </span>
                   </div>
+                  <span style={{ fontSize: 10.5, color: c.textMuted }}>
+                    {Math.round(((metrics.priorityCounts.Média + metrics.priorityCounts.Baixa) / Math.max(1, metrics.total)) * 100)}% base planejada
+                  </span>
                 </div>
               </div>
             </div>
@@ -2657,7 +3505,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                     <GitPullRequest size={16} color={accentColor} />
                   </div>
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: c.textPrimary }}>
+                    <div style={{ fontSize: 13, fontWeight: 400, color: c.textPrimary }}>
                       Auditoria de Prontidão para Próxima Versão
                     </div>
                     <div style={{ fontSize: 10.5, color: c.textSecondary }}>
@@ -2679,7 +3527,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                     color: accentContrastText,
                     border: 'none',
                     fontSize: 11,
-                    fontWeight: 600,
+                    fontWeight: 400,
                     cursor: 'pointer',
                   }}
                 >
@@ -2704,7 +3552,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: c.textPrimary }}>
+                  <span style={{ fontSize: 12, fontWeight: 400, color: c.textPrimary }}>
                     Changelog Automatizado a partir das Entregas ({recentDeliveredIssues.length} itens)
                   </span>
                   <span style={{ fontSize: 10.5, color: c.textMuted }}>
@@ -2734,7 +3582,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                       }}
                     >
                       <CheckCircle2 size={13} color={c.success} style={{ flexShrink: 0 }} />
-                      <span style={{ fontSize: 10, color: c.textMuted, fontWeight: 600 }}>
+                      <span style={{ fontSize: 10, color: c.textMuted, fontWeight: 400 }}>
                         #{iss.githubNumber || (iss as any).number || iss.id.slice(0, 4)}
                       </span>
                       <span
@@ -2742,7 +3590,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                           flex: 1,
                           fontSize: 11,
                           color: c.textPrimary,
-                          fontWeight: 500,
+                          fontWeight: 400,
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',
@@ -2753,7 +3601,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                       <span
                         style={{
                           fontSize: 9,
-                          fontWeight: 600,
+                          fontWeight: 400,
                           padding: '1px 5px',
                           borderRadius: 4,
                           background: `${accentColor}22`,

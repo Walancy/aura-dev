@@ -486,6 +486,115 @@ export class SkillsService {
     return this.listInstalled().find((s) => s.id === id)!;
   }
 
+  async update(id: string, token?: string): Promise<InstalledSkill> {
+    const s = this.listInstalled().find((item) => item.id === id);
+    if (!s) throw new Error(`Skill "${id}" não encontrada.`);
+    if (s.source.type !== 'github') {
+      throw new Error(`A skill "${s.name}" não é originária do GitHub e não pode ser atualizada automaticamente.`);
+    }
+
+    let sourceId = s.source.sourceId;
+    let skillPath = s.source.path;
+
+    if (!sourceId || !this.getSources().some((src) => src.id === sourceId)) {
+      if (s.source.repo) {
+        const [owner, repo] = s.source.repo.split('/');
+        const src: SkillSource = { id: safeId(`${owner}-${repo}-root`), label: s.source.repo, owner, repo, branch: '', basePath: '', hidden: true };
+        const state = this.readState();
+        if (!state.sources.some((x) => x.id === src.id)) {
+          state.sources.push(src);
+          this.writeState(state);
+        }
+        sourceId = src.id;
+      } else {
+        throw new Error(`Não foi possível identificar o repositório de origem de "${s.name}".`);
+      }
+    }
+
+    if (!skillPath) {
+      const src = this.getSources().find((x) => x.id === sourceId);
+      if (!src) throw new Error('Fonte de skills desconhecida.');
+      const branch = await this.resolveBranch(src, token);
+      const tree = await this.gh(`https://api.github.com/repos/${src.owner}/${src.repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`, token);
+      const skillFiles: any[] = (tree.tree || []).filter((n: any) => n.type === 'blob' && /(^|\/)SKILL\.md$/.test(n.path));
+      const wanted = s.id.toLowerCase();
+      const match = skillFiles.find((f: any) => path.posix.dirname(f.path).split('/').pop()?.toLowerCase() === wanted);
+      if (!match) throw new Error(`Pasta da skill "${s.name}" não encontrada no repositório.`);
+      skillPath = path.posix.dirname(match.path);
+    }
+
+    return this.install(sourceId, skillPath, token).then((res) => {
+      if (this.updatesCache) this.updatesCache.results[id] = false;
+      return res;
+    });
+  }
+
+  async updateAll(token?: string): Promise<{ updated: number; failed: number; skills: string[] }> {
+    const updates = await this.checkUpdates(false, token);
+    const list = this.listInstalled().filter((s) => s.source.type === 'github' && updates[s.id]);
+    let updated = 0;
+    let failed = 0;
+    const names: string[] = [];
+
+    for (const s of list) {
+      try {
+        await this.update(s.id, token);
+        updated++;
+        names.push(s.name);
+      } catch (err) {
+        failed++;
+      }
+    }
+
+    return { updated, failed, skills: names };
+  }
+
+  private updatesCache: { at: number; results: Record<string, boolean> } | null = null;
+
+  async checkUpdates(force = false, token?: string): Promise<Record<string, boolean>> {
+    if (!force && this.updatesCache && Date.now() - this.updatesCache.at < 5 * 60 * 1000) {
+      return this.updatesCache.results;
+    }
+
+    const installed = this.listInstalled().filter((s) => s.source.type === 'github' && s.source.repo && s.source.path);
+    const results: Record<string, boolean> = {};
+
+    const repos = new Map<string, InstalledSkill[]>();
+    for (const s of installed) {
+      const repo = s.source.repo!;
+      const list = repos.get(repo) || [];
+      list.push(s);
+      repos.set(repo, list);
+    }
+
+    for (const [repoFull, skills] of repos.entries()) {
+      try {
+        const [owner, repo] = repoFull.split('/');
+        const src: SkillSource = { id: safeId(`${owner}-${repo}-root`), label: repoFull, owner, repo, branch: '', basePath: '', hidden: true };
+        const branch = await this.resolveBranch(src, token);
+        const tree = await this.gh(`https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`, token);
+        const treeNodes: any[] = tree.tree || [];
+
+        for (const s of skills) {
+          const normPath = s.source.path!.replace(/\/$/, '');
+          const node = treeNodes.find((n: any) => n.path === normPath && n.type === 'tree');
+          if (node && s.source.treeSha) {
+            results[s.id] = node.sha !== s.source.treeSha;
+          } else {
+            results[s.id] = false;
+          }
+        }
+      } catch {
+        for (const s of skills) {
+          results[s.id] = false;
+        }
+      }
+    }
+
+    this.updatesCache = { at: Date.now(), results };
+    return results;
+  }
+
   // ------------------------------------------------------------------ integração com os CLIs
 
   // Recria o plugin do Claude e os links do Codex/Gemini a partir das skills ativas

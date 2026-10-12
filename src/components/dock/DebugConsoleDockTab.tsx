@@ -51,7 +51,7 @@ export const DebugConsoleDockTab: React.FC<DebugConsoleDockTabProps> = ({
     {
       id: 'init-1',
       type: 'info',
-      content: 'DevFlow Debug Console iniciado. Digite expressões JS/TS ou comandos shell com prefixo $ (ex: $ git status).',
+      content: 'Aura Dev Debug Console iniciado. Digite expressões JS/TS ou comandos shell com prefixo $ (ex: $ git status).',
       timestamp: Date.now(),
     },
   ]);

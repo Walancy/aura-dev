@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Activity, AlertTriangle, CalendarOff, Clock, Eye, GitPullRequest, Gauge, ListChecks, Sun, Users, Zap } from 'lucide-react';
+import { Activity, AlertCircle, AlertTriangle, CalendarOff, Clock, Eye, GitPullRequest, Gauge, ListChecks, Sun, Users, Zap } from 'lucide-react';
 import type { ProjectIssue, SprintOption } from '../ProjectsSchedulerView';
 import {
   formatHours,
@@ -193,10 +193,13 @@ export const TeamOverviewPanel: React.FC<Props> = ({ ctx, raw, members, metrics,
                     <Avatar ctx={ctx} login={m.login} url={m.avatarUrl} size={22} ring={d.blockers.length ? '#ef4444' : undefined} />
                     <div style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: theme.textSecondary, display: 'flex', flexDirection: 'column', gap: 2 }}>
                       <span style={{ color: theme.textPrimary, fontWeight: 500, fontSize: 12 }}>{m.login}</span>
-                      {d.yesterday.length > 0 && <span><b style={{ color: theme.textMuted, fontWeight: 500 }}>Ontem:</b> {d.yesterday.slice(0, 2).join(' • ')}</span>}
-                      {d.today.length > 0 && <span><b style={{ color: theme.textMuted, fontWeight: 500 }}>Hoje:</b> {d.today.slice(0, 2).join(' • ')}</span>}
+                      {d.yesterday.length > 0 && <span><b style={{ color: theme.textSecondary, fontWeight: 500 }}>Ontem:</b> {d.yesterday.slice(0, 2).join(' • ')}</span>}
+                      {d.today.length > 0 && <span><b style={{ color: theme.textSecondary, fontWeight: 500 }}>Hoje:</b> {d.today.slice(0, 2).join(' • ')}</span>}
                       {d.blockers.map((b, i) => (
-                        <span key={i} style={{ color: '#ef4444' }}>⛔ {b.title}</span>
+                        <span key={i} style={{ color: '#ef4444', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <AlertCircle size={11} />
+                          {b.title}
+                        </span>
                       ))}
                     </div>
                   </div>

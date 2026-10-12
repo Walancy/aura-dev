@@ -7,6 +7,174 @@ import { hexToRgba } from '../utils/color';
 
 const TERMINAL_FONT_FAMILY = '"JetBrains Mono", Menlo, Monaco, "Courier New", monospace';
 
+export interface TerminalThemeDef {
+  id: string;
+  name: string;
+  background: string;
+  foreground: string;
+  cursor?: string;
+  black?: string;
+  red?: string;
+  green?: string;
+  yellow?: string;
+  blue?: string;
+  magenta?: string;
+  cyan?: string;
+  white?: string;
+  brightBlack?: string;
+  brightRed?: string;
+  brightGreen?: string;
+  brightYellow?: string;
+  brightBlue?: string;
+  brightMagenta?: string;
+  brightCyan?: string;
+  brightWhite?: string;
+}
+
+export const TERMINAL_THEMES: Record<string, TerminalThemeDef> = {
+  default: {
+    id: 'default',
+    name: 'Aura Dev Escuro',
+    background: '#101010',
+    foreground: '#dcdcdc',
+    black: '#1a1a1a',
+    red: '#ef4444',
+    green: '#10b981',
+    yellow: '#f59e0b',
+    blue: '#3b82f6',
+    magenta: '#a855f7',
+    cyan: '#06b6d4',
+    white: '#f8f8f8',
+    brightBlack: '#64748b',
+    brightRed: '#f87171',
+    brightGreen: '#34d399',
+    brightYellow: '#fbbf24',
+    brightBlue: '#60a5fa',
+    brightMagenta: '#c084fc',
+    brightCyan: '#22d3ee',
+    brightWhite: '#ffffff',
+  },
+  'tokyo-night': {
+    id: 'tokyo-night',
+    name: 'Tokyo Night',
+    background: '#1a1b26',
+    foreground: '#c0caf5',
+    black: '#15161e',
+    red: '#f7768e',
+    green: '#9ece6a',
+    yellow: '#e0af68',
+    blue: '#7aa2f7',
+    magenta: '#bb9af7',
+    cyan: '#7dcfff',
+    white: '#a9b1d6',
+    brightBlack: '#414868',
+    brightRed: '#f7768e',
+    brightGreen: '#9ece6a',
+    brightYellow: '#e0af68',
+    brightBlue: '#7aa2f7',
+    brightMagenta: '#bb9af7',
+    brightCyan: '#7dcfff',
+    brightWhite: '#c0caf5',
+  },
+  dracula: {
+    id: 'dracula',
+    name: 'Dracula',
+    background: '#282a36',
+    foreground: '#f8f8f2',
+    black: '#21222c',
+    red: '#ff5555',
+    green: '#50fa7b',
+    yellow: '#f1fa8c',
+    blue: '#bd93f9',
+    magenta: '#ff79c6',
+    cyan: '#8be9fd',
+    white: '#f8f8f2',
+    brightBlack: '#6272a4',
+    brightRed: '#ff6e6e',
+    brightGreen: '#69ff94',
+    brightYellow: '#ffffa5',
+    brightBlue: '#d6acff',
+    brightMagenta: '#ff92df',
+    brightCyan: '#a4ffff',
+    brightWhite: '#ffffff',
+  },
+  'one-dark': {
+    id: 'one-dark',
+    name: 'One Dark Pro',
+    background: '#1e1e24',
+    foreground: '#abb2bf',
+    black: '#282c34',
+    red: '#e06c75',
+    green: '#98c379',
+    yellow: '#d19a66',
+    blue: '#61afef',
+    magenta: '#c678dd',
+    cyan: '#56b6c2',
+    white: '#abb2bf',
+    brightBlack: '#5c6370',
+    brightRed: '#be5046',
+    brightGreen: '#98c379',
+    brightYellow: '#e5c07b',
+    brightBlue: '#61afef',
+    brightMagenta: '#c678dd',
+    brightCyan: '#56b6c2',
+    brightWhite: '#ffffff',
+  },
+  monokai: {
+    id: 'monokai',
+    name: 'Monokai',
+    background: '#272822',
+    foreground: '#f8f8f2',
+    black: '#272822',
+    red: '#f92672',
+    green: '#a6e22e',
+    yellow: '#f4bf75',
+    blue: '#66d9ef',
+    magenta: '#ae81ff',
+    cyan: '#a1efe4',
+    white: '#f8f8f2',
+    brightBlack: '#75715e',
+    brightRed: '#f92672',
+    brightGreen: '#a6e22e',
+    brightYellow: '#f4bf75',
+    brightBlue: '#66d9ef',
+    brightMagenta: '#ae81ff',
+    brightCyan: '#a1efe4',
+    brightWhite: '#f9f8f5',
+  },
+  'github-dark': {
+    id: 'github-dark',
+    name: 'GitHub Dark',
+    background: '#0d1117',
+    foreground: '#c9d1d9',
+    black: '#161b22',
+    red: '#ff7b72',
+    green: '#3fb950',
+    yellow: '#d29922',
+    blue: '#58a6ff',
+    magenta: '#bc8cff',
+    cyan: '#39c5cf',
+    white: '#b1bac4',
+    brightBlack: '#484f58',
+    brightRed: '#ffa198',
+    brightGreen: '#56d364',
+    brightYellow: '#e3b341',
+    brightBlue: '#79c0ff',
+    brightMagenta: '#d2a8ff',
+    brightCyan: '#56d4dd',
+    brightWhite: '#f0f6fc',
+  },
+};
+
+export const TERMINAL_FONT_FAMILIES = [
+  { id: 'JetBrains Mono', label: 'JetBrains Mono', desc: 'Padrão Aura Dev' },
+  { id: 'Fira Code', label: 'Fira Code', desc: 'Com ligaduras' },
+  { id: 'Menlo', label: 'Menlo', desc: 'Padrão macOS' },
+  { id: 'Cascadia Code', label: 'Cascadia Code', desc: 'Moderno' },
+  { id: 'Source Code Pro', label: 'Source Code Pro', desc: 'Adobe Clean' },
+  { id: 'monospace', label: 'Sistema Monospace', desc: 'Fallback' },
+];
+
 // Real Native XTerm.js Terminal connected to node-pty
 const liveTerms = new Map<string, XTerm>();
 
@@ -47,6 +215,12 @@ export interface NativeXTermProps {
   onServerUrlDetected?: (url: string) => void;
   /** fundo transparente: deixa aparecer o degradê/logo atrás do terminal */
   transparent?: boolean;
+  fontFamily?: string;
+  lineHeight?: number;
+  themePreset?: string;
+  scrollOnUserInput?: boolean;
+  drawBoldTextInBrightColors?: boolean;
+  cursorWidth?: number;
 }
 
 export const NativeXTerm: React.FC<NativeXTermProps> = ({
@@ -68,6 +242,12 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
   alwaysVisible = false,
   onOpenUrl,
   onServerUrlDetected,
+  fontFamily = 'JetBrains Mono',
+  lineHeight = 1.15,
+  themePreset = 'default',
+  scrollOnUserInput = true,
+  drawBoldTextInBrightColors = true,
+  cursorWidth = 2,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
@@ -123,33 +303,43 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
   useEffect(() => {
     if (!containerRef.current) return;
 
+    const customTheme = TERMINAL_THEMES[themePreset || 'default'] || TERMINAL_THEMES.default;
+    const effectiveFontFamily = fontFamily
+      ? `"${fontFamily}", "JetBrains Mono", Menlo, Monaco, "Courier New", monospace`
+      : TERMINAL_FONT_FAMILY;
+
     const term = new XTerm({
       cursorBlink,
       cursorStyle,
+      cursorWidth: cursorWidth || 2,
       fontSize,
       scrollback,
-      fontFamily: TERMINAL_FONT_FAMILY,
+      fontFamily: effectiveFontFamily,
+      lineHeight: lineHeight || 1.15,
+      scrollOnUserInput: scrollOnUserInput !== false,
+      drawBoldTextInBrightColors: drawBoldTextInBrightColors !== false,
       theme: {
-        background: transparent ? 'rgba(0, 0, 0, 0)' : isDark ? '#101010' : '#ffffff',
-        foreground: isDark ? '#dcdcdc' : '#1f1f1f',
+        background: transparent ? 'rgba(0, 0, 0, 0)' : isDark ? customTheme.background : '#ffffff',
+        foreground: isDark ? customTheme.foreground : '#1f1f1f',
         cursor: accentColor,
+        cursorAccent: isDark ? customTheme.background : '#ffffff',
         selectionBackground: hexToRgba(accentColor, 0.35),
-        black: isDark ? '#1a1a1a' : '#e5e5e5',
-        red: '#ef4444',
-        green: '#10b981',
-        yellow: '#f59e0b',
-        blue: '#3b82f6',
-        magenta: '#a855f7',
-        cyan: '#06b6d4',
-        white: isDark ? '#f8f8f8' : '#111111',
-        brightBlack: '#64748b',
-        brightRed: '#f87171',
-        brightGreen: '#34d399',
-        brightYellow: '#fbbf24',
-        brightBlue: '#60a5fa',
-        brightMagenta: '#c084fc',
-        brightCyan: '#22d3ee',
-        brightWhite: isDark ? '#ffffff' : '#000000',
+        black: isDark ? (customTheme.black || '#1a1a1a') : '#e5e5e5',
+        red: customTheme.red || '#ef4444',
+        green: customTheme.green || '#10b981',
+        yellow: customTheme.yellow || '#f59e0b',
+        blue: customTheme.blue || '#3b82f6',
+        magenta: customTheme.magenta || '#a855f7',
+        cyan: customTheme.cyan || '#06b6d4',
+        white: isDark ? (customTheme.white || '#f8f8f8') : '#111111',
+        brightBlack: customTheme.brightBlack || '#64748b',
+        brightRed: customTheme.brightRed || '#f87171',
+        brightGreen: customTheme.brightGreen || '#34d399',
+        brightYellow: customTheme.brightYellow || '#fbbf24',
+        brightBlue: customTheme.brightBlue || '#60a5fa',
+        brightMagenta: customTheme.brightMagenta || '#c084fc',
+        brightCyan: customTheme.brightCyan || '#22d3ee',
+        brightWhite: isDark ? (customTheme.brightWhite || '#ffffff') : '#000000',
       },
       // Sem convertEol: o PTY já entrega \r\n. Converter \n quebrava CLIs de tela cheia (Ink/TUI),
       // que usam \n para mover o cursor e ficavam com texto deslocado e restos na tela.
@@ -481,43 +671,52 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
     }
   }, [cwd, sessionId]);
 
-  // Dynamically update terminal theme when accentColor or themeMode (isDark) changes
+  // Dynamically update terminal theme when accentColor, themeMode (isDark), or themePreset changes
   useEffect(() => {
     if (termRef.current) {
+      const customTheme = TERMINAL_THEMES[themePreset || 'default'] || TERMINAL_THEMES.default;
       termRef.current.options.theme = {
-        background: transparent ? 'rgba(0, 0, 0, 0)' : isDark ? '#101010' : '#ffffff',
-        foreground: isDark ? '#dcdcdc' : '#1f1f1f',
+        background: transparent ? 'rgba(0, 0, 0, 0)' : isDark ? customTheme.background : '#ffffff',
+        foreground: isDark ? customTheme.foreground : '#1f1f1f',
         cursor: accentColor,
-        cursorAccent: isDark ? '#101010' : '#ffffff',
+        cursorAccent: isDark ? customTheme.background : '#ffffff',
         selectionBackground: hexToRgba(accentColor, 0.35),
-        black: isDark ? '#1a1a1a' : '#e5e5e5',
-        red: '#ef4444',
-        green: '#10b981',
-        yellow: '#f59e0b',
-        blue: '#3b82f6',
-        magenta: '#a855f7',
-        cyan: '#06b6d4',
-        white: isDark ? '#f8f8f8' : '#111111',
-        brightBlack: '#64748b',
-        brightRed: '#f87171',
-        brightGreen: '#34d399',
-        brightYellow: '#fbbf24',
-        brightBlue: '#60a5fa',
-        brightMagenta: '#c084fc',
-        brightCyan: '#22d3ee',
-        brightWhite: isDark ? '#ffffff' : '#000000',
+        black: isDark ? (customTheme.black || '#1a1a1a') : '#e5e5e5',
+        red: customTheme.red || '#ef4444',
+        green: customTheme.green || '#10b981',
+        yellow: customTheme.yellow || '#f59e0b',
+        blue: customTheme.blue || '#3b82f6',
+        magenta: customTheme.magenta || '#a855f7',
+        cyan: customTheme.cyan || '#06b6d4',
+        white: isDark ? (customTheme.white || '#f8f8f8') : '#111111',
+        brightBlack: customTheme.brightBlack || '#64748b',
+        brightRed: customTheme.brightRed || '#f87171',
+        brightGreen: customTheme.brightGreen || '#34d399',
+        brightYellow: customTheme.brightYellow || '#fbbf24',
+        brightBlue: customTheme.brightBlue || '#60a5fa',
+        brightMagenta: customTheme.brightMagenta || '#c084fc',
+        brightCyan: customTheme.brightCyan || '#22d3ee',
+        brightWhite: isDark ? (customTheme.brightWhite || '#ffffff') : '#000000',
       };
     }
-  }, [accentColor, isDark, transparent]);
+  }, [accentColor, isDark, transparent, themePreset]);
 
-  // Dynamically apply font size, cursor style/blink and scrollback settings changes
+  // Dynamically apply font size, font family, line height, cursor style/blink, cursor width, scrollback
   // without tearing down the PTY-backed session (which would lose scroll position).
   useEffect(() => {
     if (termRef.current) {
+      const effectiveFontFamily = fontFamily
+        ? `"${fontFamily}", "JetBrains Mono", Menlo, Monaco, "Courier New", monospace`
+        : TERMINAL_FONT_FAMILY;
       termRef.current.options.fontSize = fontSize;
       termRef.current.options.cursorStyle = cursorStyle;
       termRef.current.options.cursorBlink = cursorBlink;
+      termRef.current.options.cursorWidth = cursorWidth || 2;
       termRef.current.options.scrollback = scrollback;
+      termRef.current.options.fontFamily = effectiveFontFamily;
+      termRef.current.options.lineHeight = lineHeight || 1.15;
+      termRef.current.options.scrollOnUserInput = scrollOnUserInput !== false;
+      termRef.current.options.drawBoldTextInBrightColors = drawBoldTextInBrightColors !== false;
       try {
         fitAddonRef.current?.fit();
         if (window.electronAPI?.pty && termRef.current) {
@@ -525,7 +724,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         }
       } catch {}
     }
-  }, [fontSize, cursorStyle, cursorBlink, scrollback, sessionId]);
+  }, [fontSize, cursorStyle, cursorBlink, cursorWidth, scrollback, fontFamily, lineHeight, scrollOnUserInput, drawBoldTextInBrightColors, sessionId]);
 
   // When tab/card becomes active, fit and focus
   useEffect(() => {

@@ -69,16 +69,16 @@ export const KANBAN_COLUMNS: KanbanColumnDef[] = [
   },
 ];
 
-// Paleta para etiquetas no estilo GitHub
+// Paleta para etiquetas no estilo GitHub sem bordas
 const LABEL_COLORS: Record<string, { bg: string; border: string; text: string }> = {
-  bug: { bg: 'rgba(239, 68, 68, 0.15)', border: '#ef4444', text: '#f87171' },
-  painel: { bg: 'rgba(6, 182, 212, 0.15)', border: '#06b6d4', text: '#22d3ee' },
-  enhancement: { bg: 'rgba(14, 165, 233, 0.15)', border: '#0ea5e9', text: '#38bdf8' },
-  feature: { bg: 'rgba(59, 130, 246, 0.15)', border: '#3b82f6', text: '#60a5fa' },
-  guia: { bg: 'rgba(16, 185, 129, 0.15)', border: '#10b981', text: '#34d399' },
-  viajante: { bg: 'rgba(20, 184, 166, 0.15)', border: '#14b8a6', text: '#2dd4bf' },
-  documentation: { bg: 'rgba(168, 85, 247, 0.15)', border: '#a855f7', text: '#c084fc' },
-  urgente: { bg: 'rgba(244, 63, 94, 0.15)', border: '#f43f5e', text: '#fb7185' },
+  bug: { bg: 'rgba(239, 68, 68, 0.15)', border: 'none', text: '#f87171' },
+  painel: { bg: 'rgba(6, 182, 212, 0.15)', border: 'none', text: '#22d3ee' },
+  enhancement: { bg: 'rgba(14, 165, 233, 0.15)', border: 'none', text: '#38bdf8' },
+  feature: { bg: 'rgba(59, 130, 246, 0.15)', border: 'none', text: '#60a5fa' },
+  guia: { bg: 'rgba(16, 185, 129, 0.15)', border: 'none', text: '#34d399' },
+  viajante: { bg: 'rgba(20, 184, 166, 0.15)', border: 'none', text: '#2dd4bf' },
+  documentation: { bg: 'rgba(168, 85, 247, 0.15)', border: 'none', text: '#c084fc' },
+  urgente: { bg: 'rgba(244, 63, 94, 0.15)', border: 'none', text: '#fb7185' },
 };
 
 function getLabelStyle(labelName: string, isEffectiveDark: boolean) {
@@ -86,8 +86,8 @@ function getLabelStyle(labelName: string, isEffectiveDark: boolean) {
   if (LABEL_COLORS[key]) return LABEL_COLORS[key];
   return {
     bg: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
-    border: isEffectiveDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.15)',
-    text: isEffectiveDark ? '#cbd5e1' : '#475569',
+    border: 'none',
+    text: isEffectiveDark ? '#d4d4d4' : '#525252',
   };
 }
 
@@ -346,20 +346,16 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                 maxWidth: 380,
                 background: isDragOver
                   ? isEffectiveDark
-                    ? 'rgba(255, 255, 255, 0.05)'
-                    : 'rgba(0, 0, 0, 0.04)'
-                  : theme.viewCanvasBg,
+                    ? '#222222'
+                    : '#e2e8f0'
+                  : isEffectiveDark
+                  ? '#161616'
+                  : '#f1f5f9',
                 borderRadius: 9,
-                border: `1px solid ${
-                  isDragOver
-                    ? accentColor
-                    : isEffectiveDark
-                    ? 'rgba(255, 255, 255, 0.06)'
-                    : 'rgba(0, 0, 0, 0.06)'
-                }`,
+                border: 'none',
                 display: 'flex',
                 flexDirection: 'column',
-                transition: 'background 0.15s ease, border-color 0.15s ease',
+                transition: 'background 0.15s ease',
                 overflow: 'hidden',
               }}
             >
@@ -384,26 +380,24 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                         width: 14,
                         height: 14,
                         borderRadius: '50%',
-                        border: `2px solid ${col.dotColor}`,
+                        background: `${col.dotColor}22`,
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         boxSizing: 'border-box',
                       }}
                     >
-                      {col.isDoneType && (
-                        <div
-                          style={{
-                            width: 6,
-                            height: 6,
-                            borderRadius: '50%',
-                            background: col.dotColor,
-                          }}
-                        />
-                      )}
+                      <div
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: '50%',
+                          background: col.dotColor,
+                        }}
+                      />
                     </div>
 
-                    <span style={{ fontSize: 13, fontWeight: 600, color: theme.textPrimary }}>
+                    <span style={{ fontSize: 13, fontWeight: 400, color: theme.textPrimary }}>
                       {col.title}
                     </span>
 
@@ -473,10 +467,10 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                           position: 'absolute',
                           top: 24,
                           right: 0,
-                          background: isEffectiveDark ? '#161b22' : '#ffffff',
-                          border: isEffectiveDark ? '1px solid #30363d' : '1px solid #d0d7de',
+                          background: isEffectiveDark ? '#1a1a1a' : '#ffffff',
+                          border: 'none',
                           borderRadius: 6,
-                          boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
+                          boxShadow: 'none',
                           padding: 4,
                           zIndex: 100,
                           minWidth: 170,
@@ -612,10 +606,8 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                       onDragEnd={handleDragEnd}
                       onClick={() => onOpenIssueDetail(task)}
                       style={{
-                        background: theme.viewCardBg,
-                        border: `1px solid ${
-                          isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'
-                        }`,
+                        background: isEffectiveDark ? '#202020' : '#ffffff',
+                        border: 'none',
                         borderRadius: 7,
                         padding: '10px 12px',
                         display: 'flex',
@@ -623,25 +615,19 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                         gap: 7,
                         cursor: isBeingDragged ? 'grabbing' : 'grab',
                         opacity: isBeingDragged ? 0.35 : 1,
-                        boxShadow: isEffectiveDark
-                          ? '0 1px 3px rgba(0,0,0,0.4)'
-                          : '0 1px 3px rgba(0,0,0,0.05)',
-                        transition: 'transform 0.12s ease, border-color 0.15s ease, box-shadow 0.15s ease',
+                        boxShadow: 'none',
+                        transition: 'transform 0.12s ease, background 0.15s ease',
                         userSelect: 'none',
                       }}
                       onMouseEnter={(e) => {
                         if (!isBeingDragged) {
-                          e.currentTarget.style.borderColor = isEffectiveDark
-                            ? 'rgba(255, 255, 255, 0.2)'
-                            : 'rgba(0, 0, 0, 0.2)';
+                          e.currentTarget.style.background = isEffectiveDark ? '#262626' : '#f8fafc';
                           e.currentTarget.style.transform = 'translateY(-1px)';
                         }
                       }}
                       onMouseLeave={(e) => {
                         if (!isBeingDragged) {
-                          e.currentTarget.style.borderColor = isEffectiveDark
-                            ? 'rgba(255, 255, 255, 0.08)'
-                            : 'rgba(0, 0, 0, 0.08)';
+                          e.currentTarget.style.background = isEffectiveDark ? '#202020' : '#ffffff';
                           e.currentTarget.style.transform = 'translateY(0)';
                         }
                       }}
@@ -674,7 +660,7 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                               width: 18,
                               height: 18,
                               borderRadius: '50%',
-                              background: assignee.avatarBg || '#475569',
+                              background: assignee.avatarBg || '#525252',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
@@ -737,10 +723,10 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                             title={`Estimativa: ${task.projectV2Estimate}`}
                             style={{
                               fontSize: 10,
-                              fontWeight: 600,
+                              fontWeight: 400,
                               color: theme.textSecondary,
-                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.05)',
-                              border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.12)'}`,
+                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)',
+                              border: 'none',
                               padding: '1px 6px',
                               borderRadius: 10,
                               lineHeight: 1.2,
@@ -762,10 +748,10 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                               alignItems: 'center',
                               justifyContent: 'center',
                               fontSize: 9.5,
-                              fontWeight: 700,
+                              fontWeight: 400,
                               color: task.priorityColor || theme.textSecondary,
-                              border: `1px solid ${task.priorityColor || (isEffectiveDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.2)')}`,
-                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+                              border: 'none',
+                              background: task.priorityColor ? `${task.priorityColor}22` : (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)'),
                               boxSizing: 'border-box',
                             }}
                           >
@@ -782,10 +768,10 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                               alignItems: 'center',
                               gap: 3.5,
                               fontSize: 10,
-                              fontWeight: 500,
+                              fontWeight: 400,
                               color: theme.textSecondary,
-                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
-                              border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.1)'}`,
+                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.05)',
+                              border: 'none',
                               padding: '1px 6px',
                               borderRadius: 10,
                               lineHeight: 1.2,
@@ -804,10 +790,10 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                               key={idx}
                               style={{
                                 fontSize: 10,
-                                fontWeight: 500,
+                                fontWeight: 400,
                                 padding: '1px 6px',
                                 borderRadius: 10,
-                                border: `1px solid ${lblStyle.border}`,
+                                border: 'none',
                                 background: lblStyle.bg,
                                 color: lblStyle.text,
                                 lineHeight: 1.2,
@@ -830,9 +816,8 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                       textAlign: 'center',
                       color: theme.textMuted,
                       fontSize: 11.5,
-                      border: `1px dashed ${
-                        isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'
-                      }`,
+                      border: 'none',
+                      background: isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
                       borderRadius: 6,
                     }}
                   >

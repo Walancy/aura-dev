@@ -182,6 +182,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     prompt: (prompt: string, model: string, cwd?: string, provider?: string, timeoutMs?: number, runId?: string, sessionIds?: string[]) =>
       ipcRenderer.invoke('ai:prompt', { prompt, model, cwd, provider, timeoutMs, runId, sessionIds }),
     checkClis: () => ipcRenderer.invoke('ai:checkClis'),
+    checkCliUpdates: () => ipcRenderer.invoke('ai:checkCliUpdates'),
     orchestratorProviders: () => ipcRenderer.invoke('ai:orchestratorProviders'),
     orchestrate: (input: any) => ipcRenderer.invoke('ai:orchestrate', input),
     cancelOrchestration: (runId: string) => ipcRenderer.invoke('ai:orchestratorCancel', runId),

@@ -5,6 +5,8 @@ import { Panel, SmallButton, selectStyle } from '../../team/teamUi';
 import { Field, Segmented, Toggle, WEEKDAYS, textareaStyle, type SectionProps } from '../settingsUi';
 import { RepoFileEditor } from './RepoFileEditor';
 
+import { logSystemActivity } from '../../../utils/brainService';
+
 const CLAUDE_TEMPLATE = (repo: string) => `# ${repo}
 
 ## Stack
@@ -27,14 +29,17 @@ export const AiSection: React.FC<SectionProps> = ({ ctx, owner, repo, repoInfo, 
   const ai = settings.ai;
   const [contextFile, setContextFile] = useState<'CLAUDE.md' | 'AGENTS.md'>('CLAUDE.md');
   const provider = AI_PROVIDERS.find((p) => p.id === ai.providerId);
-  const setAi = (patch: Partial<typeof ai>) => update((s) => ({ ...s, ai: { ...s.ai, ...patch } }));
+  const setAi = (patch: Partial<typeof ai>) => {
+    logSystemActivity('configuracoes_projeto', 'atualizar_ia', `${owner}/${repo}`, patch);
+    update((s) => ({ ...s, ai: { ...s.ai, ...patch } }));
+  };
   const setAuto = (patch: Partial<typeof ai.automations>) => setAi({ automations: { ...ai.automations, ...patch } });
   const canEdit = isAdmin || Boolean(repoInfo?.permissions?.push);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
       <Panel ctx={ctx} icon={<Bot size={14} color={accentColor} />} title="IA deste projeto">
-        <Field ctx={ctx} label="Provedor" hint="Usado na aba Time e na geração de descrição de issues deste projeto.">
+        <Field ctx={ctx} label="Provedor" hint="Aba Time e descrição de issues.">
           <select value={ai.providerId || ''} onChange={(e) => setAi({ providerId: e.target.value || undefined, model: undefined })} style={selectStyle(ctx)}>
             <option value="">Padrão do app</option>
             {AI_PROVIDERS.map((p) => (
@@ -56,7 +61,7 @@ export const AiSection: React.FC<SectionProps> = ({ ctx, owner, repo, repoInfo, 
             </select>
           </Field>
         )}
-        <Field ctx={ctx} label="Contexto fixo" hint="Enviado no início de todo prompt do DevFlow para este projeto (não altera o repositório)." wide>
+        <Field ctx={ctx} label="Contexto fixo" hint="Enviado no início de todo prompt do Aura Dev para este projeto (não altera o repositório)." wide>
           <textarea
             value={ai.contextNotes}
             onChange={(e) => setAi({ contextNotes: e.target.value })}
@@ -70,7 +75,7 @@ export const AiSection: React.FC<SectionProps> = ({ ctx, owner, repo, repoInfo, 
         <Field ctx={ctx} label="Gerar descrição de issue com IA" hint="Mostra o botão de IA ao criar tarefas.">
           <Toggle ctx={ctx} checked={ai.automations.issueDescription} onChange={(v) => setAuto({ issueDescription: v })} />
         </Field>
-        <Field ctx={ctx} label="Resumo semanal automático" hint="Gera o resumo do time ao abrir a aba Time no dia escolhido (se o último tiver mais de 6 dias).">
+        <Field ctx={ctx} label="Resumo semanal automático" hint="Gera o resumo ao abrir a aba Time no dia escolhido.">
           {ai.automations.weeklySummary && (
             <select value={ai.automations.weeklySummaryWeekday} onChange={(e) => setAuto({ weeklySummaryWeekday: Number(e.target.value) })} style={selectStyle(ctx)}>
               {WEEKDAYS.map((d, i) => (
@@ -82,13 +87,13 @@ export const AiSection: React.FC<SectionProps> = ({ ctx, owner, repo, repoInfo, 
           )}
           <Toggle ctx={ctx} checked={ai.automations.weeklySummary} onChange={(v) => setAuto({ weeklySummary: v })} />
         </Field>
-        <Field ctx={ctx} label="Sugestões de responsável" hint="Lista quem deveria pegar cada issue sem dono (aba Time → Insights).">
+        <Field ctx={ctx} label="Sugestões de responsável" hint="Lista quem deveria pegar cada issue sem dono (Time → Insights).">
           <Toggle ctx={ctx} checked={ai.automations.assigneeSuggestions} onChange={(v) => setAuto({ assigneeSuggestions: v })} />
         </Field>
       </Panel>
 
       <Panel ctx={ctx} icon={<ShieldCheck size={14} color={accentColor} />} title="Limites">
-        <Field ctx={ctx} label="O que a IA pode fazer" hint="Em “só sugerir”, os botões que atribuem issues direto a partir das sugestões ficam ocultos.">
+        <Field ctx={ctx} label="O que a IA pode fazer" hint="Em “só sugerir”, os botões de atribuição direta ficam ocultos.">
           <Segmented
             ctx={ctx}
             value={ai.permission}

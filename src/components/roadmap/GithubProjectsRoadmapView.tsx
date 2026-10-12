@@ -53,12 +53,12 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
   const leftTableScrollRef = useRef<HTMLDivElement>(null);
 
   // Safe theme tokens
-  const textPrimary = theme?.textPrimary || (isEffectiveDark ? '#ffffff' : '#0f172a');
-  const textSecondary = theme?.textSecondary || (isEffectiveDark ? '#888888' : '#64748b');
-  const textMuted = theme?.textMuted || (isEffectiveDark ? '#555555' : '#94a3b8');
-  const viewCanvasBg = theme?.viewCanvasBg || (isEffectiveDark ? '#141414' : '#f8fafc');
-  const controlBg = theme?.controlBg || (isEffectiveDark ? '#181818' : '#ffffff');
-  const controlHoverBg = theme?.controlHoverBg || (isEffectiveDark ? '#242424' : '#f8fafc');
+  const textPrimary = theme?.textPrimary || (isEffectiveDark ? '#ffffff' : '#111111');
+  const textSecondary = theme?.textSecondary || (isEffectiveDark ? '#a8a8a8' : '#666666');
+  const textMuted = theme?.textMuted || (isEffectiveDark ? '#757575' : '#888888');
+  const viewCanvasBg = theme?.viewCanvasBg || (isEffectiveDark ? '#171717' : '#f5f5f5');
+  const controlBg = theme?.controlBg || (isEffectiveDark ? '#1e1e1e' : '#ffffff');
+  const controlHoverBg = theme?.controlHoverBg || (isEffectiveDark ? '#262626' : '#f0f0f0');
 
   // Data de hoje
   const today = useMemo(() => new Date(), []);
@@ -476,10 +476,10 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
                   position: 'absolute',
                   top: 24,
                   right: 0,
-                  background: isEffectiveDark ? '#161b22' : '#ffffff',
-                  border: isEffectiveDark ? '1px solid #30363d' : '1px solid #d0d7de',
+                  background: isEffectiveDark ? '#1a1a1a' : '#ffffff',
+                  border: 'none',
                   borderRadius: 6,
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
+                  boxShadow: 'none',
                   padding: 6,
                   zIndex: 100,
                   display: 'grid',
@@ -1068,14 +1068,14 @@ export class GithubProjectsRoadmapView extends React.Component<
             justifyContent: 'center',
             padding: 32,
             gap: 12,
-            background: isDark ? '#141414' : '#f8fafc',
+            background: isDark ? '#171717' : '#f5f5f5',
             borderRadius: 8,
-            color: isDark ? '#ffffff' : '#0f172a',
-            border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
+            color: isDark ? '#ffffff' : '#111111',
+            border: 'none',
           }}
         >
           <div style={{ fontSize: 14, fontWeight: 600 }}>Não foi possível carregar a visualização de Roadmap</div>
-          <div style={{ fontSize: 12, color: isDark ? '#888888' : '#64748b' }}>
+          <div style={{ fontSize: 12, color: isDark ? '#a8a8a8' : '#666666' }}>
             {this.state.error?.message || 'Ocorreu um erro inesperado ao renderizar as tarefas na linha do tempo.'}
           </div>
           <button

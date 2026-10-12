@@ -9,7 +9,7 @@ export interface TeamUiCtx {
 }
 
 export const LOAD_META: Record<LoadLevel, { label: string; color: string }> = {
-  idle: { label: 'Ocioso', color: '#94a3b8' },
+  idle: { label: 'Ocioso', color: '#a3a3a3' },
   ok: { label: 'Equilibrado', color: '#22c55e' },
   high: { label: 'Alto', color: '#f59e0b' },
   overloaded: { label: 'Sobrecarga', color: '#ef4444' },
@@ -20,7 +20,7 @@ export const ROLE_COLOR: Record<RepoRole, string> = {
   maintain: '#f59e0b',
   write: '#3b82f6',
   triage: '#a855f7',
-  read: '#94a3b8',
+  read: '#a3a3a3',
 };
 
 export const SEVERITY_COLOR = { critical: '#ef4444', warning: '#f59e0b', info: '#3b82f6' } as const;
@@ -39,20 +39,22 @@ export const Panel: React.FC<{ ctx: TeamUiCtx; title?: React.ReactNode; icon?: R
 }) => (
   <div
     style={{
-      background: ctx.theme.viewCanvasBg,
+      background: ctx.isEffectiveDark ? '#161616' : '#ffffff',
       borderRadius: 8,
-      padding: '10px 12px',
+      padding: 10,
       display: 'flex',
       flexDirection: 'column',
-      gap: 8,
+      gap: 10,
       minWidth: 0,
       boxSizing: 'border-box',
+      border: 'none',
+      boxShadow: 'none',
       ...style,
     }}
   >
     {(title || right) && (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minHeight: 22 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, fontWeight: 600, color: ctx.theme.textPrimary }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 400, color: ctx.theme.textPrimary }}>
           {icon}
           {title}
         </div>
@@ -77,7 +79,7 @@ export const Avatar: React.FC<{ ctx: TeamUiCtx; login: string; url?: string; siz
       alignItems: 'center',
       justifyContent: 'center',
       fontSize: size * 0.42,
-      fontWeight: 600,
+      fontWeight: 400,
       color: ctx.theme.textSecondary,
       boxShadow: ring ? `0 0 0 2px ${ring}` : undefined,
     }}
@@ -102,7 +104,7 @@ export const Pill: React.FC<{ color: string; children: React.ReactNode; title?: 
       alignItems: 'center',
       gap: 4,
       fontSize: 10.5,
-      fontWeight: 500,
+      fontWeight: 400,
       padding: '2px 7px',
       borderRadius: 10,
       color: solid ? '#fff' : color,
@@ -128,7 +130,7 @@ export const StatTile: React.FC<{ ctx: TeamUiCtx; label: string; value: React.Re
   <div
     onClick={onClick}
     style={{
-      background: ctx.theme.viewCanvasBg,
+      background: ctx.isEffectiveDark ? '#1a1a1a' : '#ffffff',
       borderRadius: 8,
       padding: '10px 12px',
       display: 'flex',
@@ -136,14 +138,23 @@ export const StatTile: React.FC<{ ctx: TeamUiCtx; label: string; value: React.Re
       gap: 4,
       minWidth: 0,
       cursor: onClick ? 'pointer' : undefined,
+      border: 'none',
+      boxShadow: 'none',
+      transition: 'background 0.15s ease',
+    }}
+    onMouseEnter={(e) => {
+      if (onClick) e.currentTarget.style.background = ctx.isEffectiveDark ? '#222222' : '#f5f5f5';
+    }}
+    onMouseLeave={(e) => {
+      if (onClick) e.currentTarget.style.background = ctx.isEffectiveDark ? '#1a1a1a' : '#ffffff';
     }}
   >
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: ctx.theme.textSecondary }}>
       {icon}
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
     </div>
-    <div style={{ fontSize: 20, fontWeight: 600, color: tone || ctx.theme.textPrimary, lineHeight: 1.1 }}>{value}</div>
-    {hint && <div style={{ fontSize: 11, color: ctx.theme.textMuted }}>{hint}</div>}
+    <div style={{ fontSize: 18, fontWeight: 400, color: tone || ctx.theme.textPrimary, lineHeight: 1.1 }}>{value}</div>
+    {hint && <div style={{ fontSize: 11, color: ctx.theme.textSecondary }}>{hint}</div>}
   </div>
 );
 
@@ -183,7 +194,11 @@ export const SmallButton: React.FC<{
   disabled?: boolean;
   title?: string;
 }> = ({ ctx, onClick, children, primary, danger, disabled, title }) => {
-  const bg = primary ? ctx.accentColor : danger ? 'rgba(239, 68, 68, 0.14)' : ctx.theme.controlBg;
+  const bg = primary
+    ? ctx.accentColor
+    : danger
+    ? 'rgba(239, 68, 68, 0.16)'
+    : (ctx.isEffectiveDark ? '#1c1c1c' : ctx.theme.controlBg);
   return (
     <button
       type="button"
@@ -197,19 +212,31 @@ export const SmallButton: React.FC<{
         display: 'inline-flex',
         alignItems: 'center',
         gap: 5,
-        height: 26,
+        height: 28,
         padding: '0 10px',
         borderRadius: 6,
         border: 'none',
         background: bg,
         color: primary ? ctx.accentContrastText : danger ? '#ef4444' : ctx.theme.textPrimary,
         fontSize: 11.5,
-        fontWeight: primary ? 500 : 400,
+        fontWeight: 400,
         fontFamily: 'inherit',
         cursor: disabled ? 'not-allowed' : 'pointer',
         opacity: disabled ? 0.5 : 1,
         whiteSpace: 'nowrap',
         flexShrink: 0,
+        boxShadow: 'none',
+        transition: 'all 0.15s ease',
+      }}
+      onMouseEnter={(e) => {
+        if (!disabled && !primary && !danger) {
+          e.currentTarget.style.background = ctx.isEffectiveDark ? '#242424' : ctx.theme.controlHoverBg;
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (!disabled && !primary && !danger) {
+          e.currentTarget.style.background = bg;
+        }
       }}
     >
       {children}
@@ -218,16 +245,18 @@ export const SmallButton: React.FC<{
 };
 
 export const selectStyle = (ctx: TeamUiCtx): React.CSSProperties => ({
-  background: ctx.theme.modalInputBg || ctx.theme.controlBg,
+  background: ctx.theme.modalInputBg || (ctx.isEffectiveDark ? '#1c1c1c' : ctx.theme.controlBg),
   color: ctx.theme.textPrimary,
   border: 'none',
   borderRadius: 6,
   height: 28,
   padding: '0 8px',
   fontSize: 12,
+  fontWeight: 400,
   fontFamily: 'inherit',
   outline: 'none',
   minWidth: 0,
+  boxShadow: 'none',
 });
 
 export const inputStyle = (ctx: TeamUiCtx): React.CSSProperties => ({
@@ -238,7 +267,7 @@ export const inputStyle = (ctx: TeamUiCtx): React.CSSProperties => ({
 
 export const rowHover = (ctx: TeamUiCtx) => ({
   onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
-    e.currentTarget.style.background = ctx.isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.025)';
+    e.currentTarget.style.background = ctx.isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.025)';
   },
   onMouseLeave: (e: React.MouseEvent<HTMLElement>) => {
     e.currentTarget.style.background = 'transparent';

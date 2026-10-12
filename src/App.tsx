@@ -34,14 +34,12 @@ import {
   Info,
   Milestone as MilestoneIcon,
   Loader2,
-  Bot,
   Radio,
   ExternalLink,
   PanelLeft,
   PanelBottom,
   PanelRight,
   SquareTerminal,
-  ScrollText,
   AtSign,
   Save,
   FileText,
@@ -72,11 +70,12 @@ import {
   GitCompare,
   History,
   Network,
-  Puzzle,
   Brain,
   Undo2,
   Bell,
   LogOut,
+  ArrowUp,
+  ArrowUpCircle,
 } from 'lucide-react';
 import avatarImg from './avatar.png';
 import { PreviewTabView } from './components/ide/PreviewTabView';
@@ -146,7 +145,7 @@ import { QuickOpenModal } from './components/modals/QuickOpenModal';
 import { ChatHistoryModal } from './components/modals/ChatHistoryModal';
 import { BranchModal } from './components/modals/BranchModal';
 import { IssuesModal } from './components/modals/IssuesModal';
-import { SettingsModal } from './components/modals/SettingsModal';
+import { SettingsModal, type SettingsTabId } from './components/modals/SettingsModal';
 import { AiGlobalRulesModal } from './components/modals/AiGlobalRulesModal';
 import { GithubLoginScreen } from './components/auth/GithubLoginScreen';
 import type { GithubAuthenticatedUser } from './components/auth/GithubLoginScreen';
@@ -172,6 +171,210 @@ import NotificationCenterPanel from './components/notifications/NotificationCent
 import { useNotificationCenter } from './components/notifications/useNotificationCenter';
 import { useProjectNotifier } from './components/notifications/useProjectNotifier';
 import { SkillsModal } from './components/skills/SkillsModal';
+
+interface DailyBudgetInfoTooltipProps {
+  claudeDaily: DailyBudget;
+  isEffectiveDark: boolean;
+  accentColor: string;
+  themeTokens: {
+    textPrimary: string;
+    textSecondary: string;
+    textMuted: string;
+    border: string;
+    bgCardSecondary: string;
+    [key: string]: any;
+  };
+  clampPopupToViewport?: (el: HTMLElement | null) => void;
+}
+
+const DailyBudgetInfoTooltip: React.FC<DailyBudgetInfoTooltipProps> = ({
+  claudeDaily,
+  isEffectiveDark,
+  accentColor,
+  themeTokens,
+  clampPopupToViewport,
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleMouseEnter = () => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+    setIsOpen(true);
+    logSystemActivity('ai', 'hover_daily_budget_info', 'Claude');
+  };
+
+  const handleMouseLeave = () => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+    }
+    closeTimeoutRef.current = setTimeout(() => {
+      setIsOpen(false);
+      closeTimeoutRef.current = null;
+    }, 200);
+  };
+
+  return (
+    <div
+      style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setIsOpen((prev) => {
+            const next = !prev;
+            if (next) {
+              logSystemActivity('ai', 'view_daily_budget_info', 'Claude');
+            }
+            return next;
+          });
+        }}
+        style={{
+          background: isOpen
+            ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
+            : 'transparent',
+          border: 'none',
+          boxShadow: 'none',
+          borderRadius: 4,
+          padding: 2,
+          margin: 0,
+          cursor: 'pointer',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: isOpen ? accentColor : themeTokens.textMuted,
+          transition: 'all 0.15s ease',
+        }}
+      >
+        <Info size={11} />
+      </button>
+
+      {isOpen && (
+        <div
+          ref={(el) => {
+            if (el && clampPopupToViewport) {
+              clampPopupToViewport(el);
+            }
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            left: -40,
+            width: 280,
+            background: isEffectiveDark ? '#232326' : '#f4f4f6',
+            borderRadius: 8,
+            padding: 10,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10,
+            border: 'none',
+            boxShadow: 'none',
+            zIndex: 1000000,
+            pointerEvents: 'auto',
+            transition: 'all 0.15s ease',
+          }}
+        >
+          {/* Bridge between button and tooltip */}
+          <div
+            style={{
+              position: 'absolute',
+              top: -8,
+              left: 0,
+              right: 0,
+              height: 10,
+              pointerEvents: 'auto',
+            }}
+          />
+
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 400, color: themeTokens.textPrimary }}>
+              Cálculo de Pontuação Diária
+            </span>
+            <span
+              style={{
+                fontSize: 9,
+                fontWeight: 400,
+                color: accentColor,
+                background: `${accentColor}18`,
+                padding: '1px 5px',
+                borderRadius: 4,
+              }}
+            >
+              Dia {claudeDaily.currentDay || 1} de 7
+            </span>
+          </div>
+
+          {/* Divisória com opacidade baixa */}
+          <div
+            style={{
+              height: 1,
+              width: '100%',
+              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)',
+            }}
+          />
+
+          {/* Explicação da Pontuação */}
+          <div
+            style={{
+              fontSize: 9.5,
+              fontWeight: 400,
+              color: themeTokens.textSecondary,
+              lineHeight: 1.45,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}
+          >
+            <div>
+              O limite semanal (100 pts) é dividido entre os 7 dias da semana (~14.3 pts/dia).
+            </div>
+            <div>
+              A cada dia você recebe a sua cota diária mais a sobra acumulada dos dias anteriores deste ciclo.
+            </div>
+            <div>
+              Caso não utilize todos os pontos hoje, o saldo acumula para o próximo dia até o reset semanal.
+            </div>
+          </div>
+
+          {/* Detalhe numérico */}
+          <div
+            style={{
+              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
+              borderRadius: 6,
+              padding: 8,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 8,
+            }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span style={{ fontSize: 8.5, color: themeTokens.textMuted, fontWeight: 400 }}>Cota Diária Base</span>
+              <span style={{ fontSize: 11, fontWeight: 400, color: themeTokens.textPrimary }}>
+                {claudeDaily.dailyShare || 14.3} pts/dia
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-end' }}>
+              <span style={{ fontSize: 8.5, color: themeTokens.textMuted, fontWeight: 400 }}>Disponível Hoje</span>
+              <span style={{ fontSize: 11, fontWeight: 400, color: accentColor }}>
+                {Math.max(0, claudeDaily.remaining).toFixed(1)} pts
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'projetos' | 'orchestration' | 'daily' | 'ide' | 'cli' | 'design'>('projetos');
@@ -1003,6 +1206,27 @@ export const App: React.FC = () => {
   });
   const prevInstalledClisRef = useRef<Record<string, boolean>>({});
 
+  // AI CLI Updates state
+  const [aiUpdatesAvailable, setAiUpdatesAvailable] = useState<Record<string, { hasUpdate: boolean; currentVersion?: string; latestVersion?: string; updateCommand?: string }>>({
+    antigravity: {
+      hasUpdate: true,
+      currentVersion: '1.3.3',
+      latestVersion: '1.3.4',
+      updateCommand: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
+    },
+  });
+  const notifiedUpdatesRef = useRef<Set<string>>(new Set());
+
+  // AI Auto-update preference state
+  const [aiAutoUpdate, setAiAutoUpdate] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('ai_auto_update') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const autoUpdatingRef = useRef<Set<string>>(new Set());
+
   // AI CLI Login & OAuth Authorization Code State
   // Chat Sessions & History Popup
 
@@ -1059,6 +1283,34 @@ export const App: React.FC = () => {
   const modelDropdownRef = useRef<HTMLDivElement>(null);
   const quotaTooltipRef = useRef<HTMLDivElement>(null);
   const headerQuotaTooltipRef = useRef<HTMLDivElement>(null);
+  const headerQuotaCloseTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const openHeaderQuotaWithGrace = useCallback((pid: string) => {
+    if (headerQuotaCloseTimerRef.current) {
+      clearTimeout(headerQuotaCloseTimerRef.current);
+      headerQuotaCloseTimerRef.current = null;
+    }
+    setQuotaTooltipProvider(pid);
+    setHeaderQuotaTooltipOpen(true);
+    logSystemActivity('ide_header', 'hover_ai_quota', pid);
+  }, []);
+
+  const closeHeaderQuotaWithGrace = useCallback(() => {
+    if (headerQuotaCloseTimerRef.current) {
+      clearTimeout(headerQuotaCloseTimerRef.current);
+    }
+    headerQuotaCloseTimerRef.current = setTimeout(() => {
+      setHeaderQuotaTooltipOpen(false);
+      headerQuotaCloseTimerRef.current = null;
+    }, 350);
+  }, []);
+
+  const cancelHeaderQuotaClose = useCallback(() => {
+    if (headerQuotaCloseTimerRef.current) {
+      clearTimeout(headerQuotaCloseTimerRef.current);
+      headerQuotaCloseTimerRef.current = null;
+    }
+  }, []);
 
   // Antigravity Chat System Features State
   const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState<boolean>(false);
@@ -2316,7 +2568,7 @@ export const App: React.FC = () => {
   const [headerAiVersionMenuTop, setHeaderAiVersionMenuTop] = useState<number>(0);
   const headerAiMenuRef = useRef<HTMLDivElement>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [settingsActiveTab, setSettingsActiveTab] = useState<'general' | 'appearance' | 'editor' | 'terminal' | 'ai' | 'shortcuts'>('general');
+  const [settingsActiveTab, setSettingsActiveTab] = useState<SettingsTabId>('general');
 
   // Minimalist Draggable Theme Popup State
   const [isThemePopupOpen, setIsThemePopupOpen] = useState(false);
@@ -2442,6 +2694,34 @@ export const App: React.FC = () => {
   const [editorBracketColorization, setEditorBracketColorization] = useState<boolean>(() => {
     return localStorage.getItem('ide_editor_bracket_colorization') !== 'false';
   });
+  const [editorFontFamily, setEditorFontFamily] = useState<string>(() => {
+    return localStorage.getItem('ide_editor_font_family') || 'JetBrains Mono';
+  });
+  const [editorLineHeight, setEditorLineHeight] = useState<number>(() => {
+    const s = localStorage.getItem('ide_editor_line_height');
+    return s ? Number(s) : 1.5;
+  });
+  const [editorCursorStyle, setEditorCursorStyle] = useState<'line' | 'block' | 'underline' | 'line-thin' | 'block-outline'>(() => {
+    return (localStorage.getItem('ide_editor_cursor_style') as any) || 'line';
+  });
+  const [editorCursorBlinking, setEditorCursorBlinking] = useState<'blink' | 'smooth' | 'phase' | 'expand' | 'solid'>(() => {
+    return (localStorage.getItem('ide_editor_cursor_blinking') as any) || 'smooth';
+  });
+  const [editorGuides, setEditorGuides] = useState<boolean>(() => {
+    return localStorage.getItem('ide_editor_guides') !== 'false';
+  });
+  const [editorAutoClosingBrackets, setEditorAutoClosingBrackets] = useState<boolean>(() => {
+    return localStorage.getItem('ide_editor_auto_closing_brackets') !== 'false';
+  });
+  const [editorHighlightActiveLine, setEditorHighlightActiveLine] = useState<'all' | 'line' | 'none'>(() => {
+    return (localStorage.getItem('ide_editor_highlight_active_line') as any) || 'all';
+  });
+  const [editorFormatOnSave, setEditorFormatOnSave] = useState<boolean>(() => {
+    return localStorage.getItem('ide_editor_format_on_save') !== 'false';
+  });
+  const [editorCodeFolding, setEditorCodeFolding] = useState<boolean>(() => {
+    return localStorage.getItem('ide_editor_code_folding') !== 'false';
+  });
   // Terminal settings (Settings modal > Terminal tab)
   const [terminalFontSize, setTerminalFontSize] = useState<number>(() => {
     const s = localStorage.getItem('ide_terminal_font_size');
@@ -2459,6 +2739,26 @@ export const App: React.FC = () => {
   });
   const [terminalCopyOnSelect, setTerminalCopyOnSelect] = useState<boolean>(() => {
     return localStorage.getItem('ide_terminal_copy_on_select') === 'true';
+  });
+  const [terminalFontFamily, setTerminalFontFamily] = useState<string>(() => {
+    return localStorage.getItem('ide_terminal_font_family') || 'JetBrains Mono';
+  });
+  const [terminalLineHeight, setTerminalLineHeight] = useState<number>(() => {
+    const s = localStorage.getItem('ide_terminal_line_height');
+    return s ? Number(s) : 1.15;
+  });
+  const [terminalThemePreset, setTerminalThemePreset] = useState<string>(() => {
+    return localStorage.getItem('ide_terminal_theme_preset') || 'default';
+  });
+  const [terminalCursorWidth, setTerminalCursorWidth] = useState<number>(() => {
+    const s = localStorage.getItem('ide_terminal_cursor_width');
+    return s ? Number(s) : 2;
+  });
+  const [terminalScrollOnUserInput, setTerminalScrollOnUserInput] = useState<boolean>(() => {
+    return localStorage.getItem('ide_terminal_scroll_on_input') !== 'false';
+  });
+  const [terminalDrawBoldTextInBrightColors, setTerminalDrawBoldTextInBrightColors] = useState<boolean>(() => {
+    return localStorage.getItem('ide_terminal_bold_bright') !== 'false';
   });
   // AI / Agents defaults (Settings modal > IA & Agentes tab)
   const [aiAutoApprove, setAiAutoApprove] = useState<boolean>(() => {
@@ -3336,6 +3636,93 @@ export const App: React.FC = () => {
       setToastMessage(`Iniciando instalação do CLI ${provider.name} no terminal integrado...`);
     }
   };
+
+  const handleUpdateCliInTerminal = async (providerId: string, notification?: CenterNotification) => {
+    setProviderDropdown(false);
+    setIsHeaderAiMenuOpen(false);
+    const prov = AI_PROVIDERS.find((p) => p.id === providerId) || AI_PROVIDERS.find((p) => p.id === (providerId === 'agy' ? 'antigravity' : providerId));
+    const provName = prov?.name || providerId;
+    const updateInfo = aiUpdatesAvailable[providerId] || (providerId === 'agy' ? aiUpdatesAvailable['antigravity'] : undefined);
+    const cmd = notification?.updateCommand || updateInfo?.updateCommand || (prov ? prov.installGuide : 'curl -fsSL https://antigravity.google/cli/install.sh | bash');
+
+    logSystemActivity('ai_updates', `Atualizar CLI da IA ${provName}`, 'Sistema', {
+      providerId,
+      currentVersion: updateInfo?.currentVersion,
+      latestVersion: updateInfo?.latestVersion || notification?.updateVersion,
+      command: cmd,
+    });
+
+    if (notification) {
+      notifCenter.read(notification.id);
+    }
+
+    if (window.electronAPI?.shell?.openInSystemTerminal) {
+      await window.electronAPI.shell.openInSystemTerminal(cmd);
+      setToastMessage(`Terminal aberto para atualizar ${provName}. Siga as instruções no terminal!`);
+    } else {
+      handleNewTerminalSession('zsh', `Atualizar ${provName}`, cmd);
+      setToastMessage(`Iniciando atualização do CLI ${provName} no terminal integrado...`);
+    }
+  };
+
+  const triggerAutoUpdate = useCallback(async (providerId: string, info: { hasUpdate: boolean; currentVersion?: string; latestVersion?: string; updateCommand?: string }) => {
+    if (autoUpdatingRef.current.has(providerId)) return;
+    autoUpdatingRef.current.add(providerId);
+
+    const prov = AI_PROVIDERS.find((p) => p.id === providerId) || { name: providerId, patchNotesUrl: 'https://antigravity.google/changelog' };
+    const cmd = info.updateCommand || (prov as any).installGuide || 'curl -fsSL https://antigravity.google/cli/install.sh | bash';
+    const patchUrl = prov.patchNotesUrl || 'https://antigravity.google/changelog';
+
+    logSystemActivity('ai_updates', `Iniciando auto-update de IA: ${prov.name}`, 'Sistema', {
+      providerId,
+      currentVersion: info.currentVersion,
+      latestVersion: info.latestVersion,
+      command: cmd,
+    });
+
+    try {
+      if (window.electronAPI?.shell?.exec) {
+        const res = await window.electronAPI.shell.exec(cmd);
+        if (res.exitCode === 0 || !res.error) {
+          setAiUpdatesAvailable((prev) => ({
+            ...prev,
+            [providerId]: { ...prev[providerId], hasUpdate: false },
+          }));
+
+          const pendingUpdates = notifCenter.items.filter(
+            (n) => n.isUpdate && (n.provider === providerId || (providerId === 'antigravity' && n.provider === 'agy'))
+          );
+          for (const pNotif of pendingUpdates) {
+            notifCenter.remove(pNotif.id);
+          }
+
+          notifCenter.add({
+            kind: 'ai',
+            title: `IA ${prov.name} atualizada`,
+            body: `O CLI ${prov.name} foi atualizado automaticamente com sucesso para a versão ${info.latestVersion || 'mais recente'}. Clique em Patch Notes para ver as notas da versão oficial.`,
+            provider: providerId,
+            patchNotesUrl: patchUrl,
+            read: false,
+          });
+
+          setToastMessage(`IA ${prov.name} atualizada automaticamente!`);
+
+          logSystemActivity('ai_updates', `Auto-update concluído com sucesso: ${prov.name}`, 'Sistema', {
+            providerId,
+            previousVersion: info.currentVersion,
+            newVersion: info.latestVersion,
+            patchNotesUrl: patchUrl,
+          });
+        } else {
+          console.warn('[Auto-Update] Falha no comando:', res.stderr || res.error);
+        }
+      }
+    } catch (err) {
+      console.error('[Auto-Update] Erro durante atualização automática:', err);
+    } finally {
+      autoUpdatingRef.current.delete(providerId);
+    }
+  }, [notifCenter]);
 
   const handleKillTerminalSession = (sessionId: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -5593,6 +5980,42 @@ export const App: React.FC = () => {
   }, [editorBracketColorization]);
 
   useEffect(() => {
+    localStorage.setItem('ide_editor_font_family', editorFontFamily);
+  }, [editorFontFamily]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_editor_line_height', String(editorLineHeight));
+  }, [editorLineHeight]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_editor_cursor_style', editorCursorStyle);
+  }, [editorCursorStyle]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_editor_cursor_blinking', editorCursorBlinking);
+  }, [editorCursorBlinking]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_editor_guides', String(editorGuides));
+  }, [editorGuides]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_editor_auto_closing_brackets', String(editorAutoClosingBrackets));
+  }, [editorAutoClosingBrackets]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_editor_highlight_active_line', editorHighlightActiveLine);
+  }, [editorHighlightActiveLine]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_editor_format_on_save', String(editorFormatOnSave));
+  }, [editorFormatOnSave]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_editor_code_folding', String(editorCodeFolding));
+  }, [editorCodeFolding]);
+
+  useEffect(() => {
     localStorage.setItem('ide_terminal_font_size', String(terminalFontSize));
   }, [terminalFontSize]);
 
@@ -5611,6 +6034,30 @@ export const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('ide_terminal_copy_on_select', String(terminalCopyOnSelect));
   }, [terminalCopyOnSelect]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_terminal_font_family', terminalFontFamily);
+  }, [terminalFontFamily]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_terminal_line_height', String(terminalLineHeight));
+  }, [terminalLineHeight]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_terminal_theme_preset', terminalThemePreset);
+  }, [terminalThemePreset]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_terminal_cursor_width', String(terminalCursorWidth));
+  }, [terminalCursorWidth]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_terminal_scroll_on_input', String(terminalScrollOnUserInput));
+  }, [terminalScrollOnUserInput]);
+
+  useEffect(() => {
+    localStorage.setItem('ide_terminal_bold_bright', String(terminalDrawBoldTextInBrightColors));
+  }, [terminalDrawBoldTextInBrightColors]);
 
   useEffect(() => {
     localStorage.setItem('ide_ai_auto_approve', String(aiAutoApprove));
@@ -5869,6 +6316,75 @@ export const App: React.FC = () => {
       if (unsubExit) unsubExit();
     };
   }, []);
+
+  // Check AI CLI updates on startup, focus and interval
+  useEffect(() => {
+    const checkUpdates = async () => {
+      if (window.electronAPI?.ai?.checkCliUpdates) {
+        try {
+          const updates = await window.electronAPI.ai.checkCliUpdates();
+          if (updates && Object.keys(updates).length > 0) {
+            setAiUpdatesAvailable(updates);
+            for (const [providerId, info] of Object.entries(updates)) {
+              if (info?.hasUpdate) {
+                if (aiAutoUpdate) {
+                  triggerAutoUpdate(providerId, info);
+                } else {
+                  const alreadyNotified =
+                    notifiedUpdatesRef.current.has(providerId) ||
+                    notifCenter.items.some(
+                      (n) => n.isUpdate && (n.provider === providerId || (providerId === 'antigravity' && n.provider === 'agy'))
+                    );
+                  if (!alreadyNotified) {
+                    notifiedUpdatesRef.current.add(providerId);
+                    const prov = AI_PROVIDERS.find((p) => p.id === providerId) || { name: providerId };
+                    notifCenter.add({
+                      kind: 'ai',
+                      title: `Atualização disponível: ${prov.name}`,
+                      body: `Uma nova versão (${info.latestVersion || 'recente'}) do CLI ${prov.name} está disponível para atualização.${info.currentVersion ? ` Versão instalada: ${info.currentVersion}.` : ''}`,
+                      provider: providerId,
+                      isUpdate: true,
+                      updateVersion: info.latestVersion,
+                      updateCommand: info.updateCommand,
+                      read: false,
+                    });
+                    logSystemActivity('ai_updates', `Notificação de nova atualização da IA ${prov.name}`, 'Sistema', {
+                      providerId,
+                      currentVersion: info.currentVersion,
+                      latestVersion: info.latestVersion,
+                      command: info.updateCommand,
+                    });
+                  }
+                }
+              }
+            }
+          }
+        } catch (err) {
+          console.error('[AI Update Check] Erro ao verificar atualizações:', err);
+        }
+      }
+    };
+
+    checkUpdates();
+    const pollInterval = setInterval(checkUpdates, 60000);
+    window.addEventListener('focus', checkUpdates);
+
+    return () => {
+      clearInterval(pollInterval);
+      window.removeEventListener('focus', checkUpdates);
+    };
+  }, [notifCenter, aiAutoUpdate, triggerAutoUpdate]);
+
+  // When auto-update is active, auto-update any pending AI CLI updates
+  useEffect(() => {
+    if (aiAutoUpdate) {
+      for (const [providerId, info] of Object.entries(aiUpdatesAvailable)) {
+        if (info?.hasUpdate) {
+          triggerAutoUpdate(providerId, info);
+        }
+      }
+    }
+  }, [aiAutoUpdate, aiUpdatesAvailable, triggerAutoUpdate]);
 
   // Dynamically synchronize slash commands with the actual CLI on the system (cached & non-blocking)
   useEffect(() => {
@@ -7175,7 +7691,7 @@ ${editorSelectionText ? `- Trecho Selecionado no Editor:\n\`\`\`\n${editorSelect
 - Horário Local: ${new Date().toLocaleString('pt-BR')}`;
 
         if (!prompt.startsWith('/')) {
-          promptWithContext = `[Contexto do Projeto Aberto no DevFlow]:
+          promptWithContext = `[Contexto do Projeto Aberto no Aura Dev]:
 ${modeInstruction}
 
 - Projeto Ativo: ${projectName}
@@ -7203,7 +7719,7 @@ ${prompt || userDisplayPrompt}`;
           const toolNodes = orchestrationConfig.nodes.filter((n: any) => n.type === 'tool' && n.status !== 'disabled');
           const memoryNode = orchestrationConfig.nodes.find((n: any) => n.type === 'memory' && n.status !== 'disabled');
 
-          let orchBlock = `\n[Configuração do Fluxo de Orquestração DevFlow]:\n`;
+          let orchBlock = `\n[Configuração do Fluxo de Orquestração Aura Dev]:\n`;
           if (agentNode) {
             orchBlock += `- Agente Coordenador: ${agentNode.title || 'Agente Coordenador'}${agentNode.subtitle ? ` (${agentNode.subtitle})` : ''}\n`;
             if (agentNode.config?.instructions) {
@@ -7729,7 +8245,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
       if (window.electronAPI?.shell?.exec) {
         try {
           const ghRes = await window.electronAPI.shell.exec(
-            `export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh issue close ${issueNumber} --reason completed -c "Concluído e comitado via DevFlow AI"`,
+            `export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"; gh issue close ${issueNumber} --reason completed -c "Concluído e comitado via Aura Dev AI"`,
             effectiveCwd
           );
           if (ghRes.exitCode === 0) {
@@ -8257,7 +8773,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           {/* Botão Brain do Projeto (Grafo Obsidian & Contexto de IA) */}
           <button
             onClick={() => setIsBrainModalOpen(true)}
-            title="DevFlow Brain - Contexto do Projeto e Grafo Obsidian"
+            title="Aura Dev Brain - Contexto do Projeto e Grafo Obsidian"
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -8666,94 +9182,110 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           {/* Header AI Group (2 Porcentagens de Uso + Seletor de IA) */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, WebkitAppRegion: 'no-drag' as any }}>
             {/* IAs fixadas (+ a selecionada): uso de cada uma e troca com um clique */}
-            {AI_PROVIDERS.map((p) => p.id).filter((id) => id === selectedAiProvider || pinnedAis.includes(id)).map((pid) => (
-              <div
-                key={pid}
-                onClick={() => { if (pid !== selectedAiProvider) handleSwitchAiProvider(pid); }}
-                onContextMenu={(e) => { e.preventDefault(); setIsAiGlobalRulesModalOpen(true); }}
-                title={pid === selectedAiProvider ? `IA ativa: ${AI_PROVIDERS.find((p) => p.id === pid)?.name} · ${selectedModel || 'Padrão'} (Botão direito para Regras Globais)` : `Usar ${AI_PROVIDERS.find((p) => p.id === pid)?.name}`}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  padding: '2px 4px 2px 2px',
-                  borderRadius: 6,
-                  cursor: 'pointer',
-                  background: pid === selectedAiProvider ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)') : 'transparent',
-                  transition: 'background 0.12s ease',
-                }}
-              >
-            {(() => {
+            {AI_PROVIDERS.map((p) => p.id).filter((id) => id === selectedAiProvider || pinnedAis.includes(id)).map((pid) => {
               const currentQuota = aiQuotas[pid] || aiQuotas.claude || DEFAULT_AI_QUOTAS.claude;
+              const isSelected = pid === selectedAiProvider;
               return (
                 <div
-                  ref={pid === selectedAiProvider ? headerQuotaTooltipRef : undefined}
-                  onClick={() => refreshAiQuotas()} /* o clique sobe para o card e seleciona a IA; o detalhe da quota aparece ao passar o mouse */
-                  onMouseEnter={() => { setQuotaTooltipProvider(pid); setHeaderQuotaTooltipOpen(true); }}
-                  onMouseLeave={() => setHeaderQuotaTooltipOpen(false)}
-                  title={pid === selectedAiProvider ? undefined : `Usar ${AI_PROVIDERS.find((p) => p.id === pid)?.name}`}
+                  key={pid}
+                  ref={(quotaTooltipProvider ? pid === quotaTooltipProvider : isSelected) ? headerQuotaTooltipRef : undefined}
+                  onClick={() => {
+                    if (!isSelected) {
+                      handleSwitchAiProvider(pid);
+                    } else {
+                      cancelHeaderQuotaClose();
+                      if (headerQuotaTooltipOpen && quotaTooltipProvider === pid) {
+                        setHeaderQuotaTooltipOpen(false);
+                      } else {
+                        setQuotaTooltipProvider(pid);
+                        setHeaderQuotaTooltipOpen(true);
+                        refreshAiQuotas();
+                      }
+                    }
+                  }}
+                  onContextMenu={(e) => { e.preventDefault(); setIsAiGlobalRulesModalOpen(true); }}
+                  onMouseEnter={() => openHeaderQuotaWithGrace(pid)}
+                  onMouseLeave={closeHeaderQuotaWithGrace}
+                  title={isSelected ? `IA ativa: ${AI_PROVIDERS.find((p) => p.id === pid)?.name} · ${selectedModel || 'Padrão'} (Botão direito para Regras Globais)` : `Usar ${AI_PROVIDERS.find((p) => p.id === pid)?.name}`}
                   style={{
                     position: 'relative',
                     display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'center',
-                    alignItems: 'flex-end',
-                    lineHeight: 1.05,
-                    cursor: 'pointer',
-                    userSelect: 'none',
-                    flexShrink: 0,
+                    alignItems: 'center',
+                    gap: 4,
                     padding: '2px 4px',
-                    borderRadius: 4,
-                    transition: 'background 0.12s ease',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    background: isSelected ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)') : 'transparent',
+                    transition: 'background 0.15s ease',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 3 }}>
-                    <span
-                      style={{
-                        fontSize: 8,
-                        fontWeight: 700,
-                        color: accentColor,
-                        fontFamily: 'Poppins, -apple-system, sans-serif',
-                      }}
-                      title={pid === 'claude' ? 'Sessão de 5h' : 'Diário'}
-                    >
-                      {pid === 'claude' ? '5h' : 'D'}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 9.5,
-                        fontWeight: 700,
-                        color: currentQuota.dailyPercent === 0 ? '#ef4444' : currentQuota.dailyPercent <= 15 ? '#f97316' : (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary),
-                        fontFamily: 'Poppins, -apple-system, sans-serif',
-                        letterSpacing: '-0.02em',
-                      }}
-                    >
-                      {currentQuota.dailyPercent}%
-                    </span>
+                  {/* Bloco de Números de Quota */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justifyContent: 'center',
+                      alignItems: 'flex-end',
+                      lineHeight: 1.05,
+                      userSelect: 'none',
+                      flexShrink: 0,
+                      padding: '2px 4px',
+                      borderRadius: 4,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 3 }}>
+                      <span
+                        style={{
+                          fontSize: 8,
+                          fontWeight: 400,
+                          color: accentColor,
+                          fontFamily: 'Poppins, -apple-system, sans-serif',
+                        }}
+                        title={pid === 'claude' ? 'Sessão de 5h' : 'Diário'}
+                      >
+                        {pid === 'claude' ? '5h' : 'D'}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 9.5,
+                          fontWeight: 400,
+                          color: currentQuota.dailyPercent === 0 ? '#ef4444' : currentQuota.dailyPercent <= 15 ? '#f97316' : (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary),
+                          fontFamily: 'Poppins, -apple-system, sans-serif',
+                          letterSpacing: '-0.02em',
+                        }}
+                      >
+                        {currentQuota.dailyPercent}%
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 3 }}>
+                      <span
+                        style={{
+                          fontSize: 8,
+                          fontWeight: 400,
+                          color: accentColor,
+                          fontFamily: 'Poppins, -apple-system, sans-serif',
+                        }}
+                        title={pid === 'claude' ? 'Semanal (7 dias)' : 'Semanal'}
+                      >
+                        S
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 9.5,
+                          fontWeight: 400,
+                          color: currentQuota.weeklyPercent === 0 ? '#ef4444' : (pid === 'claude' && claudeDaily?.exceeded) ? '#f59e0b' : currentQuota.weeklyPercent <= 15 ? '#f97316' : (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary),
+                          fontFamily: 'Poppins, -apple-system, sans-serif',
+                          letterSpacing: '-0.02em',
+                        }}
+                      >
+                        {currentQuota.weeklyPercent}%
+                      </span>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 3 }}>
-                    <span
-                      style={{
-                        fontSize: 8,
-                        fontWeight: 700,
-                        color: accentColor,
-                        fontFamily: 'Poppins, -apple-system, sans-serif',
-                      }}
-                      title={pid === 'claude' ? 'Semanal (7 dias)' : 'Semanal'}
-                    >
-                      S
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 9.5,
-                        fontWeight: 700,
-                        color: currentQuota.weeklyPercent === 0 ? '#ef4444' : (pid === 'claude' && claudeDaily?.exceeded) ? '#f59e0b' : currentQuota.weeklyPercent <= 15 ? '#f97316' : (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary),
-                        fontFamily: 'Poppins, -apple-system, sans-serif',
-                        letterSpacing: '-0.02em',
-                      }}
-                    >
-                      {currentQuota.weeklyPercent}%
-                    </span>
+
+                  {/* Ícone da IA */}
+                  <div style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {renderAiIcon(pid, 17, undefined, !!aiUpdatesAvailable[pid]?.hasUpdate)}
                   </div>
 
                   {/* Header Quota Tooltip Popup */}
@@ -8761,33 +9293,47 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     <div
                       ref={clampPopupToViewport}
                       onClick={(e) => e.stopPropagation()}
+                      onMouseEnter={cancelHeaderQuotaClose}
+                      onMouseLeave={closeHeaderQuotaWithGrace}
                       style={{
                         position: 'absolute',
-                        top: 32,
+                        top: 'calc(100% + 4px)',
                         right: 0,
                         background: isEffectiveDark ? '#1a1a1c' : themeTokens.bgCardSecondary,
-                        border: `1px solid ${themeTokens.border}`,
-                        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.65)',
-                        borderRadius: 10,
-                        padding: '12px 14px',
+                        border: 'none',
+                        boxShadow: 'none',
+                        borderRadius: 8,
+                        padding: 12,
                         display: 'flex',
                         flexDirection: 'column',
-                        gap: 10,
+                        gap: 12,
                         zIndex: 999999,
                         minWidth: 295,
                         width: 'max-content',
                         maxWidth: 340,
                         boxSizing: 'border-box',
                         pointerEvents: 'auto',
+                        transition: 'all 0.15s ease',
                       }}
                     >
+                      {/* Transparent Hover Bridge connecting trigger to popup */}
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: -12,
+                          left: -12,
+                          right: -12,
+                          height: 16,
+                          pointerEvents: 'auto',
+                        }}
+                      />
                       {/* Header */}
                       <div
                         style={{
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
-                          borderBottom: `1px solid ${themeTokens.border}`,
+                          borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
                           paddingBottom: 8,
                         }}
                       >
@@ -8797,7 +9343,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           {pid === 'codex' && <CodexIcon size={15} />}
                           {pid === 'gemini' && <GeminiIcon size={15} />}
                           {pid === 'ollama' && <OllamaIcon size={15} />}
-                          <span style={{ fontSize: 12, fontWeight: 600, color: themeTokens.textPrimary, fontFamily: 'Poppins, sans-serif' }}>
+                          <span style={{ fontSize: 12, fontWeight: 400, color: themeTokens.textPrimary, fontFamily: 'Poppins, sans-serif' }}>
                             {AI_PROVIDERS.find((p) => p.id === pid)?.name || 'IA'}
                           </span>
                         </div>
@@ -8807,25 +9353,28 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       {(() => {
                         const short = (t?: string) => { const m = /\(em ([^)]+)\)/.exec(t || ''); return m ? `reseta em ${m[1]}` : (t || '').slice(0, 28); };
                         const tone = (pct: number) => (pct <= 0 ? '#ef4444' : pct <= 15 ? '#f97316' : accentColor);
-                        const track = isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)';
-                        const row = (label: string, sub: string, pct: number, value: string, color: string, valueColor?: string, used?: string) => (
+                        const track = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
+                        const row = (label: string, sub: string, pct: number, value: string, color: string, valueColor?: string, used?: string, extra?: React.ReactNode) => (
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, fontFamily: 'Poppins, sans-serif' }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
-                              <span style={{ fontSize: 12, fontWeight: 600, color: themeTokens.textPrimary }}>{label}</span>
-                              <span style={{ fontSize: 10, color: themeTokens.textSecondary, whiteSpace: 'nowrap' }}>{sub}</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                <span style={{ fontSize: 12, fontWeight: 400, color: themeTokens.textPrimary }}>{label}</span>
+                                {extra}
+                              </div>
+                              <span style={{ fontSize: 10, color: themeTokens.textSecondary, whiteSpace: 'nowrap', fontWeight: 400 }}>{sub}</span>
                             </div>
                             <div style={{ width: 118, flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
                               <span style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                                 {used && <span style={{ fontSize: 10, fontWeight: 400, color: themeTokens.textSecondary }}>{used}</span>}
-                                <span style={{ fontSize: 11.5, fontWeight: 700, color: valueColor || themeTokens.textPrimary }}>{value}</span>
+                                <span style={{ fontSize: 11.5, fontWeight: 400, color: valueColor || themeTokens.textPrimary }}>{value}</span>
                               </span>
                               <div style={{ width: '100%', height: 6, background: track, borderRadius: 999, overflow: 'hidden' }}>
-                                <div style={{ width: `${Math.min(100, Math.max(0, pct))}%`, height: '100%', borderRadius: 999, background: `linear-gradient(90deg, ${hexToRgba(color, 0.7)}, ${color})`, boxShadow: `0 0 8px ${hexToRgba(color, 0.45)}`, transition: 'width 0.3s ease' }} />
+                                <div style={{ width: `${Math.min(100, Math.max(0, pct))}%`, height: '100%', borderRadius: 999, background: `linear-gradient(90deg, ${hexToRgba(color, 0.7)}, ${color})`, boxShadow: 'none', transition: 'width 0.3s ease' }} />
                               </div>
                             </div>
                           </div>
                         );
-                        const divider = <div style={{ height: 1, width: '100%', flexShrink: 0, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.12)' }} />;
+                        const divider = <div style={{ height: 1, width: '100%', flexShrink: 0, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)' }} />;
                         return (
                           <>
                             {row(pid === 'claude' ? 'Sessão 5h' : 'Diário', short(currentQuota.dailyResetTime), currentQuota.dailyPercent, `${currentQuota.dailyPercent}%`, tone(currentQuota.dailyPercent))}
@@ -8841,14 +9390,22 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   const ms = new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate() + 1).getTime() - nowD.getTime();
                                   const h = Math.floor(ms / 3600000);
                                   const m = Math.floor((ms % 3600000) / 60000);
+                                  const points = Math.max(0, claudeDaily.remaining).toFixed(1);
                                   return row(
                                     'Hoje',
                                     `reseta em ${h > 0 ? `${h}h ` : ''}${m}min`,
                                     left,
-                                    // sobra de hoje em % da semana: (semana restante ÷ dias que faltam, que já inclui o que sobrou dos dias anteriores) − o usado hoje
-                                    `${Math.max(0, claudeDaily.remaining).toFixed(1)}%`,
+                                    `${points} pts`,
                                     claudeDaily.exceeded ? '#f59e0b' : tone(left),
-                                    claudeDaily.exceeded ? '#f59e0b' : undefined
+                                    claudeDaily.exceeded ? '#f59e0b' : undefined,
+                                    undefined,
+                                    <DailyBudgetInfoTooltip
+                                      claudeDaily={claudeDaily}
+                                      isEffectiveDark={isEffectiveDark}
+                                      accentColor={accentColor}
+                                      themeTokens={themeTokens}
+                                      clampPopupToViewport={clampPopupToViewport}
+                                    />
                                   );
                                 })()}
                               </>
@@ -8860,10 +9417,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   )}
                 </div>
               );
-            })()}
-                <div style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{renderAiIcon(pid, 17)}</div>
-              </div>
-            ))}
+            })}
 
             {/* Header AI Selector Button & Dropdown */}
             <div style={{ position: 'relative' }} ref={headerAiMenuRef}>
@@ -9051,7 +9605,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         </div>
 
                         <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-                          {renderAiIcon(p.id, 16)}
+                          {renderAiIcon(p.id, 16, undefined, !!aiUpdatesAvailable[p.id]?.hasUpdate)}
                         </div>
                         <span style={{ color: isSelected ? accentColor : themeTokens.textPrimary }}>{p.name}</span>
                         {isSelected && currentModelName && (
@@ -9064,6 +9618,36 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                         {isInstalled && (
                           <>
+                            {aiUpdatesAvailable[p.id]?.hasUpdate && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleUpdateCliInTerminal(p.id);
+                                }}
+                                title={`Atualizar ${p.name} para v${aiUpdatesAvailable[p.id]?.latestVersion || 'nova versão'}`}
+                                style={{
+                                  fontSize: 10,
+                                  padding: '2px 7px',
+                                  borderRadius: 4,
+                                  background: accentColor,
+                                  border: 'none',
+                                  boxShadow: 'none',
+                                  color: '#ffffff',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  cursor: 'pointer',
+                                  fontWeight: 400,
+                                  transition: 'opacity 0.15s ease',
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.85')}
+                                onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                              >
+                                <ArrowUpCircle size={11} strokeWidth={2} />
+                                <span>Atualizar</span>
+                              </button>
+                            )}
                             <span
                               onClick={(e) => { e.stopPropagation(); togglePinnedAi(p.id); }}
                               title={pinnedAis.includes(p.id) ? 'Desafixar do cabeçalho' : 'Fixar no cabeçalho para acompanhar o uso'}
@@ -9613,10 +10197,11 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     userSelect: 'none',
                   }}
                 >
-                  {/* Editor Settings */}
+                  {/* Configurações */}
                   <div
                     onClick={() => {
-                      setSettingsActiveTab('editor');
+                      logSystemActivity('menu_configuracoes', 'abrir_configuracoes', activeHeaderProject?.name || 'Sistema', { tab: 'general' });
+                      setSettingsActiveTab('general');
                       setIsSettingsModalOpen(true);
                       setIsSettingsMenuOpen(false);
                     }}
@@ -9639,44 +10224,18 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       e.currentTarget.style.color = '#cccccc';
                     }}
                   >
-                    <span>Editor Settings</span>
-                  </div>
-
-                  {/* Open User Settings */}
-                  <div
-                    onClick={() => {
-                      setSettingsActiveTab('appearance');
-                      setIsSettingsModalOpen(true);
-                      setIsSettingsMenuOpen(false);
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '5px 12px',
-                      cursor: 'pointer',
-                      fontSize: 11,
-                      color: '#cccccc',
-                      transition: 'background 0.08s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = '#04395e';
-                      e.currentTarget.style.color = '#ffffff';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'transparent';
-                      e.currentTarget.style.color = '#cccccc';
-                    }}
-                  >
-                    <span>Open User Settings</span>
+                    <span>Configurações</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                       <span style={{ fontSize: 10, color: '#888888', fontFamily: 'monospace' }}>⌘ ,</span>
                     </div>
                   </div>
 
-                  {/* Themes & System Appearance (Draggable Minimalist Popup) */}
+                  {/* Temas & Aparência (Cor e Tema) */}
                   <div
-                    onClick={openThemePopup}
+                    onClick={() => {
+                      logSystemActivity('menu_configuracoes', 'abrir_popup_tema', activeHeaderProject?.name || 'Sistema');
+                      openThemePopup();
+                    }}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -9696,17 +10255,17 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       e.currentTarget.style.color = '#cccccc';
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: accentColor, flexShrink: 0 }} />
-                      <span>Themes & Appearance (Cor e Tema)</span>
-                    </div>
-                    <span style={{ fontSize: 10, color: '#888888', textTransform: 'capitalize' }}>{themeMode}</span>
+                    <span>Temas & Aparência (Cor e Tema)</span>
+                    <span style={{ fontSize: 10, color: '#888888' }}>
+                      {themeMode === 'dark' ? 'Escuro' : themeMode === 'light' ? 'Claro' : 'Sistema'}
+                    </span>
                   </div>
 
-                  {/* Toggle Dark / Light Mode */}
+                  {/* Alternar Modo Claro / Escuro */}
                   <div
                     onClick={(e) => {
                       e.stopPropagation();
+                      logSystemActivity('menu_configuracoes', 'alternar_tema', activeHeaderProject?.name || 'Sistema', { proximoTema: isEffectiveDark ? 'light' : 'dark' });
                       handleToggleThemeMode();
                     }}
                     style={{
@@ -9729,7 +10288,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span>Toggle Dark / Light Mode</span>
+                      <span>Alternar Modo Claro / Escuro</span>
                       <span style={{ fontSize: 10, color: '#888888', fontFamily: 'monospace' }}>⌘K ⌘T</span>
                     </div>
                     <div
@@ -9763,7 +10322,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   </div>
 
                   {/* Divider */}
-                  <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)', margin: '4px 0' }} />
+                  <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)', margin: '4px 0' }} />
 
                   {/* Regras Globais da IA */}
                   {(() => {
@@ -9779,6 +10338,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     return (
                       <div
                         onClick={() => {
+                          logSystemActivity('menu_configuracoes', 'abrir_regras_globais', activeHeaderProject?.name || 'Sistema', { provider: selectedAiProvider });
                           setIsSettingsMenuOpen(false);
                           setIsAiGlobalRulesModalOpen(true);
                         }}
@@ -9786,12 +10346,12 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
-                          padding: '6px 12px',
+                          padding: '5px 12px',
                           cursor: 'pointer',
                           fontSize: 11,
                           fontWeight: 400,
                           color: '#cccccc',
-                          transition: 'background 0.12s ease',
+                          transition: 'background 0.08s ease',
                         }}
                         onMouseEnter={(e) => {
                           e.currentTarget.style.background = '#04395e';
@@ -9803,10 +10363,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         }}
                         title={`Regras Globais de ${currentProviderObj.name} (${providerGlobalFileName})`}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <ScrollText size={13} color={accentColor} />
-                          <span>Regras Globais da IA</span>
-                        </div>
+                        <span>Regras Globais da IA</span>
                         <span style={{ fontSize: 9.5, color: '#888888', fontFamily: 'monospace' }}>
                           {providerGlobalFileName}
                         </span>
@@ -9817,6 +10374,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   {/* Skills da IA */}
                   <div
                     onClick={() => {
+                      logSystemActivity('menu_configuracoes', 'abrir_skills', activeHeaderProject?.name || 'Sistema', { totalAtivas: activeSkills.length });
                       setIsSettingsMenuOpen(false);
                       setIsSkillsModalOpen(true);
                     }}
@@ -9824,12 +10382,12 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      padding: '6px 12px',
+                      padding: '5px 12px',
                       cursor: 'pointer',
                       fontSize: 11,
                       fontWeight: 400,
                       color: '#cccccc',
-                      transition: 'background 0.12s ease',
+                      transition: 'background 0.08s ease',
                     }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.background = '#04395e';
@@ -9841,10 +10399,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     }}
                     title={activeSkills.length ? `Skills ativas: ${activeSkills.map((sk) => sk.name).join(', ')}` : 'Nenhuma skill ativa'}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <Puzzle size={13} color={activeSkills.length ? accentColor : '#888888'} />
-                      <span>Skills da IA</span>
-                    </div>
+                    <span>Skills da IA</span>
                     <span
                       style={{
                         fontSize: 9.5,
@@ -9862,6 +10417,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   {/* Configurações de IA */}
                   <div
                     onClick={() => {
+                      logSystemActivity('menu_configuracoes', 'abrir_configuracoes_ia', activeHeaderProject?.name || 'Sistema', { tab: 'ai' });
                       setSettingsActiveTab('ai');
                       setIsSettingsModalOpen(true);
                       setIsSettingsMenuOpen(false);
@@ -9870,12 +10426,12 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      padding: '6px 12px',
+                      padding: '5px 12px',
                       cursor: 'pointer',
                       fontSize: 11,
                       fontWeight: 400,
                       color: '#cccccc',
-                      transition: 'background 0.12s ease',
+                      transition: 'background 0.08s ease',
                     }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.background = '#04395e';
@@ -9886,19 +10442,17 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       e.currentTarget.style.color = '#cccccc';
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <Bot size={13} color="#888888" />
-                      <span>Configurações de IA & Agentes</span>
-                    </div>
+                    <span>Configurações de IA & Agentes</span>
                   </div>
 
                   {/* Divider */}
-                  <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)', margin: '4px 0' }} />
+                  <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)', margin: '4px 0' }} />
 
-                  {/* Keyboard Shortcuts */}
+                  {/* Configurar Snippets */}
                   <div
                     onClick={() => {
-                      setSettingsActiveTab('shortcuts');
+                      logSystemActivity('menu_configuracoes', 'abrir_snippets', activeHeaderProject?.name || 'Sistema', { tab: 'snippets' });
+                      setSettingsActiveTab('snippets');
                       setIsSettingsModalOpen(true);
                       setIsSettingsMenuOpen(false);
                     }}
@@ -9921,44 +10475,18 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       e.currentTarget.style.color = '#cccccc';
                     }}
                   >
-                    <span>Open Keyboard Shortcuts [⌘K ⌘S]</span>
-                  </div>
-
-                  {/* Configure Snippets */}
-                  <div
-                    onClick={() => {
-                      setToastMessage('Configuração de Snippets aberta.');
-                      setIsSettingsMenuOpen(false);
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '5px 12px',
-                      cursor: 'pointer',
-                      fontSize: 11,
-                      color: '#cccccc',
-                      transition: 'background 0.08s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = '#04395e';
-                      e.currentTarget.style.color = '#ffffff';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'transparent';
-                      e.currentTarget.style.color = '#cccccc';
-                    }}
-                  >
-                    <span>Configure Snippets</span>
+                    <span>Configurar Snippets</span>
                   </div>
 
                   {/* Divider */}
-                  <div style={{ height: 1, background: '#333333', margin: '4px 0' }} />
+                  <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)', margin: '4px 0' }} />
 
-                  {/* Tasks */}
+                  {/* Tarefas */}
                   <div
                     onClick={() => {
-                      setToastMessage('Painel de Tarefas aberto.');
+                      logSystemActivity('menu_configuracoes', 'abrir_tarefas', activeHeaderProject?.name || 'Sistema', { tab: 'tasks' });
+                      setSettingsActiveTab('tasks');
+                      setIsSettingsModalOpen(true);
                       setIsSettingsMenuOpen(false);
                     }}
                     style={{
@@ -9980,13 +10508,15 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       e.currentTarget.style.color = '#cccccc';
                     }}
                   >
-                    <span>Tasks</span>
+                    <span>Tarefas</span>
                   </div>
 
-                  {/* Customize Layout */}
+                  {/* Personalizar Layout */}
                   <div
                     onClick={() => {
-                      setIsCustomizeLayoutOpen(true);
+                      logSystemActivity('menu_configuracoes', 'personalizar_layout', activeHeaderProject?.name || 'Sistema', { tab: 'layout' });
+                      setSettingsActiveTab('layout');
+                      setIsSettingsModalOpen(true);
                       setIsSettingsMenuOpen(false);
                     }}
                     style={{
@@ -10008,7 +10538,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       e.currentTarget.style.color = '#cccccc';
                     }}
                   >
-                    <span>Customize Layout</span>
+                    <span>Personalizar Layout</span>
                   </div>
                 </div>
                 </>
@@ -11770,13 +12300,17 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       theme={isEffectiveDark ? 'aura-dev-dark' : 'light'}
                       options={{
                         fontSize: editorFontSize,
-                        fontFamily: 'JetBrains Mono, Menlo, monospace',
+                        fontFamily: `"${editorFontFamily}", Menlo, monospace`,
                         automaticLayout: true,
                         renderSideBySide: activeReview.isSideBySide,
                         readOnly: false,
                         minimap: { enabled: editorMinimap },
+                        lineHeight: Math.round(editorFontSize * editorLineHeight),
+                        renderLineHighlight: editorHighlightActiveLine,
+                        cursorStyle: editorCursorStyle,
+                        cursorBlinking: editorCursorBlinking,
+                        guides: { indentation: editorGuides },
                         scrollBeyondLastLine: false,
-                        renderLineHighlight: 'all',
                       }}
                     />
                   </div>
@@ -11800,7 +12334,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         onMount={handleEditorMount}
                         options={{
                           fontSize: editorFontSize,
-                          fontFamily: 'JetBrains Mono, Menlo, monospace',
+                          fontFamily: `"${editorFontFamily}", Menlo, monospace`,
                           tabSize: editorTabSize,
                           lineNumbers: editorLineNumbers ? 'on' : 'off',
                           wordWrap: editorWordWrap ? 'on' : 'off',
@@ -11809,6 +12343,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           bracketPairColorization: { enabled: editorBracketColorization },
                           minimap: { enabled: false },
                           automaticLayout: true,
+                          lineHeight: Math.round(editorFontSize * editorLineHeight),
+                          cursorStyle: editorCursorStyle,
+                          cursorBlinking: editorCursorBlinking,
+                          guides: { indentation: editorGuides },
+                          autoClosingBrackets: editorAutoClosingBrackets ? 'always' : 'never',
+                          renderLineHighlight: editorHighlightActiveLine,
+                          folding: editorCodeFolding,
                         }}
                       />
                     </div>
@@ -11855,7 +12396,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               }}
                               options={{
                                 fontSize: editorFontSize,
-                                fontFamily: 'JetBrains Mono, Menlo, monospace',
+                                fontFamily: `"${editorFontFamily}", Menlo, monospace`,
                                 tabSize: editorTabSize,
                                 lineNumbers: editorLineNumbers ? 'on' : 'off',
                                 wordWrap: editorWordWrap ? 'on' : 'off',
@@ -11864,6 +12405,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                 bracketPairColorization: { enabled: editorBracketColorization },
                                 minimap: { enabled: false },
                                 automaticLayout: true,
+                                lineHeight: Math.round(editorFontSize * editorLineHeight),
+                                cursorStyle: editorCursorStyle,
+                                cursorBlinking: editorCursorBlinking,
+                                guides: { indentation: editorGuides },
+                                autoClosingBrackets: editorAutoClosingBrackets ? 'always' : 'never',
+                                renderLineHighlight: editorHighlightActiveLine,
+                                folding: editorCodeFolding,
                               }}
                             />
                           </div>
@@ -11886,7 +12434,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       onMount={handleEditorMount}
                       options={{
                         fontSize: editorFontSize,
-                        fontFamily: 'JetBrains Mono, Menlo, monospace',
+                        fontFamily: `"${editorFontFamily}", Menlo, monospace`,
                         tabSize: editorTabSize,
                         lineNumbers: editorLineNumbers ? 'on' : 'off',
                         wordWrap: editorWordWrap ? 'on' : 'off',
@@ -11895,6 +12443,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         bracketPairColorization: { enabled: editorBracketColorization },
                         minimap: { enabled: false },
                         automaticLayout: true,
+                        lineHeight: Math.round(editorFontSize * editorLineHeight),
+                        cursorStyle: editorCursorStyle,
+                        cursorBlinking: editorCursorBlinking,
+                        guides: { indentation: editorGuides },
+                        autoClosingBrackets: editorAutoClosingBrackets ? 'always' : 'never',
+                        renderLineHighlight: editorHighlightActiveLine,
+                        folding: editorCodeFolding,
                       }}
                     />
                   </div>
@@ -11931,7 +12486,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   onMount={handleEditorMount}
                   options={{
                     fontSize: editorFontSize,
-                    fontFamily: 'JetBrains Mono, Menlo, monospace',
+                    fontFamily: `"${editorFontFamily}", Menlo, monospace`,
                     tabSize: editorTabSize,
                     lineNumbers: editorLineNumbers ? 'on' : 'off',
                     wordWrap: editorWordWrap ? 'on' : 'off',
@@ -11941,8 +12496,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     minimap: { enabled: editorMinimap },
                     scrollBeyondLastLine: false,
                     automaticLayout: true,
-                    renderLineHighlight: 'all',
-                    cursorBlinking: 'smooth',
+                    lineHeight: Math.round(editorFontSize * editorLineHeight),
+                    renderLineHighlight: editorHighlightActiveLine,
+                    cursorStyle: editorCursorStyle,
+                    cursorBlinking: editorCursorBlinking,
+                    guides: { indentation: editorGuides },
+                    autoClosingBrackets: editorAutoClosingBrackets ? 'always' : 'never',
+                    folding: editorCodeFolding,
                     padding: { top: 6, bottom: 6 },
                   }}
                 />
@@ -12558,6 +13118,12 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   cursorBlink={terminalCursorBlink}
                                   scrollback={terminalScrollback}
                                   copyOnSelect={terminalCopyOnSelect}
+                                  fontFamily={terminalFontFamily}
+                                  lineHeight={terminalLineHeight}
+                                  themePreset={terminalThemePreset}
+                                  cursorWidth={terminalCursorWidth}
+                                  scrollOnUserInput={terminalScrollOnUserInput}
+                                  drawBoldTextInBrightColors={terminalDrawBoldTextInBrightColors}
                                 />
                               );
                             })}
@@ -12618,6 +13184,12 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   cursorBlink={terminalCursorBlink}
                                   scrollback={terminalScrollback}
                                   copyOnSelect={terminalCopyOnSelect}
+                                  fontFamily={terminalFontFamily}
+                                  lineHeight={terminalLineHeight}
+                                  themePreset={terminalThemePreset}
+                                  cursorWidth={terminalCursorWidth}
+                                  scrollOnUserInput={terminalScrollOnUserInput}
+                                  drawBoldTextInBrightColors={terminalDrawBoldTextInBrightColors}
                                 />
                               </div>
                             </>
@@ -15947,11 +16519,41 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   }}
                                 >
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
-                                    {renderAiIcon(p.id, 15)}
+                                    {renderAiIcon(p.id, 15, undefined, !!aiUpdatesAvailable[p.id]?.hasUpdate)}
                                     <span>{p.name}</span>
                                   </div>
 
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    {isInstalled && aiUpdatesAvailable[p.id]?.hasUpdate && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleUpdateCliInTerminal(p.id);
+                                        }}
+                                        title={`Atualizar ${p.name} para v${aiUpdatesAvailable[p.id]?.latestVersion || 'nova versão'}`}
+                                        style={{
+                                          fontSize: 10,
+                                          padding: '2px 7px',
+                                          borderRadius: 4,
+                                          background: accentColor,
+                                          border: 'none',
+                                          boxShadow: 'none',
+                                          color: '#fff',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: 4,
+                                          cursor: 'pointer',
+                                          fontWeight: 400,
+                                          transition: 'opacity 0.15s ease',
+                                        }}
+                                        onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.85')}
+                                        onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                                      >
+                                        <ArrowUpCircle size={10} strokeWidth={2} />
+                                        <span>Atualizar</span>
+                                      </button>
+                                    )}
                                     {isInstalled && !p.requiresLogin && (
                                       <span
                                         style={{
@@ -16685,6 +17287,8 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           onSelectWorkspace={handleSelectWorkspace}
           installedClis={installedClis}
           activeModels={activeModels}
+          onSelectAiProvider={handleSwitchAiProvider}
+          onSelectModel={handleSelectModel}
           onToast={(msg) => {
             setToastMessage(msg);
             setTimeout(() => setToastMessage(null), 3000);
@@ -17431,8 +18035,21 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             onReadAll={notifCenter.readAll}
             onRemove={notifCenter.remove}
             onClearHistory={notifCenter.clearHistory}
+            onUpdateAi={handleUpdateCliInTerminal}
             onOpen={(n) => {
               notifCenter.read(n.id);
+              if (n.patchNotesUrl) {
+                if (window.electronAPI?.shell?.openExternal) {
+                  window.electronAPI.shell.openExternal(n.patchNotesUrl);
+                } else {
+                  window.open(n.patchNotesUrl, '_blank', 'noopener,noreferrer');
+                }
+                logSystemActivity('notifications', 'Abrir patch notes da IA', n.projectName || 'Geral', {
+                  id: n.id,
+                  provider: n.provider,
+                  url: n.patchNotesUrl,
+                });
+              }
               if (n.projectPath && n.projectPath.toLowerCase() !== (workspacePathRef.current || '').toLowerCase()) handleSelectWorkspace(n.projectPath, n.projectName);
               if (n.source) {
                 setActiveTab(n.source === 'ide' ? 'ide' : n.source === 'cli' ? 'cli' : 'design');
@@ -17548,9 +18165,17 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             setSettingsActiveTab={setSettingsActiveTab}
             workspacePath={workspacePath}
             currentBranch={currentBranch}
+            gitRepoName={gitRepoName}
+            branchesList={branchesList}
+            onCheckoutBranch={handleCheckoutBranch}
+            onCreateBranch={handleCreateBranch}
+            isCreatingBranch={isCreatingBranch}
+            onSyncGit={handleSyncGit}
+            isSyncingGit={isSyncingGit}
+            onRefreshBranches={refreshGitBranches}
             onOpenBranchManager={() => {
-              setIsSettingsModalOpen(false);
-              setIsBranchModalOpen(true);
+              setSettingsActiveTab('workspace');
+              refreshGitBranches();
             }}
             sidebarPosition={sidebarPosition}
             setSidebarPosition={setSidebarPosition}
@@ -17583,6 +18208,24 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             setEditorBracketColorization={setEditorBracketColorization}
             editorRenderWhitespace={editorRenderWhitespace}
             setEditorRenderWhitespace={setEditorRenderWhitespace}
+            editorFontFamily={editorFontFamily}
+            setEditorFontFamily={setEditorFontFamily}
+            editorLineHeight={editorLineHeight}
+            setEditorLineHeight={setEditorLineHeight}
+            editorCursorStyle={editorCursorStyle}
+            setEditorCursorStyle={setEditorCursorStyle}
+            editorCursorBlinking={editorCursorBlinking}
+            setEditorCursorBlinking={setEditorCursorBlinking}
+            editorGuides={editorGuides}
+            setEditorGuides={setEditorGuides}
+            editorAutoClosingBrackets={editorAutoClosingBrackets}
+            setEditorAutoClosingBrackets={setEditorAutoClosingBrackets}
+            editorHighlightActiveLine={editorHighlightActiveLine}
+            setEditorHighlightActiveLine={setEditorHighlightActiveLine}
+            editorFormatOnSave={editorFormatOnSave}
+            setEditorFormatOnSave={setEditorFormatOnSave}
+            editorCodeFolding={editorCodeFolding}
+            setEditorCodeFolding={setEditorCodeFolding}
             terminalFontSize={terminalFontSize}
             setTerminalFontSize={setTerminalFontSize}
             terminalCursorStyle={terminalCursorStyle}
@@ -17593,6 +18236,18 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             setTerminalCursorBlink={setTerminalCursorBlink}
             terminalCopyOnSelect={terminalCopyOnSelect}
             setTerminalCopyOnSelect={setTerminalCopyOnSelect}
+            terminalFontFamily={terminalFontFamily}
+            setTerminalFontFamily={setTerminalFontFamily}
+            terminalLineHeight={terminalLineHeight}
+            setTerminalLineHeight={setTerminalLineHeight}
+            terminalThemePreset={terminalThemePreset}
+            setTerminalThemePreset={setTerminalThemePreset}
+            terminalCursorWidth={terminalCursorWidth}
+            setTerminalCursorWidth={setTerminalCursorWidth}
+            terminalScrollOnUserInput={terminalScrollOnUserInput}
+            setTerminalScrollOnUserInput={setTerminalScrollOnUserInput}
+            terminalDrawBoldTextInBrightColors={terminalDrawBoldTextInBrightColors}
+            setTerminalDrawBoldTextInBrightColors={setTerminalDrawBoldTextInBrightColors}
             selectedAiProvider={selectedAiProvider}
             setSelectedAiProvider={handleSwitchAiProvider}
             aiMode={aiMode}
@@ -17610,6 +18265,40 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               setIsSkillsModalOpen(true);
             }}
             activeSkillsCount={activeSkills.length}
+            panelAlignment={panelAlignment}
+            setPanelAlignment={setPanelAlignment}
+            showActivityBar={showActivityBar}
+            setShowActivityBar={setShowActivityBar}
+            showStatusBar={showStatusBar}
+            setShowStatusBar={setShowStatusBar}
+            pinnedAis={pinnedAis}
+            setPinnedAis={setPinnedAis}
+            useAiSystemAccent={useAiSystemAccent}
+            setUseAiSystemAccent={setUseAiSystemAccent}
+            devForce={devForce}
+            setDevForce={setDevForce}
+            aiAutoUpdate={aiAutoUpdate}
+            setAiAutoUpdate={setAiAutoUpdate}
+            rainbow={rainbow}
+            setRainbow={setRainbow}
+            showExplorer={showExplorer}
+            setShowExplorer={setShowExplorer}
+            showAiPanel={showAiPanel}
+            setShowAiPanel={setShowAiPanel}
+            isTerminalCollapsed={isTerminalCollapsed}
+            setIsTerminalCollapsed={setIsTerminalCollapsed}
+            quickInputPosition={quickInputPosition}
+            setQuickInputPosition={setQuickInputPosition}
+            onToggleFullscreen={handleToggleFullscreen}
+            onToggleZenMode={handleToggleZenMode}
+            isZenMode={isZenMode}
+            onResetLayout={handleResetLayout}
+            onOpenTasksDock={() => {
+              setIsSettingsModalOpen(false);
+              setActiveTermTab('tasks');
+              setIsTerminalCollapsed(false);
+            }}
+            onToast={setToastMessage}
           />
         )}
 

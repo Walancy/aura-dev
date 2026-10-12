@@ -101,6 +101,7 @@ import PrototypePlayer from './PrototypePlayer';
 import type { RulerGuide } from './rulers';
 import { deleteVersion, listVersions, loadVersion, saveVersion, type VersionEntry } from './versions';
 import { booleanShapes, flattenShape, type BooleanOp } from './booleanOps';
+import { logSystemActivity } from '../../utils/brainService';
 
 interface DesignStudioViewProps {
   /** false quando a aba de Design está escondida (continua montada para a IA terminar de gerar) */
@@ -723,6 +724,7 @@ export default function DesignStudioView({
     setViewPrefs((prev) => {
       const next = { ...prev, [key]: !prev[key] };
       try { localStorage.setItem('design_view_prefs', JSON.stringify(next)); } catch {}
+      logSystemActivity('design', 'toggle_view_pref', key, { ativo: next[key] });
       return next;
     });
   }, []);

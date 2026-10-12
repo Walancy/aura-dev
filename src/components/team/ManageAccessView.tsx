@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Users,
   UserCheck,
@@ -115,9 +115,30 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
   // Seleção múltipla
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // Paginação
+  // Paginação dinâmica calculada para preencher todo o espaço vertical da tabela
+  const tableWrapperRef = useRef<HTMLDivElement>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 7;
+  const [itemsPerPage, setItemsPerPage] = useState(25);
+
+  useEffect(() => {
+    const el = tableWrapperRef.current;
+    if (!el) return;
+
+    const updateCapacity = () => {
+      const h = el.clientHeight;
+      if (h > 150) {
+        // Cabeçalho ~44px, rodapé ~40px, cada linha tem ~48px
+        const availableHeight = h - 84;
+        const count = Math.max(12, Math.floor(availableHeight / 48));
+        setItemsPerPage(count);
+      }
+    };
+
+    updateCapacity();
+    const ro = new ResizeObserver(updateCapacity);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Modais
   const [isAddPeopleOpen, setIsAddPeopleOpen] = useState(false);
@@ -174,6 +195,12 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
     const start = (currentPage - 1) * itemsPerPage;
     return filteredItems.slice(start, start + itemsPerPage);
   }, [filteredItems, currentPage, itemsPerPage]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(Math.max(1, totalPages));
+    }
+  }, [currentPage, totalPages]);
 
   const isAllSelected =
     paginatedItems.length > 0 &&
@@ -260,7 +287,10 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
         alignItems: 'stretch',
         gap: 5,
         width: '100%',
-        minHeight: 360,
+        height: '100%',
+        minHeight: 0,
+        flex: 1,
+        overflow: 'hidden',
         boxSizing: 'border-box',
         fontFamily: "'Poppins', -apple-system, sans-serif",
       }}
@@ -272,16 +302,19 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
         style={{
           flex: 1,
           minWidth: 0,
+          minHeight: 0,
+          height: '100%',
           display: 'flex',
           flexDirection: 'column',
           gap: 6,
           boxSizing: 'border-box',
+          overflow: 'hidden',
         }}
       >
         {/* HEADER DO CANVAS COM TÍTULO E BOTÕES NO PADRÃO DEVFLOW */}
         <div
           style={{
-            background: theme.viewCanvasBg,
+            background: isEffectiveDark ? '#141414' : '#ffffff',
             borderRadius: 8,
             padding: '10px 14px',
             display: 'flex',
@@ -289,12 +322,13 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
             justifyContent: 'space-between',
             flexWrap: 'wrap',
             gap: 10,
+            border: 'none',
+            boxShadow: 'none',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Users size={17} color={accentColor} />
+          <div>
             <div>
-              <div style={{ fontSize: 14.5, fontWeight: 600, color: theme.textPrimary }}>
+              <div style={{ fontSize: 14.5, fontWeight: 400, color: theme.textPrimary }}>
                 Gerenciar acesso
               </div>
               <div style={{ fontSize: 11.5, color: theme.textSecondary }}>
@@ -313,7 +347,7 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
-                background: theme.controlBg,
+                background: isEffectiveDark ? '#1c1c1c' : theme.controlBg,
                 border: 'none',
                 borderRadius: 8,
                 padding: '0 12px',
@@ -323,9 +357,10 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                 fontWeight: 400,
                 cursor: 'pointer',
                 transition: 'background 0.15s ease',
+                boxShadow: 'none',
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = theme.controlHoverBg)}
-              onMouseLeave={(e) => (e.currentTarget.style.background = theme.controlBg)}
+              onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? '#242424' : theme.controlHoverBg)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = isEffectiveDark ? '#1c1c1c' : theme.controlBg)}
             >
               <span>Criar time</span>
             </button>
@@ -339,7 +374,7 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
-                background: theme.controlBg,
+                background: isEffectiveDark ? '#1c1c1c' : theme.controlBg,
                 border: 'none',
                 borderRadius: 8,
                 padding: '0 12px',
@@ -349,9 +384,10 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                 fontWeight: 400,
                 cursor: 'pointer',
                 transition: 'background 0.15s ease',
+                boxShadow: 'none',
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = theme.controlHoverBg)}
-              onMouseLeave={(e) => (e.currentTarget.style.background = theme.controlBg)}
+              onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? '#242424' : theme.controlHoverBg)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = isEffectiveDark ? '#1c1c1c' : theme.controlBg)}
             >
               <Layers size={13} color={theme.textSecondary} />
               <span>Adicionar times</span>
@@ -373,9 +409,10 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                 height: 30,
                 color: accentContrastText,
                 fontSize: 12,
-                fontWeight: 500,
+                fontWeight: 400,
                 cursor: 'pointer',
                 transition: 'opacity 0.15s ease',
+                boxShadow: 'none',
               }}
               onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.88')}
               onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
@@ -409,11 +446,12 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                   borderRadius: 6,
                   border: 'none',
                   cursor: 'pointer',
-                  background: isActive ? (isEffectiveDark ? '#242424' : '#e2e8f0') : theme.viewCanvasBg,
+                  background: isActive ? (isEffectiveDark ? '#2a2a2a' : '#e5e5e5') : (isEffectiveDark ? '#141414' : '#ffffff'),
                   color: isActive ? theme.textPrimary : theme.textSecondary,
                   fontSize: 12,
-                  fontWeight: isActive ? 500 : 400,
+                  fontWeight: 400,
                   fontFamily: 'inherit',
+                  boxShadow: 'none',
                 }}
               >
                 <Icon size={13} color={isActive ? accentColor : theme.textSecondary} />
@@ -431,15 +469,18 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
 
         {/* TABELA DE ACESSOS */}
         <div
+          ref={tableWrapperRef}
           style={{
-            background: theme.viewCanvasBg,
+            background: isEffectiveDark ? '#141414' : '#ffffff',
             borderRadius: 8,
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
             flex: 1,
-            minHeight: 280,
+            minHeight: 0,
             position: 'relative',
+            border: 'none',
+            boxShadow: 'none',
           }}
         >
           {/* Backdrop para fechar dropdowns */}
@@ -457,7 +498,7 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
           {/* CABEÇALHO DA TABELA (BARRA DE FILTRO E BUSCA) */}
           <div
             style={{
-              background: theme.controlBg,
+              background: isEffectiveDark ? '#1c1c1c' : theme.controlBg,
               padding: '8px 12px',
               display: 'flex',
               alignItems: 'center',
@@ -465,7 +506,7 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
               flexWrap: 'wrap',
               gap: 8,
               userSelect: 'none',
-              borderBottom: `1px solid ${theme.tableBorder}`,
+              borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'}`,
             }}
           >
             {/* Esquerda: Checkbox mestre + Select all + Filtros */}
@@ -480,7 +521,7 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                 ) : (
                   <Square size={15} color={theme.textSecondary} />
                 )}
-                <span style={{ fontSize: 12, fontWeight: 500, color: theme.textPrimary }}>
+                <span style={{ fontSize: 12, fontWeight: 400, color: theme.textPrimary }}>
                   Selecionar todos
                 </span>
               </div>
@@ -703,13 +744,14 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,
-                background: theme.viewCanvasBg,
+                background: isEffectiveDark ? '#141414' : '#ffffff',
                 borderRadius: 8,
                 padding: '0 10px',
                 height: 30,
                 width: 220,
                 maxWidth: '100%',
                 border: 'none',
+                boxShadow: 'none',
                 transition: 'background 0.15s ease',
               }}
             >
@@ -728,6 +770,7 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                   background: 'transparent',
                   color: theme.textPrimary,
                   fontSize: 12,
+                  fontWeight: 400,
                   fontFamily: 'inherit',
                   width: '100%',
                 }}
@@ -736,7 +779,7 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
           </div>
 
           {/* CORPO DA TABELA: LINHAS DE MEMBROS */}
-          <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflowY: 'auto' }} className="no-scrollbar">
             {paginatedItems.length === 0 ? (
               <div
                 style={{
@@ -766,19 +809,19 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       padding: '9px 12px',
-                      borderBottom: isLast ? 'none' : `1px solid ${theme.tableBorder}`,
+                      borderBottom: isLast ? 'none' : `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'}`,
                       background: isSelected
                         ? isEffectiveDark
-                          ? 'rgba(255, 255, 255, 0.04)'
-                          : 'rgba(0, 0, 0, 0.03)'
+                          ? '#2a2a2a'
+                          : '#e5e5e5'
                         : 'transparent',
                       transition: 'background 0.1s ease',
                     }}
                     onMouseEnter={(e) => {
                       if (!isSelected) {
                         e.currentTarget.style.background = isEffectiveDark
-                          ? 'rgba(255, 255, 255, 0.025)'
-                          : 'rgba(0, 0, 0, 0.02)';
+                          ? '#1c1c1c'
+                          : '#f5f5f5';
                       }
                     }}
                     onMouseLeave={(e) => {
@@ -856,7 +899,7 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                         <div
                           style={{
                             fontSize: 12.5,
-                            fontWeight: 500,
+                            fontWeight: 400,
                             color: theme.textPrimary,
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
@@ -1043,68 +1086,70 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
             )}
           </div>
 
-          {/* RODAPÉ DA TABELA: PAGINAÇÃO NO PADRÃO DEVFLOW */}
-          <div
-            style={{
-              background: theme.controlBg,
-              padding: '8px 12px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              borderTop: `1px solid ${theme.tableBorder}`,
-              userSelect: 'none',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginLeft: 'auto' }}>
-              <button
-                type="button"
-                disabled={currentPage <= 1}
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: currentPage <= 1 ? theme.textMuted : accentColor,
-                  fontSize: 12,
-                  fontWeight: 500,
-                  cursor: currentPage <= 1 ? 'not-allowed' : 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 3,
-                  padding: '3px 6px',
-                  borderRadius: 4,
-                }}
-              >
-                <ChevronLeft size={13} />
-                <span>Previous</span>
-              </button>
+          {/* RODAPÉ DA TABELA: PAGINAÇÃO NO PADRÃO DEVFLOW (APENAS QUANDO ULTRAPASSA O LIMITE DA PÁGINA) */}
+          {totalPages > 1 && (
+            <div
+              style={{
+                background: theme.controlBg,
+                padding: '8px 12px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderTop: `1px solid ${theme.tableBorder}`,
+                userSelect: 'none',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginLeft: 'auto' }}>
+                <button
+                  type="button"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: currentPage <= 1 ? theme.textMuted : accentColor,
+                    fontSize: 12,
+                    fontWeight: 500,
+                    cursor: currentPage <= 1 ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 3,
+                    padding: '3px 6px',
+                    borderRadius: 4,
+                  }}
+                >
+                  <ChevronLeft size={13} />
+                  <span>Previous</span>
+                </button>
 
-              <span style={{ fontSize: 11.5, color: theme.textPrimary, fontWeight: 500 }}>
-                {currentPage} / {totalPages}
-              </span>
+                <span style={{ fontSize: 11.5, color: theme.textPrimary, fontWeight: 500 }}>
+                  {currentPage} / {totalPages}
+                </span>
 
-              <button
-                type="button"
-                disabled={currentPage >= totalPages}
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: currentPage >= totalPages ? theme.textMuted : accentColor,
-                  fontSize: 12,
-                  fontWeight: 500,
-                  cursor: currentPage >= totalPages ? 'not-allowed' : 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 3,
-                  padding: '3px 6px',
-                  borderRadius: 4,
-                }}
-              >
-                <span>Next</span>
-                <ChevronRight size={13} />
-              </button>
+                <button
+                  type="button"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: currentPage >= totalPages ? theme.textMuted : accentColor,
+                    fontSize: 12,
+                    fontWeight: 500,
+                    cursor: currentPage >= totalPages ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 3,
+                    padding: '3px 6px',
+                    borderRadius: 4,
+                  }}
+                >
+                  <span>Next</span>
+                  <ChevronRight size={13} />
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 

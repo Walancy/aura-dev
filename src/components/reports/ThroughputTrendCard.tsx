@@ -122,7 +122,7 @@ export const ThroughputTrendCard: React.FC<Props> = ({ issues, timeRange, isEffe
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <Activity size={13} color={colors.done} />
-          <span style={{ fontSize: 12, fontWeight: 600, color: c.textPrimary }}>Ritmo: criadas × concluídas</span>
+          <span style={{ fontSize: 12, fontWeight: 400, color: c.textPrimary }}>Ritmo: criadas × concluídas</span>
         </div>
         <div style={{ display: 'flex', gap: 3 }}>
           {(['chart', 'table'] as const).map((v) => (
@@ -137,7 +137,7 @@ export const ThroughputTrendCard: React.FC<Props> = ({ issues, timeRange, isEffe
                 borderRadius: 4,
                 padding: '2px 6px',
                 fontSize: 9.5,
-                fontWeight: 500,
+                fontWeight: 400,
                 cursor: 'pointer',
               }}
             >
@@ -151,11 +151,11 @@ export const ThroughputTrendCard: React.FC<Props> = ({ issues, timeRange, isEffe
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', fontSize: 11, color: c.textSecondary }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: colors.created }} />
-          Criadas <b style={{ color: c.textPrimary, fontWeight: 600 }}>{totals.created}</b>
+          Criadas <b style={{ color: c.textPrimary, fontWeight: 400 }}>{totals.created}</b>
         </span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: colors.done }} />
-          Concluídas <b style={{ color: c.textPrimary, fontWeight: 600 }}>{totals.done}</b>
+          Concluídas <b style={{ color: c.textPrimary, fontWeight: 400 }}>{totals.done}</b>
         </span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 'auto', color: c.textPrimary }}>
           <NetIcon size={12} color={c.textSecondary} />
@@ -211,8 +211,8 @@ export const ThroughputTrendCard: React.FC<Props> = ({ issues, timeRange, isEffe
                 left: Math.min(Math.max(0, padLeft + slot * hover + slot / 2 - 70), width - 140),
                 width: 140,
                 pointerEvents: 'none',
-                background: isEffectiveDark ? '#1f1f1f' : '#ffffff',
-                boxShadow: isEffectiveDark ? '0 6px 18px rgba(0,0,0,0.6)' : '0 6px 18px rgba(0,0,0,0.12)',
+                background: c.cardSecondary,
+                boxShadow: 'none',
                 borderRadius: 6,
                 padding: '6px 8px',
                 fontSize: 10.5,
@@ -222,7 +222,7 @@ export const ThroughputTrendCard: React.FC<Props> = ({ issues, timeRange, isEffe
                 gap: 2,
               }}
             >
-              <span style={{ color: c.textPrimary, fontWeight: 600}}>{hovered.longLabel}</span>
+              <span style={{ color: c.textPrimary, fontWeight: 400}}>{hovered.longLabel}</span>
               <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                 <span style={{ width: 7, height: 7, borderRadius: 2, background: colors.created }} /> Criadas
                 <b style={{ marginLeft: 'auto', color: c.textPrimary }}>{hovered.created}</b>
@@ -246,10 +246,10 @@ export const ThroughputTrendCard: React.FC<Props> = ({ issues, timeRange, isEffe
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
             <thead>
               <tr style={{ color: c.textMuted, textAlign: 'right' }}>
-                <th style={{ textAlign: 'left', fontWeight: 500, padding: '3px 4px' }}>Período</th>
-                <th style={{ fontWeight: 500, padding: '3px 4px' }}>Criadas</th>
-                <th style={{ fontWeight: 500, padding: '3px 4px' }}>Concluídas</th>
-                <th style={{ fontWeight: 500, padding: '3px 4px' }}>Saldo</th>
+                <th style={{ textAlign: 'left', fontWeight: 400, padding: '3px 4px' }}>Período</th>
+                <th style={{ fontWeight: 400, padding: '3px 4px' }}>Criadas</th>
+                <th style={{ fontWeight: 400, padding: '3px 4px' }}>Concluídas</th>
+                <th style={{ fontWeight: 400, padding: '3px 4px' }}>Saldo</th>
               </tr>
             </thead>
             <tbody>
