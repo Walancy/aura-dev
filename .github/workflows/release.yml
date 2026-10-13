@@ -8,7 +8,16 @@ permissions:
   contents: write
 
 jobs:
+  # cria o rascunho uma vez só: os jobs em paralelo criavam um rascunho cada
+  draft:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh release create "$GITHUB_REF_NAME" --draft --title "${GITHUB_REF_NAME#v}" --generate-notes --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   release:
+    needs: draft
     strategy:
       fail-fast: false
       matrix:
