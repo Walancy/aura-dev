@@ -26,7 +26,12 @@ jobs:
       - run: npm version --no-git-tag-version --allow-same-version "${GITHUB_REF_NAME#v}"
         shell: bash
       - run: npm run build
-      - run: bunx electron-builder --publish always
+      - name: Build e publica
+        shell: bash
+        # secret ausente chega como string vazia, que o electron-builder trata como caminho de certificado
+        run: |
+          [ -n "$CSC_LINK" ] || unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+          bunx electron-builder --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # macOS: com os secrets abaixo o app é assinado e notarizado; sem eles, sai sem assinatura
