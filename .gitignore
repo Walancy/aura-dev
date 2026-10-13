@@ -46,3 +46,6 @@ docker/penpot/docker-compose.yaml
 # Scratch scripts
 scratch/
 
+
+# Instaladores gerados
+release/

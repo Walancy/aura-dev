@@ -1,0 +1,30 @@
+appId: br.com.appmoove.auradev
+productName: Aura Dev
+directories:
+  output: release
+files:
+  - dist/**
+  - dist-electron/**
+  - "!dist-electron/bin/**"
+asarUnpack:
+  - "**/node_modules/node-pty/**"
+# o orquestrador Rust é executado como processo: fica fora do asar, em resources/bin
+extraResources:
+  - from: dist-electron/bin
+    to: bin
+mac:
+  category: public.app-category.developer-tools
+  target: [dmg, zip]
+  artifactName: ${productName}-${version}-${arch}.${ext}
+win:
+  target: nsis
+linux:
+  target: [AppImage, deb]
+  category: Development
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+publish:
+  provider: github
+  owner: Walancy
+  repo: aura-dev
