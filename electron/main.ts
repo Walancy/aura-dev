@@ -981,7 +981,7 @@ ipcMain.handle('ai:checkClis', async () => {
 });
 
 // Check for updates on installed AI CLIs
-ipcMain.handle('ai:checkCliUpdates', async () => {
+const checkCliUpdates = async () => {
   const { exec } = require('node:child_process');
   const userHome = process.env.HOME || '';
   const customPaths = [
@@ -1110,6 +1110,17 @@ ipcMain.handle('ai:checkCliUpdates', async () => {
   }
 
   return results;
+};
+
+// cache + chamadas simultâneas compartilhadas: o renderer pode pedir várias vezes, cada checagem sobe vários processos node
+let cliUpdatesCache: { at: number; data: any } | null = null;
+let cliUpdatesInFlight: Promise<any> | null = null;
+ipcMain.handle('ai:checkCliUpdates', async () => {
+  if (cliUpdatesCache && Date.now() - cliUpdatesCache.at < 10 * 60 * 1000) return cliUpdatesCache.data;
+  cliUpdatesInFlight ||= checkCliUpdates()
+    .then((data) => { cliUpdatesCache = { at: Date.now(), data }; return data; })
+    .finally(() => { cliUpdatesInFlight = null; });
+  return cliUpdatesInFlight;
 });
 
 ipcMain.handle('ai:cancel', async (_event, runId?: string, cwd?: string, streamId?: string) => {

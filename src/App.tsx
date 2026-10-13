@@ -825,7 +825,7 @@ export const App: React.FC = () => {
       try {
         const info = await window.electronAPI.git.getWorkspaceGitInfo(workspacePath, activeFile?.path);
         if (info) {
-          setWorkspaceGitInfo(info);
+          setWorkspaceGitInfo((prev: any) => (JSON.stringify(prev) === JSON.stringify(info) ? prev : info));
         }
       } catch {}
     }
@@ -2521,7 +2521,7 @@ export const App: React.FC = () => {
     };
     setProjectServers([]);
     poll();
-    const timer = setInterval(poll, 4000);
+    const timer = setInterval(poll, 8000);
     return () => { alive = false; clearInterval(timer); };
   }, [workspacePath]);
   // limite diário do Claude (a semana ÷ dias que faltam): recalculado a cada leitura da quota, o dia vira o ponto de partida
@@ -3204,7 +3204,7 @@ export const App: React.FC = () => {
             e.activeAiProvider = e.activeAiProvider || projectAiStateRef.current[path]?.provider || selectedAiProvider;
           });
 
-          setProjectRuntimes(map);
+          setProjectRuntimes((prev) => (JSON.stringify(prev) === JSON.stringify(map) ? prev : map));
           // Voltou a gerar (usuário respondeu ou nova tarefa): o aviso anterior deixou de valer
           setCliAiStatus((prev) => {
             const running = Object.keys(map).filter((k) => map[k].isAiRunning && prev[k]);
@@ -4548,9 +4548,13 @@ export const App: React.FC = () => {
           activeHeaderProject?.localDir ? activeHeaderProject.localDir.split('/').filter(Boolean).pop() : '',
           workspacePath ? workspacePath.split('/').filter(Boolean).pop() : '',
         ].filter(Boolean);
+        // o cache só pinta a lista na hora; a busca no GitHub abaixo sempre roda (senão "Atualizar" nunca atualiza)
+        let hydrated = false;
         for (const c of candidates) {
+          if (hydrated) break;
           for (const [k, v] of Object.entries(cache)) {
-            if ((k.toLowerCase() === c!.toLowerCase() || k.toLowerCase().includes(c!.toLowerCase())) && v?.issues?.length > 0) {
+            // nome exato (ou "dono/repo"): `includes` casava repositórios homônimos e trazia issues de outro projeto
+            if ((k.toLowerCase() === c!.toLowerCase() || k.toLowerCase().endsWith(`/${c!.toLowerCase()}`)) && v?.issues?.length > 0) {
               const converted: GitHubIssueItem[] = v.issues.map((pi: any) => ({
                 number: pi.githubNumber || (typeof pi.id === 'string' && pi.id.startsWith('#') ? parseInt(pi.id.slice(1), 10) : Number(pi.id)) || 0,
                 title: pi.title,
@@ -4574,8 +4578,8 @@ export const App: React.FC = () => {
               }));
               if (converted.length > 0) {
                 setGitIssues(converted);
-                setIsLoadingIssues(false);
-                return;
+                hydrated = true;
+                break;
               }
             }
           }
@@ -6312,27 +6316,33 @@ export const App: React.FC = () => {
   }, []);
 
   // Check AI CLI updates on startup, focus and interval
+  // notifCenter/triggerAutoUpdate mudam a cada render: por ref, senão o efeito refaz a checagem em loop
+  const notifCenterRef = useRef(notifCenter);
+  notifCenterRef.current = notifCenter;
+  const triggerAutoUpdateRef = useRef(triggerAutoUpdate);
+  triggerAutoUpdateRef.current = triggerAutoUpdate;
   useEffect(() => {
     const checkUpdates = async () => {
       if (window.electronAPI?.ai?.checkCliUpdates) {
         try {
           const updates = await window.electronAPI.ai.checkCliUpdates();
           if (updates && Object.keys(updates).length > 0) {
-            setAiUpdatesAvailable(updates);
+            // objeto novo a cada chamada re-renderiza o App, o que refaz este efeito (deps instáveis) e vira loop infinito
+            setAiUpdatesAvailable((prev) => (JSON.stringify(prev) === JSON.stringify(updates) ? prev : updates));
             for (const [providerId, info] of Object.entries(updates)) {
               if (info?.hasUpdate) {
                 if (aiAutoUpdate) {
-                  triggerAutoUpdate(providerId, info);
+                  triggerAutoUpdateRef.current(providerId, info);
                 } else {
                   const alreadyNotified =
                     notifiedUpdatesRef.current.has(providerId) ||
-                    notifCenter.items.some(
+                    notifCenterRef.current.items.some(
                       (n) => n.isUpdate && (n.provider === providerId || (providerId === 'antigravity' && n.provider === 'agy'))
                     );
                   if (!alreadyNotified) {
                     notifiedUpdatesRef.current.add(providerId);
                     const prov = AI_PROVIDERS.find((p) => p.id === providerId) || { name: providerId };
-                    notifCenter.add({
+                    notifCenterRef.current.add({
                       kind: 'ai',
                       title: `Atualização disponível: ${prov.name}`,
                       body: `Uma nova versão (${info.latestVersion || 'recente'}) do CLI ${prov.name} está disponível para atualização.${info.currentVersion ? ` Versão instalada: ${info.currentVersion}.` : ''}`,
@@ -6367,7 +6377,7 @@ export const App: React.FC = () => {
       clearInterval(pollInterval);
       window.removeEventListener('focus', checkUpdates);
     };
-  }, [notifCenter, aiAutoUpdate, triggerAutoUpdate]);
+  }, [aiAutoUpdate]);
 
   // When auto-update is active, auto-update any pending AI CLI updates
   useEffect(() => {
@@ -6605,9 +6615,9 @@ export const App: React.FC = () => {
   };
 
   // Fetch real live AI Quotas from native CLI service
-  const refreshAiQuotas = useCallback(() => {
+  const refreshAiQuotas = useCallback((force = true) => {
     if (window.electronAPI?.ai?.getQuotas) {
-      window.electronAPI.ai.getQuotas(true).then((quotas) => {
+      window.electronAPI.ai.getQuotas(force === true).then((quotas) => {
         if (quotas && Object.keys(quotas).length > 0) {
           setAiQuotas(quotas);
         }
@@ -6618,10 +6628,11 @@ export const App: React.FC = () => {
   useEffect(() => {
     refreshAiQuotas();
     const interval = setInterval(refreshAiQuotas, 120000);
-    window.addEventListener('focus', refreshAiQuotas);
+    const onFocus = () => refreshAiQuotas(false);
+    window.addEventListener('focus', onFocus);
     return () => {
       clearInterval(interval);
-      window.removeEventListener('focus', refreshAiQuotas);
+      window.removeEventListener('focus', onFocus);
     };
   }, [refreshAiQuotas]);
 
@@ -7893,7 +7904,7 @@ ${prompt || userDisplayPrompt}`;
           const durationStr = elapsedSec >= 60 ? `${Math.floor(elapsedSec / 60)}m ${elapsedSec % 60}s` : `${elapsedSec}s`;
           setLiveWorkedDuration(durationStr);
           pollLiveChanges();
-        }, 600);
+        }, 1000);
 
         const stopAiEventListener = (window.electronAPI as any)?.ai?.onEvent?.((event: any) => {
           if (event?.kind === 'progress' && event?.payload?.text) {
