@@ -1,31 +1,22 @@
 /**
- * Limite diário do Claude:
- * O limite semanal (100%) é dividido entre os 7 dias da semana (~14.29%/dia).
- * Cada dia recebe sua cota diária + o que sobrou dos dias anteriores acumulado,
- * até o reset semanal da conta.
+ * Limite diário do Claude, sem estado, ancorado no reset semanal:
+ * o dia começa no horário do reset semanal e cada dia vale 1/7 do total semanal (~14.3 pts).
+ * Disponível hoje = restante da semana - reserva dos dias que ainda virão (dias seguintes x 1/7).
+ * Sobras acumulam sozinhas; gastar a mais deixa hoje NEGATIVO (os pontos que já saíram da reserva dos próximos dias).
  */
-export interface DailyBudgetState {
-  day: string;
-  weeklyAtStart: number;
-  budget: number;
-  usedBeforeToday?: number;
-  cycleResetTs?: number | null;
-}
-
 export interface DailyBudget {
-  state: DailyBudgetState;
+  /** teto de pontos do dia: cota base + sobras acumuladas */
   budget: number;
-  used: number;
   remaining: number;
   exceeded: boolean;
-  cumulativeAllocated?: number;
-  currentDay?: number;
-  dailyShare?: number;
+  currentDay: number;
+  dailyShare: number;
+  /** ms até o próximo reset diário (mesmo horário do reset semanal) */
+  resetsInMs: number;
 }
 
 const DAY_MS = 86400000;
 const r1 = (n: number) => Math.round(n * 10) / 10;
-export const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 /** "Quinta-feira (15/10) às 15:00 (em 6d 23h 56min)" → instante do reset (data absoluta; senão o "em ..." relativo) */
 export function parseResetTimestamp(text: string | undefined, now: Date): number | null {
@@ -41,59 +32,19 @@ export function parseResetTimestamp(text: string | undefined, now: Date): number
   return null;
 }
 
-export function computeDailyBudget(prev: DailyBudgetState | null, weeklyNow: number, resetTs: number | null, now: Date): DailyBudget {
-  const today = dayKey(now);
-  const dailyShare = 100 / 7; // ~14.2857% da semana por dia
-
-  // Determina quantos dias faltam e qual dia do ciclo de 7 dias estamos (1 a 7)
-  let currentDay = 1;
-  if (resetTs && resetTs > now.getTime()) {
-    const daysUntilReset = (resetTs - now.getTime()) / DAY_MS;
-    const daysRemaining = Math.max(1, Math.min(7, Math.ceil(daysUntilReset)));
-    currentDay = Math.max(1, Math.min(7, 7 - daysRemaining + 1));
-  }
-
-  // Quota cumulativa liberada até hoje no ciclo
-  const cumulativeAllocated = Math.min(100, currentDay * dailyShare);
-  const totalUsedThisWeek = Math.max(0, 100 - weeklyNow);
-
-  let state = prev;
-  const isNewDay = !state || state.day !== today;
-  const isNewWeeklyCycle = !state || weeklyNow > state.weeklyAtStart || (state.cycleResetTs && resetTs && resetTs > state.cycleResetTs + DAY_MS);
-
-  if (isNewDay || isNewWeeklyCycle) {
-    let usedBeforeToday = 0;
-    if (!isNewWeeklyCycle && currentDay > 1) {
-      usedBeforeToday = totalUsedThisWeek;
-    }
-    // O que sobrou dos dias anteriores:
-    const allocBeforeToday = (currentDay - 1) * dailyShare;
-    const leftoverFromYesterday = Math.max(0, allocBeforeToday - usedBeforeToday);
-    const todayBudget = r1(dailyShare + leftoverFromYesterday);
-
-    state = {
-      day: today,
-      weeklyAtStart: weeklyNow,
-      budget: todayBudget,
-      usedBeforeToday,
-      cycleResetTs: resetTs,
-    };
-  }
-
-  // Quanto resta hoje considerando a quota liberada acumulada menos o usado na semana
-  const remaining = r1(Math.max(0, cumulativeAllocated - totalUsedThisWeek));
-  const usedToday = r1(Math.max(0, totalUsedThisWeek - (state?.usedBeforeToday ?? 0)));
-  const exceeded = totalUsedThisWeek > cumulativeAllocated;
-  const budget = state?.budget && state.budget > 0 ? state.budget : r1(Math.max(dailyShare, remaining + usedToday));
-
+export function computeDailyBudget(weeklyRemaining: number, resetTs: number | null, now: Date): DailyBudget {
+  const dailyShare = 100 / 7;
+  const msToReset = resetTs && resetTs > now.getTime() ? resetTs - now.getTime() : 7 * DAY_MS;
+  const daysLeft = Math.max(1, Math.min(7, Math.ceil(msToReset / DAY_MS))); // inclui hoje
+  const reserve = (daysLeft - 1) * dailyShare; // guardado para os dias seguintes
+  const available = weeklyRemaining - reserve; // negativo quando já consumiu a reserva dos dias seguintes
+  const budget = Math.max(dailyShare, available);
   return {
-    state: { ...state, budget },
-    budget,
-    used: usedToday,
-    remaining,
-    exceeded,
-    cumulativeAllocated: r1(cumulativeAllocated),
-    currentDay,
+    budget: r1(budget),
+    remaining: r1(available),
+    exceeded: weeklyRemaining < reserve,
+    currentDay: 8 - daysLeft,
     dailyShare: r1(dailyShare),
+    resetsInMs: msToReset - (daysLeft - 1) * DAY_MS,
   };
 }

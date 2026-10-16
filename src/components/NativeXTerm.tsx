@@ -1,11 +1,25 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
+import { playTypingEffect } from './typingEffects';
 import { Terminal as XTerm, type IDecoration, type IMarker } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { TerminalSkinBackground, TerminalSkinOverlay, skinGlow, skinTint, type TerminalSkinId } from './TerminalSkin';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { hexToRgba } from '../utils/color';
 
 const TERMINAL_FONT_FAMILY = '"JetBrains Mono", Menlo, Monaco, "Courier New", monospace';
+
+/** Cmd+A: seleciona do primeiro ao último texto do buffer; o selectAll do xterm pinta também as linhas vazias do fim (um bloco da cor de destaque) */
+const selectContent = (term: XTerm) => {
+  const b = term.buffer.active;
+  let first = -1, last = -1;
+  for (let i = 0; i < b.length; i++) {
+    if (b.getLine(i)?.translateToString(true)) { if (first < 0) first = i; last = i; }
+  }
+  if (first < 0) return;
+  term.select(0, first, (last - first) * term.cols + b.getLine(last)!.translateToString(true).length);
+};
 
 export interface TerminalThemeDef {
   id: string;
@@ -164,6 +178,337 @@ export const TERMINAL_THEMES: Record<string, TerminalThemeDef> = {
     brightCyan: '#56d4dd',
     brightWhite: '#f0f6fc',
   },
+  // Estilos com moldura própria (Configurações → Terminal → Estilo visual)
+  cyberdeck: {
+    id: 'cyberdeck',
+    name: 'Cyberdeck',
+    background: '#20121a',
+    foreground: '#ff9189',
+    black: '#2b1a22',
+    red: '#ff4d4d',
+    green: '#4fd1c5',
+    yellow: '#ffb86b',
+    blue: '#4a9fe0',
+    magenta: '#ff6fae',
+    cyan: '#59c2d6',
+    white: '#ffd7d2',
+    brightBlack: '#8a5a66',
+    brightRed: '#ff7a70',
+    brightGreen: '#7fe6da',
+    brightYellow: '#ffd08a',
+    brightBlue: '#79bdf2',
+    brightMagenta: '#ff94c4',
+    brightCyan: '#8adbe9',
+    brightWhite: '#fff0ee',
+  },
+  industrial: {
+    id: 'industrial',
+    name: 'Industrial',
+    background: '#0a0a0a',
+    foreground: '#efe6c4',
+    black: '#1a1a1a',
+    red: '#ee5a3a',
+    green: '#b9c27a',
+    yellow: '#f2a33a',
+    blue: '#8fa8b8',
+    magenta: '#d9774f',
+    cyan: '#a7c4b5',
+    white: '#d8d0b4',
+    brightBlack: '#6b6558',
+    brightRed: '#ff7a55',
+    brightGreen: '#d3dc95',
+    brightYellow: '#ffc060',
+    brightBlue: '#b0c6d4',
+    brightMagenta: '#f0956f',
+    brightCyan: '#c4dccf',
+    brightWhite: '#fffbe8',
+  },
+  amber: {
+    id: 'amber',
+    name: 'Âmbar CRT',
+    background: '#1a0f05',
+    foreground: '#ffb43a',
+    black: '#1c1206',
+    red: '#ff6a3a',
+    green: '#c9a227',
+    yellow: '#ffcf5a',
+    blue: '#e0a050',
+    magenta: '#ff8a4a',
+    cyan: '#ffd08a',
+    white: '#ffe0a8',
+    brightBlack: '#8a6a2a',
+    brightRed: '#ff8a60',
+    brightGreen: '#e6c14a',
+    brightYellow: '#ffe08a',
+    brightBlue: '#f0c080',
+    brightMagenta: '#ffa56a',
+    brightCyan: '#ffe0b0',
+    brightWhite: '#fff1d0',
+  },
+  reds: {
+    id: 'reds',
+    name: 'Reds',
+    background: '#09090a',
+    foreground: '#f4eeee',
+    black: '#1a1a1c',
+    red: '#ff7a7a',
+    green: '#9fd8b6',
+    yellow: '#ffd0a0',
+    blue: '#9db7e8',
+    magenta: '#ff9ec0',
+    cyan: '#a8dcdc',
+    white: '#e6e0e0',
+    brightBlack: '#6a6a70',
+    brightRed: '#ff9a9a',
+    brightGreen: '#b9ead0',
+    brightYellow: '#ffe0bc',
+    brightBlue: '#b8ccf2',
+    brightMagenta: '#ffb8d2',
+    brightCyan: '#c4ecec',
+    brightWhite: '#ffffff',
+  },
+  bios: {
+    id: 'bios',
+    name: 'BIOS',
+    background: '#03100c',
+    foreground: '#5ff2c0',
+    black: '#04130f',
+    red: '#ff6b6b',
+    green: '#5ff2c0',
+    yellow: '#e8e36a',
+    blue: '#5aa8ff',
+    magenta: '#d58cff',
+    cyan: '#7ffff0',
+    white: '#b8ffe6',
+    brightBlack: '#2f7a66',
+    brightRed: '#ff8f8f',
+    brightGreen: '#8fffd6',
+    brightYellow: '#f4f08a',
+    brightBlue: '#85c0ff',
+    brightMagenta: '#e2aaff',
+    brightCyan: '#a8fff6',
+    brightWhite: '#e8fff6',
+  },
+  scan: {
+    id: 'scan',
+    name: 'Scan',
+    background: '#06100d',
+    foreground: '#cdeedd',
+    black: '#0a1612',
+    red: '#f08a8a',
+    green: '#9be3bd',
+    yellow: '#e6e2a0',
+    blue: '#8fc7d8',
+    magenta: '#c9a8e0',
+    cyan: '#9fe8dc',
+    white: '#e6f7ee',
+    brightBlack: '#4f7a6c',
+    brightRed: '#f6a8a8',
+    brightGreen: '#b8f0d2',
+    brightYellow: '#f2eeb8',
+    brightBlue: '#aadae8',
+    brightMagenta: '#dcc2ee',
+    brightCyan: '#bdf2ea',
+    brightWhite: '#f6fffa',
+  },
+  blood: {
+    id: 'blood',
+    name: 'Anatomia',
+    background: '#000000',
+    foreground: '#ff4a4a',
+    black: '#140000',
+    red: '#ff2b2b',
+    green: '#ff8a8a',
+    yellow: '#ffb0b0',
+    blue: '#ff9a9a',
+    magenta: '#ff6b8b',
+    cyan: '#ffc0c0',
+    white: '#f5f5f5',
+    brightBlack: '#7a2020',
+    brightRed: '#ff5a5a',
+    brightGreen: '#ffa0a0',
+    brightYellow: '#ffc8c8',
+    brightBlue: '#ffb0b0',
+    brightMagenta: '#ff8aa4',
+    brightCyan: '#ffd4d4',
+    brightWhite: '#ffffff',
+  },
+  minimal: {
+    id: 'minimal',
+    name: 'Minimal HUD',
+    background: '#050606',
+    foreground: '#d9dedd',
+    black: '#101212',
+    red: '#e49a9a',
+    green: '#9fd6c0',
+    yellow: '#d6d0a0',
+    blue: '#9fb8d6',
+    magenta: '#c4a8d6',
+    cyan: '#9fd6d0',
+    white: '#e8eceb',
+    brightBlack: '#5f6666',
+    brightRed: '#f0b4b4',
+    brightGreen: '#b8ead6',
+    brightYellow: '#e8e2b8',
+    brightBlue: '#b8cde6',
+    brightMagenta: '#d8c2e6',
+    brightCyan: '#b8e6e0',
+    brightWhite: '#ffffff',
+  },
+  discovery: {
+    id: 'discovery',
+    name: 'Discovery',
+    background: '#070812',
+    foreground: '#eceaf2',
+    black: '#10101c',
+    red: '#ff3b5c',
+    green: '#6fd6c0',
+    yellow: '#ffc66b',
+    blue: '#4aa3d9',
+    magenta: '#ff6fa8',
+    cyan: '#6fd0e8',
+    white: '#f4f2fa',
+    brightBlack: '#6b6a80',
+    brightRed: '#ff6d86',
+    brightGreen: '#98e8d8',
+    brightYellow: '#ffd896',
+    brightBlue: '#7cbce6',
+    brightMagenta: '#ff94c0',
+    brightCyan: '#98e0f0',
+    brightWhite: '#ffffff',
+  },
+  hud: {
+    id: 'hud',
+    name: 'Nave',
+    background: '#02080a',
+    foreground: '#9ef0f0',
+    black: '#06141a',
+    red: '#ff6a1a',
+    green: '#2fd6a0',
+    yellow: '#ffb23a',
+    blue: '#2f9ad6',
+    magenta: '#d97ad6',
+    cyan: '#2fd6d8',
+    white: '#d8f8f8',
+    brightBlack: '#2b6b70',
+    brightRed: '#ff8f4d',
+    brightGreen: '#6ff0c4',
+    brightYellow: '#ffc870',
+    brightBlue: '#6cc0f0',
+    brightMagenta: '#eaa0e8',
+    brightCyan: '#6ff0f0',
+    brightWhite: '#ffffff',
+  },
+  neon: {
+    id: 'neon',
+    name: 'Neon Vital',
+    background: '#050b1a',
+    foreground: '#1effa6',
+    black: '#0a1226',
+    red: '#ff4d9a',
+    green: '#1effa6',
+    yellow: '#d8f060',
+    blue: '#0aa0ff',
+    magenta: '#8a4dff',
+    cyan: '#3fe0ff',
+    white: '#d8fff0',
+    brightBlack: '#3a2a8a',
+    brightRed: '#ff7ab8',
+    brightGreen: '#6fffc4',
+    brightYellow: '#e8f890',
+    brightBlue: '#5cc0ff',
+    brightMagenta: '#a98aff',
+    brightCyan: '#8ff0ff',
+    brightWhite: '#ffffff',
+  },
+  stat: {
+    id: 'stat',
+    name: 'Clã',
+    background: '#050505',
+    foreground: '#f5f5f0',
+    black: '#121212',
+    red: '#e8503a',
+    green: '#a8c060',
+    yellow: '#f5b800',
+    blue: '#8aa8c0',
+    magenta: '#c08ab0',
+    cyan: '#8ac0c0',
+    white: '#f5f5f0',
+    brightBlack: '#6a6a60',
+    brightRed: '#ff7a62',
+    brightGreen: '#c8e080',
+    brightYellow: '#ffd02e',
+    brightBlue: '#b0c8e0',
+    brightMagenta: '#e0aad0',
+    brightCyan: '#b0e0e0',
+    brightWhite: '#ffffff',
+  },
+  flow: {
+    id: 'flow',
+    name: 'Fluxo',
+    background: '#17181b',
+    foreground: '#e6e6ea',
+    black: '#222327',
+    red: '#ee2a4e',
+    green: '#8ac08a',
+    yellow: '#e8b860',
+    blue: '#7a9ac8',
+    magenta: '#c88ab8',
+    cyan: '#7ac0c8',
+    white: '#e6e6ea',
+    brightBlack: '#5c5d66',
+    brightRed: '#ff5a78',
+    brightGreen: '#a8d8a8',
+    brightYellow: '#f0cc88',
+    brightBlue: '#9ab8e0',
+    brightMagenta: '#e0a8d0',
+    brightCyan: '#9ad8e0',
+    brightWhite: '#ffffff',
+  },
+  recon: {
+    id: 'recon',
+    name: 'Recon',
+    background: '#0a1211',
+    foreground: '#c4cfcb',
+    black: '#111c1a',
+    red: '#e0383e',
+    green: '#2de89b',
+    yellow: '#d8c460',
+    blue: '#6a9ab0',
+    magenta: '#b08ab0',
+    cyan: '#5ac8b8',
+    white: '#d8e0dc',
+    brightBlack: '#4a5c58',
+    brightRed: '#ff6468',
+    brightGreen: '#68f4b8',
+    brightYellow: '#ecd888',
+    brightBlue: '#8cb8cc',
+    brightMagenta: '#c8a8c8',
+    brightCyan: '#88e0d0',
+    brightWhite: '#ffffff',
+  },
+  ember: {
+    id: 'ember',
+    name: 'Brasa',
+    background: '#0a0302',
+    foreground: '#ff8a4a',
+    black: '#160805',
+    red: '#ff4a1a',
+    green: '#ffb23a',
+    yellow: '#ffd05a',
+    blue: '#d86a3a',
+    magenta: '#ff6a8a',
+    cyan: '#ffa06a',
+    white: '#ffd8c0',
+    brightBlack: '#7a3418',
+    brightRed: '#ff7a4a',
+    brightGreen: '#ffc870',
+    brightYellow: '#ffe08a',
+    brightBlue: '#ff9a6a',
+    brightMagenta: '#ff8aa4',
+    brightCyan: '#ffc08a',
+    brightWhite: '#fff0e0',
+  },
 };
 
 export const TERMINAL_FONT_FAMILIES = [
@@ -172,6 +517,10 @@ export const TERMINAL_FONT_FAMILIES = [
   { id: 'Menlo', label: 'Menlo', desc: 'Padrão macOS' },
   { id: 'Cascadia Code', label: 'Cascadia Code', desc: 'Moderno' },
   { id: 'Source Code Pro', label: 'Source Code Pro', desc: 'Adobe Clean' },
+  { id: 'Share Tech Mono', label: 'Share Tech Mono', desc: 'HUD / cyberpunk' },
+  { id: 'Space Mono', label: 'Space Mono', desc: 'Industrial' },
+  { id: 'VT323', label: 'VT323', desc: 'Monitor CRT' },
+  { id: 'IBM Plex Mono', label: 'IBM Plex Mono', desc: 'Técnica' },
   { id: 'monospace', label: 'Sistema Monospace', desc: 'Fallback' },
 ];
 
@@ -215,6 +564,10 @@ export interface NativeXTermProps {
   onServerUrlDetected?: (url: string) => void;
   /** fundo transparente: deixa aparecer o degradê/logo atrás do terminal */
   transparent?: boolean;
+  /** estilo visual com moldura (Cyberdeck, Industrial...), escolhido em Configurações → Terminal */
+  skin?: TerminalSkinId;
+  /** false: o estilo só aplica paleta/brilho e deixa o fundo e a moldura para quem envolve (ex.: fundo único da tela do CLI) */
+  skinLayers?: boolean;
   fontFamily?: string;
   lineHeight?: number;
   themePreset?: string;
@@ -228,7 +581,9 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
   sessionType = 'zsh',
   cwd,
   isActive,
-  transparent = false,
+  transparent: transparentProp = false,
+  skin = 'none',
+  skinLayers = true,
   initialCommand,
   accentColor = '#FF6A00',
   isDark = true,
@@ -249,7 +604,24 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
   drawBoldTextInBrightColors = true,
   cursorWidth = 2,
 }) => {
+  const transparent = transparentProp || skin !== 'none';
   const containerRef = useRef<HTMLDivElement>(null);
+  // último prompt enviado à IA deste terminal: fica numa barra fixa no topo
+  const [stickyPrompt, setStickyPrompt] = useState('');
+  const [stickyH, setStickyH] = useState(26);
+  const stickyRef = useRef<HTMLDivElement>(null);
+  const stickyTextRef = useRef<HTMLSpanElement>(null);
+  // Claude: ele já mostra o prompt do ponto de rolagem na 1ª linha; a barra só o espelha por cima, estilizada
+  const nativeBar = sessionType === 'claude';
+  const [rowBox, setRowBox] = useState({ top: 0, left: 0, width: 0, h: 18 });
+  // a barra mostra 2 linhas; a seta (só quando o prompt é maior) expande
+  const [stickyOpen, setStickyOpen] = useState(false);
+  const [stickyMore, setStickyMore] = useState(false);
+  const typedRef = useRef('');
+  // prompts enviados (em ordem): rolando o terminal, a barra mostra o prompt daquele ponto
+  const promptsRef = useRef<string[]>([]);
+  const refreshStickyRef = useRef<(() => void) | undefined>(undefined);
+  const aiSessionRef = useRef(false);
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const copyOnSelectRef = useRef(copyOnSelect);
@@ -311,6 +683,8 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
     const term = new XTerm({
       cursorBlink,
       cursorStyle,
+      // sem foco o xterm desenha um contorno de bloco por padrão; mantém o estilo escolhido
+      cursorInactiveStyle: cursorStyle,
       cursorWidth: cursorWidth || 2,
       fontSize,
       scrollback,
@@ -323,7 +697,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         foreground: isDark ? customTheme.foreground : '#1f1f1f',
         cursor: accentColor,
         cursorAccent: isDark ? customTheme.background : '#ffffff',
-        selectionBackground: hexToRgba(accentColor, 0.35),
+        selectionBackground: hexToRgba(accentColor, 0.22),
         black: isDark ? (customTheme.black || '#1a1a1a') : '#e5e5e5',
         red: customTheme.red || '#ef4444',
         green: customTheme.green || '#10b981',
@@ -370,6 +744,10 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
     term.loadAddon(webLinksAddon);
 
     term.open(containerRef.current);
+    // Mede já na abertura: com 80x24 padrão, o histórico reproduzido (e o TUI da CLI) era desenhado na largura errada e quebrava ao ajustar depois
+    try {
+      if (containerRef.current.offsetWidth >= 50 && containerRef.current.offsetHeight >= 50) fitAddon.fit();
+    } catch {}
     term.focus();
 
     // Garante que Backspace, Delete e atalhos de apagar funcionem com precisão no CLI
@@ -380,8 +758,17 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
       // Deixar Cmd+C / Ctrl+C copiar seleção nativa quando houver texto selecionado
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'c' || e.key === 'C')) {
         if (term.hasSelection()) {
+          // a cópia nativa falha com seleções grandes (ex.: Cmd+A): copia direto do xterm
+          if (e.type === 'keydown') navigator.clipboard.writeText(term.getSelection()).catch(() => {});
+          e.preventDefault();
           return false;
         }
+      }
+      // Cmd+A / Ctrl+A seleciona todo o texto do terminal (em vez do "início da linha" do shell)
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'a' || e.key === 'A')) {
+        if (e.type === 'keydown') selectContent(term);
+        e.preventDefault();
+        return false;
       }
       // Deixar Cmd+V / Ctrl+V colar nativamente
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'v' || e.key === 'V')) {
@@ -403,6 +790,13 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
             e.preventDefault();
             return false;
           }
+        }
+        // seleção em várias linhas (ex.: Cmd+A) que alcança a linha do cursor: apaga o texto digitado na linha de comando (Ctrl+E, Ctrl+U)
+        if (pty && sel && sel.start.y !== sel.end.y && sel.end.y >= buf.baseY + buf.cursorY) {
+          pty.write(sessionId, '\x05\x15');
+          term.clearSelection();
+          e.preventDefault();
+          return false;
         }
       }
 
@@ -499,13 +893,37 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         }
       }).catch(() => {});
 
-      // Load buffer history if session was already active
-      pty.getHistory?.(sessionId).then((history) => {
-        if (history) term.write(history);
-      }).catch(() => {});
+      // Histórico da sessão que já existia: a saída ao vivo espera ele ser escrito e descarta o que já veio dentro dele
+      // (antes chegava na frente e em duplicidade, o que bagunçava o TUI das CLIs de IA ao voltar para um projeto)
+      let historyReady = !pty.getHistoryWithSeq;
+      let historySeq = 0;
+      const pendingLive: Array<{ id: string; data: string; seq?: number }> = [];
+      const isAiTui = /^(claude|agy|antigravity|codex|gemini|ollama)$/.test(sessionType);
+      const finishHistory = (replayed: boolean) => {
+        historyReady = true;
+        pendingLive.splice(0).forEach((p) => { if (!p.seq || p.seq > historySeq) handleLive(p); });
+        // TUIs redesenham por posição do cursor: um SIGWINCH (tamanho muda e volta) faz a CLI repintar a tela limpa
+        if (replayed && isAiTui && !disposed && term.cols > 6) {
+          setTimeout(() => {
+            if (disposed) return;
+            pty.resize(sessionId, term.cols - 1, term.rows);
+            setTimeout(() => { if (!disposed) pty.resize(sessionId, term.cols, term.rows); }, 80);
+          }, 120);
+        }
+      };
+      if (pty.getHistoryWithSeq) {
+        pty.getHistoryWithSeq(sessionId).then((r) => {
+          if (r?.history) term.write(r.history, () => { historySeq = r.seq || 0; finishHistory(true); });
+          else { historySeq = r?.seq || 0; finishHistory(false); }
+        }).catch(() => finishHistory(false));
+      } else {
+        pty.getHistory?.(sessionId).then((history) => {
+          if (history) term.write(history);
+        }).catch(() => {});
+      }
 
-      cleanupDataListener = pty.onData((payload) => {
-        if (payload.id === sessionId) {
+      const handleLive = (payload: { id: string; data: string; seq?: number }) => {
+        {
           if (Date.now() < hold.until) {
             hold.buf += payload.data;
             if (!hold.timer) hold.timer = setTimeout(flushHold, Math.max(0, hold.until - Date.now()) + 10);
@@ -531,10 +949,78 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
             }
           }
         }
+      };
+      cleanupDataListener = pty.onData((payload) => {
+        if (payload.id !== sessionId) return;
+        if (!historyReady) pendingLive.push(payload);
+        else handleLive(payload);
       });
 
+      // prompt da barra: no fim do buffer é o último digitado; rolando, é o último prompt acima (ou no) topo da área visível.
+      // O prompt é lido do próprio transcript ("❯ texto"): vale também para o que veio de um /resume, que não foi digitado aqui
+      const refreshSticky = () => {
+        if (nativeBar) {
+          // só aparece quando a 1ª linha da tela é o cabeçalho de prompt do Claude ("❯ texto…"); o texto completo vem do que foi digitado
+          const m = /^\s*[❯>›»]\s*(\S.*)/.exec(term.buffer.active.getLine(term.buffer.active.viewportY)?.translateToString(true) ?? '');
+          const head = m ? m[1].replace(/\s+/g, ' ').replace(/…$/, '').trim() : '';
+          const full = head && promptsRef.current.findLast((x) => x.replace(/\s+/g, ' ').startsWith(head.slice(0, 25)));
+          setStickyPrompt(head ? (full || m![1].trim()) : '');
+          // posição exata da 1ª linha da tela do xterm dentro do contêiner da barra (o xterm tem margem própria)
+          const screen = term.element?.querySelector('.xterm-screen') as HTMLElement | null;
+          const root = containerRef.current?.parentElement;
+          if (screen && root && term.rows) {
+            const sr = screen.getBoundingClientRect(), rr = root.getBoundingClientRect();
+            setRowBox((b) => {
+              const n = { top: sr.top - rr.top, left: sr.left - rr.left, width: sr.width, h: sr.height / term.rows };
+              return Math.abs(b.top - n.top) + Math.abs(b.left - n.left) + Math.abs(b.width - n.width) + Math.abs(b.h - n.h) < 0.5 ? b : n;
+            });
+          }
+          return;
+        }
+        // o app só descobre que é uma sessão de IA alguns segundos depois: antes disso anota, mas não mostra
+        if (!aiSessionRef.current) return;
+        const list = promptsRef.current;
+        const buf = term.buffer.active;
+        const atBottom = buf.viewportY >= buf.baseY;
+        if (atBottom && list.length) return setStickyPrompt(list[list.length - 1]);
+        // sem digitado no fim (ex.: acabou de dar /resume): o prompt mais abaixo da área visível, fora do campo de input
+        for (let y = atBottom ? buf.baseY + term.rows - 5 : buf.viewportY; y >= 0; y--) {
+          const m = /^\s*[❯>›»]\s*(\S.*)/.exec(buf.getLine(y)?.translateToString(true) ?? '');
+          if (!m || m[1].startsWith('/')) continue;
+          const t = m[1].replace(/\s+/g, ' ').trim();
+          // o transcript pode cortar o prompt com "…": prefere o texto completo digitado, quando for o mesmo
+          const full = list.findLast((x) => x.replace(/\s+/g, ' ').startsWith(t.replace(/…$/, '').slice(0, 25)));
+          return setStickyPrompt(full ?? t);
+        }
+        if (list.length) setStickyPrompt(list[0]);
+      };
+      refreshStickyRef.current = refreshSticky;
+      const onScrollDisp = term.onScroll(refreshSticky);
+      let parsedRaf = 0;
+      const onParsedDisp = nativeBar ? term.onWriteParsed(() => { cancelAnimationFrame(parsedRaf); parsedRaf = requestAnimationFrame(refreshSticky); }) : null;
       const onDataDisp = term.onData((data) => {
+        // anota sempre (as primeiras letras chegam antes do app saber que é uma sessão de IA); só o Enter decide se vira o prompt fixo
+        const pasted = data.startsWith('\x1b[200~');
+        if (pasted) typedRef.current += data.replace(/\x1b\[20[01]~/g, '').replace(/[\r\n]+/g, ' ');
+        else if (data === '\r') {
+          const t = typedRef.current.trim();
+          // comandos (/resume, /clear...) não são prompts: não substituem o prompt da barra
+          if (/^\/(resume|clear)\b/.test(t)) {
+            // a conversa muda: o que foi digitado antes não vale mais, os prompts passam a vir do transcript
+            promptsRef.current = [];
+          } else if (t && !t.startsWith('/')) {
+            promptsRef.current.push(t);
+            if (promptsRef.current.length > 300) promptsRef.current.shift();
+            refreshSticky();
+          }
+          typedRef.current = '';
+        } else if (data === '\x7f') typedRef.current = typedRef.current.slice(0, -1);
+        else if (data === '\x03' || data === '\x15') typedRef.current = '';
+        else if (data[0] !== '\x1b' && data >= ' ') typedRef.current += data;
+        // digitar descarta a seleção (como em campos de texto); sem isso o bloco do Cmd+A fica pintado enquanto a IA redesenha a tela
+        if (term.hasSelection()) term.clearSelection();
         pty.write(sessionId, data);
+        if (containerRef.current) playTypingEffect(term, containerRef.current, data);
       });
 
       const onSelectionDisp = term.onSelectionChange(() => {
@@ -641,6 +1127,9 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         onTitleDisp.dispose();
         oscDisp.dispose();
         onDataDisp.dispose();
+        onScrollDisp.dispose();
+        onParsedDisp?.dispose();
+        cancelAnimationFrame(parsedRaf);
         writeParsedDisp.dispose();
         onSelectionDisp.dispose();
         webLinksAddon.dispose();
@@ -680,7 +1169,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         foreground: isDark ? customTheme.foreground : '#1f1f1f',
         cursor: accentColor,
         cursorAccent: isDark ? customTheme.background : '#ffffff',
-        selectionBackground: hexToRgba(accentColor, 0.35),
+        selectionBackground: hexToRgba(accentColor, 0.22),
         black: isDark ? (customTheme.black || '#1a1a1a') : '#e5e5e5',
         red: customTheme.red || '#ef4444',
         green: customTheme.green || '#10b981',
@@ -699,6 +1188,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         brightWhite: isDark ? (customTheme.brightWhite || '#ffffff') : '#000000',
       };
     }
+    if (termRef.current) termRef.current.options.allowTransparency = transparent;
   }, [accentColor, isDark, transparent, themePreset]);
 
   // Dynamically apply font size, font family, line height, cursor style/blink, cursor width, scrollback
@@ -710,6 +1200,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         : TERMINAL_FONT_FAMILY;
       termRef.current.options.fontSize = fontSize;
       termRef.current.options.cursorStyle = cursorStyle;
+      termRef.current.options.cursorInactiveStyle = cursorStyle;
       termRef.current.options.cursorBlink = cursorBlink;
       termRef.current.options.cursorWidth = cursorWidth || 2;
       termRef.current.options.scrollback = scrollback;
@@ -725,6 +1216,25 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
       } catch {}
     }
   }, [fontSize, cursorStyle, cursorBlink, cursorWidth, scrollback, fontFamily, lineHeight, scrollOnUserInput, drawBoldTextInBrightColors, sessionId]);
+
+  // A fonte escolhida (Fira Code, Cascadia...) pode ainda não estar carregada: sem ela o xterm mede a célula com a substituta e a escolha "não pega".
+  // Carrega e reaplica a família para ele remedir e reajustar as colunas.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term || !fontFamily || !document.fonts) return;
+    let cancelled = false;
+    document.fonts.load(`${fontSize}px "${fontFamily}"`).then(() => {
+      if (cancelled || termRef.current !== term) return;
+      const family = `"${fontFamily}", "JetBrains Mono", Menlo, Monaco, "Courier New", monospace`;
+      term.options.fontFamily = 'monospace';
+      term.options.fontFamily = family;
+      try {
+        fitAddonRef.current?.fit();
+        window.electronAPI?.pty?.resize(sessionId, term.cols, term.rows);
+      } catch {}
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [fontFamily, fontSize, sessionId]);
 
   // When tab/card becomes active, fit and focus
   useEffect(() => {
@@ -757,13 +1267,63 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
     return () => window.removeEventListener('devflow:focus-terminal', handleFocusEvent);
   }, [sessionId, isActive]);
 
+  useEffect(() => {
+    const el = stickyRef.current;
+    if (!el) return;
+    const measure = () => {
+      setStickyH(Math.ceil(el.getBoundingClientRect().height));
+      const t = stickyTextRef.current;
+      if (t && !stickyOpen) setStickyMore(t.scrollHeight > t.clientHeight + 1);
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    measure();
+    return () => ro.disconnect();
+  }, [!!stickyPrompt, stickyPrompt, stickyOpen]);
+
+  // prompt novo (ou rolagem para outro prompt) volta recolhido
+  useEffect(() => setStickyOpen(false), [stickyPrompt]);
+
+  // sessão de IA (CLI de IA aberta no terminal): só nela o prompt enviado vira a barra do topo
+  useEffect(() => {
+    window.electronAPI?.pty?.getRunningSessions?.().then((list) => {
+      if (list?.some((x) => x.id === sessionId && x.isAi)) { aiSessionRef.current = true; refreshStickyRef.current?.(); }
+    }).catch(() => {});
+    return window.electronAPI?.pty?.onSessionStatus?.((st) => {
+      if (st.id !== sessionId) return;
+      if (st.exited) { aiSessionRef.current = false; typedRef.current = ''; promptsRef.current = []; setStickyPrompt(''); }
+      else if (st.isAi && !aiSessionRef.current) { aiSessionRef.current = true; refreshStickyRef.current?.(); }
+    });
+  }, [sessionId]);
+
+  // Cmd+A / Cmd+C vêm do menu nativo (roles que só mexem no DOM): o menu avisa o terminal em foco
+  useEffect(() => {
+    const onSelectAll = () => {
+      if (containerRef.current?.contains(document.activeElement)) termRef.current && selectContent(termRef.current);
+    };
+    const onCopy = () => {
+      const t = termRef.current;
+      if (containerRef.current?.contains(document.activeElement) && t?.hasSelection()) navigator.clipboard.writeText(t.getSelection()).catch(() => {});
+    };
+    window.addEventListener('devflow:terminal-select-all', onSelectAll);
+    window.addEventListener('devflow:terminal-copy', onCopy);
+    return () => {
+      window.removeEventListener('devflow:terminal-select-all', onSelectAll);
+      window.removeEventListener('devflow:terminal-copy', onCopy);
+    };
+  }, []);
+
+  const [padY, padX] = skin !== 'none' ? (skinLayers ? [14, 22] : [6, 10]) : [0, 0];
+  // com a barra, o terminal começa abaixo dela (o xterm se reajusta ao novo tamanho)
+  const containerInset = { top: padY + (stickyPrompt && !nativeBar ? stickyH : 0), right: padX, bottom: padY, left: padX };
+
   return (
     <div
-      ref={containerRef}
-      data-session-id={sessionId}
-      data-terminal="true"
-      data-transparent={transparent ? 'true' : undefined}
+      className={[skinGlow(skin) && 'term-glow', skinTint(skin) && 'term-tint'].filter(Boolean).join(' ') || undefined}
       style={{
+        ['--term-glow' as any]: skinGlow(skin),
+        ['--term-tint' as any]: skinTint(skin),
+        position: 'relative',
         width: '100%',
         height: '100%',
         flex: 1,
@@ -771,7 +1331,58 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         background: transparent ? 'rgba(0, 0, 0, 0)' : isDark ? '#101010' : '#ffffff',
         display: (alwaysVisible || isActive) ? 'block' : 'none',
       }}
-      onClick={() => termRef.current?.focus()}
-    />
+    >
+      {skinLayers && <TerminalSkinBackground skin={skin} />}
+      <div
+        ref={containerRef}
+        data-session-id={sessionId}
+        data-terminal="true"
+        data-transparent={transparent ? 'true' : undefined}
+        // com moldura, o texto sai das bordas para não ficar sob os colchetes e réguas
+        style={{ position: 'absolute', ...containerInset, overflow: 'hidden', background: transparent ? 'rgba(0, 0, 0, 0)' : isDark ? '#101010' : '#ffffff' }}
+        onClick={() => termRef.current?.focus()}
+      />
+      {stickyPrompt && nativeBar && (
+        // base opaca: esconde a linha original do Claude, que ficaria visível por baixo do fundo translúcido do estilo
+        <div aria-hidden style={{ position: 'absolute', top: rowBox.top, left: rowBox.left, width: rowBox.width, height: rowBox.h, zIndex: 3, pointerEvents: 'none', background: isDark ? '#110b0d' : '#f4f4f5' }} />
+      )}
+      {stickyPrompt && (
+        // skin-tab: dentro de um estilo visual herda cantos, cores e borda do tema (o texto do prompt não vira maiúsculo)
+        <div
+          ref={stickyRef}
+          className="skin-tab"
+          data-on="1"
+          title={stickyPrompt}
+          style={{
+            position: 'absolute', top: padY, left: padX, right: padX, zIndex: 4, boxSizing: 'border-box', padding: '5px 10px',
+            display: 'flex', alignItems: 'flex-start', gap: 8, pointerEvents: 'none', fontSize: 11.5, lineHeight: 1.4, textTransform: 'none', letterSpacing: 'normal',
+            fontFamily: 'inherit', color: isDark ? '#e6e6e6' : '#222',
+            background: `color-mix(in srgb, ${accentColor} 16%, ${isDark ? '#101010' : '#ffffff'})`,
+            borderBottom: `1px solid color-mix(in srgb, ${accentColor} 45%, transparent)`,
+            // espelho do cabeçalho do Claude: cobre a 1ª linha da tela, com a fonte do terminal e sem mexer no layout
+            ...(nativeBar ? { top: rowBox.top, left: rowBox.left, right: 'auto', width: rowBox.width, height: rowBox.h, padding: '0 10px', alignItems: 'center', fontSize, lineHeight: `${rowBox.h}px`, fontFamily: `"${fontFamily}", "JetBrains Mono", monospace`, whiteSpace: 'nowrap' } : {}),
+          }}
+        >
+          <span style={{ color: accentColor, flexShrink: 0 }}>❯</span>
+          <span
+            ref={stickyTextRef}
+            style={{ flex: 1, minWidth: 0, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: (stickyOpen ? 'none' : nativeBar ? 1 : 2) as any, overflow: stickyOpen ? 'auto' : 'hidden', maxHeight: stickyOpen ? 220 : undefined, wordBreak: 'break-word', pointerEvents: stickyOpen ? 'auto' : 'none' }}
+          >
+            {stickyPrompt}
+          </span>
+          {!nativeBar && (stickyMore || stickyOpen) && (
+            <button
+              type="button"
+              title={stickyOpen ? 'Recolher' : 'Ver o prompt inteiro'}
+              onClick={() => setStickyOpen((v) => !v)}
+              style={{ pointerEvents: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', padding: 2, opacity: 0.8 }}
+            >
+              <ChevronDown size={14} style={{ transform: stickyOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
+            </button>
+          )}
+        </div>
+      )}
+      {skinLayers && <TerminalSkinOverlay skin={skin} />}
+    </div>
   );
 };

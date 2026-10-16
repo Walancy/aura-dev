@@ -131,19 +131,14 @@ export const AI_PROVIDERS: AiProviderConfig[] = [
     loginUrl: 'https://antigravity.google/product/antigravity-cli?authuser=31',
     loginHelp: 'O Antigravity requer autorização de login com sua conta Google. Faça login no navegador e envie o código gerado para o CLI.',
     models: [
+      'gemini-4-argon-high',
+      'gemini-4-argon-medium',
+      'gemini-4-argon-low',
       'gemini-3.8-flash-high',
       'gemini-3.8-flash-medium',
       'gemini-3.8-flash-low',
-      'gemini-3.7-flash-high',
-      'gemini-3.7-flash-medium',
-      'gemini-3.7-flash-low',
-      'gemini-3.6-flash-high',
-      'gemini-3.6-flash-medium',
-      'gemini-3.6-flash-low',
-      'gemini-3.1-pro-high',
-      'gemini-3.1-pro-low',
-      'claude-sonnet-4-6',
-      'claude-opus-4-6-thinking',
+      'claude-opus-5-5-high',
+      'claude-sonnet-5-5-high',
       'gpt-oss-120b-medium',
     ],
     commands: [
@@ -262,6 +257,10 @@ export const formatModelDisplayName = (modelStr?: string | null): string => {
   if (lower === 'claude-sonnet-4-6') return 'Sonnet 4.6';
   if (lower === 'claude-opus-4-6-thinking') return 'Opus 4.6 (Thinking)';
   if (lower === 'gpt-oss-120b-medium') return 'GPT-OSS 120B';
+
+  // gemini-<versão>-<linha>-<nível> de modelos novos (ex.: gemini-4-argon-high -> Argon 4 (High))
+  const g = lower.match(/^gemini-(\d+(?:\.\d+)*)-([a-z]+)(?:-(low|medium|high))?$/);
+  if (g) return `${g[2][0].toUpperCase()}${g[2].slice(1)} ${g[1]}${g[3] ? ` (${g[3][0].toUpperCase()}${g[3].slice(1)})` : ''}`;
 
   return s;
 };

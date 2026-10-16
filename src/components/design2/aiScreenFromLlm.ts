@@ -12,6 +12,8 @@ import { STYLE_MODE_MARK } from './screenFlow';
 import { buildChartShapes, normalizeChartSpec, type ChartSpec } from './charts';
 import { snapColorToTokens, snapRadiusToTokens, snapSpaceToTokens, snapTypeToTokens, tokensPromptBlock, type DesignTokens } from './designTokens';
 import { descendantIds } from './constraints';
+import { maskPathOf } from './maskShapes';
+import { isPersonQuery } from './stockImage';
 
 /** Entrada para pedir uma tela à IA e converter a resposta em shapes do canvas. */
 export interface AiScreenRequest {
@@ -41,6 +43,8 @@ export interface AiScreenRequest {
   projectAssets?: ProjectAsset[];
   /** 1 = a chamada gera UMA tela (o pedido já indica qual): sem o formato de várias telas */
   maxScreens?: number;
+  /** réplica de imagens de referência: a IA pode recortar fotos da própria referência e segue regras extras de fidelidade */
+  replicaMode?: boolean;
 }
 
 const MAX_SHAPES = 450;
@@ -125,6 +129,19 @@ const DESKTOP_GUIDE = `DESKTOP / WEB — UX/UI PROFISSIONAL (obrigatório em tel
 - NÃO FAÇA: cabeçalho gigante com texto genérico, cards vazios com só um título, tabelas com 2 linhas, tudo centralizado, mais de 2 cores fortes, caixas sem hierarquia, ícones aleatórios sem sentido.
 `;
 
+/** Regras extras quando o usuário anexa telas para REPLICAR (Design 2): recortes da própria referência, ícones finos, centralização, anéis de progresso. */
+const REPLICA_RULES = `RÉPLICA DE REFERÊNCIA — regras extras (valem junto com a fidelidade máxima):
+- As imagens de referência são numeradas 0, 1, 2… na ordem dos arquivos. FOTOS, AVATARES, MINIATURAS e ILUSTRAÇÕES que aparecem na referência: em vez de "query", use "refCrop":{"img":<número da imagem>,"x":..,"y":..,"w":..,"h":..} com a região da foto na imagem de referência, em FRAÇÃO 0–1 da largura/altura DA IMAGEM (ex.: avatar no canto superior esquerdo = {"img":1,"x":0.18,"y":0.17,"w":0.06,"h":0.07}). O app recorta esse trecho da própria referência (a foto fica idêntica). Use refCrop SOMENTE em regiões que sejam só a foto (rosto de avatar, miniatura de curso, capa de card, ilustração), sem botões, textos ou ícones por cima. Foto de fundo ou de card com elementos de interface POR CIMA (botões, textos, barra de player): use refCrop na MAIOR sub-região da foto livre de interface (ex.: o retrato entre os botões do topo e a barra de player; a figura do card entre o selo e o título) — o app preenche a área da foto com esse recorte — e desenhe a interface por cima, com o degradê/tinta da referência (ex.: roxo translúcido sobre a foto, escurecimento na base). Só use "query" em inglês (descrevendo com precisão pessoa, roupa, cenário, iluminação e cores) quando a referência não tiver nenhuma região de foto limpa.
+- NÃO use símbolos Unicode raros em textos (⇆ ⇄ ✓ ★ ●): as fontes não têm esses glifos e aparece um quadrado; use ícones (type "icon") no lugar.
+- ÍCONES: finos e discretos como na referência. Setas/chevrons pequenos: ChevronRight, ChevronLeft, KeyboardArrowRight (size 16–20), nunca ArrowForward/ArrowBack grandes e pesados em linhas de lista. Todos os ícones com o mesmo peso visual e tamanhos 16/20/24.
+- NADA OMITIDO: pilhas de avatares com contador ("+1K"), pontos de notificação, selos, contadores sobrescritos nas abas ("All Courses 12"), cada linha e cada rótulo do inventário.
+- CENTRALIZAÇÃO: o que está centralizado na referência (abas segmentadas, botões flutuantes, título de semana, navegação) fica centralizado na tela: frame com width "fill" e align center; margens laterais iguais. Nunca encoste um componente na borda esquerda se na referência ele tem margem.
+- CANTOS DE PAINEL ARREDONDADO: quando um painel/folha de cantos arredondados sobrepõe um degradê ou foto (ex.: folha branca de transações sobre um topo azul em degradê), o que aparece ATRÁS dos cantos arredondados tem a cor do degradê, nunca preto: estenda o bloco do degradê até logo abaixo do topo do painel (ou use o degradê no fundo da tela inteira).
+- ANÉIS DE PROGRESSO / ARCOS: ellipse com "arcStart", "arcEnd" (graus, 0° = 3h, horário; um anel começando no topo usa arcStart -90) e "arcInner" (0–0.99, fração do raio interno; ex.: 0.88 = anel fino) preenchido com a cor do arco; ponha antes um anel completo (arcStart 0, arcEnd 360) na cor do trilho. Nunca use arcos soltos nem "C" abertos feitos com linhas.
+- Texto sobre fundo escuro/foto com contraste legível; mesmo tamanho e peso de fonte da especificação.
+
+`;
+
 export function buildAiScreenPrompt(req: AiScreenRequest): string {
   const target = req.targetFrame;
   const size = target
@@ -132,7 +149,7 @@ export function buildAiScreenPrompt(req: AiScreenRequest): string {
     : 'Escolha o tamanho: MOBILE 393x852 (padrão para apps/celular; o app desenha o aparelho iPhone em volta) ou desktop 1440x900 (ou 1280x800), conforme o pedido.';
   const refs = referenceHints(req.prompt);
   return `Você é um designer de interfaces sênior. Crie o layout de uma ou mais telas e responda SOMENTE com JSON válido (sem markdown, sem texto antes ou depois).
-${tokensBlockFor(req)}${assetsPromptBlock(req.projectAssets)}${referenceBlock(req.referenceImages, req.referenceSpec, req.prompt.includes(STYLE_MODE_MARK))}${req.referenceImages?.length || req.referenceSpec || req.prompt.includes(STYLE_MODE_MARK) ? '' : directionBlock(req.prompt)}${inspirationBlock(req.inspirationImages)}${isDesktopRequest(req.prompt) ? DESKTOP_GUIDE : ''}${req.canReadProject && req.useProjectContext !== false ? 'Você está na pasta do projeto do usuário e já recebeu abaixo um resumo dele. Só leia arquivos se faltar algo essencial para o design (somente LEITURA), no MÁXIMO ' + (isVaguePrompt(req.prompt) ? '6 arquivos (priorize os .md de documentação que descrevem o produto)' : '4 arquivos pequenos (ex.: README, tema/cores, uma página existente)') + ' e rápido — NUNCA varra o projeto inteiro nem rode buscas amplas, pois a resposta tem tempo limite. Reflita no design o domínio, o vocabulário e a identidade visual. NUNCA edite, crie ou apague arquivos. Responda apenas o JSON.' : `NÃO edite arquivos${req.referenceSpec ? ' nem leia outros arquivos' : req.referenceImages?.length ? ' (apenas abra as imagens de referência para vê-las)' : ' nem leia outros arquivos'}; responda apenas o JSON.`}
+${tokensBlockFor(req)}${assetsPromptBlock(req.projectAssets)}${referenceBlock(req.referenceImages, req.referenceSpec, req.prompt.includes(STYLE_MODE_MARK))}${req.referenceImages?.length || req.referenceSpec || req.prompt.includes(STYLE_MODE_MARK) ? '' : directionBlock(req.prompt)}${req.replicaMode && (req.referenceImages?.length || req.referenceSpec) ? REPLICA_RULES : ''}${inspirationBlock(req.inspirationImages)}${isDesktopRequest(req.prompt) ? DESKTOP_GUIDE : ''}${req.canReadProject && req.useProjectContext !== false ? 'Você está na pasta do projeto do usuário e já recebeu abaixo um resumo dele. Só leia arquivos se faltar algo essencial para o design (somente LEITURA), no MÁXIMO ' + (isVaguePrompt(req.prompt) ? '6 arquivos (priorize os .md de documentação que descrevem o produto)' : '4 arquivos pequenos (ex.: README, tema/cores, uma página existente)') + ' e rápido — NUNCA varra o projeto inteiro nem rode buscas amplas, pois a resposta tem tempo limite. Reflita no design o domínio, o vocabulário e a identidade visual. NUNCA edite, crie ou apague arquivos. Responda apenas o JSON.' : `NÃO edite arquivos${req.referenceSpec ? ' nem leia outros arquivos' : req.referenceImages?.length ? ' (apenas abra as imagens de referência para vê-las)' : ' nem leia outros arquivos'}; responda apenas o JSON.`}
 
 PEDIDO: ${req.prompt}
 ${looksLikeErrorLog(req.prompt) ? 'ATENÇÃO: o pedido contém um ERRO/LOG colado. NÃO desenhe um dashboard genérico nem a tela de erro: deduza do texto a tela ou o componente de interface envolvido (ex.: erro de chave duplicada em itens com estado "closed" = uma lista/abas/filtro com os estados "open", "closed"…) e gere ESSA tela, com todos os estados e itens que o erro cita. Se houver imagem de referência, ela manda na aparência.\n' : ''}${req.projectContext && req.useProjectContext !== false ? `CONTEXTO DO PROJETO${req.referenceSpec || req.referenceImages?.length ? ' (SECUNDÁRIO: só para nomes/vocabulário quando o pedido pedir conteúdo do projeto; a REFERÊNCIA VISUAL manda em estrutura, posições e estilo)' : ''}:\n${req.projectContext}\n` : ''}${size}
@@ -198,6 +215,11 @@ ESTILOS AVANÇADOS (use quando a referência/pedido pedir; todos opcionais):
 - VIDRO (glassmorphism) — PREFIRA o atalho "glass":true (ou "glass":"#FFFFFF" com a cor da tinta) em frame/rect: aplica degradê claro translúcido, borda de 1px, brilho interno no topo, blur do fundo e sombra suave. Use em cards, barras, chips, campo de entrada e botões sobre fundo colorido/imagem (o fundo precisa ter cor/brilho para o vidro aparecer: nunca vidro sobre preto liso). Vidro não é "preto translúcido": a tinta é CLARA (branco) a menos que a referência mostre vidro escuro. Manual: "fill":"#FFFFFF1A","stroke":"#FFFFFF33","strokeWidth":1,"effects":[{"type":"backdrop-blur","blur":24}] (atalho: "backdropBlur":24), com cornerRadius generoso.
 - Sombras: "effects":[{"type":"shadow","x":0,"y":8,"blur":24,"spread":0,"color":"#00000040"}]; sombra interna: {"type":"inner-shadow",...}.
 - NEOMORFISMO: fundo igual ao do app, "effects":[{"type":"shadow","x":8,"y":8,"blur":16,"color":"#A3B1C680"},{"type":"shadow","x":-8,"y":-8,"blur":16,"color":"#FFFFFFCC"}]; pressionado/côncavo: dois "inner-shadow" com as mesmas cores.
+- TEXTURAS: textura sutil no fundo da tela ou de um card (quadriculado, pontos, linhas, granulado) entra como camada de preenchimento por cima da cor: {"pattern":"grid|dots|lines|checker|noise","color":"#FFFFFF","opacity":0.06,"size":8} em "backgroundFills"/"fills" (opacity 0.03–0.10 e size 6–16 px para ficar leve; use a cor clara em fundo escuro e a escura em fundo claro). Granulado fino: "effects":[{"type":"noise","density":0.5,"opacity":0.12}] ou "backgroundNoise". Se a referência tem textura visível (granulado, grade, pontos), reproduza; se NÃO tem, NÃO adicione textura nem granulado (fundo liso/degradê limpo).
+- BLUR PROGRESSIVO (foto que desfoca aos poucos, como cards com a base borrada sob o texto): em effects use {"type":"blur","blur":24,"progressive":"bottom","from":45,"to":100} na própria imagem (desfoca a foto de 45% a 100% da altura, mais forte embaixo) ou {"type":"backdrop-blur","blur":28,"progressive":"bottom","from":0,"to":100} num frame/rect translúcido sobre a base da foto (desfoca o que está atrás). "progressive": "bottom"|"top"|"left"|"right" = lado onde o blur é mais forte; "from"/"to" = % do tamanho onde a rampa começa (sem blur) e termina (blur total). Combine com um degradê escuro sutil na base para o texto ler bem.
+- IMAGEM RECORTADA POR UMA FORMA (máscara): em um item "image" use "mask":"flower|blob|squircle|star|heart|arch|drop|hexagon|circle" (flor: "petals" 4–16 e "depth" 0.1–0.4) ou "maskPath":"<caminho SVG numa caixa 100x100>" para recortar a foto no contorno da forma (avatar em flor, capa em blob, foto em coração). A forma preenche a caixa width x height da imagem; pode ter "cornerRadius" 0.
+- CLIP (cortar o conteúdo): frames de card/capa/avatar com cantos arredondados que contêm FOTO levam "clip":true para a foto ser cortada nos cantos do card (o app também liga sozinho nesses casos). NÃO ponha clip em um frame que tenha selo/etiqueta sobreposto saindo pela borda.
+- BADGE/TAG NA BORDA DE UM BOTÃO: o selo (contador, ponto, etiqueta como "1" ou "Online") é filho do botão com "overlay":true e "anchor":"top-right" (ou top-left, bottom-right, bottom-left, top-center, bottom-center) e "dx"/"dy" POSITIVOS = quanto o selo sai para fora do canto, em px (ex.: dx 4, dy 4; o padrão é ~40% do tamanho do selo); botão e selo com cantos arredondados (999). Etiquetas que cruzam a borda de baixo/cima de uma foto (ex.: pílula "0,2 km" no topo de um avatar, "Online" na base) usam anchor "top-center"/"bottom-center" com dy = metade da altura da pílula para ficar metade para fora.
 - Brilho/halo (glow) e manchas de cor no fundo: uma ellipse grande com "gradient" radial (cor → mesma cor com alfa 0) e "effects":[{"type":"blur","blur":80}] (atalho "blur":80), atrás do conteúdo.
 - Granulado/ruído: {"type":"noise","density":0.35,"opacity":0.2} em effects.
 - Raio por canto: "radii":[sup-esq,sup-dir,inf-dir,inf-esq]. Rotação: "rotation":graus.
@@ -225,6 +247,7 @@ REGRAS:
 - Ordem do array = ordem de criação e empilhamento: declare cada frame ANTES dos seus filhos; dentro de um layout, os filhos aparecem na ordem em que forem listados. Gere de cima para baixo.
 - TEXTOS: o texto precisa caber DENTRO do card/área onde está. Textos curtos (títulos, botões, rótulos, preços) devem caber em UMA linha: dê largura suficiente e não os quebre. Só use mais linhas em descrições, com a largura do card menos 16px de margem interna. Nunca deixe texto passar da borda do card.
 - ÍCONES: use SEMPRE type "icon" com "name" de um Material Icon em PascalCase (ex.: ${COMMON_ICON_NAMES.slice(0, 60).join(', ')}, ou outro) e "size" em px; "fill" define a cor. Nunca desenhe ícones com formas.
+- PESSOAS: quando a foto for de uma PESSOA (avatar, retrato, equipe, cliente, profissional, modelo), marque "person":true no item image — o app busca numa API de fotos de pessoas (retratos reais) em vez de uma foto qualquer; a "query" em inglês descreve gênero, idade aproximada, expressão, enquadramento (headshot, half body), roupa e cenário (ex.: "smiling woman in her 30s, headshot, studio light, beige background"). Foto de lugar, objeto, comida ou paisagem NÃO leva "person".
 - IMAGENS: para fotos reais (perfil de usuário, banners, capas, fotos de produtos/lugares/comida) use type "image" com "query" em INGLÊS descrevendo a foto ESPECÍFICA do contexto: se for pessoa, diga gênero, idade e tipo ("smiling young woman portrait", "senior man headshot", "doctor in white coat"); se for lugar/objeto/comida, o assunto exato ("burger on table", "modern apartment living room", "Nelore cattle in pasture"). Nunca use consultas genéricas ("photo", "person", "image"): a foto deve combinar com o texto ao redor (um card de produto mostra o produto, um perfil mostra uma pessoa). Avatares: width = height e "cornerRadius" = metade do tamanho (círculo). Cantos arredondados com "cornerRadius".
 - VELOCIDADE (a resposta tem tempo limite e cada caractere custa tempo): responda com JSON MINIFICADO — sem indentação, sem espaços fora de textos, um elemento por linha; nomes curtos (1 a 3 palavras) e OMITA "name" em textos e imagens (o app nomeia sozinho); ${req.referenceSpec || req.referenceImages?.length ? 'com REFERÊNCIA visual use até 350 elementos por tela: inclua TODOS os elementos do inventário da referência (fidelidade máxima), sem omitir nenhum.' : 'use no MÁXIMO 80 elementos por tela: priorize os blocos principais e, em listas/grades repetidas, mostre só 3 ou 4 itens de exemplo.'}
 - Hierarquia visual clara, espaçamento consistente (múltiplos de 4 ou 8) e textos reais (em português do Brasil, exceto quando há referência visual: mantenha o idioma da imagem; nada de "Lorem ipsum").`;
@@ -280,7 +303,7 @@ export function extractJson(raw: string): any | null {
 }
 
 interface Box { x: number; y: number; width: number; height: number }
-export interface PendingImage { id: string; query: string; width: number; height: number; /** arquivo do projeto (logo/ícone) em vez de foto do Unsplash */ assetPath?: string }
+export interface PendingImage { id: string; query: string; width: number; height: number; /** arquivo do projeto (logo/ícone) em vez de foto do Unsplash */ assetPath?: string; /** foto de pessoa (retrato, avatar): usa a API de pessoas */ person?: boolean; /** recorte de uma imagem de referência anexada (frações 0–1 da imagem) em vez de foto do Unsplash */ refCrop?: { img: number; x: number; y: number; w: number; h: number } }
 interface TextMeta { raw: string; size: number; weight: number; align: 'left' | 'center' | 'right'; singleLine: boolean }
 type ItemCtx = {
   frameId: string; originX: number; originY: number; width: number; height: number; pageId: string; isDark: boolean; accentColor: string;
@@ -377,6 +400,8 @@ export function overlayPosition(o: NonNullable<Shape['overlayAnchor']>, p: { x: 
     case 'bottom-right': return { x: p.x + p.width - w + o.dx, y: p.y + p.height - h + o.dy };
     case 'bottom-left': return { x: p.x - o.dx, y: p.y + p.height - h + o.dy };
     case 'center': return { x: p.x + (p.width - w) / 2, y: p.y + (p.height - h) / 2 };
+    case 'top-center': return { x: p.x + (p.width - w) / 2, y: p.y - o.dy };
+    case 'bottom-center': return { x: p.x + (p.width - w) / 2, y: p.y + p.height - h + o.dy };
     default: return { x: p.x + p.width - w + o.dx, y: p.y - o.dy }; // top-right
   }
 }
@@ -389,7 +414,7 @@ function convertAiItemRaw(item: any, ctx: ItemCtx, z: number): Shape | null {
   const declared = !pinned && typeof item.parent === 'string' && item.parent !== 'root' ? ctx.lookup?.(item.parent) : undefined;
   const pShape = declared && (declared.type === 'frame' || declared.type === 'section') ? declared : undefined;
   // "overlay"/"anchor": sobreposto ao pai (badge, ponto de notificação, botão flutuante) — FORA do fluxo do auto layout
-  const anchor = ['top-right', 'top-left', 'bottom-right', 'bottom-left', 'center'].includes(item.anchor) ? (item.anchor as 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'center') : undefined;
+  const anchor = ['top-right', 'top-left', 'bottom-right', 'bottom-left', 'center', 'top-center', 'bottom-center'].includes(item.anchor) ? (item.anchor as NonNullable<Shape['overlayAnchor']>['anchor']) : undefined;
   const overlay = !!pShape && (item.overlay === true || item.overlay === 'true' || !!anchor);
   const autoParent = !overlay && !!pShape?.hasAutoLayout && (pShape.layoutFlow === 'horizontal' || pShape.layoutFlow === 'vertical');
   const parentId = pShape ? pShape.id : ctx.frameId;
@@ -541,20 +566,36 @@ function convertAiItemRaw(item: any, ctx: ItemCtx, z: number): Shape | null {
     base.imageCrop = { x: 0, y: 0, w: 1, h: 1 }; // habilita o recorte com cantos arredondados
     base.cornerRadius = num(item.cornerRadius, item.circle ? Math.min(w, h) / 2 : 0, 0, 1000);
     Object.assign(base, { ...styleFromItem({ ...item, fill: undefined, fills: undefined, gradient: undefined }), fill: '#D4D4D8' });
+    // imagem recortada por uma forma: "mask":"flower|blob|squircle|star|heart|arch|drop|hexagon|circle" (+ "petals","depth") ou "maskPath":"<caminho SVG numa caixa 100x100>"
+    const maskD = typeof item.maskPath === 'string' && /^[MmLlHhVvCcSsQqTtAaZz0-9eE.,\s-]+$/.test(item.maskPath) ? item.maskPath.slice(0, 4000) : typeof item.mask === 'string' ? maskPathOf(item.mask, { petals: Number(item.petals) || undefined, depth: Number(item.depth) || undefined }) : undefined;
+    if (maskD) base.maskPathD = maskD;
     const assetPath = typeof item.asset === 'string' ? ctx.assets?.[item.asset] : undefined;
-    if (assetPath) {
+    const rc = item.refCrop;
+    const refCrop = rc && typeof rc === 'object' && [rc.x, rc.y, rc.w, rc.h].every((v: unknown) => typeof v === 'number' && Number.isFinite(v as number)) && rc.w > 0.005 && rc.h > 0.005
+      ? { img: Math.max(0, Math.round(Number(rc.img) || 0)), x: Math.max(0, Math.min(1, rc.x)), y: Math.max(0, Math.min(1, rc.y)), w: Math.min(1, rc.w), h: Math.min(1, rc.h) }
+      : undefined;
+    if (refCrop && !assetPath) {
+      base.name = String(item.name || 'Imagem da referência').slice(0, 40);
+      ctx.pending?.push({ id: base.id, query: '', width: Math.round(w), height: Math.round(h), refCrop });
+    } else if (assetPath) {
       // logo/ícone do próprio projeto: sem foto, sem fundo cinza, mantendo a proporção do arquivo
       base.imageFit = 'fit';
       base.fill = 'transparent';
       base.name = String(item.name || `Logo ${assetPath.split('/').pop()}`).slice(0, 40);
       ctx.pending?.push({ id: base.id, query: '', width: Math.round(w), height: Math.round(h), assetPath });
     } else {
-      ctx.pending?.push({ id: base.id, query: String(item.query || item.name || 'abstract').slice(0, 80), width: Math.round(w), height: Math.round(h) });
+      const q = String(item.query || item.name || 'abstract').slice(0, 80);
+      ctx.pending?.push({ id: base.id, query: q, width: Math.round(w), height: Math.round(h), person: item.person === true || item.person === 'true' || (item.person == null && isPersonQuery(q)) });
     }
   } else {
     base.fill = color(item.fill, item.type === 'line' ? 'none' : ctx.isDark ? '#27272A' : '#E4E4E7');
     Object.assign(base, item.type === 'line' ? {} : styleFromItem(item));
     if (item.type === 'rect') base.cornerRadius = num(item.cornerRadius, 0, 0, 400);
+    if (item.type === 'ellipse' && (item.arcStart != null || item.arcEnd != null)) {
+      base.arcStart = num(item.arcStart, 0, -360, 720);
+      base.arcEnd = num(item.arcEnd, 360, -360, 720);
+      base.arcInner = num(item.arcInner ?? item.inner, 0, 0, 0.99);
+    }
     if (item.type === 'line' && base.stroke === 'none') base.stroke = ctx.isDark ? '#3F3F46' : '#CBD5E1';
     if (item.type === 'line' && base.strokeWidth === 0) base.strokeWidth = 1;
   }
@@ -590,7 +631,7 @@ export class ScreenBuilder {
   totalWidth = 0;
   maxHeight = 0;
 
-  constructor(private req: Pick<AiScreenRequest, 'pageId' | 'startX' | 'startY' | 'isDark' | 'accentColor' | 'targetFrame' | 'icons' | 'tokens' | 'projectAssets'> & { maxScreens?: number }) {
+  constructor(private req: Pick<AiScreenRequest, 'pageId' | 'startX' | 'startY' | 'isDark' | 'accentColor' | 'targetFrame' | 'icons' | 'tokens' | 'projectAssets'> & { maxScreens?: number; /** sem o aparelho desenhado (o editor aplica a própria moldura) */ plainDevice?: boolean }) {
     this.cursorX = req.startX;
     this.z = (req.targetFrame ? req.targetFrame.zIndex + 1 : 100);
   }
@@ -631,11 +672,24 @@ export class ScreenBuilder {
       const bgStyle = styleFromItem({ fills: header.backgroundFills, gradient: header.backgroundGradient, effects: header.backgroundEffects, noise: header.backgroundNoise });
       const bg = color(header.background, bgStyle.fill || '#FFFFFF');
       // tema (tinta da barra de status/indicador home) pelo fundo REAL: degradê/camadas valem mais que a cor base
+      // Design 2: a cor "background" é a base sob as camadas (as camadas costumam ser só brilhos translúcidos)
+      if (this.req.plainDevice && bgStyle.fills?.length) {
+        const bottom = bgStyle.fills[bgStyle.fills.length - 1];
+        if (!(bottom.type === 'solid' && bottom.opacity >= 0.99)) bgStyle.fills = [...bgStyle.fills, { id: uid('f'), color: bg, opacity: 1, visible: true, type: 'solid' }];
+      }
       if (bgStyle.fills) bgDark = isDarkColor(avgFillHex(bgStyle.fills) || bg);
-      const dev = buildDevice(
-        { name, width, height, kind: mobile ? 'iphone-island' : 'plain', radius: mobile ? 55 : 0 },
-        { idGen: () => uid('dev'), pageId: this.req.pageId, x: originX, y: originY, z: this.z, isDark: bgDark ?? isDarkColor(bg), name, icons: this.req.icons, background: bg }
-      );
+      const devOpts = { idGen: () => uid('dev'), pageId: this.req.pageId, x: originX, y: originY, z: this.z, isDark: bgDark ?? isDarkColor(bg), name, icons: this.req.icons, background: bg };
+      let dev = buildDevice({ name, width, height, kind: mobile && !this.req.plainDevice ? 'iphone-island' : 'plain', radius: mobile ? 55 : 0 }, devOpts);
+      if (this.req.plainDevice && mobile) {
+        // o editor desenha a moldura (corpo, botões, ilha): aqui ficam só a tela e o que é da própria tela (hora, sinal, wifi, bateria, indicador home)
+        const full = buildDevice({ name, width, height, kind: 'iphone-island', radius: 55 }, devOpts);
+        const dx = originX - full.screenX, dy = originY - full.screenY;
+        const keep = new Set(['Hora', 'SignalCellularAlt', 'Wifi', 'Battery5Bar', 'Indicador home']);
+        const shapes = full.shapes
+          .filter((sh) => sh.id === full.screenId || (sh.parentId === full.screenId && keep.has(sh.name || '')))
+          .map((sh) => (sh.id === full.screenId ? { ...sh, x: originX, y: originY, name, deviceScreen: false, parentId: undefined } : { ...sh, x: sh.x + dx, y: sh.y + dy }));
+        dev = { shapes, rootId: full.screenId, screenId: full.screenId, screenX: originX, screenY: originY, rootWidth: width, rootHeight: height, zNext: full.zNext };
+      }
       out = dev.shapes;
       rootId = dev.rootId;
       frameId = dev.screenId; // o conteúdo da IA entra na tela, dentro do aparelho
@@ -876,6 +930,12 @@ const CLI_BY_PROVIDER: Record<string, string> = { claude: 'claude', antigravity:
  * Pede o layout à CLI de IA escolhida e devolve o texto bruto. `onText` recebe os trechos conforme chegam
  * (a CLI do Claude é executada em stream-json). Lança erro em falha ou timeout.
  */
+const activeAborts = new Set<(why?: string) => void>();
+/** Interrompe agora todas as chamadas à IA em andamento (botão Parar): cada uma rejeita com o motivo e cancela a CLI. */
+export function abortAllAiRequests(why = 'cancelado') {
+  for (const a of [...activeAborts]) a(why);
+}
+
 export async function requestAiScreenRaw(
   prompt: string,
   provider: string | undefined,
@@ -884,7 +944,9 @@ export async function requestAiScreenRaw(
   timeoutMs = 480000,
   onText?: (chunk: string) => void,
   additionalDirs?: string[],
-  stallMs = 0
+  stallMs = 0,
+  /** `abort` é preenchido com a função que interrompe só esta chamada (vigia de tempo) */
+  ctl?: { abort?: (why?: string) => void }
 ): Promise<string> {
   const api = (window as any).electronAPI?.ai;
   if (!api?.runCli) throw new Error('CLI de IA indisponível');
@@ -893,6 +955,13 @@ export async function requestAiScreenRaw(
   let timer: any;
   let stallTimer: any;
   let lastText = Date.now();
+  let abortFn: ((why?: string) => void) | null = null;
+  const aborted = new Promise<never>((_, reject) => {
+    abortFn = (why = 'cancelado') => { api.cancel?.(undefined, cwd, streamId); reject(new Error(why)); };
+    activeAborts.add(abortFn);
+    if (ctl) ctl.abort = abortFn;
+  });
+  aborted.catch(() => {});
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       api.cancel?.(undefined, cwd, streamId);
@@ -916,12 +985,13 @@ export async function requestAiScreenRaw(
       })
     : null;
   try {
-    const res = await Promise.race([api.runCli({ cliCmd, prompt, model, cwd, additionalDirs, streamText: !!onText, streamId }), timeout]);
+    const res = await Promise.race([api.runCli({ cliCmd, prompt, model, cwd, additionalDirs, streamText: !!onText, streamId }), timeout, aborted]);
     if (res?.exitCode && res.exitCode !== 0 && !res.stdout) throw new Error(res.stderr || 'A CLI de IA falhou');
     return String(res?.stdout || '');
   } finally {
     clearTimeout(timer);
     clearInterval(stallTimer);
+    if (abortFn) activeAborts.delete(abortFn);
     off?.();
   }
 }

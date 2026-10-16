@@ -5,7 +5,19 @@ import { requestAiScreenRaw } from './aiScreenFromLlm';
  * (estrutura, componentes, estilo). A geração recebe esse texto como regra obrigatória em vez de depender de a IA
  * abrir o arquivo no meio de um prompt enorme (onde a imagem era ignorada).
  */
-export function buildReferenceAnalysisPrompt(paths: string[]): string {
+export function buildReferenceAnalysisPrompt(paths: string[], extra = '', compact = false): string {
+  if (compact) return `Você é um designer de produto sênior. Abra TODAS as imagens (arquivos locais) e escreva uma ESPECIFICAÇÃO VISUAL enxuta para recriá-las com FIDELIDADE MÁXIMA. Responda em texto denso, em português, no máximo 6000 caracteres, SEM JSON, nestas seções:
+FORMATO: dispositivo e proporção.
+TEMA: cores em hex (fundo, superfícies, primária, acento, textos, bordas).
+TIPOGRAFIA: para cada nível (título, subtítulo, corpo, rótulo, legenda, botão): px (tela de ~393px de largura), peso, espaçamento entre letras, caixa, cor.
+FUNDO: cor do topo/centro/base, degradês (tipo, paradas em hex com alfa e posição %, ângulo ou centro/raio), brilhos, vinhetas; se há foto/ilustração. Mesmo atrás de painéis arredondados: diga o que aparece atrás dos cantos.
+TEXTURAS (se houver): granulado/ruído, quadriculado/grade, pontos ou linhas — onde (fundo, card), cor com alfa, tamanho da célula em px.
+VIDRO/SOMBRAS/EFEITOS: quais componentes, blur, bordas com alfa, sombras (x,y,blur,cor), blur progressivo (onde).
+LAYOUT: de fora para dentro, container | direção | gap px | padding px | fundo | borda | raio. Diferencie cards separados de seções coladas.
+INVENTÁRIO (o mais importante): UMA LINHA por elemento visível, de cima para baixo, nada omitido (texto, ícone, botão, chip, avatar, divisória, imagem). Indente por nível. Formato: tipo | TEXTO LITERAL entre aspas | caixa em % da tela x,y,largura,altura | preenchimento hex(+alfa) | borda | raio px | fonte px/peso/cor/alinhamento. Itens repetidos listados um a um.
+${extra}
+Imagens:
+${paths.map((p, i) => `- [${i}] ${p}`).join('\n')}`;
   return `Você é um designer de produto sênior. Abra TODAS as imagens abaixo (arquivos locais) e escreva uma ESPECIFICAÇÃO VISUAL precisa para recriar a MESMA interface com FIDELIDADE MÁXIMA (cada elemento visível, na posição e no tamanho em que está). Não responda JSON; responda em texto curto e denso, em português, com no máximo 10000 caracteres, usando exatamente estas seções:
 
 FORMATO: dispositivo, orientação e proporção.
@@ -27,19 +39,20 @@ Inclua TUDO que aparece: barra de status, cabeçalho (saudação, avatar), busca
 COMPOSIÇÃO: margens laterais, espaçamento entre blocos, alinhamentos, o que é sobreposto a quê, o que é rolagem horizontal.
 CONTEÚDO: registre os textos LITERAIS da imagem (no inventário). Quem for gerar a tela decide se mantém ou troca o conteúdo; a estrutura, as posições, as proporções e o estilo são sempre os da imagem.
 
+${extra}
 Imagens:
-${paths.map((p) => `- ${p}`).join('\n')}`;
+${paths.map((p, i) => `- [${i}] ${p}`).join('\n')}`;
 }
 
 const cache = new Map<string, string>();
 
 /** Especificação visual das imagens (cacheada por caminho: regerar não analisa de novo). Lança erro se a IA falhar. */
-export async function analyzeReferenceImages(paths: string[], provider: string | undefined, model: string | undefined, cwd: string | undefined, additionalDirs: string[]): Promise<string> {
-  const key = paths.join('|');
+export async function analyzeReferenceImages(paths: string[], provider: string | undefined, model: string | undefined, cwd: string | undefined, additionalDirs: string[], extra = '', timeoutMs = 240000, compact = false): Promise<string> {
+  const key = paths.join('|') + extra + (compact ? '#c' : '');
   const hit = cache.get(key);
   if (hit) return hit;
-  const raw = await requestAiScreenRaw(buildReferenceAnalysisPrompt(paths), provider, model, cwd, 240000, undefined, additionalDirs);
-  const spec = raw.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').trim().slice(0, 11000);
+  const raw = await requestAiScreenRaw(buildReferenceAnalysisPrompt(paths, extra, compact), provider, model, cwd, timeoutMs, undefined, additionalDirs);
+  const spec = raw.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').trim().slice(0, compact ? 7000 : 11000);
   if (spec.length < 80) throw new Error('A IA não conseguiu analisar as imagens de referência');
   cache.set(key, spec);
   return spec;

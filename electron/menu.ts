@@ -125,9 +125,31 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null) 
         { role: 'redo' as const, label: 'Refazer' },
         { type: 'separator' as const },
         { role: 'cut' as const, label: 'Recortar' },
-        { role: 'copy' as const, label: 'Copiar' },
+        {
+          label: 'Copiar',
+          accelerator: 'CmdOrCtrl+C',
+          click: (_item, win) => {
+            const wc = (win as BrowserWindow | undefined)?.webContents;
+            if (!wc) return;
+            // no terminal, quem copia é o xterm (a cópia nativa falha com seleções grandes)
+            wc.executeJavaScript(
+              `(() => { const t = document.activeElement?.closest?.('[data-terminal="true"]'); if (t) window.dispatchEvent(new CustomEvent('devflow:terminal-copy')); return !!t; })()`
+            ).then((inTerminal) => { if (!inTerminal) wc.copy(); }).catch(() => wc.copy());
+          },
+        },
         { role: 'paste' as const, label: 'Colar' },
-        { role: 'selectAll' as const, label: 'Selecionar Tudo' },
+        {
+          label: 'Selecionar Tudo',
+          accelerator: 'CmdOrCtrl+A',
+          click: (_item, win) => {
+            const wc = (win as BrowserWindow | undefined)?.webContents;
+            if (!wc) return;
+            // no terminal, quem seleciona é o xterm; no resto (editor, campos) vale o selectAll nativo
+            wc.executeJavaScript(
+              `(() => { const t = document.activeElement?.closest?.('[data-terminal="true"]'); if (t) window.dispatchEvent(new CustomEvent('devflow:terminal-select-all')); return !!t; })()`
+            ).then((inTerminal) => { if (!inTerminal) wc.selectAll(); }).catch(() => wc.selectAll());
+          },
+        },
         { type: 'separator' as const },
         {
           label: 'Buscar no Projeto...',

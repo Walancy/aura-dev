@@ -392,6 +392,28 @@ body.resizing-row {
 }
 
 
+/* Estilo visual no CLI: as divisórias entre terminais seguem a cor/traço do estilo */
+.cli-skin .resizer-col::after { width: 1px; background: var(--skin-line-v); }
+.cli-skin .resizer-row::after { height: 1px; background: var(--skin-line-h); }
+.cli-skin .resizer-split-term::after { background: var(--skin-line-v); }
+.cli-skin .resizer-col:hover::after, .cli-skin .resizer-col.dragging::after,
+.cli-skin .resizer-row:hover::after, .cli-skin .resizer-row.dragging::after,
+.cli-skin .resizer-split-term:hover::after, .cli-skin .resizer-split-term.dragging::after { background: var(--accent-color, #FF6A00); width: 2px; }
+.cli-skin .resizer-row:hover::after, .cli-skin .resizer-row.dragging::after { width: 100%; height: 2px; }
+
+/* Texto em RGB (24 bits) ignora a paleta do tema: o estilo o tinge (as cores ANSI já vêm da paleta) */
+.term-tint .xterm-rows span[style*="color"] { filter: var(--term-tint); }
+
+/* Estilos do terminal com brilho leve no texto */
+.term-glow .xterm-rows { text-shadow: var(--term-glow); }
+
+/* Bolinha do header: a IA de outro projeto terminou */
+@keyframes project-done-blink {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.55); border-color: #22c55e; }
+  50% { box-shadow: 0 0 0 4px rgba(34, 197, 94, 0); border-color: rgba(34, 197, 94, 0.25); }
+}
+.project-done-bubble { animation: project-done-blink 1.4s ease-in-out infinite; }
+
 /* Frame em que a IA está trabalhando */
 @keyframes ai-glow-pulse {
   0%, 100% { opacity: 0.35; filter: drop-shadow(0 0 4px currentColor); }
@@ -428,3 +450,98 @@ body.resizing-row {
   background: rgba(140, 140, 140, 0.45);
 }
 
+
+/* Abas e botões das barras do CLI: cada estilo tem forma e destaque próprios (--sk: cor de destaque, --sk-ink: texto sobre fundo sólido) */
+.cli-skin .skin-bar button,
+.cli-skin .skin-tab { transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease, clip-path 0.15s ease, filter 0.15s ease; }
+.cli-skin .skin-bar button:active,
+.cli-skin .skin-tab:active { transform: scale(0.96); }
+.cli-skin .skin-bar button:not([data-on]):hover { background: color-mix(in srgb, var(--sk) 16%, transparent) !important; }
+.cli-skin .skin-bar button,
+.cli-skin .skin-tab { border-radius: var(--sk-r, 0) !important; box-shadow: none !important; letter-spacing: var(--sk-ls, 0); text-transform: var(--sk-tt, none); }
+.cli-skin .skin-bar button[data-on],
+.cli-skin .skin-tab[data-on],
+.cli-skin .skin-tab.active { background: var(--sk-on-bg) !important; color: var(--sk-on-fg, var(--sk)) !important; border: var(--sk-on-bd, none) !important; }
+/* item ligado tem fundo fixo do estilo: sem isto não reage ao hover */
+.cli-skin .skin-bar button[data-on]:hover,
+.cli-skin .skin-tab[data-on]:hover { filter: brightness(1.25); }
+.cli-skin .skin-tab:not([data-on]):hover { background: color-mix(in srgb, var(--sk) 14%, transparent) !important; }
+.cli-skin .skin-tab[data-on] span, .cli-skin .skin-tab.active span { color: inherit !important; }
+
+.cli-skin[data-skin="cyberdeck"] { --sk: #ff635a; --sk-ink: #1a0a0c; --sk-ls: 0.6px; --sk-tt: uppercase; --sk-on-bg: linear-gradient(90deg, rgba(255,99,90,0.3), rgba(255,99,90,0.06)); }
+.cli-skin[data-skin="cyberdeck"] .skin-bar button,
+.cli-skin[data-skin="cyberdeck"] .skin-tab { clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px)); }
+
+.cli-skin[data-skin="industrial"] { --sk: #ee6a3a; --sk-ink: #0a0a0a; --sk-ls: 0.8px; --sk-tt: uppercase; --sk-on-bg: #ee6a3a; --sk-on-fg: #0a0a0a; }
+.cli-skin[data-skin="industrial"] .skin-bar button,
+.cli-skin[data-skin="industrial"] .skin-tab { border-left: 3px solid color-mix(in srgb, #ee6a3a 70%, transparent) !important; }
+
+.cli-skin[data-skin="amber"] { --sk: #ffb43a; --sk-on-bg: rgba(255,180,58,0.18); --sk-on-bd: 1px dashed rgba(255,180,58,0.7); }
+
+.cli-skin[data-skin="reds"] { --sk: #ff5c93; --sk-on-bg: #ff5c93; --sk-on-fg: #09090a; }
+
+.cli-skin[data-skin="bios"] { --sk: #5ff2c0; --sk-ls: 0.4px; --sk-on-bg: #5ff2c0; --sk-on-fg: #05170f; }
+.cli-skin[data-skin="bios"] .skin-bar button,
+.cli-skin[data-skin="bios"] .skin-tab { border: 1px solid rgba(95,242,192,0.4) !important; }
+
+.cli-skin[data-skin="scan"] { --sk: #cdeedd; --sk-on-bg: rgba(205,238,221,0.1); }
+.cli-skin[data-skin="scan"] .skin-bar button,
+.cli-skin[data-skin="scan"] .skin-tab { border-bottom: 1px dashed rgba(205,238,221,0.45) !important; }
+.cli-skin[data-skin="scan"] .skin-tab[data-on],
+.cli-skin[data-skin="scan"] .skin-tab.active { border-bottom: 2px solid #cdeedd !important; }
+
+.cli-skin[data-skin="blood"] { --sk: #ff2b2b; --sk-ls: 1px; --sk-tt: uppercase; --sk-on-bg: #ff2b2b; --sk-on-fg: #ffffff; }
+.cli-skin[data-skin="blood"] .skin-bar button,
+.cli-skin[data-skin="blood"] .skin-tab { border: 1px solid rgba(255,255,255,0.35) !important; }
+
+.cli-skin[data-skin="minimal"] { --sk: #dce4e2; --sk-on-bg: transparent; --sk-on-fg: #ffffff; }
+.cli-skin[data-skin="minimal"] .skin-bar button,
+.cli-skin[data-skin="minimal"] .skin-tab { background: transparent !important; border-bottom: 1px solid transparent !important; }
+.cli-skin[data-skin="minimal"] .skin-tab[data-on],
+.cli-skin[data-skin="minimal"] .skin-tab.active { border-bottom: 1px solid #ffffff !important; }
+
+.cli-skin[data-skin="discovery"] { --sk: #ff5c82; --sk-on-bg: linear-gradient(90deg, rgba(170,20,60,0.55), rgba(46,120,170,0.55)); --sk-on-fg: #ffffff; }
+
+/* Menus suspensos do CLI seguem o fundo, a forma e a cor do estilo */
+.cli-skin .skin-field, .cli-skin .skin-bar textarea, .cli-skin .skin-bar input { border-radius: var(--sk-r, 0) !important; }
+/* faixas e campos das abas Git/Issues: sem o cinza sólido do tema padrão, com um toque da cor do estilo */
+.cli-skin .skin-strip { background: transparent !important; }
+.cli-skin .skin-field, .cli-skin .skin-bar textarea { background: color-mix(in srgb, var(--sk) 8%, transparent) !important; }
+.cli-skin .skin-avatar, .cli-skin .skin-avatar img { border-radius: var(--sk-r, 0) !important; }
+.cli-skin .skin-menu { background: var(--sk-bg, #0a0a0a) !important; border: 1px solid color-mix(in srgb, var(--sk) 40%, transparent) !important; border-radius: var(--sk-rm, 0) !important; box-shadow: none !important; animation: skin-menu-in 0.14s ease; }
+.cli-skin .skin-menu .skin-tab { border-radius: var(--sk-rm, 0) !important; border: none !important; clip-path: none !important; }
+@keyframes skin-menu-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+.cli-skin[data-skin="cyberdeck"] { --sk-bg: #1b1015; }
+.cli-skin[data-skin="industrial"] { --sk-bg: #0a0a0a; }
+.cli-skin[data-skin="amber"] { --sk-bg: #1a0f05; }
+.cli-skin[data-skin="reds"] { --sk-bg: #09090a; }
+.cli-skin[data-skin="bios"] { --sk-bg: #05170f; }
+.cli-skin[data-skin="scan"] { --sk-bg: #0a1511; }
+.cli-skin[data-skin="blood"] { --sk-bg: #080203; }
+.cli-skin[data-skin="minimal"] { --sk-bg: #070909; }
+.cli-skin[data-skin="discovery"] { --sk-bg: #07060d; }
+.cli-skin .skin-bar button, .cli-skin .skin-tab, .cli-skin .skin-tab * , .cli-skin .skin-menu { border-radius: 0 !important; }
+.cli-skin .skin-bar button.skin-chip:not(:hover) { background: color-mix(in srgb, var(--sk) 14%, transparent) !important; color: var(--sk) !important; }
+
+/* Header do sistema na aba CLI: fundo e linha inferior do estilo */
+.cli-skin.skin-header { isolation: isolate; z-index: 60; background: transparent !important; border-radius: 0 !important; box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--sk) 30%, transparent); }
+
+/* Grupos da header (abas, organização, projeto): separados por divisória fina e com o acabamento de cada estilo */
+.cli-skin .skin-flat { background: transparent !important; border: none !important; border-radius: 0 !important; box-shadow: none !important; padding: 5px 8px !important; position: relative; }
+.cli-skin .skin-flat + .skin-flat, .cli-skin .skin-flat ~ .skin-flat { margin-left: 4px; }
+.cli-skin .skin-flat::before { content: ''; position: absolute; left: -3px; top: 20%; bottom: 20%; width: 1px; background: color-mix(in srgb, var(--sk) 28%, transparent); }
+
+/* Estilos novos: destaque (--sk), fundo de menu (--sk-bg) e acabamento de abas/botões */
+.cli-skin[data-skin="hud"] { --sk: #2fd6d8; --sk-bg: #03100f; --sk-ls: 0.6px; --sk-tt: uppercase; --sk-on-bg: color-mix(in srgb, #2fd6d8 16%, transparent); --sk-on-bd: 1px solid #2fd6d8; }
+.cli-skin[data-skin="hud"] .skin-bar button, .cli-skin[data-skin="hud"] .skin-tab { clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px); }
+.cli-skin[data-skin="neon"] { --sk: #1effa6; --sk-bg: #060d1e; --sk-on-bg: #1effa6; --sk-on-fg: #050b1a; }
+.cli-skin[data-skin="neon"] .skin-bar button, .cli-skin[data-skin="neon"] .skin-tab { border: 1px solid rgba(122,63,255,0.7) !important; }
+.cli-skin[data-skin="stat"] { --sk: #f5b800; --sk-bg: #080808; --sk-ls: 1px; --sk-tt: uppercase; --sk-on-bg: #f5b800; --sk-on-fg: #050505; }
+.cli-skin[data-skin="stat"] .skin-bar button, .cli-skin[data-skin="stat"] .skin-tab { border-bottom: 1px solid rgba(245,184,0,0.35) !important; }
+.cli-skin[data-skin="flow"] { --sk: #ee2a4e; --sk-bg: #1a1b1f; --sk-on-bg: transparent; --sk-on-fg: #ffffff; }
+.cli-skin[data-skin="flow"] .skin-bar button, .cli-skin[data-skin="flow"] .skin-tab { border-bottom: 2px solid transparent !important; }
+.cli-skin[data-skin="flow"] .skin-tab[data-on], .cli-skin[data-skin="flow"] .skin-tab.active { border-bottom: 2px solid #ee2a4e !important; }
+.cli-skin[data-skin="recon"] { --sk: #c4cfcb; --sk-bg: #0a1211; --sk-ls: 0.8px; --sk-tt: uppercase; --sk-on-bg: #e0383e; --sk-on-fg: #ffffff; }
+.cli-skin[data-skin="recon"] .skin-bar button, .cli-skin[data-skin="recon"] .skin-tab { background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0.05) 0 3px, transparent 3px 6px); }
+.cli-skin[data-skin="ember"] { --sk: #ff6a1a; --sk-bg: #0b0402; --sk-on-bg: #ff6a1a; --sk-on-fg: #0a0302; }
+.cli-skin[data-skin="ember"] .skin-tab[data-on], .cli-skin[data-skin="ember"] .skin-tab.active { filter: drop-shadow(0 0 5px rgba(255,106,26,0.7)); }

@@ -143,6 +143,8 @@ export interface EffectItem {
   blurMode?: 'uniform' | 'progressive';
   blurStart?: number;
   blurEnd?: number;
+  /** Progressivo: lado onde o blur é mais forte (padrão: embaixo) */
+  blurDir?: 'bottom' | 'top' | 'left' | 'right';
   // Noise especifico:
   noiseMode?: 'mono' | 'duo' | 'multi';
   noiseSizeX?: number;
@@ -251,7 +253,7 @@ export interface Shape {
   /** Auto layout: o primeiro filho fica por cima na pilha (em vez do último) */
   layoutStackFirstOnTop?: boolean;
   /** Posição presa a um canto do pai (refeita depois do layout): dx/dy = quanto sai para fora do canto, em px */
-  overlayAnchor?: { anchor: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'center'; dx: number; dy: number };
+  overlayAnchor?: { anchor: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'center' | 'top-center' | 'bottom-center'; dx: number; dy: number };
   layoutAlign?:
     | 'top-left'
     | 'top-center'
@@ -359,6 +361,10 @@ export interface Shape {
   pathD?: string;
   pathW?: number;
   pathH?: number;
+  /** Imagem recortada por uma forma (máscara): caminho SVG numa caixa 100x100 */
+  maskPathD?: string;
+  /** Imagem em mosaico (textura): a imagem tem N vezes o tamanho em que aparece (escala 1/N) */
+  imageTile?: number;
   /** text-path: curvatura do arco (positivo sobe, negativo desce) */
   pathCurve?: number;
   /** text-path: id de outro shape cujo contorno serve de caminho (em vez do arco) */

@@ -10,24 +10,25 @@ test('parseResetTimestamp: data absoluta e relativa', () => {
   expect(parseResetTimestamp('sem data', now)).toBeNull();
 });
 
-test('orçamento = semana restante ÷ dias; estourar reduz os próximos dias, economizar aumenta', () => {
-  const reset = at('2026-10-15T15:00:00').getTime();
-  const d1 = computeDailyBudget(null, 100, reset, at('2026-10-08T16:00:00')); // 7 dias
-  expect(d1.budget).toBeCloseTo(14.3, 1);
-  const spent = computeDailyBudget(d1.state, 80, reset, at('2026-10-08T20:00:00')); // gastou 20 > 14.3
-  expect(spent.exceeded).toBe(true);
-  const d2 = computeDailyBudget(spent.state, 80, reset, at('2026-10-09T09:00:00')); // 6 dias restantes
-  expect(d2.budget).toBeCloseTo(13.3, 1); // 80 ÷ 6 dias (gastou demais ontem: bem menos que os 95/6 de quem economizou)
-  const saved = computeDailyBudget(d1.state, 95, reset, at('2026-10-09T09:00:00'));
-  expect(saved.budget).toBeGreaterThan(d2.budget); // economizou: o dia seguinte tem mais
-  const same = computeDailyBudget(saved.state, 90, reset, at('2026-10-09T10:00:00'));
-  expect(same.used).toBe(5);
-  expect(same.exceeded).toBe(false);
+test('semana cheia: dia 1 vale 1/7 e o reset diário cai no horário do reset semanal', () => {
+  const now = at('2026-10-08T16:00:00');
+  const reset = at('2026-10-15T15:00:00').getTime(); // 6d 23h
+  const d = computeDailyBudget(100, reset, now);
+  expect(d.currentDay).toBe(1);
+  expect(d.remaining).toBeCloseTo(14.3, 1);
+  expect(d.resetsInMs).toBe(23 * 3600000); // próximo 15:00
 });
 
-test('semana reiniciou (restante subiu): recalcula', () => {
-  const s = computeDailyBudget(null, 20, null, at('2026-10-08T10:00:00'));
-  const r = computeDailyBudget(s.state, 100, null, at('2026-10-08T11:00:00'));
-  expect(r.state.weeklyAtStart).toBe(100);
-  expect(r.used).toBe(0);
+test('sobras acumulam; estourar deixa hoje negativo e marca excedido', () => {
+  const now = at('2026-10-10T12:00:00');
+  const reset = at('2026-10-15T15:00:00').getTime(); // 5d 3h -> 6 dias contando hoje
+  const saved = computeDailyBudget(95, reset, now); // 95 - 5*14.29
+  expect(saved.remaining).toBeCloseTo(23.6, 1);
+  const over = computeDailyBudget(60, reset, now);
+  expect(over.remaining).toBeCloseTo(-11.4, 1); // 60 - 5*14.29
+  expect(over.exceeded).toBe(true);
+});
+
+test('sem data de reset: assume semana cheia pela frente', () => {
+  expect(computeDailyBudget(100, null, at('2026-10-08T10:00:00')).currentDay).toBe(1);
 });

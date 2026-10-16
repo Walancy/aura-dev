@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, Zap, ListChecks, Bot, MessageSquare, AlertTriangle, Pin } from 'lucide-react';
+import { Check, Zap, ListChecks, Bot, MessageSquare, AlertTriangle, Pin, RefreshCw, Download, ChevronDown } from 'lucide-react';
 import { AI_PROVIDERS, AI_MODES } from '../../../constants/ai';
 import type { AiMode } from '../../../constants/ai';
 import { ClaudeIcon, AntigravityIcon, CodexIcon, GeminiIcon, OllamaIcon } from '../../icons/AiProviderIcons';
@@ -43,6 +43,15 @@ export interface AiAgentsSettingsTabProps {
   setDevForce?: (value: boolean) => void;
   aiAutoUpdate?: boolean;
   setAiAutoUpdate?: (value: boolean) => void;
+
+  // Modelos que aparecem no seletor e busca de atualizações das CLIs
+  aiModelOptions?: Record<string, Array<{ id: string; label: string; legacy?: boolean }>>;
+  aiVisibleModels?: Record<string, string[]>;
+  onSetVisibleModels?: (providerId: string, ids: string[] | null) => void;
+  aiUpdatesAvailable?: Record<string, { hasUpdate: boolean; currentVersion?: string; latestVersion?: string }>;
+  isCheckingAiUpdates?: boolean;
+  onCheckAiUpdates?: () => void;
+  onUpdateAi?: (providerId: string) => void;
 }
 
 export const AiAgentsSettingsTab: React.FC<AiAgentsSettingsTabProps> = ({
@@ -70,6 +79,13 @@ export const AiAgentsSettingsTab: React.FC<AiAgentsSettingsTabProps> = ({
   setDevForce,
   aiAutoUpdate = false,
   setAiAutoUpdate,
+  aiModelOptions = {},
+  aiVisibleModels = {},
+  onSetVisibleModels,
+  aiUpdatesAvailable = {},
+  isCheckingAiUpdates = false,
+  onCheckAiUpdates,
+  onUpdateAi,
 }) => {
   const iconMap: Record<string, React.ReactNode> = {
     claude: <ClaudeIcon size={14} />,
@@ -78,6 +94,25 @@ export const AiAgentsSettingsTab: React.FC<AiAgentsSettingsTabProps> = ({
     gemini: <GeminiIcon size={14} />,
     ollama: <OllamaIcon size={14} />,
   };
+
+  // cada IA começa recolhida: a lista de modelos é longa
+  const [expandedModels, setExpandedModels] = React.useState<Record<string, boolean>>({});
+
+  const cardBg = isEffectiveDark ? 'rgba(255, 255, 255, 0.035)' : 'rgba(0, 0, 0, 0.025)';
+  const smallBtn = (color: string, disabled: boolean): React.CSSProperties => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: 5,
+    flexShrink: 0,
+    padding: '5px 10px',
+    borderRadius: 6,
+    border: 'none',
+    fontSize: 11,
+    cursor: disabled ? 'default' : 'pointer',
+    opacity: disabled ? 0.6 : 1,
+    background: hexToRgba(color, 0.15),
+    color,
+  });
 
   const handleTogglePin = (id: string) => {
     if (!setPinnedAis) return;
@@ -673,6 +708,125 @@ export const AiAgentsSettingsTab: React.FC<AiAgentsSettingsTabProps> = ({
                 }}
                 accentColor={accentColor}
               />
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Buscar atualizações das IAs */}
+      {onCheckAiUpdates && (
+        <>
+          <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)' }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 500, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Versões das IAs
+            </div>
+            <div style={{ padding: 12, borderRadius: 8, background: cardBg, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <span style={{ fontSize: 11, color: themeTokens.textSecondary }}>
+                  Consulta se há versão nova de cada CLI (Claude, Antigravity, Codex...) e permite atualizar na hora.
+                </span>
+                <button type="button" onClick={onCheckAiUpdates} disabled={isCheckingAiUpdates} style={smallBtn(accentColor, isCheckingAiUpdates)}>
+                  <RefreshCw size={12} className={isCheckingAiUpdates ? 'spin-animate' : undefined} />
+                  {isCheckingAiUpdates ? 'Buscando…' : 'Buscar atualizações'}
+                </button>
+              </div>
+              {AI_PROVIDERS.filter((p) => aiUpdatesAvailable[p.id]?.hasUpdate).map((p) => (
+                <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: themeTokens.textPrimary }}>
+                    {iconMap[p.id]}
+                    {p.name}
+                    <span style={{ fontSize: 11, color: themeTokens.textSecondary }}>
+                      {aiUpdatesAvailable[p.id].currentVersion || '?'} → {aiUpdatesAvailable[p.id].latestVersion || 'nova versão'}
+                    </span>
+                  </span>
+                  {onUpdateAi && (
+                    <button type="button" onClick={() => onUpdateAi(p.id)} style={smallBtn(accentColor, false)}>
+                      <Download size={12} />
+                      Atualizar
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Modelos que aparecem no seletor do sistema */}
+      {onSetVisibleModels && AI_PROVIDERS.some((p) => (aiModelOptions[p.id] || []).length > 1) && (
+        <>
+          <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)' }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 500, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Modelos no seletor
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 8, alignItems: 'start' }}>
+            {AI_PROVIDERS.filter((p) => (aiModelOptions[p.id] || []).length > 1).map((p) => {
+              const options = aiModelOptions[p.id];
+              const chosen = aiVisibleModels[p.id];
+              const isVisible = (m: { id: string; legacy?: boolean }) => (chosen ? chosen.includes(m.id) : !m.legacy);
+              return (
+                <div key={p.id} style={{ padding: 12, borderRadius: 8, background: cardBg, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div
+                    onClick={() => setExpandedModels((prev) => ({ ...prev, [p.id]: !prev[p.id] }))}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, cursor: 'pointer', userSelect: 'none' }}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: themeTokens.textPrimary }}>
+                      {iconMap[p.id]}
+                      {p.name}
+                      <span style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>
+                        {options.filter(isVisible).length}/{options.length}
+                      </span>
+                    </span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      {chosen && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSetVisibleModels(p.id, null);
+                          }}
+                          style={{ background: 'transparent', border: 'none', color: accentColor, fontSize: 11, cursor: 'pointer', padding: 0 }}
+                        >
+                          Restaurar padrão
+                        </button>
+                      )}
+                      <ChevronDown
+                        size={14}
+                        color={themeTokens.textSecondary}
+                        style={{ transform: expandedModels[p.id] ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}
+                      />
+                    </span>
+                  </div>
+                  {expandedModels[p.id] && (
+                    <>
+                      <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)' }} />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {options.map((m) => (
+                          <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                            <span style={{ fontSize: 11.5, color: themeTokens.textSecondary }}>
+                              {m.label}
+                              {m.legacy && <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.7 }}>versão antiga</span>}
+                            </span>
+                            <MiniSwitch
+                              checked={isVisible(m)}
+                              onChange={() => {
+                                const current = options.filter(isVisible).map((o) => o.id);
+                                const next = isVisible(m) ? current.filter((id) => id !== m.id) : [...current, m.id];
+                                onSetVisibleModels(p.id, next);
+                                logSystemActivity('configuracoes_ia', 'toggle_modelo_visivel', p.id, { modelo: m.id, visivel: !isVisible(m) });
+                              }}
+                              accentColor={accentColor}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })}
             </div>
           </div>
         </>

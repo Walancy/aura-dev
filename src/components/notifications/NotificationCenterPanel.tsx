@@ -147,17 +147,28 @@ export default function NotificationCenterPanel({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, open]);
 
+  // Abrir o card não marca como lida na hora: ela é lida quando o painel fecha ou quando outra notificação é aberta
+  const openedRef = useRef<Set<string>>(new Set());
+  const flushOpened = () => {
+    openedRef.current.forEach((id) => onRead(id));
+    openedRef.current.clear();
+  };
+  const flushOpenedRef = useRef(flushOpened);
+  flushOpenedRef.current = flushOpened;
+  useEffect(() => {
+    if (!open) flushOpenedRef.current();
+  }, [open]);
+  useEffect(() => () => flushOpenedRef.current(), []);
+
   const toggleExpand = (id: string, n: CenterNotification) => {
+    if (!expandedIds.has(id) && !n.read) {
+      flushOpened();
+      openedRef.current.add(id);
+    }
     setExpandedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-        if (!n.read) {
-          onRead(n.id);
-        }
-      }
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };

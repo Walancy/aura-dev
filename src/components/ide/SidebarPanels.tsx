@@ -1124,7 +1124,10 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                                   return (
                                     <div
                                       key={idx}
+                                      className="skin-tab"
                                       style={{
+                                        textTransform: 'none',
+                                        letterSpacing: 'normal',
                                         display: 'flex',
                                         alignItems: 'center',
                                         justifyContent: 'space-between',

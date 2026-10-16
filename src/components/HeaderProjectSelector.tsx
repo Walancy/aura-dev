@@ -691,6 +691,19 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
     [projectAiStatus]
   );
 
+  // Projetos (que não o aberto) em que a IA terminou uma tarefa: viram bolinhas ao lado do projeto selecionado
+  const finishedProjects = useMemo(() => {
+    if (!projectAiStatus) return [] as HeaderProjectItem[];
+    const cur = workspacePath?.toLowerCase();
+    return Object.entries(projectAiStatus)
+      .filter(([dir, st]) => st === 'done' && dir.toLowerCase() !== cur)
+      .map(([dir]) => {
+        const known = allProjects.find((p) => p.localDir?.toLowerCase() === dir.toLowerCase());
+        const name = dir.split('/').filter(Boolean).pop() || dir;
+        return known || ({ id: dir, name, fullName: name, isCloned: true, localDir: dir, customIcon: customProjectIcons[name] } as HeaderProjectItem);
+      });
+  }, [projectAiStatus, workspacePath, allProjects, customProjectIcons]);
+
   const renderAiStatusBadge = (status: ProjectAiStatus | null, size = 13) => {
     if (!status) return null;
     const cfg =
@@ -839,6 +852,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
   return (
     <div
       ref={containerRef}
+      className="skin-flat"
       style={{
         padding: 5,
         background: themeTokens.bgCard,
@@ -861,6 +875,8 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
             setIsOrgOpen((prev) => !prev);
             setIsProjectOpen(false);
           }}
+          className="skin-tab"
+          data-on={isOrgOpen ? '1' : undefined}
           style={{
             paddingLeft: isCollapsed ? 7 : 12,
             paddingRight: isCollapsed ? 7 : 12,
@@ -928,6 +944,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
         {isOrgOpen && (
           <div
             onClick={(e) => e.stopPropagation()}
+            className="skin-menu"
             style={{
               position: 'absolute',
               top: 'calc(100% + 8px)',
@@ -1033,6 +1050,33 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
         )}
       </div>
 
+      {/* Projetos com tarefa de IA concluída: clicar abre o projeto */}
+      {finishedProjects.map((p) => (
+        <button
+          key={p.localDir}
+          type="button"
+          className="project-done-bubble"
+          title={`${p.name}: a IA terminou. Clique para abrir`}
+          onClick={() => onSelectWorkspace(p.localDir!, p.fullName || p.name)}
+          style={{
+            width: 26,
+            height: 26,
+            borderRadius: '50%',
+            border: '2px solid #22c55e',
+            background: themeTokens.bgCard,
+            padding: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            flexShrink: 0,
+            overflow: 'hidden',
+          }}
+        >
+          <ProjectHeaderIcon project={p} size={16} accentColor={accentColor} customIcons={customProjectIcons} repos={repos} orgs={organizations} />
+        </button>
+      ))}
+
       {/* 2. SELETOR DE PROJETO (À DIREITA) */}
       <div style={{ position: 'relative' }} ref={projectRef}>
         <div
@@ -1040,6 +1084,8 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
             setIsProjectOpen((prev) => !prev);
             setIsOrgOpen(false);
           }}
+          className="skin-tab"
+          data-on={isProjectOpen ? '1' : undefined}
           style={{
             paddingLeft: isCollapsed ? 7 : 12,
             paddingRight: isCollapsed ? 7 : 12,
@@ -1119,6 +1165,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
         {isProjectOpen && (
           <div
             onClick={(e) => e.stopPropagation()}
+            className="skin-menu"
             style={{
               position: 'absolute',
               top: 'calc(100% + 8px)',

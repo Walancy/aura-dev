@@ -26,7 +26,7 @@ interface AiChatHeaderProps {
   onExportMarkdown: () => void;
   onExportJson: () => void;
   onClearHistory: () => void;
-  onOpenPermissions: () => void;
+  onOpenPermissions?: () => void;
   onClosePanel: () => void;
   onSelectModel?: () => void;
   onPreviousSession?: () => void;
@@ -430,10 +430,11 @@ export const AiChatHeader: React.FC<AiChatHeaderProps> = ({
                 <span>Exportar (JSON)</span>
               </div>
 
+              {onOpenPermissions && (
               <div
                 onClick={() => {
                   setIsMenuOpen(false);
-                  onOpenPermissions();
+                  onOpenPermissions?.();
                 }}
                 style={{
                   display: 'flex',
@@ -452,6 +453,7 @@ export const AiChatHeader: React.FC<AiChatHeaderProps> = ({
                 <Shield size={12} color={accentColor} />
                 <span>Políticas de Permissão</span>
               </div>
+              )}
 
               <div style={{ height: 1, background: divider, margin: '2px 0' }} />
 

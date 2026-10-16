@@ -1,3 +1,4 @@
+import type { TerminalSkinId } from './TerminalSkin';
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   SquareTerminal,
@@ -48,7 +49,8 @@ import {
   SlidersHorizontal,
 } from 'lucide-react';
 import { FileIcon, FolderIcon } from './FileIcon';
-import { NativeXTerm, scrollTerminalToText } from './NativeXTerm';
+import { NativeXTerm, scrollTerminalToText, TERMINAL_THEMES } from './NativeXTerm';
+import { TerminalSkinOverlay, skinDividerVars } from './TerminalSkin';
 import Editor from '@monaco-editor/react';
 import { getFileLanguage } from '../utils/editor';
 import { ConfirmDeleteModal } from './modals/ConfirmDeleteModal';
@@ -110,6 +112,17 @@ export interface CliTerminalViewProps {
   onNewSession: (type?: string, name?: string, cmd?: string) => string | void;
   onCloseSession: (id: string, e?: React.MouseEvent) => void;
   terminalFontSize?: number;
+  terminalCursorStyle?: 'block' | 'bar' | 'underline';
+  terminalCursorBlink?: boolean;
+  terminalScrollback?: number;
+  terminalCopyOnSelect?: boolean;
+  terminalFontFamily?: string;
+  terminalLineHeight?: number;
+  terminalThemePreset?: string;
+  terminalSkin?: TerminalSkinId;
+  terminalCursorWidth?: number;
+  terminalScrollOnUserInput?: boolean;
+  terminalDrawBoldTextInBrightColors?: boolean;
   onSetTerminalFontSize?: (size: number) => void;
   currentBranch?: string;
   gitRepoName?: string;
@@ -220,6 +233,17 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   onNewSession,
   onCloseSession,
   terminalFontSize = 13,
+  terminalCursorStyle,
+  terminalCursorBlink,
+  terminalScrollback,
+  terminalCopyOnSelect,
+  terminalFontFamily,
+  terminalLineHeight,
+  terminalThemePreset,
+  terminalSkin,
+  terminalCursorWidth,
+  terminalScrollOnUserInput,
+  terminalDrawBoldTextInBrightColors,
   onSetTerminalFontSize,
   currentBranch,
   gitRepoName = 'Walancy/aura-dev',
@@ -495,6 +519,122 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
 
   // Explorer search filter
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [selectedDir, setSelectedDir] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [creating, setCreating] = useState<{ parent: string; isDirectory: boolean } | null>(null);
+  const [creatingName, setCreatingName] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<ExplorerNode | null>(null);
+  const [isDeletingItem, setIsDeletingItem] = useState(false);
+
+  const confirmDeleteItem = async () => {
+    if (!deleteTarget) return;
+    setIsDeletingItem(true);
+    try {
+      await window.electronAPI?.fs?.deleteItem(deleteTarget.path);
+      onToast?.(`${deleteTarget.isDirectory ? 'Pasta' : 'Arquivo'} excluído: ${deleteTarget.name}`);
+      onRefreshTree?.();
+    } catch (err: any) {
+      onToast?.(`Erro ao excluir: ${err?.message || err}`);
+    }
+    setIsDeletingItem(false);
+    setDeleteTarget(null);
+  };
+
+  const startCreating = (isDirectory: boolean) => {
+    const parent = selectedDir && (selectedDir === workspacePath || selectedDir.startsWith(workspacePath + '/')) ? selectedDir : workspacePath;
+    if (parent !== workspacePath) {
+      // garante que a pasta alvo esteja visível
+      if (!expandedFolders.has(parent)) onToggleFolder(parent);
+    }
+    setCreatingName('');
+    setCreating({ parent, isDirectory });
+  };
+
+  const commitCreating = async () => {
+    const info = creating;
+    const name = creatingName.trim();
+    setCreating(null);
+    if (!info || !name) return;
+    if (name.split('/').includes('..')) return;
+    const full = `${info.parent}/${name}`;
+    try {
+      await window.electronAPI?.fs?.createItem(full, info.isDirectory);
+      onRefreshTree?.();
+      if (!info.isDirectory) onOpenFile?.(full, name.split('/').pop() || name);
+      onToast?.(`${info.isDirectory ? 'Pasta' : 'Arquivo'} criado: ${name}`);
+    } catch (err: any) {
+      onToast?.(`Erro ao criar: ${err?.message || err}`);
+    }
+  };
+
+  const handleTreeDrop = async (e: React.DragEvent, destDir: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDropTarget(null);
+    const fs = window.electronAPI?.fs;
+    if (!fs) return;
+    let changed = false;
+    try {
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        for (const file of Array.from(e.dataTransfer.files)) {
+          const src = fs.getPathForFile(file);
+          if (!src) continue;
+          const name = src.split('/').pop() || file.name;
+          const dest = `${destDir}/${name}`;
+          if (src === dest || destDir === src || destDir.startsWith(src + '/')) continue;
+          await fs.copyItem(src, dest);
+          changed = true;
+        }
+        if (changed) onToast?.('Arquivos copiados para o projeto');
+      } else {
+        const raw = e.dataTransfer.getData('application/json');
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        if (data?.type !== 'devflow-item' || !data.path) return;
+        const src: string = data.path;
+        const dest = `${destDir}/${data.name}`;
+        const parent = src.split('/').slice(0, -1).join('/');
+        if (parent === destDir || destDir === src || destDir.startsWith(src + '/')) return;
+        await fs.renameItem(src, dest);
+        changed = true;
+        onToast?.(`Movido para ${destDir.split('/').pop()}`);
+      }
+      if (changed) {
+        if (destDir !== workspacePath && !expandedFolders.has(destDir)) onToggleFolder(destDir);
+        onRefreshTree?.();
+      }
+    } catch (err: any) {
+      onToast?.(`Erro ao mover/copiar: ${err?.message || err}`);
+    }
+  };
+
+
+  const renderCreateInput = (depth: number) => (
+    <div style={{ height: 24, paddingLeft: depth * 12 + 20, paddingRight: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+      {creating?.isDirectory ? <FolderPlus size={14} color={accentColor} /> : <FilePlus size={14} color={accentColor} />}
+      <input
+        autoFocus
+        value={creatingName}
+        onChange={(e) => setCreatingName(e.target.value)}
+        onBlur={commitCreating}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commitCreating();
+          if (e.key === 'Escape') { setCreatingName(''); setCreating(null); }
+        }}
+        placeholder={creating?.isDirectory ? 'nome-da-pasta' : 'arquivo.ts'}
+        style={{ flex: 1, minWidth: 0, height: 20, background: 'transparent', border: 'none', outline: 'none', fontSize: 12, fontWeight: 400, color: skinTk.textPrimary, fontFamily: 'inherit' }}
+      />
+    </div>
+  );
+
+  const dragOverTree = (e: React.DragEvent, dir: string) => {
+    const types = Array.from(e.dataTransfer.types);
+    if (!types.includes('Files') && !types.includes('application/json')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = types.includes('Files') ? 'copy' : 'move';
+    if (dropTarget !== dir) setDropTarget(dir);
+  };
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
   const [explorerMenuOpen, setExplorerMenuOpen] = useState<boolean>(false);
 
@@ -1113,7 +1253,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   useEffect(() => {
     const handleGlobalMouseDown = (e: MouseEvent) => {
       const target = e.target as Node;
-      if (fileContextMenu) setFileContextMenu(null);
+      const insideFileMenu = (target as HTMLElement).closest?.('[data-file-ctx-menu]');
+      if (fileContextMenu && !insideFileMenu) setFileContextMenu(null);
       if (explorerMenuOpen) setExplorerMenuOpen(false);
 
       if (layoutMenuOpen && layoutMenuRef.current && !layoutMenuRef.current.contains(target)) {
@@ -1193,6 +1334,22 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
 
   // Tooltips imediatos e estilizados para qualquer elemento com title (o title nativo é movido para data-tip ao passar o mouse)
   const viewRootRef = useRef<HTMLDivElement>(null);
+
+  // Estilo visual do terminal: o painel da esquerda e a barra de abas também ganham o fundo, a moldura e a paleta do estilo
+  const skinId = terminalSkin ?? 'none';
+  const skinActive = skinId !== 'none';
+  const skinTheme = TERMINAL_THEMES[terminalThemePreset || 'default'] || TERMINAL_THEMES.default;
+  const skinTk = skinActive
+    ? {
+        ...themeTokens,
+        bgCard: skinTheme.background,
+        bgCardSecondary: skinTheme.black || skinTheme.background,
+        textPrimary: skinTheme.foreground,
+        textSecondary: skinTheme.brightBlack || themeTokens.textSecondary,
+        border: `${skinTheme.foreground}33`,
+        hoverBg: `${skinTheme.foreground}14`,
+      }
+    : themeTokens;
   const [tip, setTip] = useState<{ text: string; x: number; y: number; above: boolean } | null>(null);
   useEffect(() => {
     let timer: any;
@@ -1485,6 +1642,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
     // cor da IA rodando neste quadrante (sem IA, o cabeçalho segue cinza)
     const slotAiType = activeWorkspace ? getSlotAiType(activeWorkspace, slotIndex, session) : undefined;
     const slotAiColor = slotAiType && slotAiType !== 'zsh' ? AI_BRAND_COLORS[slotAiType === 'agy' ? 'antigravity' : slotAiType.toLowerCase()] : undefined;
+    const hdrAiColor = skinActive ? undefined : slotAiColor;
     const slotMentionedIssues = sessionMentionedIssues[session.id] || [];
     const issuesInHeader = activeWorkspace?.gridMode !== '1x1';
     const issueTags = slotMentionedIssues.map((mIssue) => {
@@ -1566,9 +1724,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          background: themeTokens.bgCard,
+          background: skinActive ? 'transparent' : themeTokens.bgCard,
           borderRadius: activeWorkspace?.gridMode === '1x1' ? 0 : 6,
-          border: activeWorkspace?.gridMode === '1x1' ? 'none' : `1px solid ${themeTokens.border}`,
+          border: activeWorkspace?.gridMode === '1x1' || skinActive ? 'none' : `1px solid ${themeTokens.border}`,
           borderTop: 'none',
           boxShadow: 'none',
           position: 'relative',
@@ -1596,12 +1754,14 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             style={{
               height: 27,
               padding: '0 8px',
-              background: slotAiColor
-                ? `linear-gradient(90deg, rgba(0,0,0,0.5), rgba(0,0,0,0)), ${slotAiColor}`
-                : isSlotActive
-                  ? (isEffectiveDark ? '#202020' : '#eaeaea')
-                  : (isEffectiveDark ? '#141416' : '#f5f5f5'),
-              borderBottom: `1px solid ${themeTokens.border}`,
+              background: hdrAiColor
+                ? `linear-gradient(90deg, rgba(0,0,0,0.5), rgba(0,0,0,0)), ${hdrAiColor}`
+                : skinActive
+                  ? 'transparent'
+                  : isSlotActive
+                    ? (isEffectiveDark ? '#202020' : '#eaeaea')
+                    : (isEffectiveDark ? '#141416' : '#f5f5f5'),
+              borderBottom: `1px solid ${skinTk.border}`,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
@@ -1617,13 +1777,15 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             {/* Left: Quadrant Badge, Icon, Session Name & Switcher Dropdown */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
               <span
+                className="skin-tab"
+                data-on={isSlotActive ? '1' : undefined}
                 style={{
                   fontSize: 9,
                   fontWeight: 700,
                   padding: '1px 5px',
                   borderRadius: 4,
-                  background: slotAiColor ? 'rgba(0,0,0,0.28)' : isSlotActive ? accentColor : (isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'),
-                  color: slotAiColor || isSlotActive ? '#ffffff' : themeTokens.textMuted,
+                  background: hdrAiColor ? 'rgba(0,0,0,0.28)' : isSlotActive ? accentColor : (isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'),
+                  color: hdrAiColor || isSlotActive ? '#ffffff' : skinTk.textMuted,
                   letterSpacing: '0.5px',
                   flexShrink: 0,
                   transition: 'all 0.12s ease',
@@ -1638,7 +1800,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 style={{
                   fontSize: 11.5,
                   fontWeight: isSlotActive ? 600 : 500,
-                  color: slotAiColor ? '#ffffff' : isSlotActive ? themeTokens.textPrimary : themeTokens.textSecondary,
+                  color: hdrAiColor ? '#ffffff' : isSlotActive ? skinTk.textPrimary : skinTk.textSecondary,
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
@@ -1666,15 +1828,15 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   style={{
                     background: 'transparent',
                     border: 'none',
-                    color: themeTokens.textMuted,
+                    color: skinTk.textMuted,
                     padding: '2px 4px',
                     borderRadius: 3,
                     cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = slotAiColor ? '#ffffff' : themeTokens.textPrimary)}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = slotAiColor ? 'rgba(255,255,255,0.8)' : themeTokens.textMuted)}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = hdrAiColor ? '#ffffff' : skinTk.textPrimary)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = hdrAiColor ? 'rgba(255,255,255,0.8)' : skinTk.textMuted)}
                 >
                   <ChevronDown size={11} />
                 </button>
@@ -1689,7 +1851,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       left: 0,
                       width: 180,
                       background: isEffectiveDark ? '#1f1f1f' : '#ffffff',
-                      border: `1px solid ${themeTokens.border}`,
+                      border: `1px solid ${skinTk.border}`,
                       borderRadius: 6,
                       padding: '4px 0',
                       boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
@@ -1698,7 +1860,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       flexDirection: 'column',
                     }}
                   >
-                    <div style={{ padding: '3px 8px', fontSize: 10, fontWeight: 600, color: themeTokens.textMuted, textTransform: 'uppercase' }}>
+                    <div style={{ padding: '3px 8px', fontSize: 10, fontWeight: 600, color: skinTk.textMuted, textTransform: 'uppercase' }}>
                       Selecionar Terminal
                     </div>
                     {terminalSessions.map((s) => (
@@ -1720,11 +1882,11 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                           gap: 6,
                           fontSize: 11,
                           cursor: 'pointer',
-                          color: s.id === session.id ? accentColor : themeTokens.textPrimary,
+                          color: s.id === session.id ? accentColor : skinTk.textPrimary,
                           background: s.id === session.id ? hexToRgba(accentColor, 0.1) : 'transparent',
                         }}
                         onMouseEnter={(e) => {
-                          if (s.id !== session.id) e.currentTarget.style.background = themeTokens.hoverBg;
+                          if (s.id !== session.id) e.currentTarget.style.background = skinTk.hoverBg;
                         }}
                         onMouseLeave={(e) => {
                           if (s.id !== session.id) e.currentTarget.style.background = 'transparent';
@@ -1742,9 +1904,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                               window.electronAPI?.pty?.kill?.(s.id);
                               onCloseSession(s.id);
                             }}
-                            style={{ display: 'flex', alignItems: 'center', padding: 2, borderRadius: 4, color: themeTokens.textMuted, flexShrink: 0 }}
+                            style={{ display: 'flex', alignItems: 'center', padding: 2, borderRadius: 4, color: skinTk.textMuted, flexShrink: 0 }}
                             onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.background = 'rgba(239,68,68,0.12)'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.color = themeTokens.textMuted; e.currentTarget.style.background = 'transparent'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.color = skinTk.textMuted; e.currentTarget.style.background = 'transparent'; }}
                           >
                             <X size={11} />
                           </span>
@@ -1752,9 +1914,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       </div>
                     ))}
 
-                    <div style={{ height: 1, background: themeTokens.border, margin: '4px 0' }} />
+                    <div style={{ height: 1, background: skinTk.border, margin: '4px 0' }} />
 
-                    <div style={{ padding: '3px 8px', fontSize: 10, fontWeight: 700, color: themeTokens.textMuted, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                    <div style={{ padding: '3px 8px', fontSize: 10, fontWeight: 700, color: skinTk.textMuted, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
                       Iniciar IA neste Quadrante
                     </div>
                     {[
@@ -1784,9 +1946,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                           gap: 6,
                           fontSize: 11,
                           cursor: 'pointer',
-                          color: themeTokens.textPrimary,
+                          color: skinTk.textPrimary,
                         }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
                         onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                       >
                         {opt.icon}
@@ -1803,7 +1965,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               {slotMentionedIssues.length > 0 && (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, overflow: 'hidden' }}>{issueTags}</div>
-                  <div style={{ width: 1, height: 14, background: slotAiColor ? 'rgba(255,255,255,0.4)' : isEffectiveDark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(0, 0, 0, 0.16)', margin: '0 6px', flexShrink: 0 }} />
+                  <div style={{ width: 1, height: 14, background: hdrAiColor ? 'rgba(255,255,255,0.4)' : isEffectiveDark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(0, 0, 0, 0.16)', margin: '0 6px', flexShrink: 0 }} />
                 </>
               )}
               {/* Clear this slot */}
@@ -1817,15 +1979,15 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  color: slotAiColor ? 'rgba(255,255,255,0.8)' : themeTokens.textMuted,
+                  color: hdrAiColor ? 'rgba(255,255,255,0.8)' : skinTk.textMuted,
                   padding: '2px 4px',
                   borderRadius: 3,
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = slotAiColor ? '#ffffff' : themeTokens.textPrimary)}
-                onMouseLeave={(e) => (e.currentTarget.style.color = slotAiColor ? 'rgba(255,255,255,0.8)' : themeTokens.textMuted)}
+                onMouseEnter={(e) => (e.currentTarget.style.color = hdrAiColor ? '#ffffff' : skinTk.textPrimary)}
+                onMouseLeave={(e) => (e.currentTarget.style.color = hdrAiColor ? 'rgba(255,255,255,0.8)' : skinTk.textMuted)}
               >
                 <Trash2 size={11} />
               </button>
@@ -1845,15 +2007,15 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  color: slotAiColor ? 'rgba(255,255,255,0.8)' : themeTokens.textMuted,
+                  color: hdrAiColor ? 'rgba(255,255,255,0.8)' : skinTk.textMuted,
                   padding: '2px 4px',
                   borderRadius: 3,
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = slotAiColor ? '#ffffff' : themeTokens.textPrimary)}
-                onMouseLeave={(e) => (e.currentTarget.style.color = slotAiColor ? 'rgba(255,255,255,0.8)' : themeTokens.textMuted)}
+                onMouseEnter={(e) => (e.currentTarget.style.color = hdrAiColor ? '#ffffff' : skinTk.textPrimary)}
+                onMouseLeave={(e) => (e.currentTarget.style.color = hdrAiColor ? 'rgba(255,255,255,0.8)' : skinTk.textMuted)}
               >
                 {activeWorkspace?.maximizedSlotIndex === slotIndex ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
               </button>
@@ -1869,7 +2031,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  color: slotAiColor ? 'rgba(255,255,255,0.8)' : themeTokens.textMuted,
+                  color: hdrAiColor ? 'rgba(255,255,255,0.8)' : skinTk.textMuted,
                   padding: '2px 4px',
                   borderRadius: 3,
                   cursor: 'pointer',
@@ -1877,7 +2039,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   alignItems: 'center',
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.color = '#ef4444')}
-                onMouseLeave={(e) => (e.currentTarget.style.color = slotAiColor ? 'rgba(255,255,255,0.8)' : themeTokens.textMuted)}
+                onMouseLeave={(e) => (e.currentTarget.style.color = hdrAiColor ? 'rgba(255,255,255,0.8)' : skinTk.textMuted)}
               >
                 <X size={11} />
               </button>
@@ -1932,7 +2094,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             overflow: 'hidden',
             position: 'relative',
             // terminal de IA: degradê com a cor da IA (como no chat da IA da IDE) + a logo ao fundo
-            background: slotAiColor
+            background: slotAiColor && !skinActive
               ? `radial-gradient(ellipse 120% 160% at 6% 100%, ${hexToRgba(slotAiColor, isEffectiveDark ? 0.1 : 0.12)} 0%, ${isEffectiveDark ? '#101010' : '#ffffff'} 100%)`
               : undefined,
             transition: 'background 0.2s ease',
@@ -1955,6 +2117,18 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             accentColor={accentColor}
             isDark={isEffectiveDark}
             fontSize={terminalFontSize}
+            cursorStyle={terminalCursorStyle}
+            cursorBlink={terminalCursorBlink}
+            scrollback={terminalScrollback}
+            copyOnSelect={terminalCopyOnSelect}
+            fontFamily={terminalFontFamily}
+            lineHeight={terminalLineHeight}
+            themePreset={terminalThemePreset}
+            skin={terminalSkin}
+            skinLayers={false}
+            cursorWidth={terminalCursorWidth}
+            scrollOnUserInput={terminalScrollOnUserInput}
+            drawBoldTextInBrightColors={terminalDrawBoldTextInBrightColors}
             onFocus={() => handleFocusSlot(slotIndex, session.id)}
             onTitleChange={(title) => handleSessionTitleChange(session.id, title)}
           />
@@ -1967,7 +2141,11 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   return (
     <div
       ref={viewRootRef}
+      className={skinActive ? 'cli-skin' : undefined}
+      data-skin={skinActive ? skinId : undefined}
       style={{
+        ...skinDividerVars(skinId),
+        isolation: 'isolate',
         alignSelf: 'stretch',
         width: '100%',
         height: '100%',
@@ -1976,7 +2154,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
         display: 'flex',
         flexDirection: 'row',
         overflow: 'hidden',
-        background: themeTokens.bgApp,
+        background: skinActive ? 'transparent' : themeTokens.bgApp,
         gap: 0,
         padding: 0,
         boxSizing: 'border-box',
@@ -2016,9 +2194,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             width: explorerWidth,
             height: '100%',
             minHeight: 0,
-            background: themeTokens.bgCard,
+            background: skinActive ? 'transparent' : skinTk.bgCard,
             borderRadius: 10,
-            border: `1px solid ${themeTokens.border}`,
+            border: skinActive ? 'none' : `1px solid ${skinTk.border}`,
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
@@ -2029,10 +2207,11 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
         >
           {/* Header Segment Switcher: Arquivos | Git | Issues */}
           <div
+            className="skin-bar"
             style={{
               padding: '6px 8px',
-              borderBottom: `1px solid ${themeTokens.border}`,
-              background: isEffectiveDark ? '#141416' : '#f8f8f8',
+              borderBottom: `1px solid ${skinTk.border}`,
+              background: skinActive ? 'transparent' : isEffectiveDark ? '#141416' : '#f8f8f8',
               display: 'flex',
               alignItems: 'center',
               gap: 4,
@@ -2043,6 +2222,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             <button
               type="button"
               onClick={() => setSidebarTab('files')}
+              className="skin-tab"
+              data-on={sidebarTab === 'files' ? '1' : undefined}
               title="Explorador de Arquivos"
               style={{
                 flex: 1,
@@ -2057,12 +2238,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 border: 'none',
                 cursor: 'pointer',
                 background: sidebarTab === 'files' ? (isEffectiveDark ? '#232323' : '#ffffff') : 'transparent',
-                color: sidebarTab === 'files' ? themeTokens.textPrimary : themeTokens.textSecondary,
+                color: sidebarTab === 'files' ? skinTk.textPrimary : skinTk.textSecondary,
                 boxShadow: sidebarTab === 'files' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none',
                 transition: 'all 0.15s ease',
               }}
             >
-              <FolderOpen size={13} color={sidebarTab === 'files' ? accentColor : themeTokens.textSecondary} />
+              <FolderOpen size={13} color={sidebarTab === 'files' ? accentColor : skinTk.textSecondary} />
               <span>Arquivos</span>
             </button>
 
@@ -2070,6 +2251,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             <button
               type="button"
               onClick={() => setSidebarTab('git')}
+              className="skin-tab"
+              data-on={sidebarTab === 'git' ? '1' : undefined}
               title="Controle de Versão (Git)"
               style={{
                 flex: 1,
@@ -2084,12 +2267,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 border: 'none',
                 cursor: 'pointer',
                 background: sidebarTab === 'git' ? (isEffectiveDark ? '#232323' : '#ffffff') : 'transparent',
-                color: sidebarTab === 'git' ? themeTokens.textPrimary : themeTokens.textSecondary,
+                color: sidebarTab === 'git' ? skinTk.textPrimary : skinTk.textSecondary,
                 boxShadow: sidebarTab === 'git' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none',
                 transition: 'all 0.15s ease',
               }}
             >
-              <GitBranch size={13} color={sidebarTab === 'git' ? accentColor : themeTokens.textSecondary} />
+              <GitBranch size={13} color={sidebarTab === 'git' ? accentColor : skinTk.textSecondary} />
               <span>Git</span>
               {(gitModifiedCount ?? 0) > 0 && (
                 <span
@@ -2109,6 +2292,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             <button
               type="button"
               onClick={() => setSidebarTab('issues')}
+              className="skin-tab"
+              data-on={sidebarTab === 'issues' ? '1' : undefined}
               title="Issues do GitHub"
               style={{
                 flex: 1,
@@ -2123,12 +2308,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 border: 'none',
                 cursor: 'pointer',
                 background: sidebarTab === 'issues' ? (isEffectiveDark ? '#232323' : '#ffffff') : 'transparent',
-                color: sidebarTab === 'issues' ? themeTokens.textPrimary : themeTokens.textSecondary,
+                color: sidebarTab === 'issues' ? skinTk.textPrimary : skinTk.textSecondary,
                 boxShadow: sidebarTab === 'issues' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none',
                 transition: 'all 0.15s ease',
               }}
             >
-              <CircleDot size={13} color={sidebarTab === 'issues' ? '#22c55e' : themeTokens.textSecondary} />
+              <CircleDot size={13} color={sidebarTab === 'issues' ? '#22c55e' : skinTk.textSecondary} />
               <span>Issues</span>
               {openIssuesCount > 0 && (
                 <span
@@ -2154,7 +2339,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           <div
             style={{
               padding: '10px 12px',
-              borderBottom: `1px solid ${themeTokens.border}`,
+              borderBottom: `1px solid ${skinTk.border}`,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
@@ -2163,13 +2348,13 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: themeTokens.textPrimary, whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: skinTk.textPrimary, whiteSpace: 'nowrap' }}>
                 Explorer
               </span>
               <span
                 style={{
                   fontSize: 11,
-                  color: themeTokens.textMuted,
+                  color: skinTk.textMuted,
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -2189,7 +2374,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 style={{
                   background: isSearchOpen ? `${accentColor}22` : 'transparent',
                   border: 'none',
-                  color: isSearchOpen ? accentColor : themeTokens.textSecondary,
+                  color: isSearchOpen ? accentColor : skinTk.textSecondary,
                   padding: 4,
                   borderRadius: 4,
                   cursor: 'pointer',
@@ -2203,12 +2388,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               {/* Novo Arquivo */}
               <button
                 type="button"
-                onClick={onCreateNewFile}
+                onClick={() => startCreating(false)}
                 title="Novo Arquivo"
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  color: themeTokens.textSecondary,
+                  color: skinTk.textSecondary,
                   padding: 4,
                   borderRadius: 4,
                   cursor: 'pointer',
@@ -2222,12 +2407,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               {/* Nova Pasta */}
               <button
                 type="button"
-                onClick={onCreateNewFolder}
+                onClick={() => startCreating(true)}
                 title="Nova Pasta"
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  color: themeTokens.textSecondary,
+                  color: skinTk.textSecondary,
                   padding: 4,
                   borderRadius: 4,
                   cursor: 'pointer',
@@ -2246,7 +2431,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  color: themeTokens.textSecondary,
+                  color: skinTk.textSecondary,
                   padding: 4,
                   borderRadius: 4,
                   cursor: 'pointer',
@@ -2264,14 +2449,14 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             <div
               style={{
                 padding: '6px 10px',
-                borderBottom: `1px solid ${themeTokens.border}`,
+                borderBottom: `1px solid ${skinTk.border}`,
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
                 background: isEffectiveDark ? '#161616' : '#f8f8f8',
               }}
             >
-              <Search size={12} color={themeTokens.textSecondary} />
+              <Search size={12} color={skinTk.textSecondary} />
               <input
                 type="text"
                 value={searchQuery}
@@ -2284,7 +2469,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   border: 'none',
                   outline: 'none',
                   fontSize: 11,
-                  color: themeTokens.textPrimary,
+                  color: skinTk.textPrimary,
                   fontFamily: 'inherit',
                 }}
               />
@@ -2295,7 +2480,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   style={{
                     background: 'transparent',
                     border: 'none',
-                    color: themeTokens.textSecondary,
+                    color: skinTk.textSecondary,
                     padding: 2,
                     cursor: 'pointer',
                   }}
@@ -2308,7 +2493,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
 
           {/* Recursive File Tree Container */}
           <div
+            onDragOver={(e) => dragOverTree(e, workspacePath)}
+            onDragLeave={() => setDropTarget((cur) => (cur === workspacePath ? null : cur))}
+            onDrop={(e) => handleTreeDrop(e, workspacePath)}
             style={{
+              background: dropTarget === workspacePath ? hexToRgba(accentColor, 0.06) : 'transparent',
+              transition: 'background 0.15s ease',
               flex: 1,
               overflowY: 'auto',
               overflowX: 'hidden',
@@ -2318,20 +2508,21 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               gap: 1,
             }}
           >
+            {creating && creating.parent === workspacePath && renderCreateInput(0)}
             {filteredTree.length === 0 ? (
               <div
                 style={{
                   padding: '24px 12px',
                   textAlign: 'center',
                   fontSize: 11.5,
-                  color: themeTokens.textMuted,
+                  color: skinTk.textMuted,
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
                   gap: 8,
                 }}
               >
-                <FolderOpen size={24} strokeWidth={1.5} color={themeTokens.textMuted} />
+                <FolderOpen size={24} strokeWidth={1.5} color={skinTk.textMuted} />
                 <span>Nenhum arquivo encontrado</span>
               </div>
             ) : (
@@ -2354,9 +2545,13 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                           };
                           e.dataTransfer.setData('application/json', JSON.stringify(dragData));
                           e.dataTransfer.setData('text/plain', item.path);
-                          e.dataTransfer.effectAllowed = 'copy';
+                          e.dataTransfer.effectAllowed = 'copyMove';
                         }}
+                        onDragOver={isDir ? (e) => dragOverTree(e, item.path) : undefined}
+                        onDragLeave={isDir ? () => setDropTarget((cur) => (cur === item.path ? null : cur)) : undefined}
+                        onDrop={isDir ? (e) => handleTreeDrop(e, item.path) : undefined}
                         onClick={() => {
+                          setSelectedDir(isDir ? item.path : item.path.split('/').slice(0, -1).join('/') || null);
                           if (isDir) {
                             onToggleFolder(item.path);
                           } else {
@@ -2378,7 +2573,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                           paddingRight: 6,
                           height: 24,
                           borderRadius: 4,
-                          background: isFileActive ? hexToRgba(accentColor, 0.12) : 'transparent',
+                          background: dropTarget === item.path ? hexToRgba(accentColor, 0.18) : isFileActive ? hexToRgba(accentColor, 0.12) : 'transparent',
                           display: 'flex',
                           alignItems: 'center',
                           gap: 6,
@@ -2386,10 +2581,10 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                           whiteSpace: 'nowrap',
                           userSelect: 'none',
                           transition: 'background 0.1s ease',
-                          color: isFileActive ? themeTokens.textPrimary : themeTokens.textSecondary,
+                          color: isFileActive ? skinTk.textPrimary : skinTk.textSecondary,
                         }}
                         onMouseEnter={(e) => {
-                          if (!isFileActive) e.currentTarget.style.background = themeTokens.hoverBg;
+                          if (!isFileActive) e.currentTarget.style.background = skinTk.hoverBg;
                         }}
                         onMouseLeave={(e) => {
                           if (!isFileActive) e.currentTarget.style.background = 'transparent';
@@ -2404,7 +2599,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                color: themeTokens.textSecondary,
+                                color: skinTk.textSecondary,
                                 flexShrink: 0,
                               }}
                             >
@@ -2438,7 +2633,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       </div>
 
                       {/* Sub-children */}
-                      {isDir && isExpanded && item.children && item.children.length > 0 && (
+                      {isDir && isExpanded && ((item.children && item.children.length > 0) || (creating && creating.parent === item.path)) && (
                         <div style={{ width: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
                           <div
                             style={{
@@ -2451,7 +2646,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                               pointerEvents: 'none',
                             }}
                           />
-                          {item.children.map((child) => renderTreeItem(child, depth + 1))}
+                          {creating && creating.parent === item.path && renderCreateInput(depth + 1)}
+                          {(item.children || []).map((child) => renderTreeItem(child, depth + 1))}
                         </div>
                       )}
                     </div>
@@ -2470,6 +2666,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           {/* ========================================================= */}
           {sidebarTab === 'git' && (
             <div
+              className="skin-bar"
               style={{
                 flex: '1 1 0',
                 display: 'flex',
@@ -2484,7 +2681,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 onOpenPreview={() => {}}
                 activeTab="git"
                 workspacePath={workspacePath}
-                themeTokens={themeTokens}
+                themeTokens={skinTk}
                 isEffectiveDark={isEffectiveDark}
                 accentColor={accentColor}
                 accentTextColor="#ffffff"
@@ -2512,6 +2709,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           {/* ========================================================= */}
           {sidebarTab === 'issues' && (
             <div
+              className="skin-bar"
               style={{
                 flex: '1 1 0',
                 display: 'flex',
@@ -2525,7 +2723,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               <div
                 style={{
                   padding: '8px 10px',
-                  borderBottom: `1px solid ${themeTokens.border}`,
+                  borderBottom: `1px solid ${skinTk.border}`,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
@@ -2534,7 +2732,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                  <span style={{ fontSize: 11.5, fontWeight: 500, color: themeTokens.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 500, color: skinTk.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {gitRepoName.split('/').pop() || 'aura-dev'}
                   </span>
                 </div>
@@ -2547,7 +2745,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     style={{
                       background: 'transparent',
                       border: 'none',
-                      color: themeTokens.textSecondary,
+                      color: skinTk.textSecondary,
                       padding: 4,
                       borderRadius: 4,
                       cursor: 'pointer',
@@ -2569,7 +2767,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     style={{
                       background: 'transparent',
                       border: 'none',
-                      color: themeTokens.textSecondary,
+                      color: skinTk.textSecondary,
                       padding: 4,
                       borderRadius: 4,
                       cursor: 'pointer',
@@ -2602,9 +2800,10 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
 
               {/* Search & Filter bar */}
               <div
+                className="skin-strip"
                 style={{
                   padding: '6px 10px',
-                  borderBottom: `1px solid ${themeTokens.border}`,
+                  borderBottom: `1px solid ${skinTk.border}`,
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 6,
@@ -2614,6 +2813,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               >
                 <div ref={issuesFilterRef} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div
+                  className="skin-field"
                   style={{
                     flex: 1,
                     minWidth: 0,
@@ -2623,10 +2823,10 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     background: isEffectiveDark ? '#1f1f1f' : '#ffffff',
                     padding: '4px 8px',
                     borderRadius: 5,
-                    border: `1px solid ${themeTokens.border}`,
+                    border: `1px solid ${skinTk.border}`,
                   }}
                 >
-                  <Search size={11} color={themeTokens.textSecondary} />
+                  <Search size={11} color={skinTk.textSecondary} />
                   <input
                     type="text"
                     value={issuesSearchQuery}
@@ -2638,7 +2838,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       border: 'none',
                       outline: 'none',
                       fontSize: 10.5,
-                      color: themeTokens.textPrimary,
+                      color: skinTk.textPrimary,
                       fontFamily: 'inherit',
                     }}
                   />
@@ -2646,7 +2846,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     <button
                       type="button"
                       onClick={() => setIssuesSearchQuery('')}
-                      style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 1 }}
+                      style={{ background: 'transparent', border: 'none', color: skinTk.textSecondary, cursor: 'pointer', padding: 1 }}
                     >
                       <X size={11} />
                     </button>
@@ -2658,6 +2858,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     type="button"
                     onClick={() => setIsIssuesFilterOpen((v) => !v)}
                     title="Filtros"
+                    className="skin-field"
                     style={{
                       position: 'relative',
                       width: 26,
@@ -2667,9 +2868,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       alignItems: 'center',
                       justifyContent: 'center',
                       borderRadius: 5,
-                      border: `1px solid ${themeTokens.border}`,
+                      border: `1px solid ${skinTk.border}`,
                       background: isIssuesFilterOpen ? `${accentColor}22` : (isEffectiveDark ? '#1f1f1f' : '#ffffff'),
-                      color: activeIssueFilters > 0 || isIssuesFilterOpen ? accentColor : themeTokens.textSecondary,
+                      color: activeIssueFilters > 0 || isIssuesFilterOpen ? accentColor : skinTk.textSecondary,
                       cursor: 'pointer',
                     }}
                   >
@@ -2692,12 +2893,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                         flexDirection: 'column',
                         gap: 2,
                         borderRadius: 8,
-                        border: `1px solid ${themeTokens.border}`,
+                        border: `1px solid ${skinTk.border}`,
                         background: isEffectiveDark ? '#1c1c1c' : '#ffffff',
                         boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
                       }}
                     >
-                      <div style={{ padding: '2px 8px', fontSize: 9.5, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', color: themeTokens.textMuted }}>Estado</div>
+                      <div style={{ padding: '2px 8px', fontSize: 9.5, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', color: skinTk.textMuted }}>Estado</div>
                         <button
                           type="button"
                           onClick={() => setIssuesFilter('open')}
@@ -2706,7 +2907,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                             padding: '5px 8px', fontSize: 11, borderRadius: 4, border: 'none', cursor: 'pointer',
                             fontWeight: issuesFilter === 'open' ? 600 : 500,
                             background: issuesFilter === 'open' ? (isEffectiveDark ? '#2a2a2a' : '#e5e5e5') : 'transparent',
-                            color: issuesFilter === 'open' ? '#22c55e' : themeTokens.textSecondary,
+                            color: issuesFilter === 'open' ? '#22c55e' : skinTk.textSecondary,
                           }}
                         >
                           <span>Abertas</span>
@@ -2720,7 +2921,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                             padding: '5px 8px', fontSize: 11, borderRadius: 4, border: 'none', cursor: 'pointer',
                             fontWeight: issuesFilter === 'closed' ? 600 : 500,
                             background: issuesFilter === 'closed' ? (isEffectiveDark ? '#2a2a2a' : '#e5e5e5') : 'transparent',
-                            color: issuesFilter === 'closed' ? '#a855f7' : themeTokens.textSecondary,
+                            color: issuesFilter === 'closed' ? '#a855f7' : skinTk.textSecondary,
                           }}
                         >
                           <span>Fechadas</span>
@@ -2734,14 +2935,14 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                             padding: '5px 8px', fontSize: 11, borderRadius: 4, border: 'none', cursor: 'pointer',
                             fontWeight: issuesFilter === 'all' ? 600 : 500,
                             background: issuesFilter === 'all' ? (isEffectiveDark ? '#2a2a2a' : '#e5e5e5') : 'transparent',
-                            color: issuesFilter === 'all' ? themeTokens.textPrimary : themeTokens.textSecondary,
+                            color: issuesFilter === 'all' ? skinTk.textPrimary : skinTk.textSecondary,
                           }}
                         >
                           <span>Todas</span>
                           <span>{scopedIssues.length}</span>
                         </button>
 
-                      <div style={{ height: 1, margin: '4px 0', background: themeTokens.border }} />
+                      <div style={{ height: 1, margin: '4px 0', background: skinTk.border }} />
                       <button
                         type="button"
                         onClick={() => {
@@ -2755,7 +2956,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                           padding: '5px 8px', fontSize: 11, borderRadius: 4, border: 'none', cursor: 'pointer',
                           fontWeight: onlyMyIssues ? 600 : 500,
                           background: onlyMyIssues ? `${accentColor}22` : 'transparent',
-                          color: onlyMyIssues ? accentColor : themeTokens.textSecondary,
+                          color: onlyMyIssues ? accentColor : skinTk.textSecondary,
                         }}
                       >
                         <User size={12} />
@@ -2785,14 +2986,14 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       padding: '30px 12px',
                       textAlign: 'center',
                       fontSize: 11,
-                      color: themeTokens.textMuted,
+                      color: skinTk.textMuted,
                       display: 'flex',
                       flexDirection: 'column',
                       alignItems: 'center',
                       gap: 8,
                     }}
                   >
-                    <CircleDot size={24} strokeWidth={1.5} color={themeTokens.textMuted} />
+                    <CircleDot size={24} strokeWidth={1.5} color={skinTk.textMuted} />
                     <span>Nenhuma issue encontrada</span>
                     <button
                       type="button"
@@ -2800,7 +3001,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       style={{
                         background: 'transparent',
                         border: 'none',
-                        color: themeTokens.textSecondary,
+                        color: skinTk.textSecondary,
                         fontSize: 10.5,
                         padding: '4px 8px',
                         borderRadius: 4,
@@ -2838,7 +3039,10 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     return (
                       <div
                         key={issue.number}
+                        className="skin-tab"
                         style={{
+                          textTransform: 'none',
+                          letterSpacing: 'normal',
                           padding: 0,
                           overflow: 'hidden',
                           borderRadius: 6,
@@ -2876,7 +3080,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                                     </div>
                                   ))}
                                 </div>
-                                <span title={assigneeList.map((a) => `@${a.login}`).join(', ')} style={{ fontSize: 10.5, color: themeTokens.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                                <span title={assigneeList.map((a) => `@${a.login}`).join(', ')} style={{ fontSize: 10.5, color: skinTk.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
                                   {assigneeList.map((a) => a.login).join(', ')}
                                 </span>
                               </>
@@ -2895,7 +3099,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                                 onMouseDown={(e) => e.preventDefault()}
                                 onClick={() => setIssueMenuOpen((cur) => (cur === issue.number ? null : issue.number))}
                                 title="Mais ações"
-                                style={{ background: issueMenuOpen === issue.number ? (isEffectiveDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)') : 'transparent', border: 'none', color: themeTokens.textSecondary, padding: 2.5, borderRadius: 3, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                                style={{ background: issueMenuOpen === issue.number ? (isEffectiveDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)') : 'transparent', border: 'none', color: skinTk.textSecondary, padding: 2.5, borderRadius: 3, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
                               >
                                 <MoreHorizontal size={13} />
                               </button>
@@ -2911,11 +3115,11 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                                       <div
                                         key={label}
                                         onClick={() => { setIssueMenuOpen(null); run(); }}
-                                        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', borderRadius: 5, fontSize: 11.5, color: themeTokens.textPrimary, cursor: 'pointer' }}
-                                        onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+                                        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', borderRadius: 5, fontSize: 11.5, color: skinTk.textPrimary, cursor: 'pointer' }}
+                                        onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
                                         onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                                       >
-                                        <span style={{ display: 'flex', color: themeTokens.textSecondary }}>{icon}</span>
+                                        <span style={{ display: 'flex', color: skinTk.textSecondary }}>{icon}</span>
                                         <span>{label}</span>
                                       </div>
                                     ))}
@@ -2942,7 +3146,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                                               </div>
                                             ))}
                                           </div>
-                                          <span style={{ fontSize: 10.5, color: themeTokens.textMuted }}>{assigneeList.map((a) => a.login).join(', ')}</span>
+                                          <span style={{ fontSize: 10.5, color: skinTk.textMuted }}>{assigneeList.map((a) => a.login).join(', ')}</span>
                                         </div>
                                       )}
                                     </div>
@@ -2963,7 +3167,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                                 gap: 2.5,
                                 background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
                                 border: 'none',
-                                color: themeTokens.textPrimary,
+                                color: skinTk.textPrimary,
                                 padding: '2px 5px',
                                 borderRadius: 3,
                                 cursor: 'pointer',
@@ -2976,7 +3180,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                                 e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.1)';
                               }}
                               onMouseLeave={(e) => {
-                                e.currentTarget.style.color = themeTokens.textPrimary;
+                                e.currentTarget.style.color = skinTk.textPrimary;
                                 e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
                               }}
                             >
@@ -2990,7 +3194,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                           style={{
                             fontSize: 10.5,
                             fontWeight: 400,
-                            color: themeTokens.textPrimary,
+                            color: skinTk.textPrimary,
                             lineHeight: 1.25,
                             wordBreak: 'break-word',
                             overflow: 'hidden',
@@ -3001,7 +3205,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                             padding: '6px 7px 7px',
                           }}
                         >
-                          <span style={{ color: themeTokens.textMuted, fontWeight: 500, marginRight: 5 }}>#{issue.number}</span>
+                          <span style={{ color: skinTk.textMuted, fontWeight: 500, marginRight: 5 }}>#{issue.number}</span>
                           {issue.title}
                         </div>
                       </div>
@@ -3016,13 +3220,13 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           <div
             style={{
               padding: '6px 10px',
-              borderTop: `1px solid ${themeTokens.border}`,
+              borderTop: `1px solid ${skinTk.border}`,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
               fontSize: 11,
-              color: themeTokens.textMuted,
-              background: isEffectiveDark ? '#121214' : '#f8f8f8',
+              color: skinTk.textMuted,
+              background: skinActive ? 'transparent' : isEffectiveDark ? '#121214' : '#f8f8f8',
               flexShrink: 0,
               gap: 6,
             }}
@@ -3053,7 +3257,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               <span
                 style={{
                   fontWeight: 600,
-                  color: themeTokens.textPrimary,
+                  color: skinTk.textPrimary,
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -3076,7 +3280,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  color: isSyncingGit ? accentColor : themeTokens.textSecondary,
+                  color: isSyncingGit ? accentColor : skinTk.textSecondary,
                   cursor: isSyncingGit ? 'not-allowed' : 'pointer',
                   padding: '3px 5px',
                   borderRadius: 4,
@@ -3114,7 +3318,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  color: openIssuesCount > 0 ? '#22c55e' : themeTokens.textSecondary,
+                  color: openIssuesCount > 0 ? '#22c55e' : skinTk.textSecondary,
                   cursor: 'pointer',
                   padding: '3px 5px',
                   borderRadius: 4,
@@ -3132,11 +3336,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   e.currentTarget.style.background = 'transparent';
                 }}
               >
-                <CircleDot size={11} color={openIssuesCount > 0 ? '#22c55e' : themeTokens.textSecondary} />
+                <CircleDot size={11} color={openIssuesCount > 0 ? '#22c55e' : skinTk.textSecondary} />
                 <span>{openIssuesCount}</span>
               </button>
             </div>
           </div>
+          <div aria-hidden style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none' }}><TerminalSkinOverlay skin={skinId} region="sidebar" /></div>
         </div>
       )}
 
@@ -3162,9 +3367,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           flex: '1 1 0',
           height: '100%',
           minWidth: 0,
-          background: themeTokens.bgCard,
+          background: skinActive ? 'transparent' : themeTokens.bgCard,
           borderRadius: 10,
-          border: `1px solid ${themeTokens.border}`,
+          border: skinActive ? 'none' : `1px solid ${themeTokens.border}`,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -3173,10 +3378,11 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
       >
         {/* Terminal Header Tabs Bar */}
         <div
+          className="skin-bar"
           style={{
             height: 38,
             padding: '0 8px',
-            background: isEffectiveDark ? '#161616' : '#f2f2f2',
+            background: skinActive ? 'transparent' : isEffectiveDark ? '#161616' : '#f2f2f2',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
@@ -3198,7 +3404,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               style={{
                 background: 'transparent',
                 border: 'none',
-                color: themeTokens.textSecondary,
+                color: skinTk.textSecondary,
                 padding: '4px 6px',
                 borderRadius: 5,
                 cursor: 'pointer',
@@ -3206,8 +3412,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 alignItems: 'center',
                 flexShrink: 0,
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = themeTokens.textPrimary)}
-              onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textSecondary)}
+              onMouseEnter={(e) => (e.currentTarget.style.color = skinTk.textPrimary)}
+              onMouseLeave={(e) => (e.currentTarget.style.color = skinTk.textSecondary)}
             >
               <PanelLeft size={15} />
             </button>
@@ -3219,7 +3425,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               const cur = dockTabs.find((t) => t.id === cliDockTab) || dockTabs[0];
               const countBadge = (count: number | undefined, active: boolean) =>
                 count !== undefined ? (
-                  <span style={{ fontSize: 10, fontWeight: 600, padding: '0 5.5px', borderRadius: 10, height: 14, display: 'inline-flex', alignItems: 'center', background: isEffectiveDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.07)', color: active ? themeTokens.textPrimary : themeTokens.textSecondary }}>{count}</span>
+                  <span style={{ fontSize: 10, fontWeight: 600, padding: '0 5.5px', borderRadius: 10, height: 14, display: 'inline-flex', alignItems: 'center', background: isEffectiveDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.07)', color: active ? skinTk.textPrimary : skinTk.textSecondary }}>{count}</span>
                 ) : null;
               return (
                 <>
@@ -3251,9 +3457,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                         onToast?.('Problemas enviados para a IA do terminal ativo');
                       }}
                       title="Enviar os problemas para a IA do terminal ativo resolver"
-                      style={{ display: 'flex', alignItems: 'center', height: 26, padding: '0 5px', borderRadius: 5, border: 'none', background: 'transparent', cursor: 'pointer', color: themeTokens.textSecondary, flexShrink: 0 }}
+                      style={{ display: 'flex', alignItems: 'center', height: 26, padding: '0 5px', borderRadius: 5, border: 'none', background: 'transparent', cursor: 'pointer', color: skinTk.textSecondary, flexShrink: 0 }}
                       onMouseEnter={(e) => (e.currentTarget.style.color = accentColor)}
-                      onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textSecondary)}
+                      onMouseLeave={(e) => (e.currentTarget.style.color = skinTk.textSecondary)}
                     >
                       <ArrowRight size={14} />
                     </button>
@@ -3262,25 +3468,28 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     <button
                       type="button"
                       onClick={() => setDockMenuOpen((v) => !v)}
+                      className="skin-chip"
                       title="Painel: Problems, Output, Debug console, Terminal, Ports, Tarefas"
-                      style={{ height: 26, padding: '0 8px 0 10px', borderRadius: 5, border: 'none', background: isEffectiveDark ? '#2E2E2E' : '#e5e7eb', color: themeTokens.textPrimary, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap' }}
+                      style={{ height: 26, padding: '0 8px 0 10px', borderRadius: 5, border: 'none', background: isEffectiveDark ? '#2E2E2E' : '#e5e7eb', color: skinTk.textPrimary, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap' }}
                     >
                       <span>{cur.label}</span>
                       {countBadge(cur.count, true)}
-                      <ChevronDown size={12} color={themeTokens.textSecondary} style={{ transform: dockMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
+                      <ChevronDown size={12} color={skinTk.textSecondary} style={{ transform: dockMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
                     </button>
                     {dockMenuOpen && (
                       <>
                         <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setDockMenuOpen(false)} />
-                        <div style={{ position: 'absolute', top: 30, left: 0, minWidth: 170, background: isEffectiveDark ? '#1f1f1f' : '#ffffff', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', padding: 4, zIndex: 100, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <div className="skin-menu" style={{ position: 'absolute', top: 30, left: 0, minWidth: 170, background: isEffectiveDark ? '#1f1f1f' : '#ffffff', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', padding: 4, zIndex: 100, display: 'flex', flexDirection: 'column', gap: 1 }}>
                           {dockTabs.map((st) => {
                             const isActive = cur.id === st.id;
                             return (
                               <div
                                 key={st.id}
+                                className="skin-tab"
+                                data-on={isActive ? '1' : undefined}
                                 onClick={() => { setCliDockTab(st.id); setViewer(null); setDockMenuOpen(false); }}
-                                style={{ height: 28, padding: '0 10px', borderRadius: 5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, cursor: 'pointer', fontSize: 12, fontWeight: isActive ? 500 : 400, color: isActive ? themeTokens.textPrimary : themeTokens.textSecondary, background: isActive ? (isEffectiveDark ? '#2E2E2E' : '#e5e7eb') : 'transparent' }}
-                                onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = themeTokens.hoverBg; }}
+                                style={{ height: 28, padding: '0 10px', borderRadius: 5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, cursor: 'pointer', fontSize: 12, fontWeight: isActive ? 500 : 400, color: isActive ? skinTk.textPrimary : skinTk.textSecondary, background: isActive ? (isEffectiveDark ? '#2E2E2E' : '#e5e7eb') : 'transparent' }}
+                                onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = skinTk.hoverBg; }}
                                 onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
                               >
                                 <span>{st.label}</span>
@@ -3342,7 +3551,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     if (el) tabRefs.current.set(ws.id, el);
                     else tabRefs.current.delete(ws.id);
                   }}
-                  className={`workspace-tab ${isActive ? 'active' : ''} ${ws.gridMode !== '1x1' ? 'is-grid' : ''}`}
+                  data-on={isActive ? '1' : undefined}
+                  className={`workspace-tab skin-tab ${isActive ? 'active' : ''} ${ws.gridMode !== '1x1' ? 'is-grid' : ''}`}
                   onClick={() => { handleSelectWorkspace(ws.id); setCliDockTab('terminal'); setViewer(null); }}
                   onMouseDown={(e) => {
                     if (e.button === 1) {
@@ -3421,7 +3631,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                         background: isEffectiveDark ? '#141416' : '#ffffff',
                         border: 'none',
                         boxShadow: 'none',
-                        color: themeTokens.textPrimary,
+                        color: skinTk.textPrimary,
                         fontSize: 11.5,
                         fontWeight: 400,
                         outline: 'none',
@@ -3447,7 +3657,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                         style={{
                           fontSize: 12,
                           fontWeight: 400,
-                          color: isActive ? themeTokens.textPrimary : themeTokens.textSecondary,
+                          color: isActive ? skinTk.textPrimary : skinTk.textSecondary,
                           whiteSpace: 'nowrap',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
@@ -3471,7 +3681,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     style={{
                       background: 'transparent',
                       border: 'none',
-                      color: themeTokens.textMuted,
+                      color: skinTk.textMuted,
                       padding: 2,
                       borderRadius: 3,
                       cursor: 'pointer',
@@ -3487,7 +3697,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       e.currentTarget.style.opacity = '1';
                     }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.color = themeTokens.textMuted;
+                      e.currentTarget.style.color = skinTk.textMuted;
                       e.currentTarget.style.opacity = isActive ? '0.8' : '0.4';
                     }}
                   >
@@ -3513,7 +3723,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   borderRadius: 6,
                   background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
                   border: 'none',
-                  color: themeTokens.textSecondary,
+                  color: skinTk.textSecondary,
                   display: 'flex',
                   alignItems: 'center',
                   gap: 4,
@@ -3524,11 +3734,11 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   flexShrink: 0,
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.color = themeTokens.textPrimary;
+                  e.currentTarget.style.color = skinTk.textPrimary;
                   e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(0, 0, 0, 0.1)';
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.color = themeTokens.textSecondary;
+                  e.currentTarget.style.color = skinTk.textSecondary;
                   e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
                 }}
               >
@@ -3538,13 +3748,14 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               {/* Presets Popup Dropdown */}
               {newTabMenuOpen && (
                 <div
+                  className="skin-menu"
                   style={{
                     position: 'absolute',
                     top: 'calc(100% + 4px)',
                     left: 0,
                     width: 220,
                     background: isEffectiveDark ? '#1c1c1c' : '#ffffff',
-                    border: `1px solid ${themeTokens.border}`,
+                    border: `1px solid ${skinTk.border}`,
                     borderRadius: 8,
                     padding: '4px 0',
                     boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
@@ -3554,13 +3765,13 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   }}
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <div style={{ padding: '4px 10px', fontSize: 10, fontWeight: 700, color: themeTokens.textMuted, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                  <div style={{ padding: '4px 10px', fontSize: 10, fontWeight: 700, color: skinTk.textMuted, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
                     Áreas de Trabalho & Layouts
                   </div>
                   <div
                     onClick={() => handleCreateWorkspace('1x1')}
-                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
                     <Square size={13} color={accentColor} />
@@ -3568,8 +3779,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   </div>
                   <div
                     onClick={() => handleCreateWorkspace('1x2')}
-                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
                     <Columns2 size={13} color={accentColor} />
@@ -3577,8 +3788,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   </div>
                   <div
                     onClick={() => handleCreateWorkspace('2x2')}
-                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
                     <Grid2x2 size={13} color={accentColor} />
@@ -3586,8 +3797,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   </div>
                   <div
                     onClick={() => handleCreateWorkspace('2x1')}
-                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
                     <Rows2 size={13} color={accentColor} />
@@ -3595,23 +3806,23 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   </div>
                   <div
                     onClick={() => handleCreateWorkspace('3')}
-                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
                     <LayoutGrid size={13} color={accentColor} />
                     <span>Grid 3x (3 Terminais)</span>
                   </div>
 
-                  <div style={{ height: 1, background: themeTokens.border, margin: '4px 0' }} />
+                  <div style={{ height: 1, background: skinTk.border, margin: '4px 0' }} />
 
-                  <div style={{ padding: '4px 10px', fontSize: 10, fontWeight: 700, color: themeTokens.textMuted, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                  <div style={{ padding: '4px 10px', fontSize: 10, fontWeight: 700, color: skinTk.textMuted, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
                     CLIs de Inteligência Artificial
                   </div>
                   <div
                     onClick={() => handleCreateWorkspace('1x1', 'claude', 'Claude CLI', 'claude')}
-                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
                     <ClaudeIcon size={14} />
@@ -3619,8 +3830,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   </div>
                   <div
                     onClick={() => handleCreateWorkspace('1x1', 'antigravity', 'Antigravity CLI', 'agy')}
-                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
                     <AntigravityIcon size={14} />
@@ -3628,8 +3839,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   </div>
                   <div
                     onClick={() => handleCreateWorkspace('1x1', 'gemini', 'Gemini CLI', 'gemini')}
-                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
                     <GeminiIcon size={14} />
@@ -3637,23 +3848,23 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   </div>
                   <div
                     onClick={() => handleCreateWorkspace('1x1', 'codex', 'OpenAI Codex', 'codex')}
-                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
                     <CodexIcon size={14} />
                     <span>Codex CLI</span>
                   </div>
 
-                  <div style={{ height: 1, background: themeTokens.border, margin: '4px 0' }} />
+                  <div style={{ height: 1, background: skinTk.border, margin: '4px 0' }} />
 
-                  <div style={{ padding: '4px 10px', fontSize: 10, fontWeight: 700, color: themeTokens.textMuted, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                  <div style={{ padding: '4px 10px', fontSize: 10, fontWeight: 700, color: skinTk.textMuted, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
                     Terminais Shell & REPL
                   </div>
                   <div
                     onClick={() => handleCreateWorkspace('1x1', 'bash', 'Bash Shell', 'bash')}
-                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
                     <TerminalIcon size={14} color="#10b981" />
@@ -3661,8 +3872,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   </div>
                   <div
                     onClick={() => handleCreateWorkspace('1x1', 'node', 'Node.js REPL', 'node')}
-                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
                     <Play size={13} color="#22c55e" />
@@ -3670,8 +3881,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   </div>
                   <div
                     onClick={() => handleCreateWorkspace('1x1', 'python', 'Python REPL', 'python3')}
-                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+                    style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
                     <Play size={13} color="#3b82f6" />
@@ -3683,7 +3894,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           </div>
 
           {/* Right: Grid Layout Picker, Quick Split, Clear, Zoom Controls */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, position: 'relative' }}>
+          <div className="skin-bar" style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, position: 'relative' }}>
             {/* Grid Layout Picker Dropdown */}
             <div ref={layoutMenuRef} style={{ position: 'relative' }}>
               <button
@@ -3700,7 +3911,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   background: gridMode !== '1x1' ? hexToRgba(accentColor, 0.14) : (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)'),
                   border: 'none',
                   boxShadow: 'none',
-                  color: gridMode !== '1x1' ? accentColor : themeTokens.textSecondary,
+                  color: gridMode !== '1x1' ? accentColor : skinTk.textSecondary,
                   display: 'flex',
                   alignItems: 'center',
                   gap: 5,
@@ -3710,10 +3921,10 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   transition: 'background 0.15s ease, color 0.15s ease',
                 }}
                 onMouseEnter={(e) => {
-                  if (gridMode === '1x1') e.currentTarget.style.color = themeTokens.textPrimary;
+                  if (gridMode === '1x1') e.currentTarget.style.color = skinTk.textPrimary;
                 }}
                 onMouseLeave={(e) => {
-                  if (gridMode === '1x1') e.currentTarget.style.color = themeTokens.textSecondary;
+                  if (gridMode === '1x1') e.currentTarget.style.color = skinTk.textSecondary;
                 }}
               >
                 {gridMode === '2x2' ? (
@@ -3735,6 +3946,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               {/* Layout Dropdown Menu */}
               {layoutMenuOpen && (
                 <div
+                  className="skin-menu"
                   onClick={(e) => e.stopPropagation()}
                   style={{
                     position: 'absolute',
@@ -3751,12 +3963,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     flexDirection: 'column',
                   }}
                 >
-                  <div style={{ padding: '6px 12px 4px', fontSize: 10, fontWeight: 400, color: themeTokens.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  <div style={{ padding: '6px 12px 4px', fontSize: 10, fontWeight: 400, color: skinTk.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                     Layout de Terminais
                   </div>
 
                   {/* Visual Grid Mini-Selector */}
-                  <div style={{ padding: '6px 12px 8px', borderBottom: `1px solid ${hexToRgba(themeTokens.border, 0.4)}` }}>
+                  <div style={{ padding: '6px 12px 8px', borderBottom: `1px solid ${hexToRgba(skinTk.border, 0.4)}` }}>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 4, width: 84, height: 56, margin: '0 auto' }}>
                       <div
                         onClick={() => applyGridMode('1x1')}
@@ -3771,7 +3983,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                           justifyContent: 'center',
                           fontSize: 9,
                           fontWeight: 400,
-                          color: gridMode === '1x1' ? accentColor : themeTokens.textMuted,
+                          color: gridMode === '1x1' ? accentColor : skinTk.textMuted,
                           transition: 'background 0.12s ease',
                         }}
                       >
@@ -3790,7 +4002,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                           justifyContent: 'center',
                           fontSize: 9,
                           fontWeight: 400,
-                          color: gridMode === '1x2' || gridMode === '1x3' || gridMode === '3' || gridMode === '2x2' ? accentColor : themeTokens.textMuted,
+                          color: gridMode === '1x2' || gridMode === '1x3' || gridMode === '3' || gridMode === '2x2' ? accentColor : skinTk.textMuted,
                           transition: 'background 0.12s ease',
                         }}
                       >
@@ -3809,7 +4021,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                           justifyContent: 'center',
                           fontSize: 9,
                           fontWeight: 400,
-                          color: gridMode === '2x1' || gridMode === '3' || gridMode === '2x2' ? accentColor : themeTokens.textMuted,
+                          color: gridMode === '2x1' || gridMode === '3' || gridMode === '2x2' ? accentColor : skinTk.textMuted,
                           transition: 'background 0.12s ease',
                         }}
                       >
@@ -3828,7 +4040,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                           justifyContent: 'center',
                           fontSize: 9,
                           fontWeight: 400,
-                          color: gridMode === '2x2' ? accentColor : themeTokens.textMuted,
+                          color: gridMode === '2x2' ? accentColor : skinTk.textMuted,
                           transition: 'background 0.12s ease',
                         }}
                       >
@@ -3848,12 +4060,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       fontSize: 12,
                       fontWeight: 400,
                       cursor: 'pointer',
-                      color: gridMode === '1x1' ? accentColor : themeTokens.textPrimary,
+                      color: gridMode === '1x1' ? accentColor : skinTk.textPrimary,
                       background: gridMode === '1x1' ? hexToRgba(accentColor, 0.1) : 'transparent',
                       transition: 'background 0.12s ease',
                     }}
                     onMouseEnter={(e) => {
-                      if (gridMode !== '1x1') e.currentTarget.style.background = themeTokens.hoverBg;
+                      if (gridMode !== '1x1') e.currentTarget.style.background = skinTk.hoverBg;
                     }}
                     onMouseLeave={(e) => {
                       if (gridMode !== '1x1') e.currentTarget.style.background = 'transparent';
@@ -3874,12 +4086,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       fontSize: 12,
                       fontWeight: 400,
                       cursor: 'pointer',
-                      color: gridMode === '1x2' ? accentColor : themeTokens.textPrimary,
+                      color: gridMode === '1x2' ? accentColor : skinTk.textPrimary,
                       background: gridMode === '1x2' ? hexToRgba(accentColor, 0.1) : 'transparent',
                       transition: 'background 0.12s ease',
                     }}
                     onMouseEnter={(e) => {
-                      if (gridMode !== '1x2') e.currentTarget.style.background = themeTokens.hoverBg;
+                      if (gridMode !== '1x2') e.currentTarget.style.background = skinTk.hoverBg;
                     }}
                     onMouseLeave={(e) => {
                       if (gridMode !== '1x2') e.currentTarget.style.background = 'transparent';
@@ -3900,12 +4112,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       fontSize: 12,
                       fontWeight: 400,
                       cursor: 'pointer',
-                      color: gridMode === '2x1' ? accentColor : themeTokens.textPrimary,
+                      color: gridMode === '2x1' ? accentColor : skinTk.textPrimary,
                       background: gridMode === '2x1' ? hexToRgba(accentColor, 0.1) : 'transparent',
                       transition: 'background 0.12s ease',
                     }}
                     onMouseEnter={(e) => {
-                      if (gridMode !== '2x1') e.currentTarget.style.background = themeTokens.hoverBg;
+                      if (gridMode !== '2x1') e.currentTarget.style.background = skinTk.hoverBg;
                     }}
                     onMouseLeave={(e) => {
                       if (gridMode !== '2x1') e.currentTarget.style.background = 'transparent';
@@ -3926,12 +4138,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       fontSize: 12,
                       fontWeight: 400,
                       cursor: 'pointer',
-                      color: gridMode === '1x3' ? accentColor : themeTokens.textPrimary,
+                      color: gridMode === '1x3' ? accentColor : skinTk.textPrimary,
                       background: gridMode === '1x3' ? hexToRgba(accentColor, 0.1) : 'transparent',
                       transition: 'background 0.12s ease',
                     }}
                     onMouseEnter={(e) => {
-                      if (gridMode !== '1x3') e.currentTarget.style.background = themeTokens.hoverBg;
+                      if (gridMode !== '1x3') e.currentTarget.style.background = skinTk.hoverBg;
                     }}
                     onMouseLeave={(e) => {
                       if (gridMode !== '1x3') e.currentTarget.style.background = 'transparent';
@@ -3952,12 +4164,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       fontSize: 12,
                       fontWeight: 400,
                       cursor: 'pointer',
-                      color: gridMode === '3' ? accentColor : themeTokens.textPrimary,
+                      color: gridMode === '3' ? accentColor : skinTk.textPrimary,
                       background: gridMode === '3' ? hexToRgba(accentColor, 0.1) : 'transparent',
                       transition: 'background 0.12s ease',
                     }}
                     onMouseEnter={(e) => {
-                      if (gridMode !== '3') e.currentTarget.style.background = themeTokens.hoverBg;
+                      if (gridMode !== '3') e.currentTarget.style.background = skinTk.hoverBg;
                     }}
                     onMouseLeave={(e) => {
                       if (gridMode !== '3') e.currentTarget.style.background = 'transparent';
@@ -3978,12 +4190,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       fontSize: 12,
                       fontWeight: 400,
                       cursor: 'pointer',
-                      color: gridMode === '2x2' ? accentColor : themeTokens.textPrimary,
+                      color: gridMode === '2x2' ? accentColor : skinTk.textPrimary,
                       background: gridMode === '2x2' ? hexToRgba(accentColor, 0.1) : 'transparent',
                       transition: 'background 0.12s ease',
                     }}
                     onMouseEnter={(e) => {
-                      if (gridMode !== '2x2') e.currentTarget.style.background = themeTokens.hoverBg;
+                      if (gridMode !== '2x2') e.currentTarget.style.background = skinTk.hoverBg;
                     }}
                     onMouseLeave={(e) => {
                       if (gridMode !== '2x2') e.currentTarget.style.background = 'transparent';
@@ -4005,7 +4217,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 background: gridMode !== '1x1' ? hexToRgba(accentColor, 0.14) : 'transparent',
                 border: 'none',
                 boxShadow: 'none',
-                color: gridMode !== '1x1' ? accentColor : themeTokens.textSecondary,
+                color: gridMode !== '1x1' ? accentColor : skinTk.textSecondary,
                 padding: '4px 6px',
                 borderRadius: 4,
                 cursor: 'pointer',
@@ -4014,10 +4226,10 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 transition: 'background 0.15s ease, color 0.15s ease',
               }}
               onMouseEnter={(e) => {
-                if (gridMode === '1x1') e.currentTarget.style.color = themeTokens.textPrimary;
+                if (gridMode === '1x1') e.currentTarget.style.color = skinTk.textPrimary;
               }}
               onMouseLeave={(e) => {
-                if (gridMode === '1x1') e.currentTarget.style.color = themeTokens.textSecondary;
+                if (gridMode === '1x1') e.currentTarget.style.color = skinTk.textSecondary;
               }}
             >
               <SplitSquareVertical size={14} />
@@ -4031,15 +4243,15 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               style={{
                 background: 'transparent',
                 border: 'none',
-                color: themeTokens.textSecondary,
+                color: skinTk.textSecondary,
                 padding: '4px 6px',
                 borderRadius: 4,
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = themeTokens.textPrimary)}
-              onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textSecondary)}
+              onMouseEnter={(e) => (e.currentTarget.style.color = skinTk.textPrimary)}
+              onMouseLeave={(e) => (e.currentTarget.style.color = skinTk.textSecondary)}
             >
               <Eraser size={13} />
             </button>
@@ -4083,7 +4295,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   style={{
                     background: 'transparent',
                     border: 'none',
-                    color: themeTokens.textSecondary,
+                    color: skinTk.textSecondary,
                     padding: '4px',
                     borderRadius: 4,
                     cursor: 'pointer',
@@ -4100,7 +4312,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   style={{
                     background: 'transparent',
                     border: 'none',
-                    color: themeTokens.textSecondary,
+                    color: skinTk.textSecondary,
                     padding: '4px',
                     borderRadius: 4,
                     cursor: 'pointer',
@@ -4113,6 +4325,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               </div>
             )}
           </div>
+          <div aria-hidden style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none' }}><TerminalSkinOverlay skin={skinId} region="header" /></div>
         </div>
 
         {/* Global Resizing Overlay to guarantee smooth dragging over xterm canvases */}
@@ -4205,7 +4418,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             display: viewer || (cliDockTab !== 'terminal' && renderDockContent) ? 'none' : 'flex',
             overflow: 'hidden',
             position: 'relative',
-            background: isEffectiveDark ? '#0c0c0e' : '#ffffff',
+            background: skinActive ? 'transparent' : isEffectiveDark ? '#0c0c0e' : '#ffffff',
           }}
         >
           {/* Maximize banner if a slot is maximized */}
@@ -4381,6 +4594,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
       {/* =================================================================== */}
       {fileContextMenu && (
         <div
+          data-file-ctx-menu
           onClick={(e) => e.stopPropagation()}
           style={{
             position: 'fixed',
@@ -4485,8 +4699,37 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             <Copy size={13} color={themeTokens.textSecondary} />
             <span>Copiar Caminho Relativo</span>
           </div>
+
+          <div style={{ height: 1, margin: '4px 0', background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }} />
+          <div
+            onClick={() => {
+              setDeleteTarget(fileContextMenu.node);
+              setFileContextMenu(null);
+            }}
+            style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: '#ef4444', transition: 'background 0.1s ease' }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            <Trash2 size={13} color="#ef4444" />
+            <span>Excluir</span>
+          </div>
         </div>
       )}
+
+      <ConfirmDeleteModal
+        isOpen={deleteTarget !== null}
+        title={deleteTarget?.isDirectory ? 'Excluir Pasta' : 'Excluir Arquivo'}
+        message={`Deseja excluir "${deleteTarget?.name}"? Esta ação não pode ser desfeita.`}
+        itemDescription={deleteTarget?.path || ''}
+        confirmLabel="Excluir"
+        cancelLabel="Cancelar"
+        isDeleting={isDeletingItem}
+        iconType="trash"
+        themeTokens={themeTokens}
+        accentColor={accentColor}
+        onConfirm={confirmDeleteItem}
+        onClose={() => setDeleteTarget(null)}
+      />
 
       {/* Modal de Confirmação: Fechar Todos os Terminais */}
       <ConfirmDeleteModal
@@ -4519,6 +4762,11 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
         onConfirm={handleConfirmCloseSingleWorkspace}
         onClose={() => setWorkspaceToClose(null)}
       />
+      {skinActive && (
+        <div aria-hidden style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none' }}>
+          <TerminalSkinOverlay skin={skinId} region="screen" />
+        </div>
+      )}
     </div>
   );
 };

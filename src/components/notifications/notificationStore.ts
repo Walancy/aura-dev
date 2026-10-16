@@ -44,7 +44,9 @@ export function addNotification(list: CenterNotification[], input: Omit<CenterNo
   const dup = list.find((n) => n.title === input.title && (n.body || '') === (input.body || '') && now - n.timestamp < 1500);
   if (dup) return list;
   const item: CenterNotification = { ...input, read: input.read ?? false, id: `n_${now}_${Math.random().toString(36).slice(2, 8)}`, timestamp: now };
-  return [item, ...list].slice(0, MAX_NOTIFICATIONS);
+  // Avisos de IA do mesmo projeto não se empilham: o novo substitui o anterior ainda não lido
+  const rest = input.projectPath && input.kind === 'ai' && !input.isUpdate ? list.filter((n) => n.read || n.isUpdate || n.kind !== 'ai' || n.projectPath !== input.projectPath) : list;
+  return [item, ...rest].slice(0, MAX_NOTIFICATIONS);
 }
 
 export const markRead = (list: CenterNotification[], id: string) => list.map((n) => (n.id === id && !n.read ? { ...n, read: true } : n));

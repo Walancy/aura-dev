@@ -56,3 +56,14 @@ test('tempo relativo', () => {
   expect(timeAgo(now - 30 * 3_600_000, now)).toBe('ontem');
   expect(timeAgo(now - 3 * 86_400_000, now)).toBe('há 3 dias');
 });
+
+test('aviso de IA do mesmo projeto substitui o anterior não lido, sem empilhar', () => {
+  let l: CenterNotification[] = [];
+  l = addNotification(l, { kind: 'ai', title: 'p: a IA terminou', body: 'um', projectPath: '/p' }, 1000);
+  l = addNotification(l, { kind: 'ai', title: 'p: a IA terminou', body: 'dois', projectPath: '/p' }, 9000);
+  l = addNotification(l, { kind: 'ai', title: 'q: a IA terminou', body: 'tres', projectPath: '/q' }, 9500);
+  expect(l.map((n) => n.body)).toEqual(['tres', 'dois']);
+  l = markAllRead(l);
+  l = addNotification(l, { kind: 'ai', title: 'p: a IA terminou', body: 'quatro', projectPath: '/p' }, 20000);
+  expect(l.length).toBe(3); // as já lidas ficam no histórico
+});

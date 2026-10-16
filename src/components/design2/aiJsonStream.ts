@@ -13,6 +13,10 @@ export class AiJsonStream {
   private stack: { ch: '{' | '['; start: number; shapes: boolean }[] = [];
   /** quantos caracteres já foram consumidos (para completar com a resposta final) */
   get consumed() { return this.text.length; }
+  /** o objeto JSON de nível mais alto já fechou (a resposta está completa) */
+  get complete() { return this.started && this.stack.length === 0 && !this.inStr; }
+  /** todo o texto recebido */
+  get raw() { return this.text; }
 
   push(chunk: string): AiStreamEvent[] {
     this.text += chunk;

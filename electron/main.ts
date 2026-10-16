@@ -8,6 +8,7 @@ import { NativeProjectsService } from './projects-service';
 import { NativePortsService } from './ports-service';
 import { DesignRoomService } from './design-room-service';
 import { setupApplicationMenu } from './menu';
+import { registerFigcraftScheme, handleFigcraftScheme } from './figcraft-protocol';
 import { NativeCommandsService } from './commands-service';
 import { quotaService } from './quota-service';
 import { modelService } from './model-service';
@@ -264,6 +265,8 @@ ipcMain.handle('pty:setAccentColor', (_event, { accentColor }) => {
   }
 });
 
+ipcMain.handle('pty:getHistoryWithSeq', (_event, { id }) => ptyService.getHistoryWithSeq(id));
+
 ipcMain.handle('pty:getHistory', (_event, { id }) => {
   return ptyService.getHistory(id);
 });
@@ -305,14 +308,39 @@ ipcMain.handle('fs:getTree', (_event, { dirPath, depth }) => {
 });
 
 // Imagens para o Design: Unsplash (com chave de acesso gratuita) ou picsum.photos (sem chave); devolve data URL
-ipcMain.handle('unsplash:image', async (_e, { query, width, height, key, index }: { query: string; width: number; height: number; key?: string; index?: number }) => {
+ipcMain.handle('unsplash:image', async (_e, { query, width, height, key, index, people, pexelsKey }: { query: string; width: number; height: number; key?: string; index?: number; people?: boolean; pexelsKey?: string }) => {
   const w = Math.max(32, Math.min(1200, Math.round(width * 2)));
   const h = Math.max(32, Math.min(1200, Math.round(height * 2)));
   const i = index || 0;
   let url = '';
   let credit = '';
+  let peopleSource = '';
   try {
-    if (key) {
+    // Foto de PESSOA: Pexels (chave gratuita, busca por descrição em retrato) e, sem ela, rostos do randomuser.me (sem chave) para avatares
+    if (people) {
+      if (pexelsKey) {
+        const orientation = width > height * 1.15 ? 'landscape' : height > width * 1.15 ? 'portrait' : 'square';
+        const r = await fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=15&orientation=${orientation}`, { headers: { Authorization: pexelsKey } });
+        if (r.ok) {
+          const j: any = await r.json();
+          const p = j.photos?.[i % (j.photos?.length || 1)];
+          if (p?.src?.original) {
+            url = `${p.src.original}?auto=compress&cs=tinysrgb&w=${w}&h=${h}&fit=crop`;
+            credit = p.photographer || '';
+            peopleSource = 'pexels';
+          }
+        }
+      }
+      if (!url && Math.max(width, height) <= 140) {
+        const q = query.toLowerCase();
+        const g = /\b(woman|women|female|girl|lady|mother|she)\b/.test(q) ? 'women' : /\b(man|men|male|boy|guy|father|he)\b/.test(q) ? 'men' : (i % 2 ? 'women' : 'men');
+        let h32 = 0;
+        for (const ch of q) h32 = (h32 * 31 + ch.charCodeAt(0)) >>> 0;
+        url = `https://randomuser.me/api/portraits/${g}/${(h32 + i * 7) % 99}.jpg`;
+        peopleSource = 'randomuser';
+      }
+    }
+    if (!url && key) {
       const orientation = width > height * 1.15 ? 'landscape' : height > width * 1.15 ? 'portrait' : 'squarish';
       const headers = { Authorization: `Client-ID ${key}` };
       const r = await fetch(`https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=10&orientation=${orientation}&content_filter=high`, { headers });
@@ -343,7 +371,7 @@ ipcMain.handle('unsplash:image', async (_e, { query, width, height, key, index }
         }
       } catch {}
     }
-    const source = wiki ? 'wikimedia' : url ? 'unsplash' : 'picsum';
+    const source = peopleSource || (wiki ? 'wikimedia' : url ? 'unsplash' : 'picsum');
     if (!url) url = `https://picsum.photos/seed/${encodeURIComponent(`${query}-${i}`)}/${w}/${h}`;
     const res = await fetch(url, { redirect: 'follow' });
     if (!res.ok) return { error: `HTTP ${res.status}` };
@@ -1115,8 +1143,8 @@ const checkCliUpdates = async () => {
 // cache + chamadas simultâneas compartilhadas: o renderer pode pedir várias vezes, cada checagem sobe vários processos node
 let cliUpdatesCache: { at: number; data: any } | null = null;
 let cliUpdatesInFlight: Promise<any> | null = null;
-ipcMain.handle('ai:checkCliUpdates', async () => {
-  if (cliUpdatesCache && Date.now() - cliUpdatesCache.at < 10 * 60 * 1000) return cliUpdatesCache.data;
+ipcMain.handle('ai:checkCliUpdates', async (_event, force?: boolean) => {
+  if (!force && cliUpdatesCache && Date.now() - cliUpdatesCache.at < 10 * 60 * 1000) return cliUpdatesCache.data;
   cliUpdatesInFlight ||= checkCliUpdates()
     .then((data) => { cliUpdatesCache = { at: Date.now(), data }; return data; })
     .finally(() => { cliUpdatesInFlight = null; });
@@ -2360,7 +2388,10 @@ ipcMain.handle(
   },
 );
 
+registerFigcraftScheme();
+
 app.whenReady().then(() => {
+  handleFigcraftScheme();
   // Desativa restrições de X-Frame-Options, COOP, COEP e frame-ancestors para que o componente de navegador
   // interno da orquestração consiga renderizar localhost e páginas externas sem erro de SAMEORIGIN ou bloqueios.
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {

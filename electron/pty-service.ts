@@ -65,6 +65,11 @@ function normalizeClaudeModel(model?: string): string {
   return model;
 }
 
+/** duração mínima de uma tarefa (Enter → silêncio) para avisar que a IA terminou */
+const MIN_TURN_MS = 4000;
+/** linhas de moldura do TUI das CLIs (rodapé, spinner, banner) que não dizem nada no resumo */
+const TUI_CHROME = /bypass permissions|esc to interrupt|to manage|shift\+tab|ctrl\+[a-z]|Checking for updates|for shortcuts|auto-update|^\s*[·✻✽✶✳*]\s.*(…|\.\.\.|tokens)|^\s*[▸▶⏵]+\s/i;
+
 export interface NativePtySession {
   id: string;
   type: string;
@@ -81,6 +86,10 @@ export interface NativePtySession {
   /** CLI de IA rodando dentro de um shell (ex.: `claude` digitado no zsh), detectada pela árvore de processos */
   aiProvider?: string | null;
   aiCheckedAt?: number;
+  /** quando o usuário (ou a orquestração) enviou um prompt com Enter; só uma tarefa assim gera o aviso de "IA terminou" */
+  turnStartedAt?: number;
+  /** nº de ordem da saída: a tela que reabre lê o histórico e descarta o que já veio nele */
+  seq?: number;
 }
 
 /** O spawn-helper do node-pty precisa de permissão de execução: instalações e empacotamentos às vezes o deixam sem ela ("posix_spawnp failed", terminal em branco) */
@@ -503,6 +512,7 @@ export class NativePtyService extends EventEmitter {
     term.onData((data: string) => {
       if (session.buffer.length > 2000) session.buffer.shift();
       session.buffer.push(data);
+      session.seq = (session.seq || 0) + 1;
       this.sessionHistories.set(id, session.buffer);
       session.lastActivity = Date.now();
       this.emit('session-data', { id, data });
@@ -556,6 +566,7 @@ export class NativePtyService extends EventEmitter {
               const cleanText = lines.join('\n');
               const lastFew = lines
                 .slice(-6)
+                .filter((l) => !TUI_CHROME.test(l))
                 .filter((l) => !l.startsWith('❯') && !l.startsWith('agy>') && !l.startsWith('╭') && !l.startsWith('╰') && !l.startsWith('│'));
               const summary = lastFew.join(' ').slice(0, 160) || 'Tarefa finalizada no terminal.';
 
@@ -571,14 +582,17 @@ export class NativePtyService extends EventEmitter {
                 timestamp: Date.now(),
               };
               this.emit('session-ai-completed', payload);
-              this.mainWindow.webContents.send('pty:ai-completed', payload);
+              // Só avisa a interface de uma tarefa de verdade: redesenho de prompt, banner ("Checking for updates") e rodapé do TUI também geram saída e antes viravam "a IA terminou"
+              const realTurn = !!session.turnStartedAt && Date.now() - session.turnStartedAt >= MIN_TURN_MS;
+              session.turnStartedAt = undefined;
+              if (realTurn) this.mainWindow.webContents.send('pty:ai-completed', payload);
             }
           }
         }, 2200);
       }
 
       if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-        this.mainWindow.webContents.send('pty:data', { id, data });
+        this.mainWindow.webContents.send('pty:data', { id, data, seq: session.seq });
       }
     });
 
@@ -685,6 +699,7 @@ export class NativePtyService extends EventEmitter {
     }
     await new Promise((r) => setTimeout(r, 80));
     session.term.write('\r');
+    session.turnStartedAt ||= Date.now();
     return Date.now();
   }
 
@@ -790,6 +805,7 @@ export class NativePtyService extends EventEmitter {
   write(id: string, data: string) {
     const session = this.sessions.get(id);
     if (session && session.term) {
+      if (/[\r\n]/.test(data) && (session.isAi || session.aiProvider)) session.turnStartedAt ||= Date.now();
       session.term.write(data);
     }
   }
@@ -891,6 +907,10 @@ export class NativePtyService extends EventEmitter {
         lastActivity: s.lastActivity || 0,
       };
     });
+  }
+
+  getHistoryWithSeq(id: string): { history: string; seq: number } {
+    return { history: this.getHistory(id), seq: this.sessions.get(id)?.seq || 0 };
   }
 
   getHistory(id: string): string {

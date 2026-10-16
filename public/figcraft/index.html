@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>FigCraft</title>
+  
+<script type="module">
+import init, * as bindings from './figcraft-web-d87403e6cfb2ba43.js';
+const wasm = await init({ module_or_path: './figcraft-web-d87403e6cfb2ba43_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #f5f5f5; }
+    #figcraft_canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    #figcraft_loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color: #6b6b6b; font: 14px system-ui, sans-serif; pointer-events: none; }
+    @media (prefers-color-scheme: dark) {
+      html, body { background: #000000; }
+      #figcraft_loading { color: #b8b8b8; }
+    }
+  </style>
+<link rel="modulepreload" href="./figcraft-web-d87403e6cfb2ba43.js" crossorigin="anonymous" integrity="sha384-1OWz+/Id1qo0Ier6vp7qKCc/YdDLJNRFG/MWEp8MVXhHQHuuqLiBNYHgNGUAZ6qE"><link rel="preload" href="./figcraft-web-d87403e6cfb2ba43_bg.wasm" crossorigin="anonymous" integrity="sha384-2i06qw3DHIGKNRSDKePwfhMXU4Msmk8Daoz19h5MRmhQWqsrNQfkjwY//RZaXAZe" as="fetch" type="application/wasm"></head>
+<body>
+  <canvas id="figcraft_canvas"></canvas>
+  <div id="figcraft_loading">Loading FigCraft&hellip;</div>
+  <script>
+    // Host bridge (Aura Dev): the parent posts {fc, method, params}; the reply is {fc, ok, body}.
+    const ready = setInterval(() => { if (window.figcraftCall) { clearInterval(ready); parent.postMessage({ fcReady: 1 }, '*'); } }, 100);
+    addEventListener('message', (e) => {
+      const m = e.data;
+      if (!m || !m.fc || !window.figcraftCall) return;
+      window.figcraftCall(m.method, JSON.stringify(m.params || {}), (ok, body) => e.source.postMessage({ fc: m.fc, ok, body }, '*'));
+    });
+  </script>
+</body>
+</html>

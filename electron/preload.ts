@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
@@ -41,7 +41,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('pty:setAccentColor', { accentColor }),
     getHistory: (id: string) =>
       ipcRenderer.invoke('pty:getHistory', { id }),
-    onData: (callback: (payload: { id: string; data: string }) => void) => {
+    getHistoryWithSeq: (id: string) =>
+      ipcRenderer.invoke('pty:getHistoryWithSeq', { id }),
+    onData: (callback: (payload: { id: string; data: string; seq?: number }) => void) => {
       const handler = (_event: any, payload: any) => callback(payload);
       ipcRenderer.on('pty:data', handler);
       return () => ipcRenderer.removeListener('pty:data', handler);
@@ -118,7 +120,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     writeFile: (filePath: string, content: string) =>
       ipcRenderer.invoke('fs:writeFile', { filePath, content }),
     getCapabilities: () => ipcRenderer.invoke('app:capabilities'),
-    stockImage: (payload: { query: string; width: number; height: number; key?: string; index?: number }) => ipcRenderer.invoke('unsplash:image', payload),
+    stockImage: (payload: { query: string; width: number; height: number; key?: string; index?: number; people?: boolean; pexelsKey?: string }) => ipcRenderer.invoke('unsplash:image', payload),
     exportPdf: (html: string, defaultName: string) => ipcRenderer.invoke('design:exportPdf', { html, defaultName }),
     figmaFetch: (token: string, apiPath: string) => ipcRenderer.invoke('figma:fetch', { token, apiPath }),
     figmaDownloadImages: (urls: Record<string, string>) => ipcRenderer.invoke('figma:downloadImages', { urls }),
@@ -134,6 +136,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('fs:renameItem', { oldPath, newPath }),
     copyItem: (srcPath: string, destPath: string) =>
       ipcRenderer.invoke('fs:copyItem', { srcPath, destPath }),
+    getPathForFile: (file: File) => webUtils.getPathForFile(file),
     searchInFiles: (dirPath: string, query: string, options?: { isRegex?: boolean; matchCase?: boolean; matchWholeWord?: boolean; maxResults?: number }) =>
       ipcRenderer.invoke('fs:searchInFiles', { dirPath, query, ...options }),
   },
@@ -182,7 +185,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     prompt: (prompt: string, model: string, cwd?: string, provider?: string, timeoutMs?: number, runId?: string, sessionIds?: string[]) =>
       ipcRenderer.invoke('ai:prompt', { prompt, model, cwd, provider, timeoutMs, runId, sessionIds }),
     checkClis: () => ipcRenderer.invoke('ai:checkClis'),
-    checkCliUpdates: () => ipcRenderer.invoke('ai:checkCliUpdates'),
+    checkCliUpdates: (force?: boolean) => ipcRenderer.invoke('ai:checkCliUpdates', force),
     orchestratorProviders: () => ipcRenderer.invoke('ai:orchestratorProviders'),
     orchestrate: (input: any) => ipcRenderer.invoke('ai:orchestrate', input),
     cancelOrchestration: (runId: string) => ipcRenderer.invoke('ai:orchestratorCancel', runId),

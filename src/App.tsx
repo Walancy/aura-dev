@@ -87,7 +87,7 @@ import { ProjectWorkspaceSelector } from './components/ide/ProjectWorkspaceSelec
 import { HeaderProjectSelector, type HeaderActiveProjectInfo, type HeaderProjectItem, type ProjectAiStatus } from './components/HeaderProjectSelector';
 import { OrchestrationCanvas } from './components/OrchestrationCanvas';
 import { DailySchedulerView } from './components/daily/DailySchedulerView';
-import DesignStudioView from './components/design2/DesignStudioView';
+import FigcraftStudioView from './components/design3/FigcraftStudioView';
 import { CliTerminalView } from './components/CliTerminalView';
 import { ProjectTasksDockTab } from './components/dock/ProjectTasksDockTab';
 import { PortsDockTab } from './components/dock/PortsDockTab';
@@ -130,7 +130,7 @@ import { ClaudeIcon, AntigravityIcon, GeminiIcon, OllamaIcon, CodexIcon, renderA
 import { getContrastTextColor, hexToRgba, hexToRgb, rgbToHex, rgbToHsv, hsvToRgb, hexToHsv } from './utils/color';
 import { MiniSwitch } from './components/ui/MiniSwitch';
 import { detectDevCommand, detectPackageManager, listScripts, otherCommands, scriptCommand, PACKAGE_MANAGERS, type PackageManager } from './utils/devCommand';
-import { computeDailyBudget, parseResetTimestamp, type DailyBudget, type DailyBudgetState } from './utils/dailyBudget';
+import { computeDailyBudget, parseResetTimestamp, type DailyBudget } from './utils/dailyBudget';
 import { planChecks, parseTscOutput, parseEslintJson, parseOxlintJson, type CheckResult } from './utils/projectCheck';
 import { extractDocumentSymbols, getFileLanguage, isMarkdownFile } from './utils/editor';
 import type { DocumentSymbol } from './utils/editor';
@@ -140,6 +140,8 @@ import { AI_BRAND_COLORS, AI_MODES, AI_PROVIDERS, DEFAULT_AI_QUOTAS, formatModel
 import type { AiSlashCommand, AiMode, AiModeConfig, AiProviderConfig, AiQuotaConfig } from './constants/ai';
 import { formatQuotaResetDisplay, formatRelativeResetTime } from './utils/quota';
 import { ThemePopup } from './components/modals/ThemePopup';
+import { CliCustomizePopup } from './components/modals/CliCustomizePopup';
+import { TERMINAL_SKINS, TerminalSkinBackground, type TerminalSkinId } from './components/TerminalSkin';
 import { CustomizeLayoutPopup } from './components/modals/CustomizeLayoutPopup';
 import { QuickOpenModal } from './components/modals/QuickOpenModal';
 import { ChatHistoryModal } from './components/modals/ChatHistoryModal';
@@ -335,13 +337,13 @@ const DailyBudgetInfoTooltip: React.FC<DailyBudgetInfoTooltipProps> = ({
             }}
           >
             <div>
-              O limite semanal (100 pts) é dividido entre os 7 dias da semana (~14.3 pts/dia).
+              O limite semanal (100 pts) vale ~14.3 pts por dia. Cada dia começa no horário do reset semanal.
             </div>
             <div>
-              A cada dia você recebe a sua cota diária mais a sobra acumulada dos dias anteriores deste ciclo.
+              Disponível hoje = o que resta da semana menos a reserva dos dias seguintes (14.3 pts cada).
             </div>
             <div>
-              Caso não utilize todos os pontos hoje, o saldo acumula para o próximo dia até o reset semanal.
+              O que não for usado hoje acumula para amanhã; gastar a mais deixa o saldo de hoje NEGATIVO: são pontos já tirados da reserva dos próximos dias.
             </div>
           </div>
 
@@ -365,8 +367,8 @@ const DailyBudgetInfoTooltip: React.FC<DailyBudgetInfoTooltipProps> = ({
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-end' }}>
               <span style={{ fontSize: 8.5, color: themeTokens.textMuted, fontWeight: 400 }}>Disponível Hoje</span>
-              <span style={{ fontSize: 11, fontWeight: 400, color: accentColor }}>
-                {Math.max(0, claudeDaily.remaining).toFixed(1)} pts
+              <span style={{ fontSize: 11, fontWeight: 400, color: claudeDaily.remaining < 0 ? '#ef4444' : accentColor }}>
+                {claudeDaily.remaining.toFixed(1)} pts
               </span>
             </div>
           </div>
@@ -854,7 +856,21 @@ export const App: React.FC = () => {
   const [modelDropdown, setModelDropdown] = useState(false);
   const [activeProviderSubmenu, setActiveProviderSubmenu] = useState<string | null>(null);
   const [submenuOpenOnLeft, setSubmenuOpenOnLeft] = useState(false);
-  const [activeModels, setActiveModels] = useState<Record<string, { currentModel: string; currentModelId: string; models: Array<{ id: string; label: string; tag?: string; description?: string }> }>>({});
+  type AiModelEntry = { id: string; label: string; tag?: string; description?: string; legacy?: boolean };
+  const [activeModels, setActiveModels] = useState<Record<string, { currentModel: string; currentModelId: string; models: AiModelEntry[] }>>({});
+  // lista completa por provedor (Configurações → IA & Agentes escolhe, dela, o que aparece no seletor) e a escolha do usuário
+  const [allAiModels, setAllAiModels] = useState<Record<string, AiModelEntry[]>>({});
+  const [aiVisibleModels, setAiVisibleModels] = useState<Record<string, string[]>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('ai_visible_models') || '{}') || {};
+    } catch {
+      return {};
+    }
+  });
+  const aiVisibleModelsRef = useRef(aiVisibleModels);
+  aiVisibleModelsRef.current = aiVisibleModels;
+  const selectedAiProviderRef = useRef(selectedAiProvider);
+  selectedAiProviderRef.current = selectedAiProvider;
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [quotaTooltipOpen, setQuotaTooltipOpen] = useState(false);
   const [headerQuotaTooltipOpen, setHeaderQuotaTooltipOpen] = useState(false);
@@ -2525,18 +2541,18 @@ export const App: React.FC = () => {
     return () => { alive = false; clearInterval(timer); };
   }, [workspacePath]);
   // limite diário do Claude (a semana ÷ dias que faltam): recalculado a cada leitura da quota, o dia vira o ponto de partida
-  const [claudeDaily, setClaudeDaily] = useState<DailyBudget | null>(null);
   const claudeWeekly = aiQuotas.claude?.weeklyPercent;
   const claudeWeeklyReset = aiQuotas.claude?.weeklyResetTime;
+  const [dailyTick, setDailyTick] = useState(0);
   useEffect(() => {
-    if (typeof claudeWeekly !== 'number') return;
-    let prev: DailyBudgetState | null = null;
-    try { prev = JSON.parse(localStorage.getItem('claude_daily_budget') || 'null'); } catch {}
+    const t = setInterval(() => setDailyTick((n) => n + 1), 30000);
+    return () => clearInterval(t);
+  }, []);
+  const claudeDaily = useMemo<DailyBudget | null>(() => {
+    if (typeof claudeWeekly !== 'number') return null;
     const now = new Date();
-    const res = computeDailyBudget(prev, claudeWeekly, parseResetTimestamp(claudeWeeklyReset, now), now);
-    try { localStorage.setItem('claude_daily_budget', JSON.stringify(res.state)); } catch {}
-    setClaudeDaily(res);
-  }, [claudeWeekly, claudeWeeklyReset]);
+    return computeDailyBudget(claudeWeekly, parseResetTimestamp(claudeWeeklyReset, now), now);
+  }, [claudeWeekly, claudeWeeklyReset, dailyTick]);
   const togglePinnedAi = (id: string) => setPinnedAis((prev) => {
     // a IA selecionada já aparecia no cabeçalho sem estar fixada: ao fixar a primeira outra, ela fica fixada também (senão sumiria ao trocar)
     const base = prev.length === 0 && id !== selectedAiProvider ? [selectedAiProvider] : prev;
@@ -2566,6 +2582,7 @@ export const App: React.FC = () => {
 
   // Minimalist Draggable Theme Popup State
   const [isThemePopupOpen, setIsThemePopupOpen] = useState(false);
+  const [isCliCustomizeOpen, setIsCliCustomizeOpen] = useState(false);
   const [themePopupPos, setThemePopupPos] = useState({ x: 0, y: 0 });
   const [isDraggingThemePopup, setIsDraggingThemePopup] = useState(false);
   const themePopupDragRef = useRef<{ mouseX: number; mouseY: number; startX: number; startY: number } | null>(null);
@@ -2744,6 +2761,15 @@ export const App: React.FC = () => {
   const [terminalThemePreset, setTerminalThemePreset] = useState<string>(() => {
     return localStorage.getItem('ide_terminal_theme_preset') || 'default';
   });
+  const [terminalSkin, setTerminalSkin] = useState<TerminalSkinId>(() => {
+    const saved = localStorage.getItem('ide_terminal_skin');
+    return TERMINAL_SKINS.some((x) => x.id === saved) ? (saved as TerminalSkinId) : 'none';
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('ide_terminal_skin', terminalSkin);
+    } catch {}
+  }, [terminalSkin]);
   const [terminalCursorWidth, setTerminalCursorWidth] = useState<number>(() => {
     const s = localStorage.getItem('ide_terminal_cursor_width');
     return s ? Number(s) : 2;
@@ -3487,13 +3513,15 @@ export const App: React.FC = () => {
         ];
 
         ts.typescriptDefaults.setDiagnosticsOptions({
-          noSemanticValidation: false,
+          // o worker do Monaco não enxerga node_modules nem os .d.ts do projeto: semântica gera só falso positivo (a checagem real é o tsc do painel Problems)
+          noSemanticValidation: true,
           noSyntaxValidation: false,
           diagnosticCodesToIgnore: ignoreCodes,
         });
 
         ts.javascriptDefaults.setDiagnosticsOptions({
-          noSemanticValidation: false,
+          // o worker do Monaco não enxerga node_modules nem os .d.ts do projeto: semântica gera só falso positivo (a checagem real é o tsc do painel Problems)
+          noSemanticValidation: true,
           noSyntaxValidation: false,
           diagnosticCodesToIgnore: ignoreCodes,
         });
@@ -4519,9 +4547,14 @@ export const App: React.FC = () => {
   };
 
   // GitHub Issues Integration unificada com o método e cache da tela de Projetos
+  const issuesReqRef = useRef(0);
+  const issuesOwnerRef = useRef('');
   const refreshGitHubIssues = useCallback(async () => {
     const targetProjectFull = activeHeaderProject?.fullName || gitRepoName;
     const cwd = activeHeaderProject?.localDir || workspacePath || process.cwd();
+    // buscas de um projeto anterior que terminam depois da troca não podem sobrescrever a lista do projeto atual
+    const reqId = ++issuesReqRef.current;
+    const stale = () => reqId !== issuesReqRef.current;
     setIsLoadingIssues(true);
 
     let owner = '';
@@ -4533,6 +4566,12 @@ export const App: React.FC = () => {
     } else if (targetProjectFull) {
       repo = targetProjectFull;
       owner = activeHeaderProject?.owner || githubUser?.login || 'walancy';
+    }
+
+    const issuesKey = owner && repo ? `${owner}/${repo}`.toLowerCase() : cwd;
+    if (issuesOwnerRef.current !== issuesKey) {
+      issuesOwnerRef.current = issuesKey;
+      setGitIssues([]);
     }
 
     try {
@@ -4577,7 +4616,7 @@ export const App: React.FC = () => {
                 url: pi.htmlUrl,
               }));
               if (converted.length > 0) {
-                setGitIssues(converted);
+                if (!stale()) setGitIssues(converted);
                 hydrated = true;
                 break;
               }
@@ -4664,9 +4703,9 @@ export const App: React.FC = () => {
             };
           });
 
-          setGitIssues(mapped);
+          if (!stale()) setGitIssues(mapped);
           logSystemActivity('tarefas', 'refresh_issues', targetProjectFull, { count: mapped.length, source: 'github_api' });
-          setIsLoadingIssues(false);
+          if (!stale()) setIsLoadingIssues(false);
           return;
         }
       }
@@ -4691,9 +4730,9 @@ export const App: React.FC = () => {
               iterationTitle: item.iterationTitle || titleSprint,
             };
           });
-          setGitIssues(normalized);
+          if (!stale()) setGitIssues(normalized);
           logSystemActivity('tarefas', 'refresh_issues', targetProjectFull, { count: normalized.length, source: 'git_ipc' });
-          setIsLoadingIssues(false);
+          if (!stale()) setIsLoadingIssues(false);
           return;
         }
       }
@@ -4723,7 +4762,7 @@ export const App: React.FC = () => {
                 iterationTitle: item.iterationTitle || titleSprint,
               };
             });
-            setGitIssues(normalized);
+            if (!stale()) setGitIssues(normalized);
             logSystemActivity('tarefas', 'refresh_issues', targetProjectFull, { count: normalized.length, source: 'gh_cli' });
           }
         }
@@ -4731,7 +4770,7 @@ export const App: React.FC = () => {
     } catch (e) {
       console.warn('Failed to load GitHub issues:', e);
     } finally {
-      setIsLoadingIssues(false);
+      if (!stale()) setIsLoadingIssues(false);
     }
   }, [workspacePath, gitRepoName, activeHeaderProject, githubUser?.login]);
 
@@ -6547,18 +6586,26 @@ export const App: React.FC = () => {
   }, [modelDropdown]);
 
   // Fetch real live AI Models from native CLI service
+  // Visíveis no seletor: a escolha do usuário; sem escolha, tudo menos as versões antigas (legacy). O modelo em uso nunca some.
+  const visibleModelsOf = (providerId: string, models: AiModelEntry[], currentModelId?: string) => {
+    const chosen = aiVisibleModelsRef.current[providerId];
+    return models.filter((m) => m.id === currentModelId || (chosen ? chosen.includes(m.id) : !m.legacy));
+  };
+
   const refreshAiModels = useCallback(async (providerId?: string) => {
-    const target = providerId || selectedAiProvider;
+    const target = providerId || selectedAiProviderRef.current;
     if (window.electronAPI?.ai?.getModels) {
       setIsLoadingModels(true);
       try {
         const res = await window.electronAPI.ai.getModels(target);
         if (res && res.models?.length > 0) {
+          setAllAiModels((prev) => ({ ...prev, [target]: res.models }));
           setActiveModels((prev) => ({
             ...prev,
-            [target]: res,
+            [target]: { ...res, models: visibleModelsOf(target, res.models, res.currentModelId) },
           }));
-          setSelectedModel(res.currentModel);
+          // só o provedor em uso muda o modelo mostrado (os demais são carregados para listar no menu)
+          if (target === selectedAiProviderRef.current) setSelectedModel(res.currentModel);
         }
       } catch (err) {
         console.error('Error fetching AI models:', err);
@@ -6566,11 +6613,54 @@ export const App: React.FC = () => {
         setIsLoadingModels(false);
       }
     }
-  }, [selectedAiProvider]);
+  }, []);
 
   useEffect(() => {
     refreshAiModels(selectedAiProvider);
   }, [selectedAiProvider, refreshAiModels]);
+
+  // O menu lista os modelos de todos os provedores: sem carregar os de cada um, os que não estavam selecionados mostravam a lista fixa (antiga)
+  const installedClisKey = JSON.stringify(installedClis);
+  useEffect(() => {
+    AI_PROVIDERS.forEach((p) => {
+      if (p.id !== selectedAiProvider && installedClis[p.id] !== false) refreshAiModels(p.id);
+    });
+  }, [installedClisKey, refreshAiModels]);
+
+  // Mudou a escolha de modelos visíveis nas configurações
+  const handleSetVisibleModels = (providerId: string, ids: string[] | null) => {
+    const next = { ...aiVisibleModelsRef.current };
+    if (ids) next[providerId] = ids;
+    else delete next[providerId];
+    aiVisibleModelsRef.current = next;
+    setAiVisibleModels(next);
+    try {
+      localStorage.setItem('ai_visible_models', JSON.stringify(next));
+    } catch {}
+    setActiveModels((prev) => {
+      const cur = prev[providerId];
+      const all = allAiModels[providerId];
+      return cur && all ? { ...prev, [providerId]: { ...cur, models: visibleModelsOf(providerId, all, cur.currentModelId) } } : prev;
+    });
+  };
+
+  // "Buscar atualizações" das configurações: ignora o cache de 10 min do main
+  const [isCheckingAiUpdates, setIsCheckingAiUpdates] = useState(false);
+  const handleCheckAiUpdates = async () => {
+    if (!window.electronAPI?.ai?.checkCliUpdates) return;
+    setIsCheckingAiUpdates(true);
+    try {
+      const updates = await window.electronAPI.ai.checkCliUpdates(true);
+      setAiUpdatesAvailable(updates && Object.keys(updates).length > 0 ? updates : {});
+      const n = Object.values(updates || {}).filter((u: any) => u?.hasUpdate).length;
+      setToastMessage(n > 0 ? `${n} atualização(ões) de IA encontrada(s)` : 'Suas IAs já estão atualizadas');
+      AI_PROVIDERS.forEach((p) => refreshAiModels(p.id));
+    } catch {
+      setToastMessage('Não foi possível buscar atualizações das IAs');
+    } finally {
+      setIsCheckingAiUpdates(false);
+    }
+  };
 
   const handleSelectModel = async (modelItem: { id: string; label: string }, targetProviderId?: string) => {
     const provId = targetProviderId || selectedAiProvider;
@@ -8648,14 +8738,23 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
         overflow: 'hidden',
         boxSizing: 'border-box',
         position: 'relative',
+        isolation: 'isolate',
         transition: 'background 0.2s ease',
       }}
     >
+      {/* Fundo do estilo do CLI: um só plano atrás da header e da área do CLI */}
+      {activeTab === 'cli' && terminalSkin !== 'none' && (
+        <div aria-hidden style={{ position: 'absolute', inset: 0, zIndex: -1, pointerEvents: 'none' }}>
+          <TerminalSkinBackground skin={terminalSkin} />
+        </div>
+      )}
 
       {/* ============================================================ */}
       {/* 1. TOP BAR WITH ANIMATED TABS & INLINE CONTROLS              */}
       {/* ============================================================ */}
       <div
+        className={activeTab === 'cli' && terminalSkin !== 'none' ? 'cli-skin skin-bar skin-header' : undefined}
+        data-skin={activeTab === 'cli' && terminalSkin !== 'none' ? terminalSkin : undefined}
         style={{
           width: '100%',
           background: themeTokens.bgApp,
@@ -8697,6 +8796,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           />
 
           <div
+            className="skin-flat"
             style={{
               padding: 5,
               background: themeTokens.bgCard,
@@ -8722,6 +8822,8 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               return (
                 <div
                   key={t.id}
+                  className="skin-tab"
+                  data-on={isActive ? '1' : undefined}
                   onClick={() => setActiveTab(t.id as any)}
                   style={{
                     paddingLeft: 14,
@@ -9193,6 +9295,8 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               return (
                 <div
                   key={pid}
+                  className="skin-tab"
+                  data-on={isSelected ? '1' : undefined}
                   ref={(quotaTooltipProvider ? pid === quotaTooltipProvider : isSelected) ? headerQuotaTooltipRef : undefined}
                   onClick={() => {
                     if (!isSelected) {
@@ -9222,6 +9326,8 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     cursor: 'pointer',
                     background: isSelected ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)') : 'transparent',
                     transition: 'background 0.15s ease',
+                    // o clip-path de alguns estilos (cantos cortados) recortaria o popup de cotas, que é filho desta pílula
+                    clipPath: headerQuotaTooltipOpen && quotaTooltipProvider === pid ? 'none' : undefined,
                   }}
                 >
                   {/* Bloco de Números de Quota */}
@@ -9278,7 +9384,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         style={{
                           fontSize: 9.5,
                           fontWeight: 400,
-                          color: currentQuota.weeklyPercent === 0 ? '#ef4444' : (pid === 'claude' && claudeDaily?.exceeded) ? '#f59e0b' : currentQuota.weeklyPercent <= 15 ? '#f97316' : (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary),
+                          color: currentQuota.weeklyPercent === 0 ? '#ef4444' : (pid === 'claude' && claudeDaily?.exceeded) ? '#ef4444' : currentQuota.weeklyPercent <= 15 ? '#f97316' : (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary),
                           fontFamily: 'Poppins, -apple-system, sans-serif',
                           letterSpacing: '-0.02em',
                         }}
@@ -9299,7 +9405,11 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       ref={clampPopupToViewport}
                       onClick={(e) => e.stopPropagation()}
                       onMouseEnter={cancelHeaderQuotaClose}
-                      onMouseLeave={closeHeaderQuotaWithGrace}
+                      // subir do popup para a própria pílula (pai) não é sair: a pílula não reabre porque o mouse nunca deixou de estar nela
+                      onMouseLeave={(e) => {
+                        if (e.relatedTarget instanceof Node && e.currentTarget.parentElement?.contains(e.relatedTarget)) return;
+                        closeHeaderQuotaWithGrace();
+                      }}
                       style={{
                         position: 'absolute',
                         top: 'calc(100% + 4px)',
@@ -9389,20 +9499,19 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               <>
                                 {divider}
                                 {(() => {
-                                  // 0 a 100: quanto do limite de hoje ainda resta; o dia reinicia à meia-noite
+                                  // 0 a 100: pontos disponíveis hoje vs. teto do dia; o dia reinicia no horário do reset semanal
                                   const left = claudeDaily.budget > 0 ? Math.max(0, Math.min(100, Math.round((claudeDaily.remaining / claudeDaily.budget) * 100))) : 0;
-                                  const nowD = new Date();
-                                  const ms = new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate() + 1).getTime() - nowD.getTime();
+                                  const ms = claudeDaily.resetsInMs;
                                   const h = Math.floor(ms / 3600000);
                                   const m = Math.floor((ms % 3600000) / 60000);
-                                  const points = Math.max(0, claudeDaily.remaining).toFixed(1);
+                                  const points = claudeDaily.remaining.toFixed(1); // negativo quando passou do limite diário
                                   return row(
                                     'Hoje',
                                     `reseta em ${h > 0 ? `${h}h ` : ''}${m}min`,
                                     left,
                                     `${points} pts`,
-                                    claudeDaily.exceeded ? '#f59e0b' : tone(left),
-                                    claudeDaily.exceeded ? '#f59e0b' : undefined,
+                                    claudeDaily.exceeded ? '#ef4444' : tone(left),
+                                    claudeDaily.exceeded ? '#ef4444' : undefined,
                                     undefined,
                                     <DailyBudgetInfoTooltip
                                       claudeDaily={claudeDaily}
@@ -10545,6 +10654,35 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   >
                     <span>Personalizar Layout</span>
                   </div>
+
+                  {/* Personalizar CLI (popup com as opções do terminal) */}
+                  <div
+                    onClick={() => {
+                      logSystemActivity('menu_configuracoes', 'personalizar_cli', activeHeaderProject?.name || 'Sistema');
+                      setIsSettingsMenuOpen(false);
+                      setIsCliCustomizeOpen(true);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '5px 12px',
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      color: '#cccccc',
+                      transition: 'background 0.08s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = '#04395e';
+                      e.currentTarget.style.color = '#ffffff';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = '#cccccc';
+                    }}
+                  >
+                    <span>Personalizar CLI</span>
+                  </div>
                 </div>
                 </>
               )}
@@ -10585,9 +10723,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             </div>
             {/* User Profile Avatar with NO border */}
             <div
+              className="skin-avatar"
               style={{
-                width: 38,
-                height: 38,
+                width: 32,
+                height: 32,
                 borderRadius: 9999,
                 overflow: 'hidden',
                 flexShrink: 0,
@@ -13125,7 +13264,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   copyOnSelect={terminalCopyOnSelect}
                                   fontFamily={terminalFontFamily}
                                   lineHeight={terminalLineHeight}
-                                  themePreset={terminalThemePreset}
+                                  themePreset={terminalSkin !== 'none' ? 'default' : terminalThemePreset}
                                   cursorWidth={terminalCursorWidth}
                                   scrollOnUserInput={terminalScrollOnUserInput}
                                   drawBoldTextInBrightColors={terminalDrawBoldTextInBrightColors}
@@ -13191,7 +13330,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   copyOnSelect={terminalCopyOnSelect}
                                   fontFamily={terminalFontFamily}
                                   lineHeight={terminalLineHeight}
-                                  themePreset={terminalThemePreset}
+                                  themePreset={terminalSkin !== 'none' ? 'default' : terminalThemePreset}
                                   cursorWidth={terminalCursorWidth}
                                   scrollOnUserInput={terminalScrollOnUserInput}
                                   drawBoldTextInBrightColors={terminalDrawBoldTextInBrightColors}
@@ -17301,41 +17440,31 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
         />
       </div>
 
-      {/* 2.5 Design Container (editor próprio + sala LAN) */}
-      {/* Fica montado depois da primeira abertura: a IA continua gerando mesmo se o usuário for para outra tela */}
+      {/* 2.5 Design (editor FigCraft): fica montado depois da primeira abertura, a IA continua gerando se o usuário for para outra tela */}
       {designMounted && (
-      <div style={{ display: activeTab === 'design' ? 'contents' : 'none' }}>
-        <DesignStudioView
+        <FigcraftStudioView
           isActive={activeTab === 'design'}
           onAiTaskDone={handleDesignAiDone}
           workspacePath={workspacePath}
-          repoName={gitRepoName}
-          activeProject={activeHeaderProject}
-          availableProjects={headerProjectsList}
-          onSelectWorkspace={handleSelectWorkspace}
-          accentColor={accentColor}
-          isEffectiveDark={isEffectiveDark}
-          themeTokens={themeTokens}
           selectedAiProvider={selectedAiProvider}
           selectedModel={selectedModel}
-          onSelectAiProvider={handleSwitchAiProvider}
-          onSelectModel={handleSelectModel}
-          installedClis={installedClis}
-          activeModels={activeModels}
-          onInstallAiCli={handleInstallCliInTerminal}
-          onToast={(msg) => setToastMessage(msg)}
-          onSendToChat={(text) => {
-            // Abre o chat de IA da IDE com o prompt preenchido (o usuário revisa e envia)
-            setActiveTab('ide');
-            setShowAiPanel(true);
-            setTimeout(() => {
-              setAskPrompt(text);
-              promptEditorRef.current?.setValue(text);
-              promptEditorRef.current?.focus();
-            }, 350);
+          themeTokens={themeTokens as any}
+          accentColor={accentColor}
+          isEffectiveDark={isEffectiveDark}
+          projectName={activeHeaderProject?.name}
+          projectSubtitle={activeHeaderProject?.fullName || activeHeaderProject?.description}
+          userInitial={githubUser?.login?.[0]}
+          aiProviders={AI_PROVIDERS.map((p) => ({ id: p.id, name: p.name }))}
+          aiModelsByProvider={Object.fromEntries(
+            AI_PROVIDERS.map((p) => [p.id, (activeModels[p.id]?.models || []).map((m) => ({ id: m.id, label: m.label }))])
+          )}
+          onChangeAiProvider={handleSwitchAiProvider}
+          onChangeAiModel={(modelId) => {
+            const list = activeModels[selectedAiProvider]?.models || [];
+            const found = list.find((m) => m.id === modelId);
+            if (found) handleSelectModel(found, selectedAiProvider);
           }}
         />
-      </div>
       )}
 
       {/* 2.6 CLI Terminal Workspace (Navegação de arquivos + Terminal com abas) */}
@@ -17391,6 +17520,17 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           onCloseSession={handleKillTerminalSession}
           terminalFontSize={terminalFontSize}
           onSetTerminalFontSize={setTerminalFontSize}
+          terminalCursorStyle={terminalCursorStyle}
+          terminalCursorBlink={terminalCursorBlink}
+          terminalScrollback={terminalScrollback}
+          terminalCopyOnSelect={terminalCopyOnSelect}
+          terminalFontFamily={terminalFontFamily}
+          terminalLineHeight={terminalLineHeight}
+          terminalThemePreset={terminalThemePreset}
+          terminalSkin={terminalSkin}
+          terminalCursorWidth={terminalCursorWidth}
+          terminalScrollOnUserInput={terminalScrollOnUserInput}
+          terminalDrawBoldTextInBrightColors={terminalDrawBoldTextInBrightColors}
           currentBranch={currentBranch}
           gitRepoName={gitRepoName}
           onToast={(msg) => {
@@ -18247,6 +18387,8 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             setTerminalLineHeight={setTerminalLineHeight}
             terminalThemePreset={terminalThemePreset}
             setTerminalThemePreset={setTerminalThemePreset}
+            terminalSkin={terminalSkin}
+            setTerminalSkin={setTerminalSkin}
             terminalCursorWidth={terminalCursorWidth}
             setTerminalCursorWidth={setTerminalCursorWidth}
             terminalScrollOnUserInput={terminalScrollOnUserInput}
@@ -18284,6 +18426,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             setDevForce={setDevForce}
             aiAutoUpdate={aiAutoUpdate}
             setAiAutoUpdate={setAiAutoUpdate}
+            aiModelOptions={allAiModels}
+            aiVisibleModels={aiVisibleModels}
+            onSetVisibleModels={handleSetVisibleModels}
+            aiUpdatesAvailable={aiUpdatesAvailable}
+            isCheckingAiUpdates={isCheckingAiUpdates}
+            onCheckAiUpdates={handleCheckAiUpdates}
+            onUpdateAi={handleUpdateCliInTerminal}
             rainbow={rainbow}
             setRainbow={setRainbow}
             showExplorer={showExplorer}
@@ -18329,6 +18478,39 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             selectedAiProvider={selectedAiProvider}
             rainbow={rainbow}
             setRainbow={setRainbow}
+          />
+        )}
+
+        {isCliCustomizeOpen && (
+          <CliCustomizePopup
+            onClose={() => setIsCliCustomizeOpen(false)}
+            themeTokens={themeTokens}
+            isEffectiveDark={isEffectiveDark}
+            accentColor={accentColor}
+            terminalFontSize={terminalFontSize}
+            setTerminalFontSize={setTerminalFontSize}
+            terminalCursorStyle={terminalCursorStyle}
+            setTerminalCursorStyle={setTerminalCursorStyle}
+            terminalScrollback={terminalScrollback}
+            setTerminalScrollback={setTerminalScrollback}
+            terminalCursorBlink={terminalCursorBlink}
+            setTerminalCursorBlink={setTerminalCursorBlink}
+            terminalCopyOnSelect={terminalCopyOnSelect}
+            setTerminalCopyOnSelect={setTerminalCopyOnSelect}
+            terminalFontFamily={terminalFontFamily}
+            setTerminalFontFamily={setTerminalFontFamily}
+            terminalLineHeight={terminalLineHeight}
+            setTerminalLineHeight={setTerminalLineHeight}
+            terminalThemePreset={terminalThemePreset}
+            setTerminalThemePreset={setTerminalThemePreset}
+            terminalSkin={terminalSkin}
+            setTerminalSkin={setTerminalSkin}
+            terminalCursorWidth={terminalCursorWidth}
+            setTerminalCursorWidth={setTerminalCursorWidth}
+            terminalScrollOnUserInput={terminalScrollOnUserInput}
+            setTerminalScrollOnUserInput={setTerminalScrollOnUserInput}
+            terminalDrawBoldTextInBrightColors={terminalDrawBoldTextInBrightColors}
+            setTerminalDrawBoldTextInBrightColors={setTerminalDrawBoldTextInBrightColors}
           />
         )}
 

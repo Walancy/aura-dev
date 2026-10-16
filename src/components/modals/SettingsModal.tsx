@@ -14,6 +14,7 @@ import { SnippetsSettingsTab } from './settings/SnippetsSettingsTab';
 import { TasksSettingsTab } from './settings/TasksSettingsTab';
 import { WorkspaceSettingsTab } from './settings/WorkspaceSettingsTab';
 import { logSystemActivity } from '../../utils/brainService';
+import type { TerminalSkinId } from '../TerminalSkin';
 import type { GitBranchItem } from '../../types/ide';
 
 export type SettingsTabId =
@@ -127,6 +128,8 @@ export interface SettingsModalProps {
   setTerminalLineHeight?: (value: number) => void;
   terminalThemePreset?: string;
   setTerminalThemePreset?: (value: string) => void;
+  terminalSkin?: TerminalSkinId;
+  setTerminalSkin?: (value: TerminalSkinId) => void;
   terminalCursorWidth?: number;
   setTerminalCursorWidth?: (value: number) => void;
   terminalScrollOnUserInput?: boolean;
@@ -156,6 +159,13 @@ export interface SettingsModalProps {
   setDevForce?: (value: boolean) => void;
   aiAutoUpdate?: boolean;
   setAiAutoUpdate?: (value: boolean) => void;
+  aiModelOptions?: Record<string, Array<{ id: string; label: string; legacy?: boolean }>>;
+  aiVisibleModels?: Record<string, string[]>;
+  onSetVisibleModels?: (providerId: string, ids: string[] | null) => void;
+  aiUpdatesAvailable?: Record<string, { hasUpdate: boolean; currentVersion?: string; latestVersion?: string }>;
+  isCheckingAiUpdates?: boolean;
+  onCheckAiUpdates?: () => void;
+  onUpdateAi?: (providerId: string) => void;
   rainbow?: { on: boolean; stops: string[]; speed: number };
   setRainbow?: (value: { on: boolean; stops: string[]; speed: number }) => void;
 
@@ -518,6 +528,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
                 setTerminalLineHeight={props.setTerminalLineHeight}
                 terminalThemePreset={props.terminalThemePreset}
                 setTerminalThemePreset={props.setTerminalThemePreset}
+                terminalSkin={props.terminalSkin}
+                setTerminalSkin={props.setTerminalSkin}
                 terminalCursorWidth={props.terminalCursorWidth}
                 setTerminalCursorWidth={props.setTerminalCursorWidth}
                 terminalScrollOnUserInput={props.terminalScrollOnUserInput}
@@ -553,6 +565,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
                 setDevForce={props.setDevForce}
                 aiAutoUpdate={props.aiAutoUpdate}
                 setAiAutoUpdate={props.setAiAutoUpdate}
+                aiModelOptions={props.aiModelOptions}
+                aiVisibleModels={props.aiVisibleModels}
+                onSetVisibleModels={props.onSetVisibleModels}
+                aiUpdatesAvailable={props.aiUpdatesAvailable}
+                isCheckingAiUpdates={props.isCheckingAiUpdates}
+                onCheckAiUpdates={props.onCheckAiUpdates}
+                onUpdateAi={props.onUpdateAi}
               />
             )}
 

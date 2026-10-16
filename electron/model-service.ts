@@ -7,6 +7,35 @@ export interface AiModelItem {
   label: string;
   tag?: string;
   description?: string;
+  /** versão antiga de um modelo que já tem uma mais nova (ex.: Gemini 3.7 Flash quando existe o 3.8): some do seletor por padrão */
+  legacy?: boolean;
+}
+
+/** gemini-<versão>-<linha>[-nível]: devolve a linha (flash, pro, argon...) e a versão numérica */
+function parseGeminiId(id: string): { tier: string; version: number[] } | null {
+  const m = id.match(/^gemini-(\d+(?:\.\d+)*)-([a-z]+)(?:-(?:low|medium|high|thinking))?$/);
+  return m ? { tier: m[2], version: m[1].split('.').map(Number) } : null;
+}
+
+const compareVersions = (a: number[], b: number[]) => {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] || 0) - (b[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+};
+
+/** Em cada linha do Gemini (flash, pro...) só a versão mais recente fica visível; as antigas viram `legacy` */
+export function markLegacyGeminiModels(models: AiModelItem[]): AiModelItem[] {
+  const newest = new Map<string, number[]>();
+  for (const m of models) {
+    const p = parseGeminiId(m.id);
+    if (p && (!newest.has(p.tier) || compareVersions(p.version, newest.get(p.tier)!) > 0)) newest.set(p.tier, p.version);
+  }
+  return models.map((m) => {
+    const p = parseGeminiId(m.id);
+    return p && compareVersions(p.version, newest.get(p.tier)!) < 0 ? { ...m, legacy: true } : m;
+  });
 }
 
 export interface ProviderModelsResult {
@@ -255,7 +284,8 @@ export class ModelService {
   private async getAntigravityModels(): Promise<ProviderModelsResult> {
     const bin = await this.resolveBinaryPath('agy');
     let currentModelId = this.activeModelIds.antigravity || 'gemini-3.8-flash-high';
-    const models: AiModelItem[] = [];
+    let models: AiModelItem[] = [];
+    let newestFamily: string | undefined;
 
     if (bin) {
       try {
@@ -271,15 +301,18 @@ export class ModelService {
 
         const lines = cleanedOut.split('\n');
         for (const line of lines) {
-          const match = line.trim().match(/([a-zA-Z0-9._-]+)\s{2,}(.+)$/);
+          // o agy separa o id do nome com TAB (versões antigas usavam 2+ espaços); só espaços simples não casavam e caía na lista fixa
+          const match = line.trim().match(/^([a-zA-Z0-9._-]+)(?:\t+|\s{2,})(.+)$/);
           if (match) {
             const id = match[1].trim();
             const label = match[2].trim();
+            const family = id.replace(/-(low|medium|high)$/, '');
+            if (newestFamily === undefined) newestFamily = family;
 
             let tag: string | undefined = undefined;
-            if (id.includes('3.8') || id.includes('high')) tag = 'Mais Recente';
+            if (family === newestFamily) tag = 'Mais Recente';
             else if (id.includes('thinking') || id.includes('pro')) tag = 'Raciocínio';
-            else if (id.includes('low')) tag = 'Econômico';
+            else if (id.endsWith('-low')) tag = 'Econômico';
 
             models.push({ id, label, tag });
           }
@@ -291,22 +324,19 @@ export class ModelService {
 
     if (models.length === 0) {
       models.push(
-        { id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)', tag: 'Mais Recente' },
+        { id: 'gemini-4-argon-high', label: 'Gemini 4 Argon (High)', tag: 'Mais Recente' },
+        { id: 'gemini-4-argon-medium', label: 'Gemini 4 Argon (Medium)', tag: 'Mais Recente' },
+        { id: 'gemini-4-argon-low', label: 'Gemini 4 Argon (Low)', tag: 'Mais Recente' },
+        { id: 'gemini-3.8-flash-high', label: 'Gemini 3.8 Flash (High)' },
         { id: 'gemini-3.8-flash-medium', label: 'Gemini 3.8 Flash (Medium)' },
-        { id: 'gemini-3.8-flash-low', label: 'Gemini 3.8 Flash (Low)' },
-        { id: 'gemini-3.7-flash-high', label: 'Gemini 3.7 Flash (High)' },
-        { id: 'gemini-3.7-flash-medium', label: 'Gemini 3.7 Flash (Medium)' },
-        { id: 'gemini-3.7-flash-low', label: 'Gemini 3.7 Flash (Low)' },
-        { id: 'gemini-3.6-flash-high', label: 'Gemini 3.6 Flash (High)' },
-        { id: 'gemini-3.6-flash-medium', label: 'Gemini 3.6 Flash (Medium)' },
-        { id: 'gemini-3.6-flash-low', label: 'Gemini 3.6 Flash (Low)' },
-        { id: 'gemini-3.1-pro-high', label: 'Gemini 3.1 Pro (High)', tag: 'Raciocínio' },
-        { id: 'gemini-3.1-pro-low', label: 'Gemini 3.1 Pro (Low)' },
-        { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (Thinking)', tag: 'Raciocínio' },
-        { id: 'claude-opus-4-6-thinking', label: 'Claude Opus 4.6 (Thinking)', tag: 'Poderoso' },
+        { id: 'gemini-3.8-flash-low', label: 'Gemini 3.8 Flash (Low)', tag: 'Econômico' },
+        { id: 'claude-opus-5-5-high', label: 'Claude Opus 5.5 (High)', tag: 'Poderoso' },
+        { id: 'claude-sonnet-5-5-high', label: 'Claude Sonnet 5.5 (High)', tag: 'Raciocínio' },
         { id: 'gpt-oss-120b-medium', label: 'GPT-OSS 120B (Medium)' },
       );
     }
+
+    models = markLegacyGeminiModels(models);
 
     const currentItem = models.find((m) => m.id === currentModelId) || models[0];
 

@@ -54,6 +54,12 @@ function layerToFill(layer: unknown): FillItem | null {
   }
   if (!layer || typeof layer !== 'object') return null;
   const l: any = layer;
+  // textura: {"pattern":"grid|dots|lines|checker|noise","color":"#FFFFFF","opacity":0.06,"size":8,"background":"#..."}
+  if (typeof l.pattern === 'string' && ['grid', 'dots', 'lines', 'checker', 'noise'].includes(l.pattern)) {
+    const c = parseColorAlpha(l.color ?? '#FFFFFF', '#FFFFFF');
+    const bg = l.background ? parseColorAlpha(l.background, '#000000').hex : undefined;
+    return { id: uid('p'), color: c.hex, opacity: (typeof l.opacity === 'number' ? clamp(l.opacity, 0.06, 0, 1) : 0.06) * c.alpha, visible: true, type: 'pattern', patternKind: l.pattern as FillItem['patternKind'], patternScale: clamp(l.size ?? l.scale, 8, 2, 200), patternBg: bg };
+  }
   const g = gradientToFill(l.gradient ?? (l.type && l.type !== 'solid' ? l : null));
   if (g) {
     if (typeof l.opacity === 'number') g.opacity = clamp(l.opacity, 1, 0, 1);
@@ -95,6 +101,14 @@ export function effectsFromItem(item: any): EffectItem[] {
       spread: clamp(e.spread, 0, -100, 200),
       visible: true,
     };
+    if ((kind === 'layer-blur' || kind === 'background-blur') && e.progressive) {
+      // blur progressivo: cresce de "from"% a "to"% da altura/largura, na direção indicada (padrão: mais forte embaixo)
+      const dir = ['bottom', 'top', 'left', 'right'].includes(String(e.progressive)) ? String(e.progressive) : String(e.direction || 'bottom');
+      base.blurMode = 'progressive';
+      base.blurDir = (['bottom', 'top', 'left', 'right'].includes(dir) ? dir : 'bottom') as EffectItem['blurDir'];
+      base.blurStart = clamp(e.from ?? e.start, 0, 0, 100);
+      base.blurEnd = clamp(e.to ?? e.end, 100, 0, 100);
+    }
     if (kind === 'noise') {
       base.noiseMode = 'mono';
       base.noiseSizeX = clamp(e.size, 1.2, 0.5, 8);

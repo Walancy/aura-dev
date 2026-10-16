@@ -27,6 +27,8 @@ export interface DevFlowSelectProps<T = string | number> {
   minWidth?: number | string;
   maxWidth?: number | string;
   disabled?: boolean;
+  /** passar o mouse sobre uma opção (valor) ou sair dela/fechar o menu (null): permite pré-visualizar antes de escolher */
+  onOptionHover?: (value: T | null) => void;
 }
 
 export const DevFlowSelect = <T extends string | number>({
@@ -41,7 +43,10 @@ export const DevFlowSelect = <T extends string | number>({
   minWidth,
   maxWidth,
   disabled = false,
+  onOptionHover,
 }: DevFlowSelectProps<T>) => {
+  const onOptionHoverRef = useRef(onOptionHover);
+  onOptionHoverRef.current = onOptionHover;
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -75,6 +80,11 @@ export const DevFlowSelect = <T extends string | number>({
     setIsOpen((prev) => !prev);
   };
 
+  // menu fechado (escolheu, clicou fora ou Esc): some qualquer pré-visualização
+  useEffect(() => {
+    if (!isOpen) onOptionHoverRef.current?.(null);
+  }, [isOpen]);
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -87,6 +97,8 @@ export const DevFlowSelect = <T extends string | number>({
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        // fecha só o menu: o Esc não deve chegar ao popup/modal em volta
+        e.stopPropagation();
         setIsOpen(false);
       }
     };
@@ -262,6 +274,7 @@ export const DevFlowSelect = <T extends string | number>({
                     transition: 'background 0.12s ease',
                   }}
                   onMouseEnter={(e) => {
+                    onOptionHover?.(opt.value);
                     if (!isSelected) {
                       e.currentTarget.style.background = isEffectiveDark
                         ? 'rgba(255, 255, 255, 0.06)'
@@ -269,6 +282,7 @@ export const DevFlowSelect = <T extends string | number>({
                     }
                   }}
                   onMouseLeave={(e) => {
+                    onOptionHover?.(null);
                     if (!isSelected) {
                       e.currentTarget.style.background = 'transparent';
                     }

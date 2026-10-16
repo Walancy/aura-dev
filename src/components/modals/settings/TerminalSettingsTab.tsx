@@ -5,6 +5,7 @@ import type { ThemeTokens } from '../../../types/ide';
 import { logSystemActivity } from '../../../utils/brainService';
 import { TERMINAL_THEMES, TERMINAL_FONT_FAMILIES } from '../../NativeXTerm';
 import { Check } from 'lucide-react';
+import { TERMINAL_SKINS, TerminalSkinBackground, TerminalSkinOverlay, skinGlow, type TerminalSkinId } from '../../TerminalSkin';
 
 export interface TerminalSettingsTabProps {
   themeTokens: ThemeTokens;
@@ -28,6 +29,8 @@ export interface TerminalSettingsTabProps {
   setTerminalLineHeight?: (value: number) => void;
   terminalThemePreset?: string;
   setTerminalThemePreset?: (value: string) => void;
+  terminalSkin?: TerminalSkinId;
+  setTerminalSkin?: (value: TerminalSkinId) => void;
   terminalCursorWidth?: number;
   setTerminalCursorWidth?: (value: number) => void;
   terminalScrollOnUserInput?: boolean;
@@ -56,6 +59,8 @@ export const TerminalSettingsTab: React.FC<TerminalSettingsTabProps> = ({
   setTerminalLineHeight,
   terminalThemePreset = 'default',
   setTerminalThemePreset,
+  terminalSkin = 'none',
+  setTerminalSkin,
   terminalCursorWidth = 2,
   setTerminalCursorWidth,
   terminalScrollOnUserInput = true,
@@ -94,16 +99,18 @@ export const TerminalSettingsTab: React.FC<TerminalSettingsTabProps> = ({
             padding: 12,
             gap: 12,
             borderRadius: 8,
-            background: currentTheme.background,
+            background: terminalSkin !== 'none' ? 'transparent' : currentTheme.background,
             color: currentTheme.foreground,
             border: 'none',
             boxShadow: 'none',
             overflow: 'hidden',
+            position: 'relative',
             transition: 'all 0.15s ease',
           }}
         >
+          <TerminalSkinBackground skin={terminalSkin} />
           {/* Topbar do preview */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <div style={{ width: 9, height: 9, borderRadius: '50%', background: '#ef4444' }} />
               <div style={{ width: 9, height: 9, borderRadius: '50%', background: '#f59e0b' }} />
@@ -132,6 +139,8 @@ export const TerminalSettingsTab: React.FC<TerminalSettingsTabProps> = ({
               fontFamily: `"${terminalFontFamily}", "JetBrains Mono", Menlo, Monaco, monospace`,
               fontSize: terminalFontSize,
               lineHeight: terminalLineHeight,
+              textShadow: skinGlow(terminalSkin),
+              position: 'relative',
               display: 'flex',
               flexDirection: 'column',
               gap: 2,
@@ -163,6 +172,7 @@ export const TerminalSettingsTab: React.FC<TerminalSettingsTabProps> = ({
               </span>
             </div>
           </div>
+          <TerminalSkinOverlay skin={terminalSkin} />
         </div>
       </div>
 
@@ -444,6 +454,54 @@ export const TerminalSettingsTab: React.FC<TerminalSettingsTabProps> = ({
                       <div style={{ width: 14, height: 8, borderRadius: 2, background: th.cyan || '#06b6d4' }} />
                     </div>
                   </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)' }} />
+        </>
+      )}
+
+      {/* Estilo visual: moldura + degradê + paleta + fonte */}
+      {setTerminalSkin && (
+        <>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 500, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Estilo visual
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+              {TERMINAL_SKINS.map((sk) => {
+                const selected = terminalSkin === sk.id;
+                return (
+                  <button
+                    key={sk.id}
+                    type="button"
+                    onClick={() => {
+                      logSystemActivity('configuracoes_terminal', 'alterar_estilo_visual', sk.label, { estilo: sk.id });
+                      setTerminalSkin(sk.id);
+                      // o estilo traz a paleta e a fonte que combinam; dá para trocar depois
+                      if (sk.theme) setTerminalThemePreset?.(sk.theme);
+                      if (sk.font) setTerminalFontFamily?.(sk.font);
+                      if (sk.theme) setTerminalFontSize(13);
+                    }}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 3,
+                      alignItems: 'flex-start',
+                      padding: '10px 12px',
+                      borderRadius: 8,
+                      border: 'none',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      background: selected ? hexToRgba(accentColor, 0.16) : isEffectiveDark ? 'rgba(255, 255, 255, 0.035)' : 'rgba(0, 0, 0, 0.025)',
+                      color: selected ? accentColor : themeTokens.textPrimary,
+                    }}
+                  >
+                    <span style={{ fontSize: 12 }}>{sk.label}</span>
+                    <span style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>{sk.desc}</span>
+                  </button>
                 );
               })}
             </div>

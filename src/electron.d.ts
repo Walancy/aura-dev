@@ -58,11 +58,12 @@ export interface ElectronAPI {
     setAllCwd?: (cwd: string) => Promise<{ success: boolean }>;
     setAccentColor?: (accentColor: string) => Promise<{ success: boolean; error?: string }>;
     getHistory?: (id: string) => Promise<string>;
+    getHistoryWithSeq?: (id: string) => Promise<{ history: string; seq: number }>;
     foreground?: () => Promise<Record<string, string>>;
     getRunningSessions?: () => Promise<Array<{ id: string; type: string; title: string; cwd: string; isAi: boolean; isRunning: boolean; projectName: string; lastActivity?: number }>>;
     onAiCompleted?: (callback: (payload: { id: string; type: string; cwd: string; projectName: string; summary: string; needsInput?: boolean; timestamp: number }) => void) => () => void;
     onSessionStatus?: (callback: (payload: { id: string; type: string; cwd: string; isAi: boolean; isRunning: boolean; exited?: boolean }) => void) => () => void;
-    onData: (callback: (payload: { id: string; data: string }) => void) => () => void;
+    onData: (callback: (payload: { id: string; data: string; seq?: number }) => void) => () => void;
     onExit: (callback: (payload: { id: string; exitCode: number }) => void) => () => void;
   };
   fs: {
@@ -71,7 +72,7 @@ export interface ElectronAPI {
     readFile: (filePath: string) => Promise<{ content: string; error?: string }>;
     writeFile: (filePath: string, content: string) => Promise<{ success: boolean }>;
     getCapabilities?: () => Promise<{ designAi: number; stockImage: boolean; tempImages: boolean; exportPdf: boolean }>;
-    stockImage?: (payload: { query: string; width: number; height: number; key?: string; index?: number }) => Promise<{ dataUrl?: string; credit?: string; source?: string; error?: string }>;
+    stockImage?: (payload: { query: string; width: number; height: number; key?: string; index?: number; people?: boolean; pexelsKey?: string }) => Promise<{ dataUrl?: string; credit?: string; source?: string; error?: string }>;
     exportPdf?: (html: string, defaultName: string) => Promise<{ path?: string; canceled?: boolean; error?: string }>;
     figmaFetch?: (token: string, apiPath: string) => Promise<{ data?: any; error?: string; status?: number }>;
     figmaDownloadImages?: (urls: Record<string, string>) => Promise<Record<string, string>>;
@@ -81,6 +82,7 @@ export interface ElectronAPI {
     deleteItem: (itemPath: string) => Promise<{ success: boolean }>;
     renameItem: (oldPath: string, newPath: string) => Promise<{ success: boolean }>;
     copyItem: (srcPath: string, destPath: string) => Promise<{ success: boolean }>;
+    getPathForFile: (file: File) => string;
     searchInFiles?: (dirPath: string, query: string, options?: { isRegex?: boolean; matchCase?: boolean; matchWholeWord?: boolean; maxResults?: number }) => Promise<{ results: Array<{ file: string; line: number; text: string }> }>;
   };
   projects: {
@@ -125,7 +127,7 @@ export interface ElectronAPI {
   ai: {
     prompt: (prompt: string, model: string, cwd?: string, provider?: string, timeoutMs?: number) => Promise<{ response?: string; error?: string }>;
     checkClis?: () => Promise<Record<string, boolean>>;
-    checkCliUpdates?: () => Promise<Record<string, { hasUpdate: boolean; currentVersion?: string; latestVersion?: string; updateCommand?: string }>>;
+    checkCliUpdates?: (force?: boolean) => Promise<Record<string, { hasUpdate: boolean; currentVersion?: string; latestVersion?: string; updateCommand?: string }>>;
     orchestratorProviders?: () => Promise<Array<{ id: 'claude' | 'codex' | 'antigravity'; available: boolean; version?: string }>>;
     orchestrate?: (input: { runId?: string; provider: 'claude' | 'codex' | 'antigravity'; request: string; cwd: string; model?: string; mode?: 'ask' | 'plan' | 'execute'; depth?: 'fast' | 'balanced' | 'deep'; additionalDirs?: string[]; timeoutMs?: number }) => Promise<{ stdout: string; stderr: string; exitCode: number; requestId: string; cancelled?: boolean; usage?: { input_tokens?: number; output_tokens?: number } }>;
     cancelOrchestration?: (runId: string) => Promise<{ cancelled: boolean }>;
@@ -134,7 +136,7 @@ export interface ElectronAPI {
     onOrchestratorEvent?: (callback: (event: { provider: string; kind: string; message: string; timestamp_ms: number; payload: unknown; runId?: string }) => void) => () => void;
     getCommands?: (providerId: string) => Promise<Array<{ command: string; description: string; usage?: string }>>;
     getQuotas?: (force?: boolean) => Promise<Record<string, { dailyPercent: number; weeklyPercent: number; dailyResetTime: string; weeklyResetDay: string; weeklyResetTime: string }>>;
-    getModels?: (providerId: string) => Promise<{ providerId: string; currentModel: string; currentModelId: string; models: Array<{ id: string; label: string; tag?: string; description?: string }> }>;
+    getModels?: (providerId: string) => Promise<{ providerId: string; currentModel: string; currentModelId: string; models: Array<{ id: string; label: string; tag?: string; description?: string; legacy?: boolean }> }>;
     setModel?: (providerId: string, modelId: string) => Promise<{ success: boolean; currentModel: string; message: string }>;
     saveChatLocally?: (session: any) => Promise<{ success: boolean; jsonPath: string; mdPath: string; error?: string }>;
     exportChatDialog?: (session: any, format: 'markdown' | 'json') => Promise<{ success: boolean; canceled?: boolean; filePath?: string; error?: string }>;
