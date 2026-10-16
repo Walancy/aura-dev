@@ -1,6 +1,6 @@
 {
   "name": "aura-dev",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Aura Dev - Native Project Management & IDE Desktop App with Claude and AGY CLI",
   "author": "Walancy Santos <walancy.santos@appmoove.com.br>",
   "main": "dist-electron/main.js",
