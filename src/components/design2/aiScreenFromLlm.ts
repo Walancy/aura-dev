@@ -1,3 +1,4 @@
+import { isEntryScreen } from './appPlan';
 import type { FillItem, Shape } from './types';
 import { COMMON_ICON_NAMES, iconShape, resolveIconName, type IconCatalog } from './icons';
 import { fitText } from './textFit';
@@ -14,8 +15,42 @@ import { snapColorToTokens, snapRadiusToTokens, snapSpaceToTokens, snapTypeToTok
 import { descendantIds } from './constraints';
 import { maskPathOf } from './maskShapes';
 import { isPersonQuery } from './stockImage';
+import { buildDomainAndComponentHint } from '../design3/figcraftCatalog';
 
 /** Entrada para pedir uma tela à IA e converter a resposta em shapes do canvas. */
+/** Componente da biblioteca do projeto: a IA o reutiliza com {"type":"instance"} em vez de redesenhar. */
+export interface LibComponent {
+  name: string;
+  /** itens da IA que o definem (o primeiro é a raiz), com os ids e pais originais */
+  items: any[];
+  width: number;
+  height: number;
+}
+
+/** Textos e ícones que uma instância pode trocar (chaves para "text" e "icon"). */
+export function componentSlots(c: LibComponent): { texts: string[]; icons: string[] } {
+  const texts: string[] = [], icons: string[] = [];
+  for (const it of c.items) {
+    if (it?.type === 'text') texts.push(String(it.name || it.text || '').slice(0, 28));
+    else if (it?.type === 'icon' && it.name) icons.push(String(it.name));
+  }
+  return { texts: [...new Set(texts.filter(Boolean))], icons: [...new Set(icons)] };
+}
+
+/** Bloco do prompt: componentes já existentes + como declarar e reutilizar componentes (economiza tokens e mantém as telas consistentes). */
+export function componentsBlock(list?: LibComponent[]): string {
+  const known = (list || []).slice(0, 40).map((c) => {
+    const sl = componentSlots(c);
+    return `- "${c.name}" (${Math.round(c.width)}x${Math.round(c.height)})${sl.texts.length ? ` textos: ${sl.texts.map((t) => `"${t}"`).join(', ')}` : ''}${sl.icons.length ? ` ícones: ${sl.icons.join(', ')}` : ''}`;
+  });
+  return `COMPONENTES REUTILIZÁVEIS (economiza tokens e mantém as telas iguais):
+${known.length ? `JÁ EXISTEM no projeto — OBRIGATÓRIO usar uma instância sempre que a peça que você ia desenhar tiver o mesmo papel de uma destas (mesmo que a tela de referência a mostre); NÃO redesenhe:
+${known.join('\n')}
+` : ''}Uso: {"type":"instance","component":"<nome>","parent":"<id do pai>","width":"fill","text":{"<texto original>":"novo texto"},"icon":{"<ícone original>":"NovoIcone"}} — sem filhos; "text"/"icon" só quando algo muda (cada instância pode trocar textos e ícones; o resto fica igual).
+Para uma peça que aparece (ou provavelmente aparecerá) em mais de um lugar — botão, card, item de lista, cabeçalho, barra de navegação, campo, chip, selo — desenhe-a UMA vez como frame com "component":"<Nome curto e específico>" e, nas outras ocorrências, use instance. Peças únicas (hero, gráficos, conteúdo) não são componentes. Não crie componente para o que já existe.
+`;
+}
+
 export interface AiScreenRequest {
   prompt: string;
   pageId: string;
@@ -45,10 +80,12 @@ export interface AiScreenRequest {
   maxScreens?: number;
   /** réplica de imagens de referência: a IA pode recortar fotos da própria referência e segue regras extras de fidelidade */
   replicaMode?: boolean;
+  /** Design 3: componentes da biblioteca do projeto (a IA os reutiliza e declara novos) */
+  components?: LibComponent[];
 }
 
 const MAX_SHAPES = 450;
-const ALLOWED = new Set(['rect', 'ellipse', 'text', 'line', 'icon', 'image', 'frame']);
+const ALLOWED = new Set(['rect', 'ellipse', 'text', 'line', 'icon', 'image', 'frame', 'instance']);
 const MAX_SCREENS = 12;
 const SCREEN_GAP = 120;
 
@@ -131,8 +168,11 @@ const DESKTOP_GUIDE = `DESKTOP / WEB — UX/UI PROFISSIONAL (obrigatório em tel
 
 /** Regras extras quando o usuário anexa telas para REPLICAR (Design 2): recortes da própria referência, ícones finos, centralização, anéis de progresso. */
 const REPLICA_RULES = `RÉPLICA DE REFERÊNCIA — regras extras (valem junto com a fidelidade máxima):
-- As imagens de referência são numeradas 0, 1, 2… na ordem dos arquivos. FOTOS, AVATARES, MINIATURAS e ILUSTRAÇÕES que aparecem na referência: em vez de "query", use "refCrop":{"img":<número da imagem>,"x":..,"y":..,"w":..,"h":..} com a região da foto na imagem de referência, em FRAÇÃO 0–1 da largura/altura DA IMAGEM (ex.: avatar no canto superior esquerdo = {"img":1,"x":0.18,"y":0.17,"w":0.06,"h":0.07}). O app recorta esse trecho da própria referência (a foto fica idêntica). Use refCrop SOMENTE em regiões que sejam só a foto (rosto de avatar, miniatura de curso, capa de card, ilustração), sem botões, textos ou ícones por cima. Foto de fundo ou de card com elementos de interface POR CIMA (botões, textos, barra de player): use refCrop na MAIOR sub-região da foto livre de interface (ex.: o retrato entre os botões do topo e a barra de player; a figura do card entre o selo e o título) — o app preenche a área da foto com esse recorte — e desenhe a interface por cima, com o degradê/tinta da referência (ex.: roxo translúcido sobre a foto, escurecimento na base). Só use "query" em inglês (descrevendo com precisão pessoa, roupa, cenário, iluminação e cores) quando a referência não tiver nenhuma região de foto limpa.
+- As imagens de referência são numeradas 0, 1, 2… na ordem dos arquivos. FOTOS, AVATARES, MINIATURAS e ILUSTRAÇÕES que aparecem na referência: em vez de "query", use "refCrop":{"img":<número da imagem>,"x":..,"y":..,"w":..,"h":..} com a região da foto na imagem de referência, em FRAÇÃO 0–1 da largura/altura DA IMAGEM (ex.: avatar no canto superior esquerdo = {"img":1,"x":0.18,"y":0.17,"w":0.06,"h":0.07}). O app recorta esse trecho da própria referência (a foto fica idêntica). Use refCrop SOMENTE em regiões que sejam só a foto (rosto de avatar, miniatura de curso, capa de card, ilustração), sem botões, textos ou ícones por cima. Foto de fundo ou de card com elementos de interface POR CIMA (botões, textos, barra de player): use refCrop na MAIOR sub-região da foto livre de interface (ex.: o retrato entre os botões do topo e a barra de player; a figura do card entre o selo e o título) — o app preenche a área da foto com esse recorte — e desenhe a interface por cima, com o degradê/tinta da referência (ex.: roxo translúcido sobre a foto, escurecimento na base). O recorte deve ser justo no objeto, mas INTEIRO — com pernas/pés/base e todas as bordas do objeto dentro da região, sem cortar nenhuma ponta —: nunca inclua selos, etiquetas ("-5%"), botões, cantos ou bordas do card, nem pedaços da imagem vizinha. PRODUTO/OBJETO/PESSOA RECORTADO (cadeira, tênis, garrafa, modelo que aparece solto, sem retângulo de fundo na referência, ou saindo do card): marque também "removeBg":true — o app remove o fundo do recorte e fica só o objeto. Só use "query" em inglês (descrevendo com precisão pessoa, roupa, cenário, iluminação e cores) quando a referência não tiver nenhuma região de foto limpa.
 - NÃO use símbolos Unicode raros em textos (⇆ ⇄ ✓ ★ ●): as fontes não têm esses glifos e aparece um quadrado; use ícones (type "icon") no lugar.
+- MOCKUP / FOTO DO APARELHO: se a referência é uma foto ou mockup (aparelho inclinado, na mão, com fundo cinza ao redor), recrie SOMENTE a tela do app, de frente, reta, na proporção do aparelho — ignore a mão, o fundo, a moldura, o reflexo e a perspectiva (textos inclinados ficam retos).
+- SEM PADDING NEM BORDA ONDE A REFERÊNCIA NÃO TEM: nem todo bloco é um card com margem. Mapa, mapa de calor, foto, vídeo e fundo ilustrado ocupam a largura e a altura TODAS da área (sem margem, sem raio, sem borda, sem fundo de card) e ficam ATRÁS; controles flutuantes (botões de zoom, seletores, filtros, legendas, pins, alertas) são itens sobrepostos ("overlay":true ou com x/y absolutos) em cima desse fundo, sem container com padding; cartões e painéis colados nas bordas da tela e na base ficam encostados (padding 0 na borda que encosta, raio só nos cantos livres). Só use margem lateral, padding, borda e raio quando a referência mostrar.
+- MAPA DE CALOR / GRADE DE DADOS: fundo escuro + manchas de calor com elipses radiais ("gradient" radial de cores quentes para transparente, com "blur") + a textura de grade por cima ({"pattern":"grid","color":"#FFFFFF","opacity":0.08,"size":10}); pins e alertas são pequenos frames arredondados com ícone sobre o mapa.
 - ÍCONES: finos e discretos como na referência. Setas/chevrons pequenos: ChevronRight, ChevronLeft, KeyboardArrowRight (size 16–20), nunca ArrowForward/ArrowBack grandes e pesados em linhas de lista. Todos os ícones com o mesmo peso visual e tamanhos 16/20/24.
 - NADA OMITIDO: pilhas de avatares com contador ("+1K"), pontos de notificação, selos, contadores sobrescritos nas abas ("All Courses 12"), cada linha e cada rótulo do inventário.
 - CENTRALIZAÇÃO: o que está centralizado na referência (abas segmentadas, botões flutuantes, título de semana, navegação) fica centralizado na tela: frame com width "fill" e align center; margens laterais iguais. Nunca encoste um componente na borda esquerda se na referência ele tem margem.
@@ -148,8 +188,9 @@ export function buildAiScreenPrompt(req: AiScreenRequest): string {
     ? `O frame já existe com ${Math.round(target.width)}x${Math.round(target.height)} px: gere somente o CONTEÚDO dele (não mude o tamanho).`
     : 'Escolha o tamanho: MOBILE 393x852 (padrão para apps/celular; o app desenha o aparelho iPhone em volta) ou desktop 1440x900 (ou 1280x800), conforme o pedido.';
   const refs = referenceHints(req.prompt);
+  const domainHint = req.referenceSpec || req.referenceImages?.length ? '' : buildDomainAndComponentHint(req.prompt, req.projectContext);
   return `Você é um designer de interfaces sênior. Crie o layout de uma ou mais telas e responda SOMENTE com JSON válido (sem markdown, sem texto antes ou depois).
-${tokensBlockFor(req)}${assetsPromptBlock(req.projectAssets)}${referenceBlock(req.referenceImages, req.referenceSpec, req.prompt.includes(STYLE_MODE_MARK))}${req.referenceImages?.length || req.referenceSpec || req.prompt.includes(STYLE_MODE_MARK) ? '' : directionBlock(req.prompt)}${req.replicaMode && (req.referenceImages?.length || req.referenceSpec) ? REPLICA_RULES : ''}${inspirationBlock(req.inspirationImages)}${isDesktopRequest(req.prompt) ? DESKTOP_GUIDE : ''}${req.canReadProject && req.useProjectContext !== false ? 'Você está na pasta do projeto do usuário e já recebeu abaixo um resumo dele. Só leia arquivos se faltar algo essencial para o design (somente LEITURA), no MÁXIMO ' + (isVaguePrompt(req.prompt) ? '6 arquivos (priorize os .md de documentação que descrevem o produto)' : '4 arquivos pequenos (ex.: README, tema/cores, uma página existente)') + ' e rápido — NUNCA varra o projeto inteiro nem rode buscas amplas, pois a resposta tem tempo limite. Reflita no design o domínio, o vocabulário e a identidade visual. NUNCA edite, crie ou apague arquivos. Responda apenas o JSON.' : `NÃO edite arquivos${req.referenceSpec ? ' nem leia outros arquivos' : req.referenceImages?.length ? ' (apenas abra as imagens de referência para vê-las)' : ' nem leia outros arquivos'}; responda apenas o JSON.`}
+${tokensBlockFor(req)}${assetsPromptBlock(req.projectAssets)}${referenceBlock(req.referenceImages, req.referenceSpec, req.prompt.includes(STYLE_MODE_MARK))}${req.components ? componentsBlock(req.components) : ''}${req.referenceImages?.length || req.referenceSpec || req.prompt.includes(STYLE_MODE_MARK) ? '' : directionBlock(req.prompt)}${req.replicaMode && (req.referenceImages?.length || req.referenceSpec) ? REPLICA_RULES : ''}${inspirationBlock(req.inspirationImages)}${isDesktopRequest(req.prompt) ? DESKTOP_GUIDE : ''}${domainHint}${req.canReadProject && req.useProjectContext !== false ? 'Você está na pasta do projeto do usuário e já recebeu abaixo um resumo dele. Só leia arquivos se faltar algo essencial para o design (somente LEITURA), no MÁXIMO ' + (isVaguePrompt(req.prompt) ? '6 arquivos (priorize os .md de documentação que descrevem o produto)' : '4 arquivos pequenos (ex.: README, tema/cores, uma página existente)') + ' e rápido — NUNCA varra o projeto inteiro nem rode buscas amplas, pois a resposta tem tempo limite. Reflita no design o domínio, o vocabulário e a identidade visual. NUNCA edite, crie ou apague arquivos. Responda apenas o JSON.' : `NÃO edite arquivos${req.referenceSpec ? ' nem leia outros arquivos' : req.referenceImages?.length ? ' (apenas abra as imagens de referência para vê-las)' : ' nem leia outros arquivos'}; responda apenas o JSON.`}
 
 PEDIDO: ${req.prompt}
 ${looksLikeErrorLog(req.prompt) ? 'ATENÇÃO: o pedido contém um ERRO/LOG colado. NÃO desenhe um dashboard genérico nem a tela de erro: deduza do texto a tela ou o componente de interface envolvido (ex.: erro de chave duplicada em itens com estado "closed" = uma lista/abas/filtro com os estados "open", "closed"…) e gere ESSA tela, com todos os estados e itens que o erro cita. Se houver imagem de referência, ela manda na aparência.\n' : ''}${req.projectContext && req.useProjectContext !== false ? `CONTEXTO DO PROJETO${req.referenceSpec || req.referenceImages?.length ? ' (SECUNDÁRIO: só para nomes/vocabulário quando o pedido pedir conteúdo do projeto; a REFERÊNCIA VISUAL manda em estrutura, posições e estilo)' : ''}:\n${req.projectContext}\n` : ''}${size}
@@ -183,7 +224,7 @@ AUTO LAYOUT (OBRIGATÓRIO): estruture a tela como um designer no Figma, com fram
 - Um frame com "layout":"horizontal" ou "vertical" organiza os filhos sozinho: "gap" (espaço entre itens), "padding" (número, ou [topo,direita,base,esquerda]; também "paddingX"/"paddingY"), "align" (top-left, top-center, top-right, left, center, right, bottom-left, bottom-center, bottom-right).
 - Cada item declara o pai com "parent":"<id do frame>" (o pai precisa ter sido declarado ANTES, com "id"). Sem "parent" = direto na tela. Filhos de um frame com layout NÃO levam x/y.
 - Tamanhos: número, "fill" (ocupa o espaço disponível do pai) ou "hug" (se ajusta ao conteúdo). Use "hug" na altura de cards/botões/listas, "fill" na largura de itens que ocupam a linha, textos de uma linha curta com "width":"hug".
-- Estruture: um frame raiz vertical (cabeçalho, conteúdo rolável, barra inferior), seções, listas e grades (linhas horizontais de cards), cards (imagem + coluna de textos), chips, botões (frame com texto/ícone centralizado), barras de navegação e abas.
+- Estruture: um frame raiz vertical (só as barras que a tela precisa), seções, listas e grades (linhas horizontais de cards), cards (imagem + coluna de textos), chips, botões (frame com texto/ícone centralizado), barras de navegação e abas.
 - SOBREPOSIÇÕES (badge de contagem, ponto de notificação, botão flutuante, selo): use "overlay":true + "anchor":"top-right|top-left|bottom-right|bottom-left|center" (+ "dx","dy" = quanto sai para fora do canto, px) no item filho do componente que ele cobre — ele fica FORA do fluxo do auto layout, preso ao canto do pai (nunca como irmão ao lado do ícone). Ex.: botão circular 44 com ícone + {"type":"frame","parent":"btn","overlay":true,"anchor":"top-right","dx":6,"dy":6,"layout":"horizontal","align":"center","padding":[2,6,2,6],"cornerRadius":999,"fill":"#7C3AED","width":"hug","height":18} contendo o texto "3"; ponto vermelho = {"type":"ellipse","parent":"btn","overlay":true,"anchor":"top-right","dx":2,"dy":2,"width":10,"height":10,"fill":"#EF4444","stroke":"#FFFFFF","strokeWidth":2}. Outras decorações soltas: x/y absolutos sem layout.
 - Cores em "fill"/"stroke"; "cornerRadius" nos frames para cards e botões.
 - DEGRADÊ: em rect/frame/ellipse use "gradient":{"from":"#00000000","to":"#000000CC","angle":180} (cores #RRGGBBAA, ângulo 180 = de cima para baixo) em vez de "fill" — ex.: escurecer a base de uma foto para o texto ficar legível: um frame com degradê sobre a imagem, com o texto dentro.
@@ -195,6 +236,7 @@ AUTO LAYOUT (OBRIGATÓRIO): estruture a tela como um designer no Figma, com fram
 - Para um item no canto de um card (badge no topo à direita), prefira uma linha horizontal: [texto "fill"][badge "hug"], em vez de posição absoluta.
 - BARRAS FIXAS (navbar/tab bar inferior, rodapé com botão, cabeçalho fixo): use "pin":"bottom" (ou "top") no frame da barra. Ele sai do fluxo e fica colado na borda da tela; em telas mobile dê padding inferior de 34 (indicador home) e deixe espaço no conteúdo. Para barra FLUTUANTE (cápsula com margem, como nos apps modernos) use também "inset" (distância da borda, ex.: 24), "x" (ex.: 24) e largura numérica (largura da tela − 2·x). NUNCA coloque uma navbar como mais um item do fluxo vertical logo depois de conteúdo "hug": ela subiria para o meio da tela. (Alternativa sem pin: o frame de conteúdo antes dela precisa ter "height":"fill".)
 
+COERÊNCIA E PROPORÇÕES (obrigatório): cada tela tem só o que faz sentido para o PROPÓSITO dela. Telas de entrada (splash, boas-vindas, onboarding, login, cadastro, recuperar senha, verificação) e fluxos em tela cheia (execução, câmera, player) NÃO têm navbar/tab bar inferior nem o menu principal do app: só o necessário (logo, título, campos, botão, link). Navbar/tab bar só nas telas principais. Proporções: botão primário 48–56px de altura (nunca acima de 56) com altura "hug"; botão de largura "fill" só em formulários e rodapés de ação; botão secundário, chip e ícone-botão em "hug" (chip 28–36, ícone-botão 40–48); campo de texto 48–56; ícones 20–24 (até 32 em destaque); avatar 36–48 (até 96 no perfil); padding de card 12–20; título de tela 24–32, corpo 14–16, legenda 12. Nada gigante: um elemento só passa de ~25% da altura da tela se for imagem, hero ou gráfico.
 RECEITAS DE COMPONENTES — ensinam apenas COMO construir cada peça com auto layout. Use SÓ as peças que a referência/o pedido pedem; NÃO são blocos obrigatórios. Não monte o esqueleto padrão (busca + chips + card de destaque + grade de cards + lista + navbar) a menos que a referência ou o pedido peçam exatamente isso:
 - Navbar/tab bar: frame "pin":"bottom", layout horizontal, padding [10,8,34,8], fundo e borda superior sutil; cada aba é um frame vertical (gap 4, align top-center, width "fill", height "hug") com ícone + rótulo curto; a aba ativa usa a cor de destaque.
 - Cabeçalho: frame horizontal (align left, gap 12, width "fill"); o título com width "fill" empurra os ícones de ação para a direita; ícones e avatar com tamanho fixo.
@@ -215,12 +257,15 @@ ESTILOS AVANÇADOS (use quando a referência/pedido pedir; todos opcionais):
 - VIDRO (glassmorphism) — PREFIRA o atalho "glass":true (ou "glass":"#FFFFFF" com a cor da tinta) em frame/rect: aplica degradê claro translúcido, borda de 1px, brilho interno no topo, blur do fundo e sombra suave. Use em cards, barras, chips, campo de entrada e botões sobre fundo colorido/imagem (o fundo precisa ter cor/brilho para o vidro aparecer: nunca vidro sobre preto liso). Vidro não é "preto translúcido": a tinta é CLARA (branco) a menos que a referência mostre vidro escuro. Manual: "fill":"#FFFFFF1A","stroke":"#FFFFFF33","strokeWidth":1,"effects":[{"type":"backdrop-blur","blur":24}] (atalho: "backdropBlur":24), com cornerRadius generoso.
 - Sombras: "effects":[{"type":"shadow","x":0,"y":8,"blur":24,"spread":0,"color":"#00000040"}]; sombra interna: {"type":"inner-shadow",...}.
 - NEOMORFISMO: fundo igual ao do app, "effects":[{"type":"shadow","x":8,"y":8,"blur":16,"color":"#A3B1C680"},{"type":"shadow","x":-8,"y":-8,"blur":16,"color":"#FFFFFFCC"}]; pressionado/côncavo: dois "inner-shadow" com as mesmas cores.
+- XADREZ/QUADRICULADO: se o pedido citar xadrez, tabuleiro ou quadriculado como textura, use {"pattern":"checker","color":"#RRGGBB","background":"#RRGGBB","opacity":1,"size":16} (size = lado de 2 quadrados; as duas cores formam o xadrez) em vez do tom sutil abaixo.
 - TEXTURAS: textura sutil no fundo da tela ou de um card (quadriculado, pontos, linhas, granulado) entra como camada de preenchimento por cima da cor: {"pattern":"grid|dots|lines|checker|noise","color":"#FFFFFF","opacity":0.06,"size":8} em "backgroundFills"/"fills" (opacity 0.03–0.10 e size 6–16 px para ficar leve; use a cor clara em fundo escuro e a escura em fundo claro). Granulado fino: "effects":[{"type":"noise","density":0.5,"opacity":0.12}] ou "backgroundNoise". Se a referência tem textura visível (granulado, grade, pontos), reproduza; se NÃO tem, NÃO adicione textura nem granulado (fundo liso/degradê limpo).
 - BLUR PROGRESSIVO (foto que desfoca aos poucos, como cards com a base borrada sob o texto): em effects use {"type":"blur","blur":24,"progressive":"bottom","from":45,"to":100} na própria imagem (desfoca a foto de 45% a 100% da altura, mais forte embaixo) ou {"type":"backdrop-blur","blur":28,"progressive":"bottom","from":0,"to":100} num frame/rect translúcido sobre a base da foto (desfoca o que está atrás). "progressive": "bottom"|"top"|"left"|"right" = lado onde o blur é mais forte; "from"/"to" = % do tamanho onde a rampa começa (sem blur) e termina (blur total). Combine com um degradê escuro sutil na base para o texto ler bem.
 - IMAGEM RECORTADA POR UMA FORMA (máscara): em um item "image" use "mask":"flower|blob|squircle|star|heart|arch|drop|hexagon|circle" (flor: "petals" 4–16 e "depth" 0.1–0.4) ou "maskPath":"<caminho SVG numa caixa 100x100>" para recortar a foto no contorno da forma (avatar em flor, capa em blob, foto em coração). A forma preenche a caixa width x height da imagem; pode ter "cornerRadius" 0.
+- PRODUTO SAINDO DO CARD (efeito "pop-out"): quando a referência mostra o produto/foto recortado ultrapassando o topo do card, o card NÃO leva "clip" e é um frame vertical com padding de topo igual à parte do produto que fica DENTRO do card; a imagem do produto é filha do card com "removeBg":true, "overlay":true, "anchor":"top-center" e "popOut" = fração da altura da imagem que sobe para FORA do card (0.3–0.45; o app posiciona), "width" = ~85% da largura do card e "height" = ~80% do width (o app confere), "width" ~ 80–90% do card e "imageFit":"fit"; nome e preço vêm abaixo, na coluna do card. O fundo do card é só a superfície (branco/translúcido), sem a cor do fundo da foto.
+- ETIQUETAS DE DESCONTO ("-5%", "-10%", "Novo"): pílula preta (ou da cor da marca) "hug", padding [4,10,4,10], cornerRadius 999, texto 12 branco, filha do CARD com "overlay":true, "anchor":"top-right", "dx" ~ 8 e "dy" ~ 12; declare-a DEPOIS da imagem do produto para ficar por cima; texto em UMA linha (nunca "-5" cortado nem repetida dentro da foto).
 - CLIP (cortar o conteúdo): frames de card/capa/avatar com cantos arredondados que contêm FOTO levam "clip":true para a foto ser cortada nos cantos do card (o app também liga sozinho nesses casos). NÃO ponha clip em um frame que tenha selo/etiqueta sobreposto saindo pela borda.
 - BADGE/TAG NA BORDA DE UM BOTÃO: o selo (contador, ponto, etiqueta como "1" ou "Online") é filho do botão com "overlay":true e "anchor":"top-right" (ou top-left, bottom-right, bottom-left, top-center, bottom-center) e "dx"/"dy" POSITIVOS = quanto o selo sai para fora do canto, em px (ex.: dx 4, dy 4; o padrão é ~40% do tamanho do selo); botão e selo com cantos arredondados (999). Etiquetas que cruzam a borda de baixo/cima de uma foto (ex.: pílula "0,2 km" no topo de um avatar, "Online" na base) usam anchor "top-center"/"bottom-center" com dy = metade da altura da pílula para ficar metade para fora.
-- Brilho/halo (glow) e manchas de cor no fundo: uma ellipse grande com "gradient" radial (cor → mesma cor com alfa 0) e "effects":[{"type":"blur","blur":80}] (atalho "blur":80), atrás do conteúdo.
+- Brilho/halo (glow) e manchas de cor no fundo: uma ellipse grande com "gradient" radial (cor → mesma cor com alfa 0, com várias paradas para o degradê ser macio), atrás do conteúdo. NÃO use blur grande nelas (o blur de camada é pesado e trava o zoom do editor): no máximo "blur":12.
 - Granulado/ruído: {"type":"noise","density":0.35,"opacity":0.2} em effects.
 - Raio por canto: "radii":[sup-esq,sup-dir,inf-dir,inf-esq]. Rotação: "rotation":graus.
 - ESPAÇAMENTO E POSIÇÃO: a tela inteira deve ser preenchida como na referência (sem grande vazio embaixo): blocos principais com espaço proporcional entre si; o que fica colado na base (campo de entrada, botões de ação, navegação) usa "pin":"bottom" com margem; cabeçalho no topo logo abaixo da barra de status; mesmo recuo lateral (16–24px) em TODOS os blocos; mesmo gap entre itens iguais; cards/chips de uma mesma fileira com mesma largura e altura (largura "fill" dividindo igualmente). Carrossel só se a referência tiver; senão os cards cabem na largura.
@@ -248,6 +293,7 @@ REGRAS:
 - TEXTOS: o texto precisa caber DENTRO do card/área onde está. Textos curtos (títulos, botões, rótulos, preços) devem caber em UMA linha: dê largura suficiente e não os quebre. Só use mais linhas em descrições, com a largura do card menos 16px de margem interna. Nunca deixe texto passar da borda do card.
 - ÍCONES: use SEMPRE type "icon" com "name" de um Material Icon em PascalCase (ex.: ${COMMON_ICON_NAMES.slice(0, 60).join(', ')}, ou outro) e "size" em px; "fill" define a cor. Nunca desenhe ícones com formas.
 - PESSOAS: quando a foto for de uma PESSOA (avatar, retrato, equipe, cliente, profissional, modelo), marque "person":true no item image — o app busca numa API de fotos de pessoas (retratos reais) em vez de uma foto qualquer; a "query" em inglês descreve gênero, idade aproximada, expressão, enquadramento (headshot, half body), roupa e cenário (ex.: "smiling woman in her 30s, headshot, studio light, beige background"). Foto de lugar, objeto, comida ou paisagem NÃO leva "person".
+- RECORTE (SEM FUNDO): quando o assunto da foto deve aparecer solto sobre o fundo/degradê/cor da tela (pessoa ou produto que "sai" do card, herói com modelo recortado, produto em destaque num banner colorido, sticker, logo em foto), marque "removeBg":true no item image — o app remove o fundo da foto (PNG transparente) e a imagem fica sem retângulo; a "query" deve pedir o assunto isolado (ex.: "sneaker product shot, white background"). Foto de capa, paisagem, cenário ou foto que preenche o card inteiro NÃO leva removeBg.
 - IMAGENS: para fotos reais (perfil de usuário, banners, capas, fotos de produtos/lugares/comida) use type "image" com "query" em INGLÊS descrevendo a foto ESPECÍFICA do contexto: se for pessoa, diga gênero, idade e tipo ("smiling young woman portrait", "senior man headshot", "doctor in white coat"); se for lugar/objeto/comida, o assunto exato ("burger on table", "modern apartment living room", "Nelore cattle in pasture"). Nunca use consultas genéricas ("photo", "person", "image"): a foto deve combinar com o texto ao redor (um card de produto mostra o produto, um perfil mostra uma pessoa). Avatares: width = height e "cornerRadius" = metade do tamanho (círculo). Cantos arredondados com "cornerRadius".
 - VELOCIDADE (a resposta tem tempo limite e cada caractere custa tempo): responda com JSON MINIFICADO — sem indentação, sem espaços fora de textos, um elemento por linha; nomes curtos (1 a 3 palavras) e OMITA "name" em textos e imagens (o app nomeia sozinho); ${req.referenceSpec || req.referenceImages?.length ? 'com REFERÊNCIA visual use até 350 elementos por tela: inclua TODOS os elementos do inventário da referência (fidelidade máxima), sem omitir nenhum.' : 'use no MÁXIMO 80 elementos por tela: priorize os blocos principais e, em listas/grades repetidas, mostre só 3 ou 4 itens de exemplo.'}
 - Hierarquia visual clara, espaçamento consistente (múltiplos de 4 ou 8) e textos reais (em português do Brasil, exceto quando há referência visual: mantenha o idioma da imagem; nada de "Lorem ipsum").`;
@@ -303,7 +349,7 @@ export function extractJson(raw: string): any | null {
 }
 
 interface Box { x: number; y: number; width: number; height: number }
-export interface PendingImage { id: string; query: string; width: number; height: number; /** arquivo do projeto (logo/ícone) em vez de foto do Unsplash */ assetPath?: string; /** foto de pessoa (retrato, avatar): usa a API de pessoas */ person?: boolean; /** recorte de uma imagem de referência anexada (frações 0–1 da imagem) em vez de foto do Unsplash */ refCrop?: { img: number; x: number; y: number; w: number; h: number } }
+export interface PendingImage { id: string; query: string; width: number; height: number; /** arquivo do projeto (logo/ícone) em vez de foto do Unsplash */ assetPath?: string; /** foto de pessoa (retrato, avatar): usa a API de pessoas */ person?: boolean; /** o assunto é recortado (sem o fundo da foto) por cima do fundo da tela */ removeBg?: boolean; /** recorte de uma imagem de referência anexada (frações 0–1 da imagem) em vez de foto do Unsplash */ refCrop?: { img: number; x: number; y: number; w: number; h: number } }
 interface TextMeta { raw: string; size: number; weight: number; align: 'left' | 'center' | 'right'; singleLine: boolean }
 type ItemCtx = {
   frameId: string; originX: number; originY: number; width: number; height: number; pageId: string; isDark: boolean; accentColor: string;
@@ -458,7 +504,8 @@ function convertAiItemRaw(item: any, ctx: ItemCtx, z: number): Shape | null {
   const relX = num(item.x, 0, 0, Math.max(0, width - (isText ? 24 : w)));
   const relY = num(item.y, 0, 0, Math.max(0, height - (isText ? 12 : h)));
   let pos = place(relX, relY);
-  const overlayInfo = overlay && pShape && anchor ? { anchor, dx: num(item.dx, Math.round(Math.min(w, h) * 0.4), -200, 200), dy: num(item.dy, Math.round(Math.min(w, h) * 0.4), -200, 200) } : undefined;
+  const popOut = item.type === 'image' && (item.removeBg === true || item.removeBg === 'true') && overlay && !!anchor; // produto recortado que sai do card: sempre pelo topo, subindo uma fração da própria altura
+  const overlayInfo = overlay && pShape && anchor ? (popOut ? { anchor: 'top-center' as const, dx: 0, dy: Math.round(h * num(item.popOut, 0.4, 0.15, 0.6)) } : { anchor, dx: num(item.dx, Math.round(Math.min(w, h) * 0.4), -200, 200), dy: num(item.dy, Math.round(Math.min(w, h) * 0.4), -200, 200) }) : undefined;
   if (overlayInfo && pShape) pos = overlayPosition(overlayInfo, pShape, w, h);
   else if (overlay && pShape) pos = { x: pShape.x + num(item.x, 0, -200, 4000), y: pShape.y + num(item.y, 0, -200, 4000) };
   const base: any = {
@@ -485,6 +532,7 @@ function convertAiItemRaw(item: any, ctx: ItemCtx, z: number): Shape | null {
   if (overlay) {
     base.layoutAbsolute = true;
     if (overlayInfo) base.overlayAnchor = overlayInfo;
+    if (popOut && overlayInfo) base.popOut = true;
   }
 
   if (isFrame) {
@@ -576,7 +624,7 @@ function convertAiItemRaw(item: any, ctx: ItemCtx, z: number): Shape | null {
       : undefined;
     if (refCrop && !assetPath) {
       base.name = String(item.name || 'Imagem da referência').slice(0, 40);
-      ctx.pending?.push({ id: base.id, query: '', width: Math.round(w), height: Math.round(h), refCrop });
+      ctx.pending?.push({ id: base.id, query: '', width: Math.round(w), height: Math.round(h), refCrop, removeBg: item.removeBg === true || item.removeBg === 'true' });
     } else if (assetPath) {
       // logo/ícone do próprio projeto: sem foto, sem fundo cinza, mantendo a proporção do arquivo
       base.imageFit = 'fit';
@@ -585,7 +633,7 @@ function convertAiItemRaw(item: any, ctx: ItemCtx, z: number): Shape | null {
       ctx.pending?.push({ id: base.id, query: '', width: Math.round(w), height: Math.round(h), assetPath });
     } else {
       const q = String(item.query || item.name || 'abstract').slice(0, 80);
-      ctx.pending?.push({ id: base.id, query: q, width: Math.round(w), height: Math.round(h), person: item.person === true || item.person === 'true' || (item.person == null && isPersonQuery(q)) });
+      ctx.pending?.push({ id: base.id, query: q, width: Math.round(w), height: Math.round(h), person: item.person === true || item.person === 'true' || (item.person == null && isPersonQuery(q)), removeBg: item.removeBg === true || item.removeBg === 'true' });
     }
   } else {
     base.fill = color(item.fill, item.type === 'line' ? 'none' : ctx.isDark ? '#27272A' : '#E4E4E7');
@@ -626,14 +674,33 @@ export class ScreenBuilder {
   /** barras fixas: id -> borda da tela onde ficam coladas */
   private pins = new Map<string, { edge: 'top' | 'bottom'; top: number; bottom: number; inset: number }>();
   private textMeta = new Map<string, TextMeta>();
+  /** componentes reutilizáveis: nome -> itens que o definem (da biblioteca do projeto + os declarados nesta resposta) */
+  private defs = new Map<string, LibComponent>();
+  /** nomes declarados nesta resposta (a biblioteca ainda não os tem) */
+  readonly newDefs: string[] = [];
+  /** id da IA (na tela atual) -> componente que está sendo definido por ele */
+  private defMember = new Map<string, string>();
+  private instSeq = 0;
+  /** nome da tela em construção e ids de itens descartados (navbar numa tela de login e tudo o que está dentro dela) */
+  private screenName = '';
+  private skipIds = new Set<string>();
   /** gráficos (type:"chart"): o frame é criado como um frame comum e a geometria é refeita quando o tamanho final é conhecido */
   private charts = new Map<string, { spec: ChartSpec; w: number; h: number; childIds: string[] }>();
   totalWidth = 0;
   maxHeight = 0;
 
-  constructor(private req: Pick<AiScreenRequest, 'pageId' | 'startX' | 'startY' | 'isDark' | 'accentColor' | 'targetFrame' | 'icons' | 'tokens' | 'projectAssets'> & { maxScreens?: number; /** sem o aparelho desenhado (o editor aplica a própria moldura) */ plainDevice?: boolean }) {
+  constructor(private req: Pick<AiScreenRequest, 'pageId' | 'startX' | 'startY' | 'isDark' | 'accentColor' | 'targetFrame' | 'icons' | 'tokens' | 'projectAssets' | 'components'> & { maxScreens?: number; /** sem o aparelho desenhado (o editor aplica a própria moldura) */ plainDevice?: boolean; /** só um componente: quadro do tamanho dele, sem barra de status nem aparelho */ componentMode?: boolean }) {
     this.cursorX = req.startX;
     this.z = (req.targetFrame ? req.targetFrame.zIndex + 1 : 100);
+    for (const c of req.components || []) this.defs.set(c.name.toLowerCase(), c);
+  }
+
+  /** Componentes declarados nesta resposta (para entrarem na biblioteca do projeto). */
+  get declared(): LibComponent[] {
+    return this.newDefs.map((n) => this.defs.get(n)).filter((c): c is LibComponent => !!c).map((c) => {
+      const root = this.all.find((x) => x.fcDef === c.name);
+      return root ? { ...c, width: root.width, height: root.height } : c;
+    });
   }
 
   get itemCount() { return this.items; }
@@ -651,6 +718,9 @@ export class ScreenBuilder {
     }
     this.screens++;
     this.aiIds.clear(); // ids declarados valem só dentro da própria tela
+    this.defMember.clear();
+    this.skipIds.clear();
+    this.screenName = typeof header.name === 'string' ? header.name : '';
     this.rootFlowId = null;
     const width = target ? target.width : num(header.width, 393, 200, 3000);
     const height = target ? target.height : num(header.height, 852, 200, 3000);
@@ -679,8 +749,8 @@ export class ScreenBuilder {
       }
       if (bgStyle.fills) bgDark = isDarkColor(avgFillHex(bgStyle.fills) || bg);
       const devOpts = { idGen: () => uid('dev'), pageId: this.req.pageId, x: originX, y: originY, z: this.z, isDark: bgDark ?? isDarkColor(bg), name, icons: this.req.icons, background: bg };
-      let dev = buildDevice({ name, width, height, kind: mobile && !this.req.plainDevice ? 'iphone-island' : 'plain', radius: mobile ? 55 : 0 }, devOpts);
-      if (this.req.plainDevice && mobile) {
+      let dev = buildDevice({ name, width, height, kind: mobile && !this.req.plainDevice ? 'iphone-island' : 'plain', radius: mobile && !this.req.componentMode ? 55 : 0 }, devOpts);
+      if (this.req.plainDevice && mobile && !this.req.componentMode) {
         // o editor desenha a moldura (corpo, botões, ilha): aqui ficam só a tela e o que é da própria tela (hora, sinal, wifi, bateria, indicador home)
         const full = buildDevice({ name, width, height, kind: 'iphone-island', radius: 55 }, devOpts);
         const dx = originX - full.screenX, dy = originY - full.screenY;
@@ -715,6 +785,74 @@ export class ScreenBuilder {
   addItem(rawItem: any): Shape | null {
     if (!this.ctx) this.startScreen({});
     if (!this.ctx || this.items >= MAX_SCREENS * MAX_SHAPES) return null;
+    // rede de segurança: tela de entrada (login, cadastro, splash…) não tem barra de navegação; o item e o que há dentro dele são descartados
+    if (rawItem && typeof rawItem === 'object') {
+      const underSkipped = typeof rawItem.parent === 'string' && this.skipIds.has(rawItem.parent);
+      const navOnEntry = rawItem.type === 'frame' && NAVBAR_NAME.test(String(rawItem.name || '')) && isEntryScreen(this.screenName);
+      if (underSkipped || navOnEntry) { if (typeof rawItem.id === 'string') this.skipIds.add(rawItem.id); return null; }
+    }
+    if (rawItem?.type === 'instance') return this.expandInstance(rawItem);
+    // componente novo: um frame com "component":"Nome" (e tudo o que está dentro dele) passa a ser reutilizável
+    const defKey = rawItem?.type === 'frame' && typeof rawItem.component === 'string' ? rawItem.component.trim().slice(0, 40).toLowerCase() : '';
+    let defOf = '';
+    if (defKey && !this.defs.has(defKey) && typeof rawItem.id === 'string') {
+      const own = { ...rawItem, component: undefined };
+      this.defs.set(defKey, { name: rawItem.component.trim().slice(0, 40), items: [own], width: 0, height: 0 });
+      this.newDefs.push(defKey);
+      this.defMember.set(rawItem.id, defKey);
+      defOf = defKey;
+    } else if (typeof rawItem?.parent === 'string' && this.defMember.has(rawItem.parent)) {
+      const k = this.defMember.get(rawItem.parent)!;
+      if (typeof rawItem.id === 'string') this.defMember.set(rawItem.id, k);
+      if (this.newDefs.includes(k)) this.defs.get(k)!.items.push({ ...rawItem });
+    }
+    const shape = this.addPlainItem(rawItem);
+    if (shape && defOf) {
+      this.patch(shape.id, { fcDef: this.defs.get(defOf)!.name });
+      this.defs.get(defOf)!.width = shape.width;
+      this.defs.get(defOf)!.height = shape.height;
+    }
+    return shape ? this.all.find((x) => x.id === shape.id) ?? shape : null;
+  }
+
+  /** Instância de um componente: recria os itens dele (via o mesmo pipeline) trocando só os textos e ícones pedidos. */
+  private expandInstance(item: any): Shape | null {
+    const def = typeof item.component === 'string' ? this.defs.get(item.component.trim().toLowerCase()) : undefined;
+    if (!def?.items.length) return null;
+    const pre = `inst${++this.instSeq}:`;
+    const text: Record<string, string> = item.text && typeof item.text === 'object' ? item.text : {};
+    const icon: Record<string, string> = item.icon && typeof item.icon === 'object' ? item.icon : {};
+    const iconKey = (k: string) => k.replace(/[^a-z0-9]/gi, '').toLowerCase();
+    const iconOv = new Map(Object.entries(icon).map(([k, v]) => [iconKey(k), String(v)]));
+    let root: Shape | null = null;
+    const inside: string[] = [];
+    for (const [i, orig] of def.items.entries()) {
+      const c: any = { ...orig };
+      if (typeof orig.id === 'string') c.id = pre + orig.id;
+      if (i === 0) {
+        c.parent = item.parent;
+        for (const k of ['x', 'y', 'width', 'height', 'pin', 'inset', 'align']) if (item[k] !== undefined) c[k] = item[k];
+        c.name = typeof item.name === 'string' && item.name.trim() ? item.name : def.name;
+      } else c.parent = pre + orig.parent;
+      if (c.type === 'text') {
+        const v = text[orig.name] ?? text[orig.text];
+        if (v !== undefined) { c.text = String(v); if (orig.name === undefined || orig.name === orig.text) c.name = undefined; }
+      } else if (c.type === 'icon') {
+        const v = iconOv.get(iconKey(String(orig.name)));
+        if (v) c.name = v;
+      }
+      const sh = this.addItem(c);
+      if (!sh) continue;
+      if (i === 0) root = sh; else inside.push(sh.id);
+    }
+    if (!root) return null;
+    const r = root;
+    for (const id of inside) this.patch(id, { fcInside: r.id });
+    this.patch(r.id, { fcInst: { name: def.name, ...(Object.keys(text).length ? { text } : {}), ...(Object.keys(icon).length ? { icon } : {}) } });
+    return this.all.find((x) => x.id === r.id) ?? r;
+  }
+
+  private addPlainItem(rawItem: any): Shape | null {
     let item = rawItem;
     // rede de segurança: a hora da barra de status já vem do aparelho ("9:41" duplicado quando a IA copia da referência)
     if (item?.type === 'text' && /^\s*\d{1,2}:\d{2}\s*$/.test(String(item.text ?? '')) && Number(item.y ?? 0) < MOBILE_SAFE.top && this.ctx.width < 600) return null;
@@ -835,7 +973,22 @@ export class ScreenBuilder {
     }
   }
 
+  /** Botão/chip que a IA fez gigante (altura fixa acima de 64px com só texto e ícone dentro): volta a se ajustar ao conteúdo. */
+  private fixOversizedButtons(): void {
+    const kids = new Map<string, Shape[]>();
+    for (const s of this.all) if (s.parentId) kids.set(s.parentId, [...(kids.get(s.parentId) || []), s]);
+    this.all = this.all.map((s) => {
+      if (s.type !== 'frame' || !s.hasAutoLayout || s.height <= 64 || s.heightMode === 'fill' || s.deviceChrome || s.deviceScreen) return s;
+      const c = kids.get(s.id) || [];
+      const texts = c.filter((k) => k.type === 'text');
+      if (!c.length || c.length > 3 || !texts.length || c.some((k) => k.type === 'frame' || k.type === 'image') || texts.reduce((a, k) => a + (k.text?.length || 0), 0) > 28) return s;
+      const cap = (v?: number) => Math.min(v ?? 0, 20);
+      return { ...s, heightMode: 'hug', paddingTop: cap(s.paddingTop), paddingBottom: cap(s.paddingBottom) };
+    });
+  }
+
   settle(): void {
+    this.fixOversizedButtons();
     this.compactFillToHug();
     this.equalizeRows();
     for (let i = 0; i < 3; i++) {
@@ -868,6 +1021,14 @@ export class ScreenBuilder {
     for (const s of this.all.filter((x) => x.overlayAnchor)) {
       const parent = this.all.find((x) => x.id === s.parentId);
       if (!parent) continue;
+      if (s.popOut && parent.width > 0 && s.width < parent.width * 0.78) {
+        // a IA costuma dar um tamanho de ícone: o produto ocupa ~85% da largura do card, mantendo a proporção da caixa
+        const k = (parent.width * 0.85) / Math.max(1, s.width);
+        this.all = this.all.map((k2) => (k2.id === s.id ? { ...k2, width: Math.round(s.width * k), height: Math.round(s.height * k) } : k2));
+        const cur = this.all.find((k2) => k2.id === s.id)!;
+        s.width = cur.width; s.height = cur.height;
+        s.overlayAnchor = { ...s.overlayAnchor!, dy: Math.round(cur.height * 0.4) };
+      }
       const pos = overlayPosition(s.overlayAnchor!, parent, s.width, s.height);
       const dx = Math.round(pos.x - s.x), dy = Math.round(pos.y - s.y);
       if (!dx && !dy) continue;
@@ -906,7 +1067,7 @@ export class ScreenBuilder {
 /** Valida e converte a resposta da IA em shapes (coordenadas absolutas no canvas). Aceita uma tela ({shapes}) ou várias ({screens}). Null se inutilizável. */
 export function parseAiScreenResponse(
   raw: string,
-  req: Pick<AiScreenRequest, 'pageId' | 'startX' | 'startY' | 'isDark' | 'accentColor' | 'targetFrame' | 'icons'>
+  req: Pick<AiScreenRequest, 'pageId' | 'startX' | 'startY' | 'isDark' | 'accentColor' | 'targetFrame' | 'icons' | 'components'>
 ): { shapes: Shape[]; mainFrameId: string; width: number; height: number; pending: PendingImage[] } | null {
   const data = extractJson(raw);
   if (!data) return null;
@@ -946,7 +1107,7 @@ export async function requestAiScreenRaw(
   additionalDirs?: string[],
   stallMs = 0,
   /** `abort` é preenchido com a função que interrompe só esta chamada (vigia de tempo) */
-  ctl?: { abort?: (why?: string) => void }
+  ctl?: { abort?: (why?: string) => void; /** esforço de raciocínio da CLI (Antigravity): padrão "low", que responde em ~1/3 do tempo */ effort?: 'low' | 'medium' | 'high' }
 ): Promise<string> {
   const api = (window as any).electronAPI?.ai;
   if (!api?.runCli) throw new Error('CLI de IA indisponível');
@@ -985,7 +1146,7 @@ export async function requestAiScreenRaw(
       })
     : null;
   try {
-    const res = await Promise.race([api.runCli({ cliCmd, prompt, model, cwd, additionalDirs, streamText: !!onText, streamId }), timeout, aborted]);
+    const res = await Promise.race([api.runCli({ cliCmd, prompt, model, cwd, additionalDirs, streamText: !!onText, streamId, effort: ctl?.effort ?? 'low' }), timeout, aborted]);
     if (res?.exitCode && res.exitCode !== 0 && !res.stdout) throw new Error(res.stderr || 'A CLI de IA falhou');
     return String(res?.stdout || '');
   } finally {

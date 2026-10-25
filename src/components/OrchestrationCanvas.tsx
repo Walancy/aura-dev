@@ -74,6 +74,7 @@ import {
   detectProjectPort,
   deduplicateProjectNodesDevUrls,
   scanSystemOccupiedPorts,
+  scanSystemOccupiedPortsOrNull,
   extractPortFromUrl,
 } from '../utils/projectDevUrl';
 import {
@@ -83,27 +84,9 @@ import {
   type ProjectCandidate,
 } from '../utils/projectMatcher';
 
-// Module constant for PTY session names scoped by floor
-export const ORCHESTRATION_CLI_SESSION_PREFIX = 'orch-cli-';
-
-export const getOrchestrationCliSessionId = (floorId: string, nodeId: string): string => {
-  return `${ORCHESTRATION_CLI_SESSION_PREFIX}${floorId}-${nodeId}`;
-};
-
-export const parseOrchestrationCliSessionId = (
-  sessionId: string
-): { floorId: string; nodeId: string } | null => {
-  if (!sessionId.startsWith(ORCHESTRATION_CLI_SESSION_PREFIX)) return null;
-  const rest = sessionId.slice(ORCHESTRATION_CLI_SESSION_PREFIX.length);
-  const dashIdx = rest.indexOf('-');
-  if (dashIdx === -1) {
-    return { floorId: '', nodeId: rest };
-  }
-  return {
-    floorId: rest.slice(0, dashIdx),
-    nodeId: rest.slice(dashIdx + 1),
-  };
-};
+// Ids das sessões PTY por andar (módulo próprio, com teste)
+import { ORCHESTRATION_CLI_SESSION_PREFIX, getOrchestrationCliSessionId, parseOrchestrationCliSessionId } from '../utils/orchestrationSession';
+export { ORCHESTRATION_CLI_SESSION_PREFIX, getOrchestrationCliSessionId, parseOrchestrationCliSessionId };
 
 // ============================================================================
 // TYPES
@@ -142,6 +125,10 @@ export interface WorkflowNode {
     projectPath?: string;
     gitBranch?: string;
     devUrl?: string;
+    fullName?: string;
+    cloneUrl?: string;
+    htmlUrl?: string;
+    isCloned?: boolean;
   };
   output?: {
     text?: string;
@@ -167,7 +154,7 @@ export interface WorkflowEdge {
   id: string;
   fromNodeId: string;
   fromPort: string;
-  fromSide?: 'right' | 'bottom' | 'top';
+  fromSide?: 'right' | 'bottom' | 'top' | 'left';
   fromRatio?: number;
   toNodeId: string;
   toPort: string;
@@ -212,6 +199,32 @@ export const getConnectedProjectNodes = (
     }
   });
   return allNodes.filter((n) => n.type === 'project' && connectedNodeIds.has(n.id));
+};
+
+// Helper: projetos que valem para um nó: os ligados a ele; se não houver, os dos nós anteriores do fluxo (um modelo-trabalhador
+// ligado só ao agente coordenador herda o projeto dele). Usado pelo motor de execução E pelo card do terminal: os dois precisam
+// concordar no diretório, senão o card recria a sessão em outra pasta (e o agente passa a rodar, com permissões totais, no repositório errado).
+export const getProjectNodesForNode = (
+  nodeId: string,
+  allNodes: WorkflowNode[],
+  allEdges: WorkflowEdge[]
+): WorkflowNode[] => {
+  const direct = getConnectedProjectNodes(nodeId, allNodes, allEdges);
+  if (direct.length > 0) return direct;
+  const seen = new Set<string>([nodeId]);
+  const queue = allEdges.filter((e) => e.toNodeId === nodeId).map((e) => e.fromNodeId);
+  const found = new Map<string, WorkflowNode>();
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const anc = allNodes.find((n) => n.id === id);
+    if (!anc) continue;
+    if (anc.type === 'project') { found.set(anc.id, anc); continue; }
+    getConnectedProjectNodes(id, allNodes, allEdges).forEach((p) => found.set(p.id, p));
+    allEdges.filter((e) => e.toNodeId === id).forEach((e) => queue.push(e.fromNodeId));
+  }
+  return [...found.values()];
 };
 
 // Helper: Extrai a ação/atividade legível em tempo real a partir de dados brutos do stream CLI da IA
@@ -413,263 +426,9 @@ export const getOptimalTooltipSide = (
   return 'top';
 };
 
-// Dicionário de serviços e plataformas conhecidas na web
-export const KNOWN_SERVICES: Record<
-  string,
-  { home: string; search?: (q: string) => string }
-> = {
-  youtube: {
-    home: 'https://www.youtube.com',
-    search: (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`,
-  },
-  github: {
-    home: 'https://www.github.com',
-    search: (q) => `https://github.com/search?q=${encodeURIComponent(q)}`,
-  },
-  google: {
-    home: 'https://www.google.com',
-    search: (q) => `https://www.google.com/search?q=${encodeURIComponent(q)}`,
-  },
-  twitter: {
-    home: 'https://x.com',
-    search: (q) => `https://x.com/search?q=${encodeURIComponent(q)}`,
-  },
-  x: {
-    home: 'https://x.com',
-    search: (q) => `https://x.com/search?q=${encodeURIComponent(q)}`,
-  },
-  linkedin: {
-    home: 'https://www.linkedin.com',
-    search: (q) => `https://www.linkedin.com/search/results/all/?keywords=${encodeURIComponent(q)}`,
-  },
-  instagram: {
-    home: 'https://www.instagram.com',
-  },
-  reddit: {
-    home: 'https://www.reddit.com',
-    search: (q) => `https://www.reddit.com/search/?q=${encodeURIComponent(q)}`,
-  },
-  wikipedia: {
-    home: 'https://www.wikipedia.org',
-    search: (q) => `https://pt.wikipedia.org/w/index.php?search=${encodeURIComponent(q)}`,
-  },
-  twitch: {
-    home: 'https://www.twitch.tv',
-  },
-  netflix: {
-    home: 'https://www.netflix.com',
-  },
-  spotify: {
-    home: 'https://open.spotify.com',
-    search: (q) => `https://open.spotify.com/search/${encodeURIComponent(q)}`,
-  },
-  chatgpt: {
-    home: 'https://chatgpt.com',
-  },
-  claude: {
-    home: 'https://claude.ai',
-  },
-  amazon: {
-    home: 'https://www.amazon.com',
-    search: (q) => `https://www.amazon.com/s?k=${encodeURIComponent(q)}`,
-  },
-  'mercado livre': {
-    home: 'https://www.mercadolivre.com.br',
-    search: (q) => `https://lista.mercadolivre.com.br/${encodeURIComponent(q)}`,
-  },
-  mercadolivre: {
-    home: 'https://www.mercadolivre.com.br',
-    search: (q) => `https://lista.mercadolivre.com.br/${encodeURIComponent(q)}`,
-  },
-  figma: {
-    home: 'https://www.figma.com',
-  },
-  g1: {
-    home: 'https://g1.globo.com',
-    search: (q) => `https://g1.globo.com/busca/?q=${encodeURIComponent(q)}`,
-  },
-  globo: {
-    home: 'https://www.globo.com',
-  },
-  uol: {
-    home: 'https://www.uol.com.br',
-  },
-  apple: {
-    home: 'https://www.apple.com',
-  },
-  microsoft: {
-    home: 'https://www.microsoft.com',
-  },
-  vercel: {
-    home: 'https://vercel.com',
-  },
-  maps: {
-    home: 'https://maps.google.com',
-    search: (q) => `https://maps.google.com/maps?q=${encodeURIComponent(q)}`,
-  },
-  tradutor: {
-    home: 'https://translate.google.com',
-    search: (q) => `https://translate.google.com/?text=${encodeURIComponent(q)}`,
-  },
-  noticias: {
-    home: 'https://news.google.com',
-    search: (q) => `https://news.google.com/search?q=${encodeURIComponent(q)}`,
-  },
-};
-
-// Helper: Extrai ou resolve a URL destinada ao componente de navegador interno
-export function resolveBrowserUrlFromInput(
-  upstreamInput?: string,
-  nodeConfigUrl?: string,
-  candidateProjects: ProjectCandidate[] = []
-): string {
-  let targetUrl = '';
-  if (upstreamInput) {
-    const rawInput = upstreamInput
-      .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
-      .replace(/[\x00-\x1F\x7F]/g, ' ')
-      .trim();
-
-    // 1. URL explícita (http://, https://, www.)
-    const urlMatch = rawInput.match(/(?:https?:\/\/|www\.)[^\s"'<>\x00-\x1F\x7F]+/i);
-    if (urlMatch) {
-      targetUrl = urlMatch[0]
-        .replace(/^[*\s`"']+|[*_`"'<>\)\].,;:]+$/g, '')
-        .replace(/\/\*+.*$/, '');
-      if (targetUrl.startsWith('www.')) targetUrl = `https://${targetUrl}`;
-      return targetUrl;
-    }
-
-    // 2. Localhost ou domínio .localhost (Portless) com ou sem porta (ex: localhost:3000, 127.0.0.1:5173, myapp.localhost:1355, app.localhost)
-    const localhostMatch = rawInput.match(/\b(?:(?:[a-zA-Z0-9_-]+\.)*localhost|127\.0\.0\.1)(?::\d+)?(?:\/[^\s"'<>\x00-\x1F\x7F]*)?\b/i);
-    if (localhostMatch) {
-      const cleanLocal = localhostMatch[0]
-        .replace(/^[*\s`"']+|[*_`"'<>\)\].,;:]+$/g, '')
-        .replace(/\/\*+.*$/, '');
-      return `http://${cleanLocal}`;
-    }
-
-    // 3. Domínio explícito no texto (ex: vitejs.dev, apple.com, g1.globo.com, devflow.org/docs)
-    const domainMatch = rawInput.match(
-      /\b([a-zA-Z0-9-]+\.(?:com\.br|gov\.br|org\.br|edu\.br|com|org|net|io|dev|app|ai|me|tv|co|uk|de|fr|xyz|tech)(?:\/[^\s"'<>\x00-\x1F\x7F]*)?)\b/i
-    );
-    if (domainMatch) {
-      const cleanDom = domainMatch[1]
-        .replace(/^[*\s`"']+|[*_`"'<>\)\].,;:]+$/g, '')
-        .replace(/\/\*+.*$/, '');
-      return `https://${cleanDom}`;
-    }
-
-    // 4. Busca direcionada a um serviço específico (ex: "pesquisar x no youtube", "buscar repo no github")
-    const serviceSearchMatch = rawInput.match(
-      /(?:pesquisar|buscar|procurar)(?:\s+(?:por|sobre))?\s+([^]+?)\s+(?:no|em|na)\s+([a-zA-Z0-9\s]+?)(?:\s+no\s+navegador|\.|$)/i
-    );
-    if (serviceSearchMatch) {
-      const q = serviceSearchMatch[1].trim();
-      const sName = serviceSearchMatch[2].trim().toLowerCase();
-      const svc = KNOWN_SERVICES[sName];
-      if (svc?.search && q) {
-        return svc.search(q);
-      }
-    }
-
-    // 5. Menção a serviço conhecido (ex: "Abra o youtube no navegador.", "Acesse o github", "abrir google")
-    for (const [key, svc] of Object.entries(KNOWN_SERVICES)) {
-      const svcRegex = new RegExp(`\\b${key}\\b`, 'i');
-      if (svcRegex.test(rawInput)) {
-        // Verifica se há pedido de busca associado na frase (ex: "abra o youtube e busque rock")
-        const associatedSearch = rawInput.match(
-          /(?:pesquisar|buscar|procurar)(?:\s+(?:por|sobre))?\s+[:"']?([^"'\n\r]+)/i
-        );
-        if (associatedSearch && associatedSearch[1]?.trim() && svc.search) {
-          const cleanQ = associatedSearch[1]
-            .trim()
-            .replace(new RegExp(`\\s+(?:no|em|na)\\s+${key}`, 'i'), '')
-            .replace(/\s+no\s+navegador/i, '')
-            .trim();
-          if (cleanQ && !new RegExp(`^${key}$`, 'i').test(cleanQ)) {
-            return svc.search(cleanQ);
-          }
-        }
-        return svc.home;
-      }
-    }
-
-    // 6. Resolução de Projeto Solicitado & Dev URL
-    // Se o texto mencionar um projeto ou expressar intenção de abrir projeto / dev server:
-    if (candidateProjects && candidateProjects.length > 0) {
-      const matched = findProjectsInText(rawInput, candidateProjects);
-      if (matched.length > 0 && matched[0].devUrl) {
-        return matched[0].devUrl;
-      }
-      if (isProjectOpenIntent(rawInput)) {
-        const fallback = candidateProjects.find((p) => p.devUrl) || candidateProjects[0];
-        if (fallback?.devUrl) {
-          return fallback.devUrl;
-        }
-      }
-    }
-
-    // 7. "Abra o site [nome]" (ex: "abra o site da apple", "acesse o site da vercel")
-    const siteMatch = rawInput.match(
-      /(?:abrir|abra|acesse|acessar|navegar\s+para)\s+(?:o\s+)?site\s+(?:da\s+|do\s+|de\s+)?([a-zA-Z0-9-]+)/i
-    );
-    if (siteMatch && siteMatch[1]) {
-      const name = siteMatch[1].trim().toLowerCase();
-      if (KNOWN_SERVICES[name]) {
-        return KNOWN_SERVICES[name].home;
-      }
-      return `https://www.${name}.com`;
-    }
-
-    // 8. Busca geral por intenção (pesquisar / buscar / procurar / saber / ver)
-    const generalSearchMatch = rawInput.match(
-      /(?:pesquisar|buscar|procurar|encontrar|como|qual\s+é|o\s+que\s+é)(?:\s+(?:por|sobre))?\s+[:"']?([^"'\n\r]+)/i
-    );
-    if (generalSearchMatch && generalSearchMatch[1]?.trim()) {
-      const cleanQ = generalSearchMatch[1]
-        .trim()
-        .replace(/\s+no\s+navegador\.?$/i, '')
-        .replace(/\s+(?:na web|na internet)$/i, '')
-        .trim();
-      if (cleanQ) {
-        return `https://www.google.com/search?q=${encodeURIComponent(cleanQ)}`;
-      }
-    }
-
-    // 9. Se há texto e parece comando de abrir algo (e NÃO for intenção de abrir projeto):
-    const openVerbMatch = rawInput.match(
-      /(?:abrir|abra|acesse|acessar|visitar|navegue\s+até)\s+(.+)/i
-    );
-    if (openVerbMatch && openVerbMatch[1]?.trim() && !isProjectOpenIntent(rawInput)) {
-      const target = openVerbMatch[1].trim().replace(/\s+no\s+navegador\.?$/i, '').trim();
-      if (target) {
-        return `https://www.google.com/search?q=${encodeURIComponent(target)}`;
-      }
-    }
-
-    // 10. Se for qualquer texto não vazio (e não for comando de projeto):
-    if (rawInput.length > 0 && !isProjectOpenIntent(rawInput)) {
-      return `https://www.google.com/search?q=${encodeURIComponent(rawInput)}`;
-    }
-  }
-
-  // 11. Configuração pré-existente do nó de navegador
-  if (!targetUrl && nodeConfigUrl && nodeConfigUrl !== 'about:blank') {
-    targetUrl = nodeConfigUrl;
-  }
-
-  if (!targetUrl) {
-    targetUrl = 'about:blank';
-  }
-
-  if (!/^https?:\/\//i.test(targetUrl) && !targetUrl.startsWith('about:')) {
-    targetUrl = `https://${targetUrl}`;
-  }
-
-  return targetUrl;
-}
+// Dicionário de serviços e resolução de URL do navegador: módulo próprio (com teste)
+import { KNOWN_SERVICES, resolveBrowserUrlFromInput } from '../utils/browserUrl';
+export { KNOWN_SERVICES, resolveBrowserUrlFromInput };
 
 export interface ExecutionRecord {
   id: string;
@@ -710,7 +469,7 @@ export interface OrchestrationCanvasProps {
   onSelectAiProvider?: (providerId: string) => void;
   onSelectModel?: (modelItem: { id: string; label: string }, targetProviderId?: string) => void;
   onSelectWorkspace?: (dirPath: string, repoName?: string) => Promise<void> | void;
-  onToast?: (msg: string) => void;
+  onToast?: (msg: string, type?: 'info' | 'success' | 'error') => void;
   currentUser?: { login: string; avatarUrl?: string } | null;
   /** Se a aba de Orquestração está ativa/visível no app (o container fica montado mas com
    * display:none quando o usuário está em outra aba) — usado para refazer o fit/resize/focus
@@ -845,7 +604,8 @@ const DEFAULT_EDGES: WorkflowEdge[] = [
 
 export const normalizeLoadedNodes = (raw: any): WorkflowNode[] => {
   if (!Array.isArray(raw)) return deduplicateProjectNodesDevUrls(DEFAULT_NODES).nodes;
-  const mapped = raw.map((n) => ({
+  // um item nulo/sem id no JSON salvo não pode derrubar o carregamento do fluxo inteiro
+  const mapped = raw.filter((n) => n && typeof n === 'object' && typeof n.id === 'string').map((n) => ({
     ...n,
     status: n.status === 'running' ? 'ready' : (n.status || 'ready'),
     needsAttention: false,
@@ -857,7 +617,7 @@ export const normalizeLoadedNodes = (raw: any): WorkflowNode[] => {
 
 export const normalizeLoadedEdges = (raw: any): WorkflowEdge[] => {
   if (!Array.isArray(raw)) return DEFAULT_EDGES;
-  return raw.map((e) => {
+  return raw.filter((e) => e && typeof e === 'object' && typeof e.id === 'string').map((e) => {
     // If edge had legacy hardcoded orange color, remove it so it adapts to the system accentColor
     const isLegacyOrange =
       e.color &&
@@ -1133,13 +893,18 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
   const [floors, setFloors] = useState<OrchestrationFloor[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_FLOORS);
-      if (saved) return JSON.parse(saved);
+      const parsed = saved ? JSON.parse(saved) : [];
+      if (Array.isArray(parsed)) return parsed.filter((f) => f && typeof f.id === 'string' && typeof f.worktreePath === 'string');
     } catch {}
     return [];
   });
+  const floorsRef = useRef(floors);
+  floorsRef.current = floors;
   const [activeFloorId, setActiveFloorId] = useState<string>(() => {
     try {
-      return localStorage.getItem(STORAGE_KEY_ACTIVE_FLOOR) || GROUND_FLOOR_ID;
+      // um andar que não existe mais (apagado, dado corrompido) volta para o térreo: nós e terminais não podem apontar para ele
+      const saved = localStorage.getItem(STORAGE_KEY_ACTIVE_FLOOR) || GROUND_FLOOR_ID;
+      return saved === GROUND_FLOOR_ID || floors.some((f) => f.id === saved) ? saved : GROUND_FLOOR_ID;
     } catch {
       return GROUND_FLOOR_ID;
     }
@@ -1167,7 +932,10 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
   const [floorToLand, setFloorToLand] = useState<OrchestrationFloor | null>(null);
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
   const [isClearLogsConfirmOpen, setIsClearLogsConfirmOpen] = useState(false);
+  const maestroBusyRef = useRef<Set<string>>(new Set());
   const [isConsentModalOpen, setIsConsentModalOpen] = useState(false);
+  /** gatilho que o usuário mandou executar antes de autorizar (a execução depois da autorização continua dele, não vira o fluxo todo) */
+  const pendingStartNodeIdRef = useRef<string | undefined>(undefined);
   const cancelWorkflowRef = useRef(false);
   const runningWorkflowRunIdRef = useRef<string | null>(null);
   // Execuções em andamento: cada gatilho/fluxo roda de forma independente (cancelamento e nós próprios)
@@ -1324,16 +1092,19 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
     const tPort = extractPortFromUrl(url);
     const pPath = projectNode.config.projectPath;
     const pName = projectNode.config.projectName || projectNode.title || 'projeto';
-    scanSystemOccupiedPorts().then((sysPorts) => {
-      if (tPort && !sysPorts.includes(tPort)) {
+    scanSystemOccupiedPortsOrNull().then((sysPorts) => {
+      // sem o scan não dá para saber se a porta está livre: não sobe servidor "no escuro"
+      if (sysPorts && tPort && !sysPorts.includes(tPort)) {
         const cleanName = pName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
         const sessionId = `dev-server-${cleanName}`;
-        window.electronAPI.pty.create(sessionId, 'zsh', pPath, 100, 24, accentColor).then(() => {
+        window.electronAPI.pty.create(sessionId, 'zsh', pPath, 100, 24, accentColor).then((res) => {
+          // terminal que já existia (servidor rodando ou subindo): digitar o comando de novo iria para o stdin dele
+          if (!res?.success || res.reused) return;
           window.electronAPI.pty.write(sessionId, 'bun run dev 2>/dev/null || pnpm dev 2>/dev/null || npm run dev\n');
           onToast?.(`🚀 Iniciando servidor de "${pName}" em segundo plano...`, 'info');
         }).catch(() => {});
       }
-    });
+    }).catch(() => {});
   };
 
   const handleOpenUrlFromNode = useCallback(
@@ -1358,7 +1129,8 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
         const projectNode =
           (sourceNode?.type === 'project' ? sourceNode : null) ||
           getConnectedProjectNodes(sourceNodeId, nodes, edges)[0] ||
-          nodes.find((n) => n.type === 'project' && n.config?.projectPath);
+          // sem projeto ligado: só o projeto cuja dev URL é a da própria URL (o "primeiro projeto" subiria o servidor errado)
+          nodes.find((n) => n.type === 'project' && n.config?.projectPath && extractPortFromUrl(n.config?.devUrl) === extractPortFromUrl(url));
         ensureDevServer(projectNode, url);
       }
 
@@ -1433,6 +1205,11 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
   const handleSwitchFloor = useCallback(
     (newFloorId: string) => {
       if (newFloorId === activeFloorId) return;
+      // grava o andar que está saindo agora: o salvamento com debounce seria cancelado pela troca e a última edição se perderia
+      try {
+        localStorage.setItem(floorStorageKey(STORAGE_KEY_NODES, activeFloorId), JSON.stringify(nodesRef.current));
+        localStorage.setItem(floorStorageKey(STORAGE_KEY_EDGES, activeFloorId), JSON.stringify(edgesRef.current));
+      } catch {}
       let loadedNodes: WorkflowNode[] = DEFAULT_NODES;
       let loadedEdges: WorkflowEdge[] = DEFAULT_EDGES;
       let loadedLogs: ExecutionRecord[] = [];
@@ -1459,6 +1236,17 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
       setActiveFloorId(newFloorId);
       setSelectedNodeId(null);
       setExpandedCliNodes({});
+      // o andar duplicado repete os ids dos nós: estado de UI do andar anterior apontaria para os nós errados
+      setSelectedNodeIds([]);
+      setConfiguringNodeId(null);
+      setNodeOptionsPopup(null);
+      setActiveInstructionNodeId(null);
+      setExpandedProjectNodes({});
+      setOpenedCliNodeIds(new Set());
+      setNodeIncomingUrls({});
+      setActiveDynamicEdgeIds(new Set());
+      projectOriginalPositionsRef.current = {};
+      projectShiftedPositionsRef.current = {};
     },
     [activeFloorId]
   );
@@ -1541,24 +1329,33 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
       if (!workspacePath) return;
       setIsFloorBusy(true);
       try {
-        // Encerra todos os terminais PTY associados a este andar antes de excluir o worktree (Itens 20 e 25)
+        // Os terminais do andar só são encerrados depois que o worktree saiu: se a remoção falhar o andar continua existindo
         let floorNodeIds: string[] = [];
         try {
           const raw = localStorage.getItem(floorStorageKey(STORAGE_KEY_NODES, floor.id));
           if (raw) {
             const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed)) floorNodeIds = parsed.map((n: any) => n.id);
+            if (Array.isArray(parsed)) floorNodeIds = parsed.map((n: any) => n?.id).filter(Boolean);
           }
         } catch {}
         if (floor.id === activeFloorId) {
           floorNodeIds = Array.from(new Set([...floorNodeIds, ...nodes.map((n) => n.id)]));
         }
-        killNodeSessions(floorNodeIds, floor.id);
 
-        const result = await window.electronAPI?.git?.worktreeRemove?.(workspacePath, floor.worktreePath);
+        let result = await window.electronAPI?.git?.worktreeRemove?.(workspacePath, floor.worktreePath);
+        if (!result?.success) {
+          // um terminal aberto no worktree pode impedir a remoção: encerra e tenta de novo uma vez
+          killNodeSessions(floorNodeIds, floor.id);
+          result = await window.electronAPI?.git?.worktreeRemove?.(workspacePath, floor.worktreePath);
+        }
         if (!result?.success) {
           onToast?.(`Falha ao excluir andar: ${result?.error || 'erro desconhecido'}`);
           return;
+        }
+        killNodeSessions(floorNodeIds, floor.id);
+        // troca de andar ANTES de apagar as chaves: a troca grava o andar que sai, e recriaria as chaves do andar apagado
+        if (activeFloorId === floor.id) {
+          handleSwitchFloor(GROUND_FLOOR_ID);
         }
         try {
           localStorage.removeItem(floorStorageKey(STORAGE_KEY_NODES, floor.id));
@@ -1566,9 +1363,6 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
           localStorage.removeItem(floorStorageKey(STORAGE_KEY_LOGS, floor.id));
         } catch {}
         setFloors((prev) => prev.filter((f) => f.id !== floor.id));
-        if (activeFloorId === floor.id) {
-          handleSwitchFloor(GROUND_FLOOR_ID);
-        }
         onToast?.(`Andar "${floor.name}" excluído.`);
       } finally {
         setIsFloorBusy(false);
@@ -1630,7 +1424,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
       const saved = localStorage.getItem(STORAGE_KEY_PAN_ZOOM);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (typeof parsed.zoom === 'number' && !isNaN(parsed.zoom)) {
+        if (typeof parsed.zoom === 'number' && Number.isFinite(parsed.zoom) && parsed.zoom >= 0.2 && parsed.zoom <= 3) {
           return parsed.zoom;
         }
       }
@@ -1643,7 +1437,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
       const saved = localStorage.getItem(STORAGE_KEY_PAN_ZOOM);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (typeof parsed.x === 'number' && typeof parsed.y === 'number' && !isNaN(parsed.x) && !isNaN(parsed.y)) {
+        if (Number.isFinite(parsed.x) && Number.isFinite(parsed.y) && Math.abs(parsed.x) < 1e6 && Math.abs(parsed.y) < 1e6) {
           return { x: parsed.x, y: parsed.y };
         }
       }
@@ -1678,7 +1472,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
     fromNodeId: string;
     fromPort: string;
     fromDir?: 'right' | 'down' | 'up';
-    fromSide?: 'right' | 'bottom' | 'top';
+    fromSide?: 'right' | 'bottom' | 'top' | 'left';
     fromRatio?: number;
     fromX?: number;
     fromY?: number;
@@ -1688,6 +1482,8 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
     snappedPort?: string | null;
     snappedSide?: 'left' | 'top' | 'bottom' | 'right';
     snappedRatio?: number;
+    /** cabo existente que está sendo reencaixado: ao soltar volta com o mesmo id, rótulo e auto-relay (ou volta inteiro se o drop não valer) */
+    origEdge?: WorkflowEdge;
   } | null>(null);
 
   // Interactive Link Tag Dragging State (Deslocar tagzinha de chars ao longo do cabo bezier)
@@ -1979,6 +1775,9 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
       try {
         const res = await cloneGitRepository(projItem);
         if (res.success && res.repoPath) {
+          const newPath = res.repoPath;
+          const gitInfo = await window.electronAPI?.git?.getWorkspaceGitInfo?.(newPath).catch(() => null);
+          const newBranch = gitInfo?.branch || 'main';
           let detectedPort: number | null = null;
           try {
             detectedPort = await detectProjectPort(newPath);
@@ -2073,59 +1872,56 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
       if (targetNode.type === 'model' || targetNode.type === 'agent') {
         const prov = (targetNode.provider || 'claude') as AiProviderId;
         const modelName = targetNode.config?.model || 'Sonnet 5';
+        // A saída vai para a sessão do nó (ela é criada só de saída, se ainda não existir, e vira o CLI de verdade quando ele for aberto)
         const relaySessionId = getOrchestrationCliSessionId(activeFloorId, targetNodeId);
-        window.electronAPI?.pty?.create?.(relaySessionId, 'zsh', effectiveWorkspacePath);
+        // A resposta chega depois de um await: se o usuário trocou de andar (ids de nó se repetem em andares duplicados), não escreve no andar novo
+        const floorAtStart = activeFloorId;
+        const setFloorNodes: typeof setNodes = (u) => { if (activeFloorIdRef.current === floorAtStart) setNodes(u); };
+        const setStatus = (status: WorkflowNode['status']) =>
+          setFloorNodes((prev) => prev.map((n) => (n.id === targetNodeId ? { ...n, status } : n)));
 
-        setNodes((prev) =>
-          prev.map((n) => (n.id === targetNodeId ? { ...n, status: 'running' } : n))
-        );
+        setStatus('running');
         onToast?.(`🤖 Enviando para ${targetNode.title}...`, 'info');
 
         try {
-          if (window.electronAPI?.ai?.prompt) {
-            const res = await (window.electronAPI.ai.prompt as any)(
-              text,
-              modelName,
-              effectiveWorkspacePath,
-              prov,
-              undefined,
-              undefined,
-              [relaySessionId]
+          if (!window.electronAPI?.ai?.prompt) {
+            setStatus('failed');
+            onToast?.('Serviço de IA indisponível para o relay.', 'error');
+            return;
+          }
+          const res = await (window.electronAPI.ai.prompt as any)(
+            text,
+            modelName,
+            effectiveWorkspacePath,
+            prov,
+            undefined,
+            undefined,
+            [relaySessionId]
+          );
+          if (res?.response) {
+            const reply = res.response.trim();
+            setFloorNodes((prev) =>
+              prev.map((n) =>
+                n.id === targetNodeId
+                  ? { ...n, status: 'success', output: { text: reply, timestamp: new Date().toLocaleTimeString() } }
+                  : n
+              )
             );
-            if (res?.response) {
-              const reply = res.response.trim();
-              setNodes((prev) =>
-                prev.map((n) =>
-                  n.id === targetNodeId
-                    ? {
-                        ...n,
-                        status: 'success',
-                        output: {
-                          text: reply,
-                          timestamp: new Date().toLocaleTimeString(),
-                        },
-                      }
-                    : n
-                )
-              );
-              onToast?.(`✨ Resposta de ${targetNode.title} recebida!`, 'success');
+            onToast?.(`✨ Resposta de ${targetNode.title} recebida!`, 'success');
 
-              const url = resolveBrowserUrlFromInput(reply, undefined, []);
-              if (url && url !== 'about:blank' && !url.includes('google.com/search')) {
-                handleOpenUrlFromNode(targetNodeId, url);
-              }
-            } else if (res?.error) {
-              onToast?.(`Erro em ${targetNode.title}: ${res.error}`, 'error');
-              setNodes((prev) =>
-                prev.map((n) => (n.id === targetNodeId ? { ...n, status: 'failed' } : n))
-              );
-            }
+            // só uma URL escrita na resposta abre o navegador (o resolvedor por nome de serviço abria claude.ai/x.com para "o Claude sugeriu x")
+            const explicit = reply.match(/https?:\/\/[^\s)<>"']+/i)?.[0];
+            if (explicit && activeFloorIdRef.current === floorAtStart) handleOpenUrlFromNode(targetNodeId, explicit);
+          } else if (res?.cancelled) {
+            setStatus('cancelled');
+          } else {
+            // erro do CLI ou resposta vazia: o nó não pode ficar "running" para sempre
+            setStatus('failed');
+            onToast?.(`Erro em ${targetNode.title}: ${res?.error || 'a IA não devolveu resposta'}`, 'error');
           }
         } catch (err: any) {
           onToast?.(`Falha na comunicação: ${err?.message || err}`, 'error');
-          setNodes((prev) =>
-            prev.map((n) => (n.id === targetNodeId ? { ...n, status: 'failed' } : n))
-          );
+          setStatus('failed');
         }
         return;
       }
@@ -2474,6 +2270,21 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
     return () => clearTimeout(timer);
   }, [nodes, activeFloorId]);
 
+  // A janela da debounce não pode perder a última edição ao fechar o app ou sair da tela
+  useEffect(() => {
+    const flush = () => {
+      try {
+        localStorage.setItem(floorStorageKey(STORAGE_KEY_NODES, activeFloorIdRef.current), JSON.stringify(nodesRef.current));
+        localStorage.setItem(floorStorageKey(STORAGE_KEY_EDGES, activeFloorIdRef.current), JSON.stringify(edgesRef.current));
+      } catch {}
+    };
+    window.addEventListener('beforeunload', flush);
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      flush();
+    };
+  }, []);
+
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
@@ -2687,6 +2498,9 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
       if (!draft) return;
       const maestroNode = nodes.find((n) => n.id === maestroNodeId);
       if (!maestroNode) return;
+      // segundo clique/Enter durante a espera da IA recrutaria tudo de novo (nós e papéis duplicados)
+      if (maestroBusyRef.current.has(maestroNodeId)) return;
+      maestroBusyRef.current.add(maestroNodeId);
 
       setMaestroBusy((prev) => ({ ...prev, [maestroNodeId]: true }));
       setMaestroRawError((prev) => ({ ...prev, [maestroNodeId]: '' }));
@@ -2697,6 +2511,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
 Pedido do usuário: ${draft}`;
 
       let rawResponse = '';
+      const createdRolesOnError: AgentRole[] = [];
       try {
         const result = await window.electronAPI?.ai?.prompt?.(systemPrompt, 'claude-headless', effectiveWorkspacePath);
         rawResponse = result?.response || '';
@@ -2713,9 +2528,19 @@ Pedido do usuário: ${draft}`;
         const newNodes: WorkflowNode[] = [];
         const newEdges: WorkflowEdge[] = [];
         const rolesSnapshot = [...roles];
+        const createdRoles: AgentRole[] = [];
+        const defaultModelLabel = getProviderModelList(maestroNode.provider || (selectedAiProvider as AiProviderId) || 'claude')[0]?.label || 'Default';
 
+        const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
         for (let i = 0; i < plan.recruits.length; i++) {
-          const recruit = plan.recruits[i];
+          const raw = plan.recruits[i] as any;
+          // a IA pode mandar número/objeto onde se esperava texto: cada campo é validado (um item ruim não derruba o plano inteiro)
+          const recruit = {
+            name: str(raw?.name),
+            role: str(raw?.role),
+            instructions: str(raw?.instructions),
+            connectTo: Array.isArray(raw?.connectTo) ? (raw.connectTo.filter((t: unknown) => typeof t === 'string') as string[]) : [],
+          };
           const recruitProvider = maestroNode.provider || (selectedAiProvider as AiProviderId) || 'claude';
           const newId = `node-model-${Date.now()}-${i}`;
           let roleId: string | undefined;
@@ -2732,6 +2557,8 @@ Pedido do usuário: ${draft}`;
               if (created) {
                 roleId = created.id;
                 rolesSnapshot.push(created);
+                createdRoles.push(created);
+                createdRolesOnError.push(created);
               }
             }
           }
@@ -2741,7 +2568,7 @@ Pedido do usuário: ${draft}`;
             id: newId,
             type: 'model',
             title: recruit.name || recruit.role || 'Agente recrutado',
-            subtitle: 'Sonnet 3.7',
+            subtitle: defaultModelLabel,
             provider: recruitProvider,
             x: Math.round(startX + i * (RECRUIT_W + GAP)),
             y: Math.round(startY),
@@ -2750,7 +2577,7 @@ Pedido do usuário: ${draft}`;
             status: 'ready',
             roleId,
             config: {
-              model: 'Sonnet 3.7',
+              model: defaultModelLabel,
               temperature: 0.7,
               maxTokens: 2048,
             },
@@ -2776,9 +2603,17 @@ Pedido do usuário: ${draft}`;
           }
         }
 
-        if (rolesSnapshot.length !== roles.length) setRoles(rolesSnapshot);
+        if (createdRoles.length) setRoles((prev) => [...prev, ...createdRoles.filter((c) => !prev.some((r) => r.id === c.id))]);
 
-        const dismissIds = new Set(plan.dismiss.filter((id) => nodes.some((n) => n.id === id)));
+        // só agentes de IA parados: nunca o próprio Maestro, projetos, gatilhos ou o que está executando
+        const dismissIds = new Set(
+          plan.dismiss.filter(
+            (id) =>
+              typeof id === 'string' &&
+              id !== maestroNodeId &&
+              nodes.some((n) => n.id === id && (n.type === 'model' || n.type === 'agent') && n.status !== 'running')
+          )
+        );
         if (dismissIds.size > 0) {
           // Encerra PTYs de nós dispensados pelo Maestro (Item 20)
           killNodeSessions(Array.from(dismissIds), activeFloorId);
@@ -2797,6 +2632,8 @@ Pedido do usuário: ${draft}`;
           `Maestro: ${newNodes.length} agente(s) recrutado(s)${dismissIds.size ? `, ${dismissIds.size} dispensado(s)` : ''}.`
         );
       } catch (err) {
+        // papéis que já foram criados no disco antes do erro entram na lista da interface
+        if (createdRolesOnError.length) setRoles((prev) => [...prev, ...createdRolesOnError.filter((c) => !prev.some((r) => r.id === c.id))]);
         setMaestroRawError((prev) => ({
           ...prev,
           [maestroNodeId]: rawResponse
@@ -2804,10 +2641,11 @@ Pedido do usuário: ${draft}`;
             : `Erro ao consultar a IA: ${err instanceof Error ? err.message : String(err)}`,
         }));
       } finally {
+        maestroBusyRef.current.delete(maestroNodeId);
         setMaestroBusy((prev) => ({ ...prev, [maestroNodeId]: false }));
       }
     },
-    [maestroDrafts, nodes, roles, effectiveWorkspacePath, accentColor, getNodeDimensions, onToast]
+    [maestroDrafts, nodes, roles, effectiveWorkspacePath, accentColor, getNodeDimensions, onToast, getProviderModelList, selectedAiProvider, activeFloorId, killNodeSessions]
   );
 
   // Ombro: responde perguntas sobre o estado dos agentes com base nos resumos coletados
@@ -2864,7 +2702,7 @@ Pergunta do usuário: ${question}`;
   );
 
   const getNodeCliSessionType = useCallback(
-    (targetNode: WorkflowNode): string => {
+    (targetNode: { id: string; type: string; provider?: string }): string => {
       if (targetNode.type === 'agent' || targetNode.type === 'model') {
         const connectedModelNode = edges
           .filter((e) => e.fromNodeId === targetNode.id || e.toNodeId === targetNode.id)
@@ -2966,7 +2804,8 @@ Pergunta do usuário: ${question}`;
               if (n.id === nodeId) return n;
               if (savedPositions[n.id]) {
                 const wasShifted = shiftedMap?.[n.id];
-                if (!wasShifted || (n.x === wasShifted.x && n.y === wasShifted.y)) {
+                // só volta quem foi empurrado e continua onde o empurrão o deixou (quem o usuário moveu, ou nunca foi empurrado, fica)
+                if (wasShifted && n.x === wasShifted.x && n.y === wasShifted.y) {
                   return {
                     ...n,
                     x: savedPositions[n.id].x,
@@ -3070,7 +2909,8 @@ Pergunta do usuário: ${question}`;
               if (n.id === nodeId) return n;
               if (savedPositions[n.id]) {
                 const wasShifted = shiftedMap?.[n.id];
-                if (!wasShifted || (n.x === wasShifted.x && n.y === wasShifted.y)) {
+                // só volta quem foi empurrado e continua onde o empurrão o deixou (quem o usuário moveu, ou nunca foi empurrado, fica)
+                if (wasShifted && n.x === wasShifted.x && n.y === wasShifted.y) {
                   return {
                     ...n,
                     x: savedPositions[n.id].x,
@@ -3127,7 +2967,9 @@ Pergunta do usuário: ${question}`;
         }
         if (!expandedCliNodesRef.current[edge.toNodeId]) continue;
         const targetSessionId = getOrchestrationCliSessionId(activeFloorIdRef.current, edge.toNodeId);
-        window.electronAPI?.pty?.write?.(targetSessionId, `${payload.summary}\r`);
+        // o resumo vem da saída de outro terminal: sem ESC/controle e em uma linha (senão quebra de linha vira vários envios, ESC vira controle da TUI)
+        const safeSummary = String(payload.summary).replace(/[\x00-\x08\x0b-\x1f\x7f]/g, ' ').replace(/\s*\n\s*/g, ' ').trim();
+        if (safeSummary) window.electronAPI?.pty?.write?.(targetSessionId, `${safeSummary}\r`);
       }
     });
     const unsubStatus = window.electronAPI?.pty?.onSessionStatus?.((payload) => {
@@ -4025,13 +3867,20 @@ Pergunta do usuário: ${question}`;
             );
           });
 
+      const orig = draggingLink.origEdge;
+      const restoreOrig = () => {
+        if (orig) setEdges((prev) => (prev.some((e) => e.id === orig.id) ? prev : [...prev, orig]));
+      };
+
       if (targetNode && targetNode.id !== draggingLink.fromNodeId) {
         // Item 48: Drop validation - input port & cycle detection
         const hasInputPort = Boolean(targetNode.ports?.input && targetNode.ports.input.length > 0);
         if (!hasInputPort) {
           onToast?.(`O nó "${targetNode.title}" não aceita conexões de entrada.`);
+          restoreOrig();
         } else if (wouldCreateCycle(edges, draggingLink.fromNodeId, targetNode.id)) {
           onToast?.('Conexão rejeitada: criaria um ciclo no grafo.');
+          restoreOrig();
         } else {
           const linkColor = targetNode.type === 'memory' ? (themeTokens?.textPrimary || '#64748b') : undefined;
           const { width, height } = getNodeDimensions(targetNode);
@@ -4044,7 +3893,9 @@ Pergunta do usuário: ${question}`;
                 height
               );
           const newEdge: WorkflowEdge = {
-            id: `edge-${Date.now()}`,
+            // reencaixe: mantém id, rótulo, cor e auto-relay do cabo original
+            ...(orig || {}),
+            id: orig?.id || `edge-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             fromNodeId: draggingLink.fromNodeId,
             fromPort: draggingLink.fromPort,
             fromSide: draggingLink.fromSide,
@@ -4053,7 +3904,7 @@ Pergunta do usuário: ${question}`;
             toPort: 'in',
             toSide: inPos.side,
             toRatio: inPos.ratio,
-            color: linkColor,
+            color: orig ? orig.color : linkColor,
           };
 
           setEdges((prev) => {
@@ -4068,6 +3919,9 @@ Pergunta do usuário: ${question}`;
             return [...prev, newEdge];
           });
         }
+      } else {
+        // soltou no vazio: o cabo existente volta como estava (antes era apagado sem aviso)
+        restoreOrig();
       }
 
       setDraggingLink(null);
@@ -4132,7 +3986,7 @@ Pergunta do usuário: ${question}`;
                 height
               );
           const newEdge: WorkflowEdge = {
-            id: `edge-${Date.now()}`,
+            id: `edge-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             fromNodeId: draggingLink.fromNodeId,
             fromPort: draggingLink.fromPort,
             fromSide: draggingLink.fromSide,
@@ -4321,6 +4175,7 @@ Pergunta do usuário: ${question}`;
       currentY: mouseY,
       snappedNodeId: null,
       snappedPort: null,
+      origEdge: edge,
     });
   };
 
@@ -4335,32 +4190,36 @@ Pergunta do usuário: ${question}`;
   const handleCancelWorkflow = useCallback(() => {
     cancelWorkflowRef.current = true;
     const runIdToCancel = runningWorkflowRunIdRef.current;
+    // nós das execuções que estão sendo canceladas: só neles se interrompe terminal (não em projetos/IDEs do usuário)
+    const runNodeIds = new Set<string>();
     activeRunsRef.current.forEach((run) => {
       run.ctl.cancelled = true;
+      run.nodeIds.forEach((id) => runNodeIds.add(id));
       run.runIds.forEach((id) => {
         try { window.electronAPI?.ai?.cancel?.(id); } catch {}
       });
     });
 
-    try {
-      window.electronAPI?.ai?.cancel?.(runIdToCancel || undefined);
-    } catch (err) {
-      console.warn('[Orchestration] Failed to cancel workflow run:', err);
+    // Sem runId não há o que cancelar no backend: `ai.cancel()` sem id mataria o chat, o Maestro e a geração do Design
+    if (runIdToCancel) {
+      try { window.electronAPI?.ai?.cancel?.(runIdToCancel); } catch (err) {
+        console.warn('[Orchestration] Failed to cancel workflow run:', err);
+      }
+      try { window.electronAPI?.ai?.cancelOrchestration?.(runIdToCancel); } catch {}
     }
-    try {
-      window.electronAPI?.ai?.cancelOrchestration?.(runIdToCancel || '');
-    } catch {}
 
     // Immediately stop flow execution UI state
     setIsExecutingFlow(false);
     runningWorkflowRunIdRef.current = null;
 
-    // Interrupt any running CLI session with SIGINT / Ctrl+C
-    busyCliNodeIds.forEach((nId) => {
-      const sId = getOrchestrationCliSessionId(activeFloorIdRef.current, nId);
-      try {
-        window.electronAPI?.pty?.write?.(sId, '\x03');
-      } catch {}
+    // Interrompe o prompt em andamento (o await do nó termina agora) e manda Ctrl+C só aos terminais desta execução
+    const floorId = activeFloorIdRef.current;
+    runNodeIds.forEach((nId) => {
+      const sId = getOrchestrationCliSessionId(floorId, nId);
+      try { window.electronAPI?.pty?.cancelPrompt?.(sId); } catch {}
+      if (busyCliNodeIds.has(nId)) {
+        try { window.electronAPI?.pty?.write?.(sId, '\x03'); } catch {}
+      }
     });
 
     // Immediately mark all running nodes as cancelled
@@ -4386,6 +4245,7 @@ Pergunta do usuário: ${question}`;
     const consentKey = `devflow_orch_consent_${effectiveWorkspacePath || 'default'}`;
     const hasConsent = localStorage.getItem(consentKey) === 'true';
     if (!hasConsent) {
+      pendingStartNodeIdRef.current = startNodeId;
       setIsConsentModalOpen(true);
       return;
     }
@@ -4426,6 +4286,8 @@ Pergunta do usuário: ${question}`;
     );
 
     const outputs = new Map<string, string>();
+    /** nós que falharam (ou foram pulados): quem depende deles não roda com entrada vazia */
+    const failedIds = new Set<string>();
     let overallSuccess = true;
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
@@ -4477,6 +4339,9 @@ Pergunta do usuário: ${question}`;
             let nodeError = '';
             let nodeTokens = 0;
 
+            // O corpo roda dentro de uma função própria: um `return` (cancelado, já executado) ou uma exceção em qualquer ponto
+            // ainda passa pela atualização final de status do nó (antes ele ficava em "running" para sempre).
+            const runBody = async () => {
             if (node.type === 'trigger') {
               nodeOutput = node.config?.prompt || 'Disparo de gatilho do fluxo.';
               outputs.set(node.id, nodeOutput);
@@ -4512,9 +4377,14 @@ Pergunta do usuário: ${question}`;
                     outputs.set(node.id, nodeOutput);
                     lastSummary = nodeOutput;
                   }
-                  if (res?.stderr && (res.exitCode !== 0 || !res.stdout)) {
-                    nodeError = res.stderr;
+                  // o código de saída decide (saída em stderr com código 0, como `git fetch`, é sucesso; timeout ou código != 0 é falha)
+                  if (res?.error || (typeof res?.exitCode === 'number' && res.exitCode !== 0)) {
+                    nodeError = res?.stderr || res?.error || `O comando terminou com código ${res?.exitCode}.`;
                     overallSuccess = false;
+                  } else if (!nodeOutput && res?.stderr) {
+                    nodeOutput = res.stderr;
+                    outputs.set(node.id, nodeOutput);
+                    lastSummary = nodeOutput;
                   }
                 } catch (shErr: any) {
                   nodeError = shErr?.message || 'Falha na execução do comando shell.';
@@ -4535,6 +4405,29 @@ Pergunta do usuário: ${question}`;
               // Se os nós imediatamente anteriores não geraram saída de texto (ex: modelo intermediário falhou ou não gerou texto),
               // busca nos nós ancestrais conectados (como o gatilho original ou nós anteriores) para não perder o prompt do usuário!
               let effectiveInput = upstreamInput;
+              // A saída de um nó de IA é a tela crua do terminal (ruído, domínios soltos como "gmail.com", rótulos como "g1"): a URL do
+              // navegador vem, nesta ordem, do que o agente declarou (DEVFLOW_OPEN_URL / servidor local), do pedido do usuário
+              // (gatilhos anteriores) e só por último dessa saída
+              const upstreamFromAi = incoming.some((e) => {
+                const t = nodes.find((n) => n.id === e.fromNodeId)?.type;
+                return t === 'model' || t === 'agent';
+              });
+              if (upstreamFromAi) {
+                const declaredUrl = extractAgentOpenUrl(upstreamInput, '');
+                const triggerPrompts: string[] = [];
+                const seenUp = new Set<string>([node.id]);
+                const upQueue = incoming.map((e) => e.fromNodeId);
+                while (upQueue.length > 0) {
+                  const id = upQueue.shift()!;
+                  if (seenUp.has(id)) continue;
+                  seenUp.add(id);
+                  const up = nodes.find((n) => n.id === id);
+                  if (!up) continue;
+                  if (up.type === 'trigger' && up.config?.prompt?.trim()) triggerPrompts.push(up.config.prompt.trim());
+                  edges.filter((e) => e.toNodeId === id).forEach((e) => upQueue.push(e.fromNodeId));
+                }
+                effectiveInput = declaredUrl || triggerPrompts.join('\n') || upstreamInput;
+              }
               if (!effectiveInput.trim()) {
                 const findAncestorPrompt = (curNodeId: string, visited = new Set<string>()): string => {
                   if (visited.has(curNodeId)) return '';
@@ -4555,7 +4448,7 @@ Pergunta do usuário: ${question}`;
                 effectiveInput = findAncestorPrompt(node.id);
               }
 
-              const connectedProjects = getConnectedProjectNodes(node.id, nodes, edges);
+              const connectedProjects = getProjectNodesForNode(node.id, nodes, edges);
               const allCanvasProjects = nodes.filter((n) => n.type === 'project');
 
               const candidateProjects: ProjectCandidate[] = [
@@ -4721,8 +4614,10 @@ Pergunta do usuário: ${question}`;
                 prompt = upstreamInput || 'Execute a tarefa atribuída.';
               }
 
-              // 1. Coleta todos os candidatos de projeto (conectados, canvas, disponíveis)
-              const connectedProjects = getConnectedProjectNodes(node.id, nodes, edges);
+              // 1. Coleta todos os candidatos de projeto (conectados, canvas, disponíveis). Sem projeto ligado ao nó, vale o dos nós
+              // anteriores: o modelo-trabalhador ligado só ao agente herda o projeto dele (senão caía no workspace do app e rodava,
+              // com permissões totais, no repositório errado)
+              const connectedProjects = getProjectNodesForNode(node.id, nodes, edges);
               const allCanvasProjects = nodes.filter((n) => n.type === 'project');
 
               const candidateProjects: ProjectCandidate[] = [
@@ -4893,7 +4788,7 @@ Pergunta do usuário: ${question}`;
               const modelList = getProviderModelList(p);
               const modelName = node.config?.model || modelList[0]?.label || 'Sonnet 5';
 
-              const nodeSessionId = getOrchestrationCliSessionId(activeFloorId, node.id);
+              const nodeSessionId = getOrchestrationCliSessionId(runFloorId, node.id);
               const cliType = getNodeCliSessionType(node);
 
               // Garante que a sessão de terminal do nó exista no backend rodando o CLI interativo da IA
@@ -5013,15 +4908,17 @@ Pergunta do usuário: ${question}`;
 
                     // Fallback se houver navegador conectado no fluxo ou no canvas E houver projeto com devUrl
                     if (urlsToOpen.length === 0 && (connectedBrowsers.length > 0 || allCanvasBrowsers.length > 0)) {
+                      const connectedWithUrl = connectedProjects.find((p) => p.config?.devUrl);
                       const projWithDevUrl =
-                        (primaryProject?.devUrl ? primaryProject : null) ||
-                        connectedProjects.find((p) => p.devUrl) ||
-                        candidateProjects.find((p) => p.devUrl);
+                        (primaryProject?.devUrl ? { devUrl: primaryProject.devUrl, title: primaryProject.title || primaryProject.name } : null) ||
+                        (connectedWithUrl ? { devUrl: connectedWithUrl.config.devUrl, title: connectedWithUrl.title } : null) ||
+                        candidateProjects.find((p) => p.devUrl) ||
+                        null;
 
                       if (projWithDevUrl?.devUrl) {
                         urlsToOpen.push({
                           url: projWithDevUrl.devUrl,
-                          projectTitle: projWithDevUrl.title || projWithDevUrl.projectName || 'Projeto',
+                          projectTitle: projWithDevUrl.title || 'Projeto',
                         });
                       }
                     }
@@ -5084,6 +4981,21 @@ Pergunta do usuário: ${question}`;
                 }
               }
             }
+
+            };
+            const blockedBy = incoming.find((e) => failedIds.has(e.fromNodeId));
+            if (blockedBy) {
+              nodeError = `Pulado: o nó anterior (${nodes.find((n) => n.id === blockedBy.fromNodeId)?.title || blockedBy.fromNodeId}) falhou.`;
+              overallSuccess = false;
+            } else {
+              try {
+                await runBody();
+              } catch (bodyErr: any) {
+                nodeError = bodyErr?.message || 'Erro inesperado ao executar o nó.';
+                overallSuccess = false;
+              }
+            }
+            if (nodeError) failedIds.add(node.id);
 
             const nodeDuration = Date.now() - nodeStartTime;
             const isNodeSuccess = !nodeError && !run.ctl.cancelled;
@@ -5171,13 +5083,13 @@ Pergunta do usuário: ${question}`;
       } else {
         const triggerNode = nodes.find((n) => run.nodeIds.has(n.id) && n.type === 'trigger');
         const triggerPrompt = triggerNode?.config?.prompt || 'Fluxo Orquestrado';
-        const modelNode = nodes.find((n) => n.type === 'model');
+        const modelNode = nodes.find((n) => run.nodeIds.has(n.id) && (n.type === 'model' || n.type === 'agent'));
         const modelProvider = modelNode?.provider || selectedAiProvider || 'claude';
         const modelList = getProviderModelList(modelProvider);
         const modelName = modelNode?.config?.model || modelList[0]?.label || 'Sonnet 5';
 
         const newLog: ExecutionRecord = {
-          id: `exec-${Date.now()}`,
+          id: `exec-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           timestamp: new Date().toLocaleString(),
           status: overallSuccess ? 'success' : 'failed',
           duration: durationFormatted,
@@ -5190,7 +5102,8 @@ Pergunta do usuário: ${question}`;
         };
         if (activeFloorIdRef.current === runFloorId) {
           setExecutionLogs((prev) => [newLog, ...prev.slice(0, 29)]);
-        } else {
+        } else if (floorsRef.current.some((f) => f.id === runFloorId) || runFloorId === GROUND_FLOOR_ID) {
+          // (andar apagado durante a execução: não recria a chave de logs dele)
           try {
             const k = floorStorageKey(STORAGE_KEY_LOGS, runFloorId);
             const prevLogs = JSON.parse(localStorage.getItem(k) || '[]');
@@ -5293,7 +5206,8 @@ Pergunta do usuário: ${question}`;
       };
       ports = { input: ['in'], output: ['out', 'webview'] };
     } else if (type === 'project') {
-      const existingProjectNodes = nodes.filter((n) => n.type === 'project');
+      // nodesRef (não `nodes`): chamadas seguidas (Maestro abrindo 2 projetos) enxergam o nó que acabou de ser criado
+      const existingProjectNodes = nodesRef.current.filter((n) => n.type === 'project');
       const usedProjectPaths = new Set(
         existingProjectNodes.map((n) => n.config?.projectPath?.toLowerCase()).filter(Boolean)
       );
@@ -5319,12 +5233,15 @@ Pergunta do usuário: ${question}`;
           )[0]
         : null;
 
+      // Pediu um projeto pelo nome e ele não existe entre os repositórios: não troca por "qualquer outro" (abriria/subiria o projeto errado)
+      const askedByName = Boolean(requestedProjectQuery) && !/^(novo )?projeto$/i.test(requestedProjectQuery.trim());
+      const matchedProj =
+        matchedAvailable &&
+        availableProjects.find((p) => p.name === matchedAvailable.name || p.fullName === matchedAvailable.fullName);
+
       // Escolhe preferencialmente o projeto solicitado ou um disponível que ainda não esteja no canvas
-      const candidateProj =
-        (matchedAvailable &&
-          availableProjects.find(
-            (p) => p.name === matchedAvailable.name || p.fullName === matchedAvailable.fullName
-          )) ||
+      const candidateProj = matchedProj ||
+        (askedByName ? undefined : (
         availableProjects.find(
           (p) =>
             p.localDir &&
@@ -5343,12 +5260,12 @@ Pergunta do usuário: ${question}`;
             p.localDir.toLowerCase() === effectiveWorkspacePath.toLowerCase()
         ) ||
         availableProjects.find((p) => p.isCloned) ||
-        availableProjects[0];
+        availableProjects[0]));
 
-      const initialPath = candidateProj?.localDir || effectiveWorkspacePath || '';
+      const initialPath = candidateProj?.localDir || (askedByName ? '' : effectiveWorkspacePath) || '';
       const initialName =
         candidateProj?.name ||
-        (initialPath ? initialPath.split(/[/\\]/).filter(Boolean).pop() || 'Projeto' : 'Novo Projeto');
+        (askedByName ? requestedProjectQuery.trim() : initialPath ? initialPath.split(/[/\\]/).filter(Boolean).pop() || 'Projeto' : 'Novo Projeto');
       const isCloned = candidateProj ? candidateProj.isCloned : Boolean(initialPath);
 
       let detectedPort: number | null = null;
@@ -5382,14 +5299,33 @@ Pergunta do usuário: ${question}`;
       config = { ...config, ...initialConfig };
     }
 
+    // Sem posição pedida, o nó novo não nasce em cima de outro (vários nós seguidos ficavam empilhados no mesmo ponto)
+    let placedX = x;
+    let placedY = y;
+    if (position?.x === undefined && position?.y === undefined) {
+      const boxes = nodesRef.current.map((n) => ({ n, d: getNodeDimensions(n) }));
+      const overlaps = (cx: number, cy: number) =>
+        boxes.some(({ n, d }) => cx < n.x + d.width + 24 && cx + width + 24 > n.x && cy < n.y + d.height + 24 && cy + height + 24 > n.y);
+      // colunas que cabem na área visível: a grade quebra em linhas em vez de empurrar os nós para fora da tela
+      const visibleW = (canvasRef.current?.clientWidth || 1200) / zoom - x;
+      const maxCols = Math.max(1, Math.min(6, Math.floor(visibleW / (width + 40))));
+      search: for (let row = 0; row < 12; row++) {
+        for (let col = 0; col < maxCols; col++) {
+          const cx = x + col * (width + 40);
+          const cy = y + row * (height + 40);
+          if (!overlaps(cx, cy)) { placedX = cx; placedY = cy; break search; }
+        }
+      }
+    }
+
     const newNode: WorkflowNode = {
       id: newId,
       type,
       title,
       subtitle,
       provider: provider as AiProviderId,
-      x,
-      y,
+      x: placedX,
+      y: placedY,
       width,
       height,
       status: 'ready',
@@ -5443,6 +5379,13 @@ Pergunta do usuário: ${question}`;
     if (!projectNode) {
       const id = await handleAddNode('project', undefined, undefined, projectName);
       projectNode = nodesRef.current.find((n) => n.id === id);
+      // o nome pedido não casou com nenhum repositório: remove o nó vazio em vez de abrir/subir outro projeto
+      if (projectNode && !projectNode.config?.projectPath) {
+        const orphan = projectNode.id;
+        nodesRef.current = nodesRef.current.filter((n) => n.id !== orphan);
+        setNodes((prev) => prev.filter((n) => n.id !== orphan));
+        throw new Error(`Projeto "${projectName}" não encontrado entre os repositórios disponíveis.`);
+      }
     }
     const devUrl = projectNode?.config?.devUrl;
     if (!projectNode || !devUrl) throw new Error(`Projeto "${projectName}" não encontrado ou sem URL de desenvolvimento.`);
@@ -5462,7 +5405,7 @@ Pergunta do usuário: ${question}`;
         console.warn(`[handleConnectNodes] Nó não encontrado: from=${fromNodeId} (${!!sourceNode}), to=${toNodeId} (${!!targetNode})`);
         return false;
       }
-      if (wouldCreateCycle(fromNodeId, toNodeId, curEdges)) return false;
+      if (wouldCreateCycle(curEdges, fromNodeId, toNodeId)) return false;
 
       // Resolução inteligente de portas compatíveis
       let actualFromPort = fromPort;
@@ -5498,18 +5441,18 @@ Pergunta do usuário: ${question}`;
         color: '#3b82f6',
       };
 
-      edgesRef.current = [...edgesRef.current, newEdge];
-      setEdges((prev) => {
-        const isDuplicate = prev.some(
-          (e) =>
-            e.fromNodeId === fromNodeId &&
-            e.toNodeId === toNodeId &&
-            e.fromPort === actualFromPort &&
-            e.toPort === actualToPort
-        );
-        if (isDuplicate) return prev;
-        return [...prev, newEdge];
-      });
+      // já ligados: não suja o ref com uma aresta que o estado não terá
+      const alreadyLinked = curEdges.some(
+        (e) =>
+          e.fromNodeId === fromNodeId &&
+          e.toNodeId === toNodeId &&
+          e.fromPort === actualFromPort &&
+          e.toPort === actualToPort
+      );
+      if (!alreadyLinked) {
+        edgesRef.current = [...edgesRef.current, newEdge];
+        setEdges((prev) => (prev.some((e) => e.id === newEdge.id) ? prev : [...prev, newEdge]));
+      }
 
       // Ao conectar Projeto <-> Navegador, sincroniza a URL do projeto para o componente de navegador
       if (sourceNode.type === 'project' && targetNode.type === 'webview') {
@@ -5556,6 +5499,10 @@ Pergunta do usuário: ${question}`;
   const zoomRef = useRef(zoom);
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
 
+  // onToast muda de identidade a cada render do App: como dependência do efeito, o cleanup parava o `flutter run` recém-iniciado
+  const onToastRef = useRef(onToast);
+  onToastRef.current = onToast;
+
   useEffect(() => {
     const unsub = window.electronAPI?.flutter?.onEvent?.((event) => {
       if (event.runId !== flutterRunIdRef.current) return;
@@ -5584,13 +5531,13 @@ Pergunta do usuário: ${question}`;
               ports: { input: ['in'], output: ['out'] },
             },
           ]);
-          onToast?.(`App Flutter disponível em ${event.url}`);
+          onToastRef.current?.(`App Flutter disponível em ${event.url}`);
         }
       } else if (event.kind === 'exit') {
-        onToast?.('Execução do Flutter encerrada.');
+        onToastRef.current?.('Execução do Flutter encerrada.');
         flutterRunIdRef.current = null;
       } else if (event.kind === 'stderr' && /error/i.test(event.data)) {
-        onToast?.('Erro ao rodar o Flutter — veja o terminal do sistema para detalhes.');
+        onToastRef.current?.('Erro ao rodar o Flutter — veja o terminal do sistema para detalhes.');
       }
     });
     return () => {
@@ -5599,7 +5546,7 @@ Pergunta do usuário: ${question}`;
         window.electronAPI.flutter.stop(flutterRunIdRef.current);
       }
     };
-  }, [onToast]);
+  }, []);
 
   const handleRunFlutterWeb = useCallback(async () => {
     if (!effectiveWorkspacePath) {
@@ -5815,9 +5762,11 @@ Pergunta do usuário: ${question}`;
       setNodes((prev) =>
         prev.map((n) => {
           if (n.id !== id) return n;
+          // chaves `undefined` não apagam o que já existe (um update só com `config` zerava título e subtítulo)
+          const defined = Object.fromEntries(Object.entries(updates).filter(([, v]) => v !== undefined));
           return {
             ...n,
-            ...updates,
+            ...defined,
             config: (updates as any).config ? { ...n.config, ...(updates as any).config } : n.config,
           };
         })
@@ -5864,7 +5813,7 @@ Pergunta do usuário: ${question}`;
     const source = copiedNodeRef.current || copiedNode;
     if (!source) return;
 
-    const newId = `node_${Date.now()}`;
+    const newId = `node_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const cleanTitle = source.title.includes('(Cópia)')
       ? source.title
       : `${source.title} (Cópia)`;
@@ -5876,9 +5825,16 @@ Pergunta do usuário: ${question}`;
       x: source.x + 40,
       y: source.y + 40,
       status: 'idle',
+      output: undefined,
+      needsAttention: false,
       config: JSON.parse(JSON.stringify(source.config || {})),
       ports: { ...source.ports },
     };
+    // projeto copiado: a porta de dev não pode repetir a do original
+    if (pastedNode.type === 'project') {
+      const all = deduplicateProjectNodesDevUrls([...nodesRef.current, pastedNode]).nodes;
+      pastedNode.config = { ...pastedNode.config, devUrl: all[all.length - 1].config?.devUrl };
+    }
 
     setNodes((prev) => [...prev, pastedNode]);
     setSelectedNodeId(newId);
@@ -5901,7 +5857,7 @@ Pergunta do usuário: ${question}`;
   const handleDuplicateNode = (id: string) => {
     const sourceNode = nodes.find((n) => n.id === id);
     if (!sourceNode) return;
-    const newId = `node_${Date.now()}`;
+    const newId = `node_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const duplicatedNode: WorkflowNode = {
       ...sourceNode,
       id: newId,
@@ -5909,9 +5865,15 @@ Pergunta do usuário: ${question}`;
       x: sourceNode.x + 40,
       y: sourceNode.y + 40,
       status: 'idle',
+      output: undefined,
+      needsAttention: false,
       config: JSON.parse(JSON.stringify(sourceNode.config || {})),
       ports: { ...sourceNode.ports },
     };
+    if (duplicatedNode.type === 'project') {
+      const all = deduplicateProjectNodesDevUrls([...nodesRef.current, duplicatedNode]).nodes;
+      duplicatedNode.config = { ...duplicatedNode.config, devUrl: all[all.length - 1].config?.devUrl };
+    }
     setNodes((prev) => [...prev, duplicatedNode]);
     setSelectedNodeId(newId);
     if (duplicatedNode.type !== 'webview') {
@@ -5985,7 +5947,8 @@ Pergunta do usuário: ${question}`;
         if (allIds.length > 0) setSelectedNodeId(allIds[0]);
         onToast?.(`${allIds.length} nós selecionados.`);
       } else if (!isInput && (e.metaKey || e.ctrlKey) && (e.key === 'c' || e.key === 'C')) {
-        if (selectedNodeId) {
+        // texto selecionado na tela (popups, painéis) tem prioridade: Cmd+C copia o texto, não o nó
+        if (selectedNodeId && !window.getSelection()?.toString()) {
           e.preventDefault();
           handleCopyNode(selectedNodeId);
         }
@@ -6472,6 +6435,8 @@ Pergunta do usuário: ${question}`;
       <React.Fragment key={node.id}>
         {/* Outer Concentric Contour Aura Ring (Matching Reference UI) */}
         <div
+          data-node-id={node.id}
+          data-node-type={node.type}
           style={{
             position: 'absolute',
             left: node.x - 7,
@@ -6801,6 +6766,8 @@ Pergunta do usuário: ${question}`;
               projectName={node.config?.projectName || node.title || 'Projeto'}
               projectPath={node.config?.projectPath || ''}
               gitBranch={node.config?.gitBranch || 'main'}
+              devUrl={node.config?.devUrl}
+              existingDevUrls={nodes.filter((n) => n.type === 'project' && n.id !== node.id).map((n) => n.config?.devUrl).filter(Boolean) as string[]}
               cloneUrl={node.config?.cloneUrl}
               htmlUrl={node.config?.htmlUrl}
               isCloned={node.config?.isCloned !== false && Boolean(node.config?.projectPath)}
@@ -7185,8 +7152,8 @@ Pergunta do usuário: ${question}`;
                 onMouseDown={(e) => e.stopPropagation()}
               >
                 {(() => {
-                  const nodeConnectedProjects = getConnectedProjectNodes(node.id, nodes, edges);
-                  const nodeProjectCwd = nodeConnectedProjects[0]?.config?.path || nodeConnectedProjects[0]?.config?.url || effectiveWorkspacePath;
+                  const nodeConnectedProjects = getProjectNodesForNode(node.id, nodes, edges);
+                  const nodeProjectCwd = nodeConnectedProjects[0]?.config?.projectPath || effectiveWorkspacePath;
                   const sType = getNodeCliSessionType(node);
                   return (
                     <NativeXTerm
@@ -8580,8 +8547,7 @@ Pergunta do usuário: ${question}`;
         {/* Transparent full-screen overlay during resizing, node dragging, link drag, panning, marquee selection or tag dragging */}
         {Boolean(resizingNode || draggingNodeId || draggingLink || isPanning || selectionBox || draggingTagEdgeId) && (
           <div
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
+            // sem onMouseMove/onMouseUp: o evento sobe até o canvas pai, que já os trata (aqui rodavam em dobro: toasts repetidos, nós empurrados 2x)
             style={{
               position: 'fixed',
               inset: 0,
@@ -10039,7 +10005,8 @@ Pergunta do usuário: ${question}`;
               left: clampedX,
               top: clampedY,
               width: popupWidth,
-              maxHeight: 'calc(100vh - 24px)',
+              // cabe sempre abaixo do topo escolhido e rola por dentro (o `overflow: hidden` mais abaixo anulava o `overflowY` e cortava os últimos itens)
+              maxHeight: `calc(100vh - ${clampedY + 12}px)`,
               overflowY: 'auto',
               background: isEffectiveDark ? '#141414' : '#ffffff',
               border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.12)' : '1px solid rgba(0, 0, 0, 0.12)',
@@ -10048,7 +10015,7 @@ Pergunta do usuário: ${question}`;
                 ? '0 16px 36px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.05)'
                 : '0 16px 36px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.06)',
               zIndex: 950,
-              overflow: 'hidden',
+              overflowX: 'hidden',
               animation: 'popupScale 0.12s cubic-bezier(0.16, 1, 0.3, 1)',
               display: 'flex',
               flexDirection: 'column',
@@ -10326,7 +10293,7 @@ Pergunta do usuário: ${question}`;
                         }}
                       >
                         <button
-                          onClick={() => sendRelayMessage(target.id, relayDraft, activePopupNode.id)}
+                          onClick={() => { const msg = relayDraft; setRelayDraft(''); void sendRelayMessage(target.id, msg, activePopupNode.id); }}
                           disabled={!relayDraft.trim()}
                           style={{
                             flex: 1,
@@ -10424,8 +10391,6 @@ Pergunta do usuário: ${question}`;
                               ? 'Gatilho'
                               : activePopupNode.type === 'agent'
                               ? 'Agente de IA'
-                              : activePopupNode.type === 'model'
-                              ? 'Modelo de IA'
                               : activePopupNode.type === 'tool'
                               ? 'Ferramenta CLI'
                               : activePopupNode.type === 'ide'
@@ -11725,7 +11690,9 @@ Pergunta do usuário: ${question}`;
           const consentKey = `devflow_orch_consent_${effectiveWorkspacePath || 'default'}`;
           localStorage.setItem(consentKey, 'true');
           setIsConsentModalOpen(false);
-          executeWorkflow();
+          const startId = pendingStartNodeIdRef.current;
+          pendingStartNodeIdRef.current = undefined;
+          executeWorkflow(startId);
         }}
         onClose={() => setIsConsentModalOpen(false)}
       />

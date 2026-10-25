@@ -17,10 +17,11 @@ import { chatHistoryService } from './chat-history-service';
 import { githubAuthService } from './github-auth-service';
 import { skillsService } from './skills-service';
 import { orchestratorService } from './orchestrator-service';
+import { StringDecoder } from 'node:string_decoder';
 import { autonomousService } from './autonomous-service';
 import { rolesService } from './roles-service';
 import { flutterService } from './flutter-service';
-import { getCleanEnv, resolveBinaryPath, normalizeClaudeModel } from './env-utils';
+import { getCleanEnv, resolveBinaryPath, normalizeClaudeModel, ensureClaudeWorkspaceTrust } from './env-utils';
 
 // Set macOS application name
 app.name = 'Aura Dev';
@@ -254,6 +255,10 @@ ipcMain.handle('pty:runPromptInCli', async (_event, { id, prompt, timeoutMs }) =
   } catch (err: any) {
     return { response: '', error: err?.message || String(err) };
   }
+});
+
+ipcMain.on('pty:cancelPrompt', (_event, { id }) => {
+  ptyService.cancelPrompt(id);
 });
 
 ipcMain.handle('pty:setAccentColor', (_event, { accentColor }) => {
@@ -803,6 +808,8 @@ ipcMain.handle('ai:prompt', async (_event, { prompt, model, cwd, provider, timeo
             child.kill('SIGTERM');
           }
         } catch {}
+        // quem ignora o SIGTERM não pode ficar vivo (nem na lista de execuções ativas): escala para a árvore toda
+        setTimeout(() => { try { killProcessTree(child); } catch {} activePromptProcesses.delete(entry); }, 3000);
         resolve({
           response: stdout.trim(),
           error: 'Tempo limite esgotado ao aguardar resposta do CLI',
@@ -1186,6 +1193,9 @@ ipcMain.handle('ai:cancel', async (_event, runId?: string, cwd?: string, streamI
   }
 
   if (!runId) {
+    // execuções do chat via orquestrador: só as do chat (nunca as autônomas), e só as do projeto quando há cwd
+    if (streamId && orchestratorService.cancel(streamId)) cancelled = true;
+    else if (!streamId && orchestratorService.cancelByTag('chat', cwd)) cancelled = true;
     // Com cwd cancela só a execução daquele projeto; sem cwd, todas (comportamento anterior)
     for (const [key, run] of Array.from(activeDirectCliRuns.entries())) {
       if (cwd && key.split('\u0000')[0] !== cwd) continue;
@@ -1197,6 +1207,8 @@ ipcMain.handle('ai:cancel', async (_event, runId?: string, cwd?: string, streamI
   return { cancelled };
 });
 ipcMain.handle('ai:orchestratorCancel', async (_event, runId: string) => ({ cancelled: orchestratorService.cancel(runId) }));
+ipcMain.handle('ai:orchestratorProviders', async () => orchestratorService.providers());
+ipcMain.handle('ai:orchestrate', async (_event, input) => orchestratorService.run(input, (event) => mainWindow?.webContents.send('ai:orchestrator-event', event)));
 ipcMain.handle('ai:autonomousRun', async (_event, input) => autonomousService.run(input, (event) => mainWindow?.webContents.send('ai:orchestrator-event', event)));
 ipcMain.handle('ai:autonomousCancel', async (_event, runId: string) => ({ cancelled: autonomousService.cancel(runId) }));
 
@@ -1276,8 +1288,10 @@ ipcMain.handle('ai:runCli', async (_event, {
   permissions,
   streamText,
   streamId,
+  effort,
 }: {
   cliCmd: string;
+  effort?: string;
   prompt: string;
   model?: string;
   cwd?: string;
@@ -1294,6 +1308,10 @@ ipcMain.handle('ai:runCli', async (_event, {
     denylistCommands: string[];
   };
 }) => {
+  // só as CLIs de IA conhecidas: um `cliCmd` qualquer (ex.: "../../bin/sh") não vira executável com o prompt como argumento
+  if (!['claude', 'agy', 'antigravity', 'codex', 'gemini', 'ollama'].includes(cliCmd)) {
+    return { stdout: '', stderr: `CLI de IA não suportada: ${String(cliCmd)}`, exitCode: 1, requestId: streamId || '', cancelled: false };
+  }
   const fs = require('node:fs');
   const path = require('node:path');
   const { spawn } = require('node:child_process');
@@ -1357,6 +1375,8 @@ ipcMain.handle('ai:runCli', async (_event, {
       args.push('--model', model);
     }
     args.push('--dangerously-skip-permissions');
+    // esforço de raciocínio (low|medium|high): com "low" a geração de uma tela cai de ~90s para ~35s
+    if (effort && /^(low|medium|high|xhigh|max)$/.test(effort)) args.push('--effort', effort);
     if (streamText) args.push('--output-format', 'stream-json');
     args.push('--add-dir', targetCwd);
     if (additionalDirs && additionalDirs.length > 0) {
@@ -1404,7 +1424,9 @@ ipcMain.handle('ai:runCli', async (_event, {
 
   // If the orchestrator is active, follow the orchestrator configuration and route through the Rust orchestrator service.
   // Otherwise, use direct CLI execution of the selected AI.
-  if (useOrchestrator && !prompt.startsWith('/')) {
+  // Com uma política de permissões restritiva salva, o caminho direto é o que a respeita (o orquestrador roda com permissões totais).
+  const orchestratorAllowed = !permissions || mode === 'always-proceed' || mode === 'proceed-in-sandbox';
+  if (useOrchestrator && orchestratorAllowed && !prompt.startsWith('/')) {
     const supportedProviders = ['agy', 'antigravity', 'codex', 'claude'];
     if (supportedProviders.includes(cliCmd)) {
       const orchestratorProvider =
@@ -1421,6 +1443,9 @@ ipcMain.handle('ai:runCli', async (_event, {
         model: resolvedModel,
         additionalDirs,
         mode: orchestratorConfig?.mode || 'execute',
+        timeoutMs: 30 * 60 * 1000,
+        runId: streamId, // o renderer conhece este id: o Parar do chat consegue cancelar esta execução
+        tag: 'chat',
       }, (event) => mainWindow?.webContents.send('ai:orchestrator-event', event));
     }
   }
@@ -1463,9 +1488,30 @@ ipcMain.handle('ai:runCli', async (_event, {
     const jsonStream = (cliCmd === 'claude' || cliCmd === 'agy') && !!streamText;
     let lineBuf = '';
     let finalResult = '';
+    // um caractere multibyte ("ç", "ã") pode vir partido entre dois chunks: o decoder segura o pedaço até completar
+    const outDecoder = new StringDecoder('utf8');
+    const errDecoder = new StringDecoder('utf8');
+    const processLine = (line: string) => {
+      try {
+        const evt = JSON.parse(line);
+        const delta = evt.type === 'stream_event' ? evt.event?.delta : null;
+        if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
+          stdout += delta.text;
+          emitText(delta.text);
+        } else if (evt.type === 'result' && typeof evt.result === 'string') {
+          finalResult = evt.result;
+        } else if (evt.event === 'step_update' && evt.step_update?.step_type === 'agent_response' && typeof evt.step_update.text_delta === 'string') {
+          // Antigravity: trechos da resposta do agente
+          stdout += evt.step_update.text_delta;
+          emitText(evt.step_update.text_delta);
+        } else if (evt.event === 'result' && typeof evt.result?.response === 'string') {
+          finalResult = evt.result.response;
+        }
+      } catch {}
+    };
     child.stdout?.on('data', (data: Buffer) => {
       if (isCancelled) return;
-      const chunk = data.toString();
+      const chunk = outDecoder.write(data);
       if (!jsonStream) {
         stdout += chunk;
         emitText(chunk);
@@ -1475,29 +1521,12 @@ ipcMain.handle('ai:runCli', async (_event, {
       lineBuf += chunk;
       const lines = lineBuf.split('\n');
       lineBuf = lines.pop() || '';
-      for (const line of lines) {
-        try {
-          const evt = JSON.parse(line);
-          const delta = evt.type === 'stream_event' ? evt.event?.delta : null;
-          if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
-            stdout += delta.text;
-            emitText(delta.text);
-          } else if (evt.type === 'result' && typeof evt.result === 'string') {
-            finalResult = evt.result;
-          } else if (evt.event === 'step_update' && evt.step_update?.step_type === 'agent_response' && typeof evt.step_update.text_delta === 'string') {
-            // Antigravity: trechos da resposta do agente
-            stdout += evt.step_update.text_delta;
-            emitText(evt.step_update.text_delta);
-          } else if (evt.event === 'result' && typeof evt.result?.response === 'string') {
-            finalResult = evt.result.response;
-          }
-        } catch {}
-      }
+      for (const line of lines) processLine(line);
     });
 
     child.stderr?.on('data', (data: Buffer) => {
       if (isCancelled) return;
-      stderr += data.toString();
+      stderr += errDecoder.write(data);
     });
 
     child.on('error', (err: Error) => {
@@ -1515,6 +1544,11 @@ ipcMain.handle('ai:runCli', async (_event, {
 
     child.on('close', (code: number) => {
       releaseRun();
+      // a última linha do stream não termina em "\n": sem isto o `result` final (a resposta inteira) se perdia
+      if (jsonStream && !isCancelled && lineBuf.trim()) {
+        processLine(lineBuf);
+        lineBuf = '';
+      }
       if (!resolved) {
         resolved = true;
         resolve({
@@ -1639,21 +1673,8 @@ ipcMain.handle('shell:exec', async (_event, { command, cwd }: { command: string;
   const targetCwd = cwd && fs.existsSync(cwd) ? cwd : (userHome || process.cwd());
   const shellPath = process.env.SHELL || '/bin/zsh';
 
-  // Ensure workspace trust in ~/.claude.json so Claude Code does not block
-  try {
-    const claudeJsonPath = path.join(userHome, '.claude.json');
-    if (fs.existsSync(claudeJsonPath)) {
-      const cJson = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8'));
-      if (!cJson.projects) cJson.projects = {};
-      if (!cJson.projects[targetCwd] || !cJson.projects[targetCwd].hasTrustDialogAccepted) {
-        cJson.projects[targetCwd] = {
-          ...(cJson.projects[targetCwd] || {}),
-          hasTrustDialogAccepted: true,
-        };
-        fs.writeFileSync(claudeJsonPath, JSON.stringify(cJson, null, 2), 'utf8');
-      }
-    }
-  } catch {}
+  // Claude Code não pode travar no diálogo de confiança da pasta
+  ensureClaudeWorkspaceTrust(targetCwd);
 
   const customPaths = [
     path.join(userHome, '.local/bin'),
@@ -1683,6 +1704,8 @@ ipcMain.handle('shell:exec', async (_event, { command, cwd }: { command: string;
       COLORTERM: 'truecolor',
       PATH: envPath,
       HOME: userHome,
+      // git sem terminal: pedido de usuário/senha falha na hora em vez de travar 60 s até o timeout
+      GIT_TERMINAL_PROMPT: '0',
     };
 
     let stdout = '';
@@ -1691,10 +1714,22 @@ ipcMain.handle('shell:exec', async (_event, { command, cwd }: { command: string;
 
     const authRegex = /Authentication required|Please visit the URL to log in|paste the authorization code|oauth2\/auth|waiting for authentication/i;
 
+    // grupo próprio: no timeout o SIGKILL leva a árvore toda (`cd x && npm start` deixava o servidor vivo)
     const child = spawn(shellPath, ['-l', '-c', cmdToRun], {
       cwd: targetCwd,
       env,
+      detached: process.platform !== 'win32',
     });
+    child.stdout.setEncoding('utf8'); // caractere multibyte partido entre chunks
+    child.stderr.setEncoding('utf8');
+    const killTree = (signal: NodeJS.Signals) => {
+      try {
+        if (child.pid && process.platform !== 'win32') process.kill(-child.pid, signal);
+        else child.kill(signal);
+      } catch {
+        try { child.kill(signal); } catch {}
+      }
+    };
 
     const finish = (result: any) => {
       if (!resolved) {
@@ -1705,7 +1740,7 @@ ipcMain.handle('shell:exec', async (_event, { command, cwd }: { command: string;
     };
 
     const timer = setTimeout(() => {
-      try { child.kill('SIGKILL'); } catch {}
+      killTree('SIGKILL');
       finish({
         stdout,
         stderr,
@@ -1719,7 +1754,7 @@ ipcMain.handle('shell:exec', async (_event, { command, cwd }: { command: string;
       stdout += str;
       // Early detection: CLI is prompting for browser login or auth code, return immediately
       if (authRegex.test(str) || authRegex.test(stdout)) {
-        try { child.kill('SIGTERM'); } catch {}
+        killTree('SIGTERM');
         finish({
           stdout,
           stderr,
@@ -1733,7 +1768,7 @@ ipcMain.handle('shell:exec', async (_event, { command, cwd }: { command: string;
       const str = chunk.toString();
       stderr += str;
       if (authRegex.test(str) || authRegex.test(stderr)) {
-        try { child.kill('SIGTERM'); } catch {}
+        killTree('SIGTERM');
         finish({
           stdout,
           stderr,
@@ -2199,6 +2234,12 @@ ipcMain.handle(
   ),
 );
 ipcMain.handle(
+  'github:submitPullReview',
+  teamHandler(({ owner, repo, pullNumber, event, body }: { owner: string; repo: string; pullNumber: number; event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT'; body?: string }) =>
+    githubAuthService.submitPullReview(owner, repo, pullNumber, event, body),
+  ),
+);
+ipcMain.handle(
   'github:addAssignees',
   teamHandler(({ owner, repo, issueNumber, assignees }: { owner: string; repo: string; issueNumber: number; assignees: string[] }) =>
     githubAuthService.addAssignees(owner, repo, issueNumber, assignees),
@@ -2261,7 +2302,7 @@ ipcMain.handle('skills:call', async (_event, { action, payload }: { action: stri
         data = skillsService.importLocal(p.dir);
         break;
       case 'openFolder':
-        await shell.openPath(p.id ? `${skillsService.root}/${p.id}` : skillsService.root);
+        await shell.openPath(p.id ? skillsService.dirOf(p.id) : skillsService.root);
         break;
       case 'update':
         data = await skillsService.update(p.id, token || undefined);
@@ -2432,6 +2473,15 @@ app.whenReady().then(() => {
     } catch {}
   }
   createWindow();
+});
+
+// Ao sair, nada do que o app iniciou pode ficar rodando (o provedor de IA roda com permissões totais; o flutter segura a porta).
+app.on('before-quit', () => {
+  try { orchestratorService.cancelAll(); } catch {}
+  for (const entry of Array.from(activePromptProcesses)) { try { killProcessTree(entry.child); } catch {} }
+  for (const run of Array.from(activeDirectCliRuns.values())) { try { run.cancel(); } catch {} }
+  try { flutterService.stopAll(); } catch {}
+  try { ptyService.killAll(); } catch {}
 });
 
 app.on('window-all-closed', () => {

@@ -467,3 +467,55 @@ Para testar na UI, o app roda com `./node_modules/.bin/electron dist-electron/ma
 - [x] Fase 6 (64–75) — Polimento
 
 Ao terminar cada fase: rodar a seção **Como verificar**, testar manualmente os critérios de **Aceite** num diretório descartável e marcar o checklist.
+
+---
+
+## Rodada 2 — revisão geral e QA (2026-10-19)
+
+Auditoria do código atual (o canvas passou de ~7.300 para ~11.800 linhas depois da rodada 1: nós de projeto, git, andares), `bunx tsc`, testes automatizados, e QA no app real via DevTools Protocol. **Tudo abaixo foi verificado e corrigido.**
+
+### Como foi testado
+- `cd rust/orchestrator && cargo test && cargo clippy --all-targets`: 15 testes (8 unitários + 7 de integração em `tests/fake_provider.rs`, com provedores falsos no PATH: sucesso, falha, UTF-8 inválido, timeout, SIGTERM ignorado e cancelamento do orquestrador).
+- `bun test`: 519 testes, incluindo `tests/orchestrator-service.test.ts` (serviço Node + binário Rust real + `claude` falso), `orchestration-session`, `orchestration-ports-matcher` e `design-ai-edit-bulk`.
+- QA no app: Electron com `--remote-debugging-port=9333 --user-data-dir=<tmp> --disable-renderer-backgrounding --disable-backgrounding-occluded-windows` (sem os flags o loop de render pausa e o FigCraft para de responder). Semeie o `localStorage` com `Page.addScriptToEvaluateOnNewDocument` (o `beforeunload` da tela grava o estado em memória por cima de qualquer coisa semeada antes do reload). **Nunca clique "Executar Fluxo" no fluxo padrão durante o QA**: ele inicia um agente real com permissões totais no workspace; use um fluxo semeado só com nós `tool` (`echo`).
+
+### Bugs corrigidos
+**Runner Rust**
+- Cancelar o orquestrador **não matava o provedor** (ele roda em outro grupo de processos): agora há handler de SIGTERM/SIGINT/SIGHUP que encerra o grupo do provedor; o provedor também é encerrado se quem o iniciou morrer.
+- Timeout só mandava SIGTERM e travava para sempre se o provedor o ignorasse: SIGTERM, 3 s, SIGKILL no grupo todo.
+- Linha de saída com UTF-8 inválido encerrava o leitor e o provedor travava com o pipe cheio: leitura por bytes.
+- Antigravity em modo `plan`/`ask` rodava com `--dangerously-skip-permissions`: agora usa `--mode plan`.
+- `--version` sem limite de tempo; `println!` com pipe quebrado entrava em pânico.
+
+**Backend Electron**
+- `OrchestratorService`: resultado com `cancelled: true`/exit 130, `cancelByTag` (o Parar do chat não cancela execuções autônomas), validação de provider e pasta; `runCli` passa o `streamId` como runId, respeita a política de permissões salva (política restritiva usa o caminho direto) e só aceita CLIs conhecidas; `ai:orchestrate`/`ai:orchestratorProviders` agora têm handler.
+- O app **não encerrava nada ao sair**: `before-quit` cancela orquestrador, prompts, execuções diretas, Flutter e PTYs.
+- PTY: `onExit` de uma sessão antiga apagava a sessão nova; `sendOutput` abria um zsh para qualquer id; sessão só de saída (`ai-stream`) impedia o CLI real de abrir; `cd`/modelo digitados no shell sem escape; `agy` fora do PATH do shell quebrava o terminal; novo `pty.cancelPrompt` (Parar termina o await do nó em vez de esperar até 5 min).
+- Injeção de shell: `ports:kill`, `git clone/worktree/blame` (agora `execFile` + validação de URL), `pty` (aspas simples).
+- Skills: `name: ..` no frontmatter apagava `~/.devflow` (`dirOf()` valida o id); `openFolder`/`read`/`save` validados.
+- `landWorktree` recusa andar com alterações não commitadas e desfaz o merge em conflito (antes o repositório ficava em MERGING e em outra branch).
+- Flutter: resolve o binário no PATH do app, mata a árvore ao parar, emite `exit` em falha de início.
+- Autônomo: cancelamento antes da fase iniciar, limpeza de `cancelledRuns`, histórico apagado por data (não por UUID).
+- `runCli`: caractere multibyte partido entre chunks e última linha do stream-json perdida; `shell:exec` mata a árvore no timeout e grava `~/.claude.json` de forma atômica; timeout do `ai:prompt` escala para SIGKILL.
+
+**Tela de Orquestração**
+- `parseOrchestrationCliSessionId` quebrava em andares criados pelo usuário (`floor-<ts>`): todos os eventos do terminal eram descartados (card sem atenção, Ombro, auto-relay).
+- `OrchestrationProjectNode`: sem imports (`fetchAllGitProjects`, `cloneGitRepository`) e loop infinito de varreduras (`existingDevUrls = []` + `onUpdateConfig` inline nas deps); porta própria do projeto contada como ocupada; `devUrl` não era passado.
+- Motor de execução: falha de nó agora **pula os dependentes** ("Pulado: …"); exceção em qualquer ponto não deixa o nó em `running`; ferramenta shell decide por código de saída (stderr com código 0 é sucesso); sessão do nó usa o andar da execução; Parar não cancela mais chat/Maestro/Design nem manda Ctrl+C a terminais fora da execução.
+- Relay: nó ficava `running` para sempre, escrevia no andar errado e abria claude.ai/x.com por "o Claude sugeriu x".
+- Persistência: última edição perdida ao trocar de andar/fechar; dado corrompido (item nulo, zoom 0, andares inválidos, andar ativo inexistente) derrubava a tela; estado de UI do andar anterior ficava no novo; excluir andar recriava as chaves dele.
+- `wouldCreateCycle` com argumentos trocados em `handleConnectNodes`; duplicata de aresta; ids de nó/aresta com colisão; reencaixe de cabo perdia id/rótulo/auto-relay (e soltar no vazio apagava sem aviso); `mouseup`/`mousemove` rodavam em dobro (overlay + canvas); menu "…" cortado (`overflow: hidden` anulava o scroll); Flutter parado a cada render do App; consentimento perdia o gatilho de partida; fechar CLI/projeto desfazia o arraste manual dos vizinhos; novos nós nasciam empilhados.
+- Maestro: `update_node` apagava título/subtítulo; resposta caía em outra conversa; `$node-N` desalinhava; recrutamento sem proteção de reentrada, sem validar o JSON e podia dispensar o próprio Maestro/projetos; `handleMaestroOpenProject` abria/subia o projeto errado.
+- Utilitários: casamento de projetos irmãos (`estancia-bahia-api` × `-painel`), verbos coloquiais ("abre", "roda"), porta de proxy/banco lida como porta do dev, porta padrão por framework (Next/CRA 3000, Angular 4200, Astro 4321), `extractPortFromUrl`, detecção de URL com cores ANSI do Vite.
+- Também: Simulador vazava a captura de tela, nó de navegador (timers de aba fechada, voltar/avançar com URL errada, `file:`).
+
+### Teste do fluxo "agente pede para abrir algo no navegador" (Gatilho → Agente → Modelo → Navegador, com Antigravity e com Claude)
+Bugs encontrados e corrigidos:
+- Pasta nova no Claude: o diálogo "Você confia nesta pasta?" (padrão "Não, sair") engolia o prompt e o nó falhava com "CLI encerrado antes de processar o prompt". `ensureClaudeWorkspaceTrust()` pré-confia a pasta (atômico) ao abrir o terminal de IA da Orquestração.
+- O **modelo-trabalhador** ligado só ao agente rodava, com permissões totais, no **repositório do app** (não no projeto do fluxo): o motor e o card do terminal só olhavam projetos ligados diretamente, e o card ainda recriava a sessão na pasta errada. `getProjectNodesForNode()` (usado pelos dois) herda o projeto dos nós anteriores.
+- O nó de navegador abria sites aleatórios (`g1.globo.com`, `gmail.com`, `github.comnocard...`): (a) o passo 5 do resolvedor casava nome de serviço solto no texto (agora exige verbo de abrir/acessar, módulo `utils/browserUrl.ts` com teste); (b) a URL era raspada da tela crua do terminal do modelo (agora vale: URL declarada pelo agente, pedido do gatilho, e só então a saída); (c) `stripAnsi` apagava o "cursor para a direita" e colava palavras (`stripTerminalControl` converte em espaço); (d) `github.com` e `https://www.github.com/` abriam duas abas (comparação normalizada).
+- Observação: o Antigravity em modo interativo leva ~6 min por nó neste fluxo (prompt do fluxo é grande e o modelo roda com esforço alto).
+
+### Pendente / decisões
+- `webSecurity: false` e iframe do nó navegador sem `sandbox` (risco já listado nos itens 2–3); `~/.gemini/antigravity-cli/settings.json` é reescrito com permissões totais a cada sessão.
+- Soltar um cabo existente no vazio agora o **restaura** (antes apagava); para desconectar use o botão do cabo.

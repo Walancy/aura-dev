@@ -25,7 +25,8 @@ import {
 } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import { FileIcon, FolderIcon } from './FileIcon';
-import { allocateUniqueDevUrl, detectProjectPort, scanSystemOccupiedPorts, extractPortFromUrl, detectProjectApps, DetectedProjectApp } from '../utils/projectDevUrl';
+import { fetchAllGitProjects, cloneGitRepository, type GitProjectItem } from '../utils/gitProjects';
+import { allocateUniqueDevUrl, detectProjectPort, scanSystemOccupiedPorts, scanSystemOccupiedPortsOrNull, extractPortFromUrl, detectProjectApps, DetectedProjectApp } from '../utils/projectDevUrl';
 
 export interface FileTreeNode {
   name: string;
@@ -118,6 +119,24 @@ function getMonacoLanguage(filePath: string): string {
   }
 }
 
+const NO_URLS: string[] = [];
+
+/**
+ * Dev URL livre: evita as portas dos OUTROS nós de projeto e as ocupadas no sistema, mas não a do próprio projeto
+ * (se ele já está rodando na 5173, é nela que o nó deve apontar, não na 5174).
+ */
+async function pickDevUrl(existing: string[], preferred: number | null, projectPath?: string): Promise<string> {
+  const occupied = await scanSystemOccupiedPorts();
+  let own = new Set<number>();
+  if (projectPath) {
+    try {
+      const res = await window.electronAPI?.ports?.scanProject?.(projectPath);
+      own = new Set((res?.ports || []).map((p) => p.port));
+    } catch {}
+  }
+  return allocateUniqueDevUrl(existing, preferred, 5173, occupied.filter((port) => !own.has(port)));
+}
+
 export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> = ({
   nodeId,
   projectPath: initialProjectPath,
@@ -127,7 +146,7 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
   cloneUrl: initialCloneUrl,
   htmlUrl: initialHtmlUrl,
   isCloned: initialIsCloned,
-  existingDevUrls = [],
+  existingDevUrls = NO_URLS,
   width,
   height,
   isEffectiveDark,
@@ -161,6 +180,14 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
   const [hasCopiedPath, setHasCopiedPath] = useState<boolean>(false);
   const [searchFilter, setSearchFilter] = useState<string>('');
 
+  // props que mudam de identidade a cada render do canvas: em refs, para não re-disparar os efeitos/callbacks que as usam
+  const existingDevUrlsRef = useRef(existingDevUrls);
+  existingDevUrlsRef.current = existingDevUrls;
+  const onUpdateConfigRef = useRef(onUpdateConfig);
+  onUpdateConfigRef.current = onUpdateConfig;
+  const onToastRef = useRef(onToast);
+  onToastRef.current = onToast;
+
   useEffect(() => {
     setCurrentPath(initialProjectPath || '');
     setCurrentName(initialProjectName || 'Projeto');
@@ -177,16 +204,15 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
       const list = await fetchAllGitProjects(currentPath);
       setProjectsList(list);
 
-      // Auto assign if path is empty
-      if (!currentPath && list.length > 0) {
+      // Auto assign só em nó novo e sem escolha: um repositório não clonado escolhido de propósito não pode ser trocado
+      if (!currentPath && list.length > 0 && !currentCloneUrl && !currentHtmlUrl && initialIsCloned !== false) {
         const firstCloned = list.find((p) => p.isCloned && p.localDir) || list[0];
         if (firstCloned.isCloned && firstCloned.localDir) {
           let detectedPort: number | null = null;
           try {
             detectedPort = await detectProjectPort(firstCloned.localDir);
           } catch {}
-          const sysPorts = await scanSystemOccupiedPorts();
-          const newDevUrl = allocateUniqueDevUrl(existingDevUrls, detectedPort, 5173, sysPorts);
+          const newDevUrl = await pickDevUrl(existingDevUrlsRef.current, detectedPort, firstCloned.localDir);
           setCurrentPath(firstCloned.localDir);
           setCurrentName(firstCloned.name);
           setCurrentBranch(firstCloned.branch || 'main');
@@ -194,7 +220,7 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
           setCurrentHtmlUrl(firstCloned.htmlUrl);
           setCurrentDevUrl(newDevUrl);
           setIsClonedState(true);
-          onUpdateConfig({
+          onUpdateConfigRef.current({
             projectPath: firstCloned.localDir,
             projectName: firstCloned.name,
             gitBranch: firstCloned.branch || 'main',
@@ -208,7 +234,7 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
     } catch (err) {
       console.warn('[OrchestrationProjectNode] Erro ao listar projetos do Git:', err);
     }
-  }, [currentPath, existingDevUrls, onUpdateConfig]);
+  }, [currentPath, currentCloneUrl, currentHtmlUrl, initialIsCloned]);
 
   useEffect(() => {
     loadProjects();
@@ -241,8 +267,7 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
           try {
             detectedPort = await detectProjectPort(res.repoPath);
           } catch {}
-          const sysPorts = await scanSystemOccupiedPorts();
-          const newDevUrl = allocateUniqueDevUrl(existingDevUrls, detectedPort, 5173, sysPorts);
+          const newDevUrl = await pickDevUrl(existingDevUrlsRef.current, detectedPort, res.repoPath);
           setCurrentPath(res.repoPath);
           setCurrentName(projToClone.name);
           const b = projToClone.branch || 'main';
@@ -268,7 +293,7 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
         setIsCloning(false);
       }
     },
-    [projectsList, currentName, currentCloneUrl, currentHtmlUrl, existingDevUrls, onUpdateConfig, loadProjects, onToast]
+    [projectsList, currentName, currentCloneUrl, currentHtmlUrl, loadProjects]
   );
 
   // Fetch file tree whenever currentPath changes
@@ -354,21 +379,29 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
 
     if (currentPath && isClonedState && window.electronAPI?.pty) {
       const targetPort = extractPortFromUrl(currentDevUrl);
-      const sysPorts = await scanSystemOccupiedPorts();
-      const isAlreadyRunning = targetPort ? sysPorts.includes(targetPort) : false;
+      const sysPorts = await scanSystemOccupiedPortsOrNull();
+      // sem o scan não dá para saber se já roda: não sobe um segundo servidor "no escuro"
+      const isAlreadyRunning = sysPorts === null || (targetPort ? sysPorts.includes(targetPort) : false);
 
       if (!isAlreadyRunning) {
         onToast?.(`🚀 Iniciando servidor local para "${currentName}" em segundo plano...`, 'info');
         const cleanName = currentName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
         const sessionId = `dev-server-${cleanName}`;
         try {
-          await window.electronAPI.pty.create(sessionId, 'zsh', currentPath, 100, 24, accentColor);
-          // Executa com fallback inteligente de gerenciador de pacotes
-          const runCmd = 'bun run dev 2>/dev/null || pnpm dev 2>/dev/null || npm run dev\n';
-          window.electronAPI.pty.write(sessionId, runCmd);
-          onToast?.(`Servidor do projeto iniciado via terminal integrado na porta ${targetPort || 'padrão'}`, 'success');
+          const created = await window.electronAPI.pty.create(sessionId, 'zsh', currentPath, 100, 24, accentColor);
+          if (!created?.success) {
+            onToast?.(`Não consegui abrir o terminal do servidor${created?.error ? `: ${created.error}` : ''}`, 'error');
+          } else if (created.reused) {
+            onToast?.('O terminal deste servidor já está aberto: nada foi reenviado', 'info');
+          } else {
+            // Executa com fallback inteligente de gerenciador de pacotes
+            const runCmd = 'bun run dev 2>/dev/null || pnpm dev 2>/dev/null || npm run dev\n';
+            window.electronAPI.pty.write(sessionId, runCmd);
+            onToast?.(`Servidor do projeto iniciado via terminal integrado na porta ${targetPort || 'padrão'}`, 'success');
+          }
         } catch (err: any) {
           console.warn('[OrchestrationProjectNode] Erro ao iniciar servidor:', err);
+          onToast?.(`Falha ao iniciar o servidor: ${err?.message || err}`, 'error');
         }
       } else {
         onToast?.(`🌐 Servidor ativo! Conectando ${currentDevUrl} no navegador`, 'info');
@@ -385,8 +418,7 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
         detectedPort = await detectProjectPort(p.path);
       } catch {}
     }
-    const sysPorts = await scanSystemOccupiedPorts();
-    const newDevUrl = allocateUniqueDevUrl(existingDevUrls, detectedPort, 5173, sysPorts);
+    const newDevUrl = await pickDevUrl(existingDevUrlsRef.current, detectedPort, p.path);
     setCurrentPath(p.path);
     setCurrentName(p.name);
     setCurrentBranch(p.branch || 'main');
@@ -745,8 +777,7 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
                           detectedPort = await detectProjectPort(p.localDir);
                         } catch {}
                       }
-                      const sysPorts = await scanSystemOccupiedPorts();
-                      const newDevUrl = allocateUniqueDevUrl(existingDevUrls, detectedPort, 5173, sysPorts);
+                      const newDevUrl = await pickDevUrl(existingDevUrlsRef.current, detectedPort, p.isCloned ? p.localDir : undefined);
                       setCurrentDevUrl(newDevUrl);
 
                       if (p.isCloned && p.localDir) {

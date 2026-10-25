@@ -41,8 +41,21 @@ export class AutonomousService {
     input: AutonomousTaskInput,
     onEvent?: (event: OrchestratorEvent & { phase?: Phase; issueId?: string }) => void
   ): Promise<{ runId: string; status: 'done' | 'review' | 'failed'; summary: string }> {
-    input = await this.resolveProjectItem(input);
     const runId = input.runId || randomUUID();
+    try {
+      return await this.runInner({ ...input, runId }, runId, onEvent);
+    } finally {
+      this.cancelledRuns.delete(runId);
+      this.activeRuns.delete(runId);
+    }
+  }
+
+  private async runInner(
+    input: AutonomousTaskInput,
+    runId: string,
+    onEvent?: (event: OrchestratorEvent & { phase?: Phase; issueId?: string }) => void
+  ): Promise<{ runId: string; status: 'done' | 'review' | 'failed'; summary: string }> {
+    input = await this.resolveProjectItem(input);
     const emit = (phase: Phase, event: OrchestratorEvent) =>
       onEvent?.({ ...event, phase, issueId: input.taskId || input.itemId });
 
@@ -172,6 +185,10 @@ export class AutonomousService {
     state: any,
     emit: (phase: Phase, event: OrchestratorEvent) => void
   ) {
+    // o cancelamento pode chegar enquanto o GitHub era consultado, antes de a fase existir: não inicia o provedor
+    if (this.cancelledRuns.has(runId)) {
+      return { stdout: '', stderr: 'Operação cancelada pelo usuário', exitCode: 130, requestId: runId, cancelled: true };
+    }
     this.activeRuns.set(runId, `${runId}-${phase}`);
     const result = await orchestratorService.run(
       {
@@ -244,9 +261,11 @@ export class AutonomousService {
       fs.writeFileSync(path.join(directory, `${runId}.json`), JSON.stringify(state, null, 2));
 
       // Keep only 200 most recent files
+      // os nomes são UUIDs (sem ordem de tempo): "mais recentes" é pela data de modificação
+      const mtime = (f: string) => { try { return fs.statSync(path.join(directory, f)).mtimeMs; } catch { return 0; } };
       const files = fs.readdirSync(directory)
         .filter((f) => f.endsWith('.json'))
-        .sort((a, b) => b.localeCompare(a));
+        .sort((a, b) => mtime(b) - mtime(a));
       if (files.length > 200) {
         for (const oldFile of files.slice(200)) {
           try { fs.unlinkSync(path.join(directory, oldFile)); } catch {}

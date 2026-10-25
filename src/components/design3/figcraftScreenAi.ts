@@ -4,25 +4,31 @@ import { FcSync } from './figcraftShapes';
 import { AiJsonStream, type AiStreamEvent } from '../design2/aiJsonStream';
 import { buildAiScreenPrompt, parseAiScreenResponse, requestAiScreenRaw, ScreenBuilder, guessScreenFormat } from '../design2/aiScreenFromLlm';
 import { applyAiEdits, buildAiEditPrompt, editScope } from '../design2/aiEdit';
-import { buildPlanPrompt, looksMultiScreen, parsePlan, screenPrompt } from '../design2/appPlan';
+import { buildPlanPrompt, looksMultiScreen, parsePlan, screenPrompt, type ExistingScreen } from '../design2/appPlan';
 import { analyzeReferenceImages } from '../design2/referenceAnalysis';
 import { listRefs, matchRefs, readRef, saveRefs } from '../design2/references';
 import { buildProjectDigest } from '../design2/projectDigest';
 import { listProjectAssets } from '../design2/projectAssets';
 import { fetchStockImage } from '../design2/stockImage';
 import { loadIcons } from '../design2/icons';
+import { loadLibrary, saveToLibrary } from './figcraftComponents';
+import { extractReusable, screenDigest } from './figcraftReuse';
+import { logSystemActivity } from '../../utils/brainService';
 import { fixContrast } from '../design2/audit';
 import { relayoutAll } from '../design2/autoLayout';
 import { patternTile } from '../design2/pattern';
 import { applyTextResize } from '../design2/textResize';
 import { findFreeSpot } from '../design2/freeSpot';
 import { STYLE_MODE_MARK, wantsNewScreens } from '../design2/screenFlow';
-import { referenceIntent, selectionIntent } from './figcraftIntent';
+import { looksLikeVariation, referenceIntent, requestFormat, requestKind, selectionIntent } from './figcraftIntent';
+import { cutoutTrimmed as cutout, exportNodePng, setImageFill, wantsRemoveBg } from './figcraftBg';
+import { buildPrototypeFlow, wantsPrototype } from './figcraftProto';
 import { describeScreenStyle } from '../design2/screenStyle';
 import { lowEffortModel, resolveCliModel, visionModel } from '../design2/aiModel';
 import { normalizeTokens, type DesignTokens } from '../design2/designTokens';
 import { readProjectTokens } from '../design2/projectDoc';
 import { getActiveBrainContextSync, generateBrainAiContext } from '../../utils/brainService';
+import { buildCompactComponentPrompt, classifyDesignTask, matchComponentSpec } from './figcraftCatalog';
 
 const NEUTRAL_CWD = '/tmp';
 
@@ -271,7 +277,7 @@ async function fixInkFromPixels(call: FigcraftCall, sync: FcSync, rootShapeIds: 
       const top = luminanceOf(img, 0.01, Math.min(0.08, 54 / Math.max(1, root.height)));
       const bottom = luminanceOf(img, Math.max(0.9, 1 - 24 / Math.max(1, root.height)), 0.995);
       for (const [names, lum] of [[['Hora', 'SignalCellularAlt', 'Wifi', 'Battery5Bar'], top], [['Indicador home'], bottom]] as Array<[string[], number]>) {
-        const ids = chrome.filter((c) => names.includes(c.name || '')).map((c) => sync.idOf(c.id)).filter((x): x is number => x !== undefined);
+        const ids = chrome.filter((c) => names.includes(c.name || '')).map((c) => sync.paintId(c.id)).filter((x): x is number => x !== undefined);
         if (ids.length) await call('engine.execute', { command: 'node.set', params: { ids, props: { fills: [{ type: 'solid', color: lum > 0.5 ? '#000000' : '#FFFFFF', opacity: 1 }] } } }).catch(() => {});
       }
     } catch { /* mantém a cor estimada */ }
@@ -324,6 +330,8 @@ export interface FigAiOptions {
   isDark: boolean;
   /** ids do FigCraft selecionados ao enviar o pedido */
   selection: number[];
+  /** texto do PRD enviado (ou achado na pasta do projeto): a IA cria todas as telas dele */
+  prd?: string;
   onProgress: (m: string) => void;
   signal: { cancelled: boolean };
   onToast?: (m: string) => void;
@@ -334,7 +342,10 @@ export interface FigAiResult { message: string; layers: number; rootIds: number[
 const fsApi = () => (window as any).electronAPI?.fs;
 
 /** Recorta um trecho (frações 0–1) de uma imagem de referência e devolve como data URL JPEG. */
-function cropRef(src: string | undefined, c: { x: number; y: number; w: number; h: number }, outW: number, outH: number): Promise<string | null> {
+function cropRef(src: string | undefined, c0: { x: number; y: number; w: number; h: number }, outW: number, outH: number, pad = 0): Promise<string | null> {
+  // objeto que vai perder o fundo: a região ganha uma folga para não cortar pernas/pontas (o recorte do fundo tira o excesso)
+  const x = Math.max(0, c0.x - c0.w * pad), y = Math.max(0, c0.y - c0.h * pad);
+  const c = { x, y, w: Math.min(1 - x, c0.w * (1 + 2 * pad)), h: Math.min(1 - y, c0.h * (1 + 2 * pad)) };
   return new Promise((resolve) => {
     if (!src) return resolve(null);
     const img = new Image();
@@ -493,6 +504,7 @@ export async function runFigcraftAi(o: FigAiOptions): Promise<FigAiResult> {
 
 async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResult> {
   const { call, sync, signal } = o;
+  sync.reset(); // cada pedido só mexe no que ele mesmo cria ou adota; as telas de pedidos anteriores ficam intactas
   const setGlow = () => call('ui.glow', { ids: [...gs.glow] }).catch(() => {});
   /** Quadro vazio no lugar da tela que vai nascer: aparece na hora, com o contorno brilhando até a tela ficar pronta. */
   const makePlaceholder = async (key: number, name: string, x: number, y: number, w: number, h: number, mobile: boolean) => {
@@ -517,7 +529,11 @@ async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResul
   // chamadas auxiliares (entender o pedido, analisar a referência, planejar as telas) são curtas e estruturadas: sempre no modelo de esforço baixo (o "High" leva de 2,5x a 7x mais)
   const quickModel = lowEffortModel(o.provider, cliModel);
   const cwd = o.useCtx && o.ws ? o.ws : NEUTRAL_CWD;
+  // esforço de raciocínio da CLI: "low" gera a tela em ~1/3 do tempo (o modo rápido); desligado, "medium"
+  const effort: 'low' | 'medium' = o.fastMode ? 'low' : 'medium';
   const icons = await loadIcons().catch(() => undefined);
+  sync.icons = icons;
+  const library = await loadLibrary(o.ws); // componentes que a IA já desenhou neste projeto: ela os reutiliza com instâncias
   const projTokens: DesignTokens | null = o.useTokens ? (() => { const t = normalizeTokens(null); void t; return null; })() : null;
   const tokens = o.useTokens ? await readProjectTokens(o.ws).then((r) => { const t = normalizeTokens(r); return t && t.enabled !== false ? t : null; }).catch(() => null) : projTokens;
   const projectContext = o.useCtx ? await getProjectContext(o.ws, o.projectName) : undefined;
@@ -534,44 +550,191 @@ async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResul
   const byId = new Map(pageShapes.map((s) => [s.id, s]));
   const rootOf = (id: string) => { let c = byId.get(id); while (c?.parentId && byId.get(c.parentId)) c = byId.get(c.parentId); return c?.id ?? id; };
   const liveIds = o.selection.map((i) => `fc:${i}`).filter((id) => byId.has(id) && byId.get(id)!.visible !== false);
-  const firstSel = byId.get(liveIds[0]);
+  // ---- ações diretas: remover o fundo de imagens e montar o fluxo de protótipo entre as telas selecionadas
+  const rawIdx = new Map<number, any>();
+  const rawParentIdx = new Map<number, number>();
+  const indexRaw = (n: any, parentId?: number) => {
+    rawIdx.set(n.id, n);
+    if (parentId !== undefined) rawParentIdx.set(n.id, parentId);
+    (n.children || []).forEach((c: any) => indexRaw(c, n.id));
+  };
+  (cur.page?.children || []).forEach((c: any) => indexRaw(c, undefined));
+  const rawRootOf = (id: number): number => {
+    let curId = id;
+    while (rawParentIdx.has(curId)) curId = rawParentIdx.get(curId)!;
+    return curId;
+  };
+  /** Nó raiz no canvas que é uma imagem colada/avulsa (não uma tela estruturada com múltiplos elementos de UI). */
+  const isStandaloneCanvasImage = (rawNode: any): boolean => {
+    if (!rawNode) return false;
+    const kids = rawNode.children || [];
+    const hasImgFill = (rawNode.fills || []).some((f: any) => f.type === 'image');
+    if (hasImgFill && kids.length === 0) return true;
+    if (kids.length === 1 && (kids[0].fills || []).some((f: any) => f.type === 'image') && !(kids[0].children || []).length) return true;
+    return false;
+  };
+
+  const imgNodes = (n: any): any[] => [...((n.fills || []).some((f: any) => f.type === 'image') ? [n] : []), ...(n.children || []).flatMap(imgNodes)];
+  const selNodes = o.selection.map((i) => rawIdx.get(i)).filter(Boolean);
+  const selImages = [...new Map(selNodes.flatMap(imgNodes).map((n: any) => [n.id, n])).values()].slice(0, 12);
+  const noScreenWords = !/\b(tela|telas|pagina|paginas|app|site|landing|fluxo)\b/.test(clean.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''));
+  if (wantsRemoveBg(clean) && (selImages.length || (o.images.length && noScreenWords))) {
+    let n = 0;
+    const placed: number[] = [];
+    if (selImages.length) {
+      for (const node of selImages) {
+        if (signal.cancelled) throw new Error('cancelado');
+        o.onProgress(`Removendo o fundo da imagem ${n + 1} de ${selImages.length}…`);
+        const src = await exportNodePng(call, node.id);
+        if (!src) continue;
+        const r = await cutout(src);
+        if (r.error) throw new Error(r.error);
+        if (r.dataUrl && (await setImageFill(call, node.id, r.dataUrl))) n++;
+      }
+    } else {
+      const spot0 = findFreeSpot(pageShapes, 100, 100, 700, 700);
+      for (const [i, img] of o.images.entries()) {
+        if (signal.cancelled) throw new Error('cancelado');
+        o.onProgress(`Removendo o fundo da imagem ${i + 1} de ${o.images.length}…`);
+        const r = await cutout(img);
+        if (r.error) throw new Error(r.error);
+        const pr = r.dataUrl ? await call('engine.execute', { command: 'image.place', params: { data: r.dataUrl.slice(r.dataUrl.indexOf(',') + 1), x: spot0.x + i * 720, y: spot0.y } }).catch(() => null) : null;
+        const pid = pr?.id ?? pr?.ids?.[0];
+        if (pid !== undefined) { n++; placed.push(pid); }
+      }
+      if (placed.length) await call('engine.execute', { command: 'select.set', params: { ids: placed } }).catch(() => {});
+    }
+    if (!n) throw new Error('Não consegui remover o fundo da imagem.');
+    await call('engine.execute', { command: 'view.zoomFit', params: {} }).catch(() => {});
+    return { message: `Fundo removido de ${n} imagem(ns)`, layers: n, rootIds: placed };
+  }
+
+  // Separa a seleção do canvas entre:
+  // 1) Imagens avulsas coladas no canvas (usadas como referência visual ou para converter em tela editável)
+  // 2) Telas prontas / elementos de telas prontas (usados para editar in-place ou como guia de estilo/design system)
+  const selectedCanvasImageMap = new Map<number, any>();
+  const screenLiveIds: string[] = [];
+  for (const id of liveIds) {
+    const rawId = fcIdOf(id);
+    if (rawId === undefined) continue;
+    const rootRawId = rawRootOf(rawId);
+    const rootRaw = rawIdx.get(rootRawId);
+    if (isStandaloneCanvasImage(rootRaw)) {
+      selectedCanvasImageMap.set(rootRawId, rootRaw);
+    } else {
+      screenLiveIds.push(id);
+    }
+  }
+  const selectedCanvasImageNodes = [...selectedCanvasImageMap.values()].sort((a: any, b: any) => (a.x ?? 0) - (b.x ?? 0));
+  const hasCanvasImageSelection = selectedCanvasImageNodes.length > 0;
+  const hasScreenSelection = screenLiveIds.length > 0;
+  const hasAnyImageRef = o.images.length > 0 || hasCanvasImageSelection;
+
+  const normP = clean.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const createsMore = /\b(outras?|novas?|mais|demais)\s+(\d+\s+)?telas?\b|\b(cri(e|ar)|ger(e|ar))\s+(\d+|duas|tres|quatro|cinco|seis)\s+telas\b/.test(normP);
+  const selRoots = [...new Set(screenLiveIds.map(rootOf))].map((id) => rawIdx.get(fcIdOf(id)!)).filter(Boolean).sort((a: any, b: any) => a.x - b.x);
+  if (wantsPrototype(clean) && selRoots.length >= 2 && !createsMore) {
+    const made = await buildPrototypeFlow(call, selRoots, { request: clean, provider: o.provider, model: quickModel, cwd: NEUTRAL_CWD, onProgress: o.onProgress });
+    if (!made) throw new Error('A IA não encontrou ligações válidas entre as telas selecionadas. Tente descrever o fluxo desejado.');
+    return { message: `Protótipo criado: ${made} interações entre ${selRoots.length} telas`, layers: made, rootIds: [] };
+  }
+
+  const firstSel = screenLiveIds.length ? byId.get(screenLiveIds[0]) : undefined;
   const selFrame = firstSel ? (firstSel.type === 'frame' ? firstSel : pageShapes.find((s) => s.id === firstSel.parentId && s.type === 'frame') || null) : null;
   const hasContent = !!selFrame && pageShapes.some((s) => s.parentId === selFrame.id);
-  // com telas selecionadas: criar outras telas (a selecionada vira referência de design) ou alterar a seleção? A IA decide
-  const needsIntent = liveIds.length > 0 && (!selFrame || liveIds.length > 1 || hasContent);
-  const rootsSel = [...new Set(liveIds.map(rootOf))].map((id) => byId.get(id)?.name || 'tela');
-  const selIntent = needsIntent ? await selectionIntent(clean, rootsSel, { provider: o.provider, model: quickModel, onProgress: o.onProgress }) : wantsNewScreens(clean) ? 'new' : 'edit';
-  if (needsIntent) o.onProgress(selIntent === 'new' ? 'Pedido entendido: criar novas telas usando a selecionada como referência de design.' : 'Pedido entendido: alterar as telas selecionadas.');
-  const fromSelection = liveIds.length > 0 && selIntent === 'new';
-  const editsSelection = !fromSelection && liveIds.length > 0 && (!selFrame || liveIds.length > 1 || hasContent);
+  // com telas prontas selecionadas (sozinhas ou junto com imagens do canvas): criar outras telas ou alterar a tela selecionada?
+  const needsIntent = screenLiveIds.length > 0 && (!selFrame || screenLiveIds.length > 1 || hasContent);
+  const rootsSel = [...new Set(screenLiveIds.map(rootOf))].map((id) => byId.get(id)?.name || 'tela');
+  const selIntent = needsIntent
+    ? await selectionIntent(clean, rootsSel, { provider: o.provider, model: quickModel, onProgress: o.onProgress, hasCanvasImages: hasCanvasImageSelection })
+    : wantsNewScreens(clean) ? 'new' : 'edit';
+  if (needsIntent) {
+    if (hasCanvasImageSelection) {
+      o.onProgress(selIntent === 'new'
+        ? 'Pedido entendido: criar nova(s) tela(s) combinando a tela e a imagem selecionadas no canvas.'
+        : 'Pedido entendido: editar a tela selecionada usando a imagem selecionada no canvas como referência.');
+    } else {
+      o.onProgress(selIntent === 'new'
+        ? 'Pedido entendido: criar novas telas usando a tela selecionada como referência de design.'
+        : 'Pedido entendido: alterar as telas selecionadas.');
+    }
+  } else if (hasCanvasImageSelection && !hasScreenSelection) {
+    o.onProgress(`Lendo ${selectedCanvasImageNodes.length} imagem(ns) selecionada(s) no canvas como referência…`);
+  }
+  const fromSelection = screenLiveIds.length > 0 && selIntent === 'new';
+  const editsSelection = !fromSelection && screenLiveIds.length > 0 && (!selFrame || screenLiveIds.length > 1 || hasContent);
   const genTarget = !fromSelection && !editsSelection && selFrame ? selFrame : null;
+  // um componente (botão, card, navbar, modal...) ou uma tela? Componente gera só ele, em um quadro do tamanho dele
+  const kind: 'component' | 'screen' = editsSelection || genTarget ? 'screen' : await requestKind(clean, hasAnyImageRef || fromSelection, { provider: o.provider, model: quickModel, onProgress: o.onProgress });
+  const isComponent = kind === 'component';
+  const matchedComp = isComponent ? matchComponentSpec(clean) : null;
+  if (isComponent) {
+    o.onProgress(matchedComp ? `Pedido entendido: componente "${matchedComp.name}" (${matchedComp.width}x${matchedComp.height}px).` : 'Pedido entendido: gerar somente o componente, sem montar uma tela.');
+  }
+
+  // Dimensões e posição das imagens avulsas selecionadas no canvas (para posicionar a tela gerada ao lado delas)
+  const canvasImgDims = selectedCanvasImageNodes[0]
+    ? { w: Math.round(selectedCanvasImageNodes[0].width || 393), h: Math.round(selectedCanvasImageNodes[0].height || 852) }
+    : null;
+  const canvasImgRight = selectedCanvasImageNodes.length
+    ? Math.max(...selectedCanvasImageNodes.map((n: any) => Math.round((n.x || 0) + (n.width || 400))))
+    : 0;
+  const canvasImgTop = selectedCanvasImageNodes[0] ? Math.round(selectedCanvasImageNodes[0].y || 100) : 100;
+
+  // imagem anexada ou selecionada no canvas: replicar a referência (com eventuais modificações pedidas) ou criar telas novas no estilo dela?
+  const refMode: 'replicate' | 'style' = hasAnyImageRef && !fromSelection && !editsSelection
+    ? await referenceIntent(clean, { provider: o.provider, model: quickModel, onProgress: o.onProgress, component: isComponent })
+    : fromSelection ? 'style' : 'replicate';
+  if (hasAnyImageRef && !fromSelection && !editsSelection) {
+    o.onProgress(refMode === 'replicate'
+      ? (isComponent ? 'Pedido entendido: recriar o componente da imagem de referência.' : 'Pedido entendido: recriar a tela da imagem selecionada em camadas editáveis.')
+      : 'Pedido entendido: criar tela(s) nova(s) usando a imagem selecionada como guia de estilo.');
+  }
+  const refStyle = refMode === 'style';
 
   // ---- tela nova: o quadro vazio brilhando aparece já, antes de ler referências e pensar no layout
   const newMode = !editsSelection && !genTarget;
+  // desktop ou mobile: pelas palavras do pedido, pela proporção da imagem selecionada no canvas, pelo PRD/projeto ou pela IA
+  const explicitDeviceInPrompt = /\b(desktop|web ?app|site|landing|dashboard|painel|mobile|celular|iphone|android|tablet|ipad)\b/i.test(clean);
+  const canvasImgFormat = canvasImgDims && !explicitDeviceInPrompt && refMode === 'replicate'
+    ? (canvasImgDims.w <= 580 && canvasImgDims.h >= canvasImgDims.w * 1.28
+        ? { mobile: true, width: 393, height: 852, deviceName: 'Mobile (proporção da imagem selecionada)' }
+        : canvasImgDims.w >= canvasImgDims.h * 1.15
+          ? { mobile: false, width: 1440, height: 900, deviceName: 'Desktop (proporção da imagem selecionada)' }
+          : null)
+    : null;
+  const guessed: { mobile: boolean; width: number; height: number; deviceName?: string } = canvasImgFormat
+    ? canvasImgFormat
+    : newMode && !isComponent && !fromSelection
+      ? await requestFormat(o.prd ? `${clean}\n${o.prd.slice(0, 700)}` : clean, { provider: o.provider, model: quickModel, projectContext, onProgress: o.onProgress })
+      : guessScreenFormat(clean, undefined);
+  if (newMode && !isComponent && !fromSelection) o.onProgress(guessed.mobile ? `Pedido entendido: ${guessed.deviceName || 'tela mobile'} (${guessed.width}x${guessed.height}px).` : `Pedido entendido: ${guessed.deviceName || 'tela desktop'} (${guessed.width}x${guessed.height}px).`);
   if (newMode) {
     let preDims: { w: number; h: number } | null = null;
     let preRight = 0, preTop = 0;
     if (fromSelection) {
-      const roots = [...new Set(liveIds.map(rootOf))].map((id) => byId.get(id)!).sort((a, b) => a.x - b.x).slice(0, 3);
-      if (roots[0]) { preDims = { w: Math.round(roots[0].width), h: Math.round(roots[0].height) }; preRight = Math.max(...roots.map((r) => r.x + r.width)); preTop = roots[0].y; }
+      const roots = [...new Set(screenLiveIds.map(rootOf))].map((id) => byId.get(id)!).sort((a, b) => a.x - b.x).slice(0, 3);
+      if (roots[0]) {
+        preDims = { w: Math.round(roots[0].width), h: Math.round(roots[0].height) };
+        preRight = Math.max(...roots.map((r) => r.x + r.width), canvasImgRight);
+        preTop = roots[0].y;
+      }
+    } else if (hasCanvasImageSelection) {
+      preRight = canvasImgRight;
+      preTop = canvasImgTop;
     }
-    const f0 = preDims ? { mobile: preDims.w <= 500 && preDims.h >= 600, width: preDims.w, height: preDims.h } : guessScreenFormat(clean, undefined);
-    const s0 = preDims ? findFreeSpot(pageShapes, preRight + 160, preTop, preDims.w + 80, preDims.h + 80) : findFreeSpot(pageShapes, 100, 100, f0.width + 80, f0.height + 80);
-    await makePlaceholder(0, 'Gerando a tela…', s0.x, s0.y, f0.width, f0.height, f0.mobile);
+    const f0 = isComponent ? { mobile: false, width: matchedComp?.width ?? 360, height: matchedComp?.height ?? 220 } : preDims ? { mobile: preDims.w <= 500 && preDims.h >= 600, width: preDims.w, height: preDims.h } : guessed;
+    const s0 = (preDims || hasCanvasImageSelection)
+      ? findFreeSpot(pageShapes, preRight + 160, preTop, f0.width + 80, f0.height + 80)
+      : findFreeSpot(pageShapes, 100, 100, f0.width + 80, f0.height + 80);
+    await makePlaceholder(0, isComponent ? (matchedComp?.name || 'Gerando o componente…') : 'Gerando a tela…', s0.x, s0.y, f0.width, f0.height, f0.mobile);
   } else if (genTarget || editsSelection) {
     // edição: as telas que a IA está mexendo brilham
-    for (const id of editsSelection ? new Set(liveIds.map(rootOf)) : [genTarget!.id]) { const n = fcIdOf(id); if (n !== undefined) gs.glow.add(n); }
+    for (const id of editsSelection ? new Set(screenLiveIds.map(rootOf)) : [genTarget!.id]) { const n = fcIdOf(id); if (n !== undefined) gs.glow.add(n); }
     await setGlow();
   }
 
-  // imagem anexada: replicar a referência fielmente ou criar telas novas com o design dela?
-  const refMode: 'replicate' | 'style' = o.images.length && !fromSelection && !editsSelection
-    ? await referenceIntent(clean, { provider: o.provider, model: quickModel, onProgress: o.onProgress })
-    : fromSelection ? 'style' : 'replicate';
-  if (o.images.length && !fromSelection && !editsSelection) o.onProgress(refMode === 'replicate' ? 'Pedido entendido: replicar a referência o mais fiel possível.' : 'Pedido entendido: criar tela(s) nova(s) usando a referência só como guia de design.');
-  const refStyle = refMode === 'style';
-
-  // ---- imagens de referencia: viram arquivos temporarios que a CLI abre pelo caminho
+  // ---- imagens de referencia (anexadas no chat + imagens selecionadas no canvas): viram arquivos temporarios que a CLI abre pelo caminho
   const refs: string[] = [];
   /** imagens de referência (data URL) na mesma ordem de `refs`: o `refCrop` da IA aponta para elas */
   const refData: string[] = [];
@@ -582,19 +745,42 @@ async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResul
     if (r?.path) { refs.push(r.path); refData.push(dataUrl); }
   }
   if (o.images.length > refs.length) throw new Error('Não consegui salvar as imagens de referência. Reinicie o app e envie de novo.');
+
+  // Exporta também as imagens avulsas selecionadas diretamente no canvas para `refs` / `refData`
+  for (const imgNode of selectedCanvasImageNodes) {
+    if (!save) break;
+    try {
+      const exp = await call('engine.execute', { command: 'file.export', params: { ids: [imgNode.id], format: 'png', scale: 1 } });
+      const saved = exp?.data ? await save(exp.data, 'png') : null;
+      if (saved?.path) {
+        refs.push(saved.path);
+        refData.push(`data:image/png;base64,${exp.data}`);
+      }
+    } catch { /* ignora falha individual */ }
+  }
   let refDirs = [...new Set(refs.map((p) => p.slice(0, p.lastIndexOf('/'))))];
 
   // telas selecionadas + "crie outras telas": viram guia de estilo (exporta como imagem)
   let baseDims: { w: number; h: number } | null = null;
+  let existingScreens: ExistingScreen[] = []; // telas selecionadas: já existem, as novas são as que faltam
   let selStyle = '';
   let baseRight = 0, baseTop = 0;
   if (fromSelection) {
-    o.onProgress('Lendo a tela selecionada como guia de estilo…');
-    const roots = [...new Set(liveIds.map(rootOf))].map((id) => byId.get(id)!).sort((a, b) => a.x - b.x).slice(0, 3);
-    try { selStyle = describeScreenStyle(pageShapes, roots[0]); } catch { /* sem resumo de estilo */ }
+    o.onProgress(hasCanvasImageSelection ? 'Lendo a tela e a imagem selecionadas no canvas…' : 'Lendo a tela selecionada como guia de estilo…');
+    const roots = [...new Set(screenLiveIds.map(rootOf))].map((id) => byId.get(id)!).sort((a, b) => a.x - b.x).slice(0, 3);
+    try { selStyle = roots.map((r) => describeScreenStyle(pageShapes, r)).filter(Boolean).join('\n---\n'); } catch { /* sem resumo de estilo */ }
+    existingScreens = roots.map((r) => ({ name: r.name || 'Tela', summary: screenDigest(pageShapes, r) }));
+    // as peças reutilizáveis da tela selecionada (navbar, cabeçalho, cards repetidos, botões, campos) viram componentes: as telas novas as reutilizam
+    try {
+      const found = extractReusable(pageShapes, roots, icons).filter((c) => !library.some((l) => l.name.toLowerCase() === c.name.toLowerCase()));
+      if (found.length) {
+        await saveToLibrary(o.ws, library, found);
+        o.onProgress(`${found.length} componente(s) da tela selecionada para reutilizar: ${found.map((c) => c.name).join(', ')}`);
+      }
+    } catch { /* sem componentes: a IA desenha do zero */ }
     for (const r of roots) {
       if (!baseDims) baseDims = { w: Math.round(r.width), h: Math.round(r.height) };
-      baseRight = Math.max(baseRight, r.x + r.width);
+      baseRight = Math.max(baseRight, r.x + r.width, canvasImgRight);
       baseTop = baseTop || r.y;
       try {
         const e = await call('engine.execute', { command: 'file.export', params: { ids: [fcIdOf(r.id)], format: 'png', scale: 1 } });
@@ -610,8 +796,8 @@ async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResul
   const refFs = fsApi();
   const inspiration: string[] = [];
   if (o.ws && refFs?.readFile && refFs?.writeFile) {
-    if (o.images.length) {
-      saveRefs(o.ws, o.images, clean, refFs).then((l) => l.length && o.onToast?.(`${l.length} referência(s) na biblioteca`)).catch(() => {});
+    if (refData.length && !fromSelection) {
+      saveRefs(o.ws, refData, clean, refFs).then((l) => l.length && o.onToast?.(`${l.length} referência(s) na biblioteca`)).catch(() => {});
     } else if (!refs.length) {
       try {
         for (const h of matchRefs(await listRefs(o.ws, refFs), clean, 2)) {
@@ -624,10 +810,27 @@ async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResul
     }
   }
 
+  // classificação de complexidade da tarefa (Simple / Medium / Complex) para definir orçamento de tempo, modelo e prompt
+  const taskClass = classifyDesignTask({
+    prompt: clean,
+    isComponent,
+    isMultiScreen: looksMultiScreen(clean) || (fromSelection && /(telas|sequ[eê]ncia|fluxo|jornada|outras|pr[oó]ximas|etapas)/i.test(clean)),
+    hasPrd: !!o.prd,
+    hasReferences: refs.length > 0,
+    isReplica: refs.length > 0 && !refStyle,
+    isEdit: editsSelection,
+    selectedCount: screenLiveIds.length || selectedCanvasImageNodes.length,
+    fastMode: o.fastMode,
+    projectContext,
+  });
+  if (taskClass.domain) {
+    o.onProgress(`Contexto identificado: ${taskClass.domain.name} (${taskClass.complexitySpec.label}).`);
+  }
+
   // etapa 1: uma chamada so para olhar as imagens e descrever a interface (a geracao recebe isso como regra)
   let spec: string | undefined;
-  // a análise em separado de uma imagem leva de 2,5 a 5 min na CLI e costuma estourar o limite: no modo rápido a imagem vai direto para a geração
-  if (refs.length && !o.fastMode) {
+  // a análise em separado de uma imagem leva de 2,5 a 5 min na CLI: só roda em tarefas complexas com réplica fiel e fora do modo rápido
+  if (refs.length && !o.fastMode && !taskClass.complexitySpec.skipSeparateVisionPass) {
     o.onProgress(`Analisando ${refs.length} imagem(ns) de referência…`);
     const t0a = Date.now();
     const tick = setInterval(() => o.onProgress(`Analisando ${refs.length} imagem(ns) de referência… ${Math.round((Date.now() - t0a) / 1000)}s`), 2000);
@@ -660,21 +863,34 @@ async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResul
       }
       await call('engine.execute', { command: 'select.set', params: { ids: rootIds } }).catch(() => {});
       await call('engine.execute', { command: 'view.zoomFit', params: {} }).catch(() => {});
+      await call('engine.execute', { command: 'select.set', params: { ids: [] } }).catch(() => {});
     }
-    return { message: msg, layers, rootIds };
+    let protoNote = '';
+    if (wantsPrototype(clean)) {
+      try {
+        const idx = new Map<number, any>();
+        const ix = (n: any) => { idx.set(n.id, n); (n.children || []).forEach(ix); };
+        ((await readPage()).page?.children || []).forEach(ix);
+        const ids = [...(fromSelection ? [...new Set(screenLiveIds.map(rootOf))].map(fcIdOf) : []), ...rootIds].filter((x): x is number => x !== undefined);
+        const nodes = [...new Set(ids)].map((i) => idx.get(i)).filter(Boolean).sort((a: any, b: any) => a.x - b.x);
+        const made = await buildPrototypeFlow(call, nodes, { request: clean, provider: o.provider, model: quickModel, cwd: NEUTRAL_CWD, onProgress: o.onProgress });
+        if (made) protoNote = ` · protótipo com ${made} interações`;
+      } catch (e: any) { o.onToast?.(`Não consegui montar o protótipo: ${String(e?.message || e).slice(0, 80)}`); }
+    }
+    return { message: msg + protoNote, layers, rootIds };
   };
 
   // ======================================================== editar o que esta selecionado
   if (editsSelection) {
     const groups = new Map<string, string[]>();
-    for (const id of liveIds) { const r = rootOf(id); groups.set(r, [...(groups.get(r) || []), id]); }
+    for (const id of screenLiveIds) { const r = rootOf(id); groups.set(r, [...(groups.get(r) || []), id]); }
     sync.adopt(pageShapes);
     const applyEdit = async (ids: string[], text: string): Promise<{ changed: number; added: number; removed: number } | null> => {
       const scope0 = editScope(pageShapes, ids);
-      o.onProgress(`Pedindo para ${o.provider || 'a IA'} editar ${ids.length} elemento(s) selecionado(s)...`);
+      o.onProgress(`Pedindo para ${o.provider || 'a IA'} editar ${ids.length} elemento(s) selecionado(s)${refs.length ? ` usando ${refs.length} imagem(ns) de referência` : ''}...`);
       const raw = await requestAiScreenRaw(
-        buildAiEditPrompt({ prompt: text, accentColor: o.accentColor, isDark: o.isDark, referenceImages: refs, referenceSpec: spec, tokens }, scope0, ids),
-        o.provider, genModel, cwd || undefined, 480000, undefined, refDirs
+        buildAiEditPrompt({ prompt: text, accentColor: o.accentColor, isDark: o.isDark, projectContext, referenceImages: refs, referenceSpec: spec, tokens }, scope0, ids, pageShapes),
+        o.provider, genModel, cwd || undefined, 480000, undefined, refDirs, 0, { effort }
       );
       if (signal.cancelled) throw new Error('cancelado');
       const fresh = (await readPage()).shapes;
@@ -682,29 +898,31 @@ async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResul
       if (!edited) return null;
       let shapes = edited.shapes;
       if (edited.pending.length) {
-        const imgs = await Promise.all(edited.pending.map((j) => fetchStockImage(j.query, j.width, j.height, { person: j.person }).then((r) => [j.id, r] as const).catch(() => [j.id, null] as const)));
+        const imgs = await Promise.all(edited.pending.map((j) => fetchStockImage(j.query, j.width, j.height, { person: j.person }).then(async (r) => (r && j.removeBg ? { ...r, dataUrl: (await cutout(r.dataUrl)).dataUrl || r.dataUrl } : r)).then((r) => [j.id, r] as const).catch(() => [j.id, null] as const)));
         shapes = shapes.map((s) => { const hit = imgs.find(([id]) => id === s.id)?.[1]; return hit ? { ...s, imageUrl: hit.dataUrl } : s; });
       }
       sync.adopt(fresh);
-      const done = relayoutAll(applyTextResize(shapes));
+      const done = relayoutAll(applyTextResize(expandTextures(shapes)));
       await sync.sync(done);
       await sync.verify(done).catch(() => 0);
       return { changed: edited.changed, added: edited.added, removed: edited.removed };
     };
     if (groups.size >= 2) {
-      // varias telas selecionadas: a mesma instrucao em cada tela, uma por vez sobre o estado mais recente
+      // varias telas selecionadas: a mesma instrucao em cada tela, uma por vez sobre o estado mais recente, compartilhando o contexto das irmãs
       const list = [...groups.entries()].sort((a, b) => (byId.get(a[0])?.x ?? 0) - (byId.get(b[0])?.x ?? 0));
+      const allScreenNames = list.map(([rId]) => byId.get(rId)?.name || 'Tela').join(', ');
       let ok = 0; let layers = 0;
-      for (const [, ids] of list) {
+      for (const [rId, ids] of list) {
         if (signal.cancelled) throw new Error('cancelado');
-        const r = await applyEdit(ids, `${clean}\n\n(Esta é uma das ${list.length} telas selecionadas: aplique exatamente esta mudança nesta tela, de forma coerente com as demais.)`).catch(() => null);
+        const thisName = byId.get(rId)?.name || 'Tela';
+        const r = await applyEdit(ids, `${clean}\n\n(Esta é a tela "${thisName}" dentro da seleção múltipla [${allScreenNames}]: aplique esta mudança de forma coerente e consistente com as demais telas selecionadas.)`).catch(() => null);
         if (r) { ok++; layers += r.changed + r.added + r.removed; }
         o.onProgress(`Editando as telas selecionadas: ${ok} de ${list.length}…`);
       }
       if (!ok) throw new Error('A IA não devolveu alterações válidas em nenhuma tela. Tente descrever a mudança de outra forma.');
       return { message: `Alterações aplicadas em ${ok} de ${list.length} telas`, layers, rootIds: [] };
     }
-    const r = await applyEdit(liveIds, clean);
+    const r = await applyEdit(screenLiveIds, clean);
     if (!r) throw new Error('A IA não devolveu alterações válidas. Tente descrever a mudança de outra forma.');
     const n = r.changed + r.added + r.removed;
     return { message: `${r.changed} alterado(s), ${r.added} adicionado(s), ${r.removed} removido(s)`, layers: n, rootIds: [] };
@@ -713,9 +931,9 @@ async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResul
   // ======================================================== preencher um frame vazio
   if (genTarget) {
     sync.adopt([genTarget]);
-    const aiReq = { tokens, projectAssets: projectAssets.length ? projectAssets : undefined, prompt: clean, pageId: PAGE, startX: genTarget.x, startY: genTarget.y, accentColor: o.accentColor, isDark: o.isDark, targetFrame: genTarget, icons, projectContext, canReadProject: o.useCtx && !!o.ws && !refs.length, useProjectContext: o.useCtx, referenceImages: refs, referenceSpec: spec, inspirationImages: inspiration, replicaMode: refs.length > 0 && !refStyle };
+    const aiReq = { tokens, projectAssets: projectAssets.length ? projectAssets : undefined, prompt: clean, pageId: PAGE, startX: genTarget.x, startY: genTarget.y, accentColor: o.accentColor, isDark: o.isDark, targetFrame: genTarget, icons, components: library, projectContext, canReadProject: o.useCtx && !!o.ws && !refs.length, useProjectContext: o.useCtx, referenceImages: refs, referenceSpec: spec, inspirationImages: inspiration, replicaMode: refs.length > 0 && !refStyle };
     o.onProgress(`Pedindo o layout para ${o.provider || 'a IA'}...`);
-    const generated = parseAiScreenResponse(await requestAiScreenRaw(buildAiScreenPrompt(aiReq), o.provider, genModel, cwd || undefined, 480000, undefined, refDirs), aiReq);
+    const generated = parseAiScreenResponse(await requestAiScreenRaw(buildAiScreenPrompt(aiReq), o.provider, genModel, cwd || undefined, 480000, undefined, refDirs, 0, { effort }), aiReq);
     if (signal.cancelled) throw new Error('cancelado');
     if (!generated) throw new Error('A IA não devolveu um layout válido. Tente descrever a tela com mais detalhes ou escolha outro modelo.');
     let shapes = relayoutAll(applyTextResize(generated.shapes));
@@ -726,14 +944,37 @@ async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResul
   }
 
   // ======================================================== telas novas
-  const fmt = baseDims ? { mobile: baseDims.w <= 500 && baseDims.h >= 600, width: baseDims.w, height: baseDims.h } : guessScreenFormat(clean, undefined);
+  const isVariation = fromSelection && looksLikeVariation(clean.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+  const fmt = isComponent
+    ? { mobile: false, width: matchedComp?.width ?? 360, height: matchedComp?.height ?? 220 }
+    : (baseDims && !explicitDeviceInPrompt)
+      ? { mobile: baseDims.w <= 500 && baseDims.h >= 600, width: baseDims.w, height: baseDims.h }
+      : guessed;
   let hinted = clean;
-  if (baseDims) hinted = `${clean}\n\n${STYLE_MODE_MARK} As imagens anexadas são telas JÁ EXISTENTES deste sistema/app; crie as telas pedidas no MESMO padrão de design delas. Tamanho: ${baseDims.w}x${baseDims.h} (${fmt.mobile ? 'MOBILE' : 'DESKTOP'}); escreva exatamente esse tamanho em "width"/"height".${selStyle ? `\n\nPADRÃO DE DESIGN DA TELA SELECIONADA (reaproveite): ${selStyle}` : ''}`;
-  else if (refStyle && refs.length) hinted = `${clean}\n\n${STYLE_MODE_MARK} As imagens anexadas são REFERÊNCIA DE DESIGN, não a tela a copiar: crie o que o pedido descreve (assunto, telas e estrutura próprios do pedido) no MESMO padrão visual delas — paleta, tipografia, raios, espaçamentos, estilo dos componentes e clima — sem repetir o conteúdo nem a composição das imagens. (Formato: ${fmt.mobile ? 'MOBILE 393x852' : 'DESKTOP 1440x900'}.)`;
-  else hinted = `${clean}\n\n(Formato detectado: ${fmt.mobile ? 'MOBILE 393x852' : 'DESKTOP 1440x900'}. Use esse tamanho em "width"/"height".)`;
+  const compDimsHint = matchedComp ? `${matchedComp.name} (~${matchedComp.width}x${matchedComp.height}px)` : 'botão ~220x52, card ~280x148, barra de navegação 393x84, modal ~400x320, campo 343x84';
+  const COMPONENT_NOTE = `\n\nCOMPONENTE ÚNICO: o pedido é UM componente de interface, NÃO uma tela. Gere SOMENTE o componente pedido${hasAnyImageRef ? ' (se a imagem mostra uma tela inteira, identifique nela o componente citado no pedido e recrie só esse trecho, fiel ao visual dele)' : ''}: um único frame raiz com o TAMANHO do componente (${compDimsHint}) em "width"/"height" do cabeçalho; SEM barra de status, SEM indicador home, SEM aparelho, SEM outros elementos de tela em volta (título de página, navegação, lista extra). O fundo do frame é a superfície do próprio componente (ou transparente se ele flutua); se o componente tiver estados/variações citados no pedido, coloque-os lado a lado em frames separados. Use auto layout, ícones Material e as medidas da referência/design tokens.${matchedComp ? `\nRECEITA DO COMPONENTE: ${matchedComp.recipe}` : ''}`;
+  if (isComponent) {
+    hinted = `${clean}${COMPONENT_NOTE}${selStyle ? `\n\nPADRÃO DE DESIGN DA TELA SELECIONADA (reaproveite cores, fontes e estilo): ${selStyle}` : ''}`;
+  } else if (fromSelection && hasCanvasImageSelection) {
+    const imgCount = o.images.length + selectedCanvasImageNodes.length;
+    hinted = `${clean}\n\n${STYLE_MODE_MARK} SELEÇÃO COMBINADA NO CANVAS (IMAGEM DE REFERÊNCIA + TELA PRONTA): as primeiras ${imgCount} imagem(ns) anexadas são IMAGEM(NS) DE REFERÊNCIA selecionadas no canvas, e as demais são TELAS JÁ PRONTAS do projeto. Combine ambas conforme o pedido: siga o design system/estilo da tela pronta selecionada (${selStyle || 'cores, tipografia e raios da tela'}) e use a estrutura/conteúdo/referência visual da imagem selecionada. Tamanho: ${fmt.width}x${fmt.height} (${fmt.mobile ? 'MOBILE' : 'DESKTOP'}); escreva exatamente esse tamanho em "width"/"height".`;
+  } else if (fromSelection && isVariation) {
+    hinted = `${clean}\n\nVARIAÇÃO / ADAPTAÇÃO DA TELA SELECIONADA: a imagem anexada é a tela selecionada no canvas. Crie uma NOVA tela ao lado dela aplicando exatamente a variação ou adaptação pedida (ex: tema dark/light, versão mobile/desktop, layout alternativo), mantendo a identidade, os dados e a coerência com a tela original. Tamanho: ${fmt.width}x${fmt.height} (${fmt.mobile ? 'MOBILE' : 'DESKTOP'}).${selStyle ? `\n\nESTILO DA TELA ORIGINAL: ${selStyle}` : ''}`;
+  } else if (baseDims) {
+    hinted = `${clean}\n\n${STYLE_MODE_MARK} As imagens anexadas são telas JÁ EXISTENTES deste sistema/app; crie as telas pedidas no MESMO padrão de design delas. Tamanho: ${fmt.width}x${fmt.height} (${fmt.mobile ? 'MOBILE' : 'DESKTOP'}); escreva exatamente esse tamanho em "width"/"height".${selStyle ? `\n\nPADRÃO DE DESIGN DA TELA SELECIONADA (reaproveite): ${selStyle}` : ''}`;
+  } else if (refStyle && refs.length) {
+    hinted = `${clean}\n\n${STYLE_MODE_MARK} As imagens anexadas são REFERÊNCIA DE DESIGN, não a tela a copiar: crie o que o pedido descreve (assunto, telas e estrutura próprios do pedido) no MESMO padrão visual delas — paleta, tipografia, raios, espaçamentos, estilo dos componentes e clima — sem repetir o conteúdo nem a composição das imagens. (Formato: ${fmt.mobile ? `MOBILE ${fmt.width}x${fmt.height}` : `DESKTOP ${fmt.width}x${fmt.height}`}.)`;
+  } else if (refs.length && !refStyle) {
+    hinted = `${clean}\n\nRECRIAÇÃO A PARTIR DA IMAGEM SELECIONADA/ANEXADA: transforme a interface da imagem de referência em uma tela de alta fidelidade totalmente editável (frames com auto layout, textos editáveis, ícones vetoriais e componentes estruturados), aplicando também quaisquer modificações ou adaptações solicitadas no pedido acima. (Formato: ${fmt.mobile ? `MOBILE ${fmt.width}x${fmt.height}` : `DESKTOP ${fmt.width}x${fmt.height}`}. Use esse tamanho em "width"/"height".)`;
+  } else {
+    hinted = `${clean}\n\n(Formato detectado: ${fmt.mobile ? `MOBILE ${fmt.width}x${fmt.height}` : `DESKTOP ${fmt.width}x${fmt.height}`}. Use esse tamanho em "width"/"height".)`;
+  }
+  if (o.prd) hinted += `\n\nPRD DO PROJETO (use os dados, campos, perfis e regras reais dele nas telas):\n${o.prd.slice(0, 6000)}`;
   const spot = baseDims
-    ? findFreeSpot(pageShapes, baseRight + 160, baseTop, baseDims.w + 80, baseDims.h + 80)
-    : findFreeSpot(pageShapes, 100, 100, fmt.width + 80, fmt.height + 80);
+    ? findFreeSpot(pageShapes, baseRight + 160, baseTop, fmt.width + 80, fmt.height + 80)
+    : hasCanvasImageSelection
+      ? findFreeSpot(pageShapes, canvasImgRight + 160, canvasImgTop, fmt.width + 80, fmt.height + 80)
+      : findFreeSpot(pageShapes, 100, 100, fmt.width + 80, fmt.height + 80);
 
   /** Mesclagem de varias geracoes simultaneas (uma por tela): cada uma publica o proprio conjunto de shapes. */
   const parts = new Map<number, Shape[]>();
@@ -741,7 +982,25 @@ async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResul
   const frameRoots: string[] = [];
 
   const generateOne = async (key: number, prompt: string, startX: number, startY: number, maxScreens?: number): Promise<number> => {
-    const aiReq = { tokens, projectAssets: projectAssets.length ? projectAssets : undefined, prompt, pageId: PAGE, startX, startY, accentColor: o.accentColor, isDark: o.isDark, icons, projectContext, canReadProject: o.useCtx && !!o.ws && !(refs.length || spec), useProjectContext: o.useCtx, maxScreens, plainDevice: true, replicaMode: refs.length > 0 && !refStyle, referenceImages: refs, referenceSpec: spec, inspirationImages: inspiration };
+    const canRead = taskClass.complexitySpec.canReadProjectFiles && o.useCtx && !!o.ws && !(refs.length || spec);
+    const aiReq = { tokens, projectAssets: projectAssets.length ? projectAssets : undefined, prompt, pageId: PAGE, startX, startY, accentColor: o.accentColor, isDark: o.isDark, icons, components: library, projectContext, canReadProject: canRead, useProjectContext: o.useCtx, maxScreens: isComponent ? 1 : maxScreens, plainDevice: true, componentMode: isComponent, replicaMode: refs.length > 0 && !refStyle, referenceImages: refs, referenceSpec: spec, inspirationImages: inspiration };
+    const useCompact = isComponent && taskClass.complexitySpec.useCompactPrompt && !!taskClass.componentSpec && !refs.length && !inspiration.length;
+    const promptToSend = useCompact
+      ? buildCompactComponentPrompt({
+          prompt: clean,
+          spec: taskClass.componentSpec!,
+          domain: taskClass.domain,
+          tokens,
+          isDark: o.isDark,
+          accentColor: o.accentColor,
+          referenceImages: refs,
+          referenceSpec: spec,
+        })
+      : buildAiScreenPrompt(aiReq);
+    const taskEffort = o.fastMode ? 'low' : taskClass.complexitySpec.effort;
+    const taskModel = (o.fastMode || taskClass.complexity === 'simple') ? (quickModel || genModel) : genModel;
+    const taskTimeout = taskClass.complexitySpec.timeoutMs;
+    const stallLimit = taskClass.complexitySpec.stallTimeoutMs;
     const builder = new ScreenBuilder(aiReq);
     const stream = new AiJsonStream();
     const queue: AiStreamEvent[] = [];
@@ -757,7 +1016,7 @@ async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResul
         const job = builder.pending[imgStarted++];
         if (job.refCrop) {
           // foto da própria referência: recorta o trecho que a IA indicou
-          jobs.push(cropRef(refData[job.refCrop.img] ?? refData[0], job.refCrop, job.width, job.height).then((url) => { if (signal.cancelled || !url) return; builder.patch(job.id, { imageUrl: url }); live(); }).catch(() => { imgFailed++; }));
+          jobs.push(cropRef(refData[job.refCrop.img] ?? refData[0], job.refCrop, job.width, job.height, job.removeBg ? 0.05 : 0).then(async (url) => { if (signal.cancelled || !url) return; let out = url; if (job.removeBg) { const cut = await cutout(url); if (cut.dataUrl) out = cut.dataUrl; else o.onToast?.(cut.error || 'Não consegui remover o fundo da imagem'); } if (signal.cancelled) return; builder.patch(job.id, { imageUrl: out, ...(job.removeBg ? { imageFit: 'fit' as const } : {}) }); live(); }).catch(() => { imgFailed++; }));
           continue;
         }
         if (job.assetPath) {
@@ -765,11 +1024,13 @@ async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResul
           jobs.push(Promise.resolve(fsApi()?.readFileDataUrl?.(job.assetPath)).then((r: any) => { if (signal.cancelled || !r?.dataUrl) return; builder.patch(job.id, { imageUrl: r.dataUrl }); live(); }).catch(() => {}));
           continue;
         }
-        jobs.push(fetchStockImage(job.query, job.width, job.height, { person: job.person }).then((r) => {
+        jobs.push(fetchStockImage(job.query, job.width, job.height, { person: job.person }).then(async (r) => {
           if (!r) { imgFailed++; return; }
           if (signal.cancelled) return;
+          if (job.removeBg) { const cut = await cutout(r.dataUrl); if (cut.dataUrl) r = { ...r, dataUrl: cut.dataUrl }; else o.onToast?.(cut.error || 'Não consegui remover o fundo da foto'); }
+          if (signal.cancelled) return;
           const c = builder.all.find((s) => s.id === job.id);
-          builder.patch(job.id, { imageUrl: r.dataUrl, name: r.credit ? `${c?.name || 'Foto'} · Foto: ${r.credit} (Unsplash)` : c?.name });
+          builder.patch(job.id, { imageUrl: r.dataUrl, ...(job.removeBg ? { imageFit: 'fit' as const } : {}), name: r.credit ? `${c?.name || 'Foto'} · Foto: ${r.credit} (Unsplash)` : c?.name });
           live();
         }).catch(() => { imgFailed++; }));
       }
@@ -811,31 +1072,31 @@ async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResul
         }
       }
     })();
-    o.onProgress(`Pedindo o layout para ${o.provider || 'a IA'}${o.useCtx && o.ws ? ' (analisando o projeto)' : ''}...`);
+    o.onProgress(`Pedindo o layout para ${o.provider || 'a IA'}${canRead ? ' (analisando o projeto)' : useCompact ? ' (modo rápido de componente)' : ''}...`);
     const startedAt = Date.now();
     const wait = setInterval(() => { if (builder.itemCount === 0 && screenCount === 0) o.onProgress(`${o.provider || 'A IA'} está ${refs.length ? `analisando ${refs.length} imagem(ns) e ` : ''}pensando no layout… ${Math.round((Date.now() - startedAt) / 1000)}s`); }, 1000);
     let final = '';
     let failure: any = null;
     try {
-      // vigia: sem nenhum elemento depois de 3,5 min a chamada é interrompida (a CLI "pensando" para sempre); a nova tentativa usa o modelo rápido
+      // vigia: sem nenhum elemento depois de stallLimit a chamada é interrompida; a nova tentativa usa o modelo rápido
       const ask = (model: string | undefined) => {
-        const ctl: { abort?: (why?: string) => void } = {};
+        const ctl: { abort?: (why?: string) => void; effort?: 'low' | 'medium' | 'high' } = { effort: taskEffort };
         const started = Date.now();
-        const dog = setInterval(() => { if (builder.itemCount === 0 && Date.now() - started > 210000) ctl.abort?.('STALL: a IA não devolveu nenhum elemento em 3,5 minutos'); }, 5000);
+        const dog = setInterval(() => { if (builder.itemCount === 0 && Date.now() - started > stallLimit) ctl.abort?.('STALL: a IA demorou demais para devolver o primeiro elemento'); }, 5000);
         let closing = false;
-        return requestAiScreenRaw(buildAiScreenPrompt(aiReq), o.provider, model, cwd || undefined, 480000, (chunk) => {
+        return requestAiScreenRaw(promptToSend, o.provider, model, canRead ? (cwd || undefined) : NEUTRAL_CWD, taskTimeout, (chunk) => {
           queue.push(...stream.push(chunk));
           poke();
           // o JSON fechou: a CLI ainda leva minutos para encerrar sozinha; interrompe depois de uma folga curta
-          if (!closing && stream.complete) { closing = true; setTimeout(() => ctl.abort?.('DONE'), 1200); }
-        }, refDirs, 150000, ctl).finally(() => clearInterval(dog));
+          if (!closing && stream.complete) { closing = true; setTimeout(() => ctl.abort?.('DONE'), 900); }
+        }, refDirs, stallLimit, ctl).finally(() => clearInterval(dog));
       };
-      final = await ask(genModel).catch((e) => {
+      final = await ask(taskModel).catch((e) => {
         if (String(e?.message) === 'DONE') return stream.raw;
         if (!/^STALL/.test(String(e?.message)) || signal.cancelled || builder.itemCount > 0) throw e;
         const quick = lowEffortModel(o.provider, cliModel);
-        o.onProgress(quick && quick !== genModel ? `A IA travou (${String(e?.message).replace(/^STALL:\s*/, '')}); tentando de novo com o modelo rápido…` : 'A IA travou; tentando de novo…');
-        return ask(quick && quick !== genModel ? quick : genModel).catch((e2) => { if (String(e2?.message) === 'DONE') return stream.raw; throw e2; });
+        o.onProgress(quick && quick !== taskModel ? `A IA travou (${String(e?.message).replace(/^STALL:\s*/, '')}); tentando de novo com o modelo rápido…` : 'A IA travou; tentando de novo…');
+        return ask(quick && quick !== taskModel ? quick : taskModel).catch((e2) => { if (String(e2?.message) === 'DONE') return stream.raw; throw e2; });
       });
       if (stream.consumed === 0 && final) queue.push(...stream.push(final)); // CLIs que só devolvem no fim
     } catch (e) { failure = e; }
@@ -858,31 +1119,54 @@ async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResul
     parts.set(key, relayoutAll(applyTextResize(builder.all))); // o mesmo acabamento que o Design aplica ao confirmar
     await publish();
     frameRoots.push(...ids);
+    // peças reutilizáveis que a IA declarou: viram componentes do FigCraft (principal em "Componentes") e entram na biblioteca do projeto
+    if (builder.declared.length) {
+      await sync.promoteAll(parts.get(key) || []).catch(() => 0);
+      await saveToLibrary(o.ws, library, builder.declared).catch(() => {});
+      logSystemActivity('design', 'Criou componentes reutilizaveis no Design', o.ws?.split('/').pop() || 'Estudio de Design', { components: builder.declared.map((c) => c.name) });
+    }
     return ids.length;
   };
 
   // pedido de varias telas (fluxo / app completo): planeja as telas + design system e gera UMA tela por chamada, em paralelo
-  if (looksMultiScreen(clean) || (fromSelection && /(telas|sequ[eê]ncia|fluxo|jornada|outras|pr[oó]ximas|etapas)/i.test(clean))) {
-    o.onProgress('Planejando as telas do app…');
-    const planRaw = await requestAiScreenRaw(buildPlanPrompt(clean, projectContext, spec, tokens), o.provider, quickModel, cwd || undefined, 120000).catch(() => null);
+  if (!isComponent && (!!o.prd || looksMultiScreen(clean) || (fromSelection && /(telas|sequ[eê]ncia|fluxo|jornada|outras|pr[oó]ximas|etapas)/i.test(clean)))) {
+    o.onProgress(o.prd ? 'Lendo o PRD e planejando todas as telas do projeto…' : 'Planejando as telas do app…');
+    const planPrompt = buildPlanPrompt(clean, projectContext, spec, tokens, o.prd, existingScreens);
+    const askPlan = (model: string | undefined, ms: number) => requestAiScreenRaw(planPrompt, o.provider, model, cwd || undefined, ms).catch((e) => { if (o.prd || signal.cancelled) throw e; return null; });
+    let plan = (raw0 => (raw0 ? parsePlan(raw0, o.prd ? 16 : 12) : null))(await askPlan(o.prd ? genModel : quickModel, o.prd ? 300000 : 120000));
     if (signal.cancelled) throw new Error('cancelado');
-    const plan = planRaw ? parsePlan(planRaw) : null;
+    if (!plan && !o.prd) {
+      // sem plano, a IA geraria várias telas numa chamada só (e sairiam repetidas): tenta de novo com o modelo principal
+      o.onProgress('O plano das telas não veio; tentando de novo…');
+      plan = (raw0 => (raw0 ? parsePlan(raw0, 12) : null))(await askPlan(genModel, 180000));
+      if (signal.cancelled) throw new Error('cancelado');
+    }
+    if (!plan && o.prd) throw new Error('Não consegui planejar as telas a partir do PRD. Tente de novo.');
     if (plan && baseDims) { plan.width = baseDims.w; plan.height = baseDims.h; }
+    else if (plan && o.prd) { plan.width = guessed.width; plan.height = guessed.height; }
     if (plan && plan.screens.length >= 2) {
       const N = plan.screens.length;
       const step = plan.width + 200;
+      const cols = N > 5 ? 5 : N;
+      const rowStep = plan.height + 240;
+      const at = (i: number) => ({ x: spot.x + (i % cols) * step, y: spot.y + Math.floor(i / cols) * rowStep });
       // um quadro vazio brilhando por tela planejada, lado a lado (o primeiro quadro, provisório, sai)
       await dropPlaceholder(0);
       o.onProgress(`${N} telas planejadas: ${plan.screens.map((x) => x.name).join(', ')}`);
       const mobilePlan = plan.width <= 500 && plan.height >= 600;
-      for (let i = 0; i < N; i++) await makePlaceholder(i, plan.screens[i].name, spot.x + i * step, spot.y, plan.width, plan.height, mobilePlan);
+      for (let i = 0; i < N; i++) await makePlaceholder(i, plan.screens[i].name, at(i).x, at(i).y, plan.width, plan.height, mobilePlan);
       let done = 0, next = 0;
       const errors: string[] = [];
       const worker = async () => {
         while (next < N && !signal.cancelled) {
           const i = next++;
           try {
-            await generateOne(i, screenPrompt(hinted, plan, i), spot.x + i * step, spot.y, 1);
+            o.onProgress(`Gerando a tela ${i + 1} de ${N}: ${plan.screens[i].name}…`);
+            await generateOne(i, screenPrompt(hinted, plan, i, { request: clean, existing: existingScreens }), at(i).x, at(i).y, 1).catch(async (e1) => {
+              if (signal.cancelled || /cancelado/i.test(String(e1?.message))) throw e1;
+              o.onProgress(`A tela "${plan.screens[i].name}" falhou (${String(e1?.message || e1).slice(0, 60)}); tentando de novo…`);
+              await generateOne(i, screenPrompt(hinted, plan, i, { request: clean, existing: existingScreens }), at(i).x, at(i).y, 1);
+            });
           } catch (e: any) {
             if (signal.cancelled) return;
             errors.push(`${plan.screens[i].name}: ${e?.message || 'falhou'}`);
@@ -892,7 +1176,7 @@ async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResul
           }
         }
       };
-      await Promise.all(Array.from({ length: Math.min(3, N) }, worker));
+      await worker(); // uma tela por vez: cada chamada à CLI carrega só uma tela (com a imagem de referência), o que evita travar
       if (signal.cancelled) throw new Error('cancelado');
       if (errors.length === N) throw new Error(errors[0] || 'A IA não gerou nenhuma tela.');
       if (errors.length) o.onToast?.(`${errors.length} tela(s) falharam: ${errors.map((x) => x.split(':')[0]).join(', ')}`);
@@ -905,10 +1189,10 @@ async function runFigcraftAiInner(o: FigAiOptions, gs: Live): Promise<FigAiResul
   return finish(frameRoots, count === 1 ? 'Tela gerada e pronta para revisar' : `${count} telas geradas e prontas para revisar`, [...parts.values()].flat().length);
 
   /** Fotos (Unsplash) e arquivos do projeto (logo) que a IA pediu num conteudo gerado de uma vez. */
-  async function loadPhotos(shapes: Shape[], pending: Array<{ id: string; query: string; width: number; height: number; assetPath?: string; person?: boolean; refCrop?: { img: number; x: number; y: number; w: number; h: number } }>, apply: (next: Shape[]) => Promise<void>) {
+  async function loadPhotos(shapes: Shape[], pending: Array<{ id: string; query: string; width: number; height: number; assetPath?: string; person?: boolean; removeBg?: boolean; refCrop?: { img: number; x: number; y: number; w: number; h: number } }>, apply: (next: Shape[]) => Promise<void>) {
     if (!pending.length) return;
     const imgs = await Promise.all(pending.map((j) =>
-      (j.refCrop ? cropRef(refData[j.refCrop.img] ?? refData[0], j.refCrop, j.width, j.height).then((url) => (url ? { dataUrl: url } : null)) : j.assetPath ? Promise.resolve(fsApi()?.readFileDataUrl?.(j.assetPath)).then((r: any) => (r?.dataUrl ? { dataUrl: r.dataUrl } : null)) : fetchStockImage(j.query, j.width, j.height, { person: j.person })).then((r) => [j.id, r] as const).catch(() => [j.id, null] as const)
+      (j.refCrop ? cropRef(refData[j.refCrop.img] ?? refData[0], j.refCrop, j.width, j.height, j.removeBg ? 0.05 : 0).then(async (url) => (url ? { dataUrl: j.removeBg ? (await cutout(url)).dataUrl || url : url } : null)) : j.assetPath ? Promise.resolve(fsApi()?.readFileDataUrl?.(j.assetPath)).then((r: any) => (r?.dataUrl ? { dataUrl: r.dataUrl } : null)) : fetchStockImage(j.query, j.width, j.height, { person: j.person }).then(async (r) => (r && j.removeBg ? { ...r, dataUrl: (await cutout(r.dataUrl)).dataUrl || r.dataUrl } : r))).then((r) => [j.id, r] as const).catch(() => [j.id, null] as const)
     ));
     await apply(shapes.map((s) => { const hit = imgs.find(([id]) => id === s.id)?.[1]; return hit ? { ...s, imageUrl: hit.dataUrl } : s; }));
   }

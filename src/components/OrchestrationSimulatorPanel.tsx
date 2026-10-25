@@ -30,11 +30,14 @@ export const OrchestrationSimulatorPanel: React.FC<OrchestrationSimulatorPanelPr
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  // pedido de captura em andamento: o getUserMedia é assíncrono e o painel pode fechar/trocar de janela antes dele responder
+  const requestRef = useRef(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Stop active media stream completely
   const stopStream = useCallback(() => {
+    requestRef.current++; // invalida qualquer captura que ainda não respondeu
     if (streamRef.current) {
       try {
         streamRef.current.getTracks().forEach((track) => {
@@ -73,6 +76,7 @@ export const OrchestrationSimulatorPanel: React.FC<OrchestrationSimulatorPanelPr
   // Connect to selected window stream
   const connectToSource = useCallback((sourceId: string) => {
     stopStream();
+    const requestId = requestRef.current;
     setError(null);
     setSelectedId(sourceId);
 
@@ -86,6 +90,11 @@ export const OrchestrationSimulatorPanel: React.FC<OrchestrationSimulatorPanelPr
       },
     })
       .then((stream: MediaStream) => {
+        // chegou tarde (outra janela escolhida, painel fechado): para as trilhas, senão o indicador de gravação de tela fica aceso
+        if (requestId !== requestRef.current) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
         streamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -93,6 +102,7 @@ export const OrchestrationSimulatorPanel: React.FC<OrchestrationSimulatorPanelPr
         }
       })
       .catch((err: Error) => {
+        if (requestId !== requestRef.current) return;
         const msg = err.message || '';
         if (/denied|permission|not allowed/i.test(msg)) {
           setError(

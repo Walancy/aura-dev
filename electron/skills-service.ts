@@ -106,7 +106,7 @@ const safeId = (s: string) =>
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9._-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    .replace(/^[-.]+|[-.]+$/g, '') // sem "." nas pontas: ".." nunca vira o id (o id vira pasta e é apagado ao reinstalar)
     .slice(0, 64);
 
 export class SkillsService {
@@ -219,12 +219,20 @@ export class SkillsService {
     return out.sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
   }
 
+  /** Pasta de uma skill: só ids simples ("..", "/" e afins não passam), sempre direto dentro de `root`. */
+  dirOf(id: string): string {
+    if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9._-]*$/.test(id) || id.includes('..')) throw new Error('Nome de skill inválido.');
+    const dir = path.join(this.root, id);
+    if (path.dirname(dir) !== this.root) throw new Error('Caminho inválido.');
+    return dir;
+  }
+
   getActive(): InstalledSkill[] {
     return this.listInstalled().filter((s) => s.active);
   }
 
   readSkill(id: string): string {
-    return fs.readFileSync(path.join(this.root, id, 'SKILL.md'), 'utf8');
+    return fs.readFileSync(path.join(this.dirOf(id), 'SKILL.md'), 'utf8');
   }
 
   setActive(id: string, active: boolean) {
@@ -250,8 +258,7 @@ export class SkillsService {
   }
 
   uninstall(id: string) {
-    const dir = path.join(this.root, id);
-    if (!dir.startsWith(this.root + path.sep)) throw new Error('Caminho inválido.');
+    const dir = this.dirOf(id);
     this.setActive(id, false);
     this.setAlwaysOn(id, false);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -261,7 +268,7 @@ export class SkillsService {
   create(input: { name: string; description: string; body: string }): InstalledSkill {
     const id = safeId(input.name);
     if (!id) throw new Error('Nome inválido.');
-    const dir = path.join(this.root, id);
+    const dir = this.dirOf(id);
     if (fs.existsSync(dir)) throw new Error(`Já existe uma skill "${id}".`);
     fs.mkdirSync(dir, { recursive: true });
     const desc = input.description.replace(/\n/g, ' ').trim();
@@ -271,7 +278,7 @@ export class SkillsService {
   }
 
   updateSkillMd(id: string, content: string) {
-    const file = path.join(this.root, id, 'SKILL.md');
+    const file = path.join(this.dirOf(id), 'SKILL.md');
     if (!fs.existsSync(file)) throw new Error('Skill não instalada.');
     if (!/^---\s*\n[\s\S]*?\n---/.test(content)) throw new Error('O SKILL.md precisa começar com o frontmatter (--- name / description ---).');
     fs.writeFileSync(file, content);
@@ -282,7 +289,7 @@ export class SkillsService {
     if (!fs.existsSync(skillMd)) throw new Error('A pasta escolhida não tem um SKILL.md.');
     const fm = parseFrontmatter(fs.readFileSync(skillMd, 'utf8'));
     const id = safeId(fm.name || path.basename(srcDir));
-    const dest = path.join(this.root, id);
+    const dest = this.dirOf(id);
     fs.rmSync(dest, { recursive: true, force: true });
     fs.cpSync(srcDir, dest, { recursive: true, filter: (p) => !/\/(\.git|node_modules)(\/|$)/.test(p) });
     fs.writeFileSync(path.join(dest, '.devflow-meta.json'), JSON.stringify({ source: { type: 'local', path: srcDir }, installedAt: new Date().toISOString() }, null, 2));
@@ -470,7 +477,7 @@ export class SkillsService {
         path.join(tmp, '.devflow-meta.json'),
         JSON.stringify({ source: { type: 'github', sourceId, repo: `${src.owner}/${src.repo}`, path: skillPath, treeSha: dirNode?.sha }, installedAt: new Date().toISOString() }, null, 2),
       );
-      const dest = path.join(this.root, id);
+      const dest = this.dirOf(id);
       fs.rmSync(dest, { recursive: true, force: true });
       fs.renameSync(tmp, dest);
       if (src.alwaysOn?.includes(id)) {

@@ -71,7 +71,7 @@ export interface AccessHistoryEntry {
   id: string;
   at: string;
   actor: string;
-  action: 'add' | 'remove' | 'role' | 'invite-cancel' | 'team-add' | 'team-remove' | 'team-role' | 'team-create' | 'review-request' | 'assign';
+  action: 'add' | 'remove' | 'role' | 'invite-cancel' | 'team-add' | 'team-remove' | 'team-role' | 'team-create' | 'review-request' | 'review-approve' | 'assign';
   target: string;
   detail?: string;
 }

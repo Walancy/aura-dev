@@ -82,12 +82,24 @@ import { PreviewTabView } from './components/ide/PreviewTabView';
 import { FileIcon, FolderIcon } from './components/FileIcon';
 import { PromptEditor, PromptEditorRef } from './components/PromptEditor';
 import { SidebarPanels } from './components/ide/SidebarPanels';
+import { shq, SYNC_COMMAND } from './utils/gitShell';
 import { ProjectsSchedulerView, prefetchProjectsData } from './components/ProjectsSchedulerView';
 import { ProjectWorkspaceSelector } from './components/ide/ProjectWorkspaceSelector';
 import { HeaderProjectSelector, type HeaderActiveProjectInfo, type HeaderProjectItem, type ProjectAiStatus } from './components/HeaderProjectSelector';
 import { OrchestrationCanvas } from './components/OrchestrationCanvas';
 import { DailySchedulerView } from './components/daily/DailySchedulerView';
 import FigcraftStudioView from './components/design3/FigcraftStudioView';
+import {
+  loadDesignBridgeManifest,
+  getDesignBridgeManifestSync,
+  matchDesignScreensForRequest,
+  formatDesignContextBlockForAi,
+  buildDesignImplementationPrompt,
+  resolveDesignScreenPreviewUrl,
+  buildScreenSvgFallbackDataUrl,
+  type DesignBridgeManifest,
+  type DesignScreenSpec,
+} from './utils/designBridgeService';
 import { CliTerminalView } from './components/CliTerminalView';
 import { ProjectTasksDockTab } from './components/dock/ProjectTasksDockTab';
 import { PortsDockTab } from './components/dock/PortsDockTab';
@@ -522,6 +534,27 @@ export const App: React.FC = () => {
         }
       });
     }
+  }, []);
+
+  // Recarrega automaticamente quando um novo build de UI (dist/index.html) for compilado no disco
+  useEffect(() => {
+    const fsApi = (window as any).electronAPI?.fs;
+    if (!fsApi?.readFile || window.location.protocol !== 'file:') return;
+    const distIndexPath = '/Users/walancy/Documents/codes/devflow-desktop/dist/index.html';
+    let initialContent: string | null = null;
+    const timer = setInterval(async () => {
+      try {
+        const res = await fsApi.readFile(distIndexPath);
+        if (res?.content) {
+          if (initialContent === null) {
+            initialContent = res.content;
+          } else if (res.content !== initialContent) {
+            window.location.reload();
+          }
+        }
+      } catch {}
+    }, 2000);
+    return () => clearInterval(timer);
   }, []);
 
   // Workspace & Explorer State
@@ -2334,7 +2367,7 @@ export const App: React.FC = () => {
 
   // Panel & Layout Visibility Controls (Antigravity & VS Code Customize Layout)
   const [showExplorer, setShowExplorer] = useState(true);
-  const [activeActivityTab, setActiveActivityTab] = useState<'explorer' | 'search' | 'git' | 'debug' | 'preview' | 'testing'>('explorer');
+  const [activeActivityTab, setActiveActivityTab] = useState<'explorer' | 'search' | 'git' | 'debug' | 'preview' | 'testing' | 'design'>('explorer');
   const [previewTabUrl, setPreviewTabUrl] = useState<string | null>(null);
   const [previewTabActive, setPreviewTabActive] = useState(false);
   const [gitModifiedCount, setGitModifiedCount] = useState<number>(0);
@@ -3061,8 +3094,8 @@ export const App: React.FC = () => {
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
   useEffect(() => {
-    if (activeTab === 'design') setDesignMounted(true);
-  }, [activeTab]);
+    if (activeTab === 'design' || activeActivityTab === 'design') setDesignMounted(true);
+  }, [activeTab, activeActivityTab]);
   // Avisa que a IA do Design terminou quando o usuário está em outra tela, em outro projeto ou com o app em segundo plano
   const handleDesignAiDone = useCallback(
     (r: { ok: boolean; message: string; workspace: string }) => {
@@ -4998,7 +5031,7 @@ export const App: React.FC = () => {
     if (!window.electronAPI?.shell?.exec) return;
     const cwd = workspacePath || process.cwd();
     try {
-      const res = await window.electronAPI.shell.exec(`git checkout ${branch}`, cwd);
+      const res = await window.electronAPI.shell.exec(`git checkout ${shq(branch)}`, cwd);
       if (res.exitCode === 0) {
         setCurrentBranch(branch);
         setIsBranchModalOpen(false);
@@ -5017,7 +5050,7 @@ export const App: React.FC = () => {
     if (!newBranch.trim() || !window.electronAPI?.shell?.exec) return;
     const cwd = workspacePath || process.cwd();
     try {
-      const res = await window.electronAPI.shell.exec(`git checkout -b ${newBranch.trim()}`, cwd);
+      const res = await window.electronAPI.shell.exec(`git checkout -b ${shq(newBranch.trim())}`, cwd);
       if (res.exitCode === 0) {
         setCurrentBranch(newBranch.trim());
         setNewBranchInput('');
@@ -5038,11 +5071,11 @@ export const App: React.FC = () => {
     const cwd = workspacePath || process.cwd();
     setIsSyncingGit(true);
     try {
-      const res = await window.electronAPI.shell.exec('git pull --rebase && git push', cwd);
+      const res = await window.electronAPI.shell.exec(SYNC_COMMAND, cwd);
       if (res.exitCode === 0) {
         setToastMessage('Sincronizado com sucesso com o GitHub!');
       } else {
-        setToastMessage(`Sincronização: ${res.stdout || res.stderr || 'concluído'}`);
+        setToastMessage(`Erro ao sincronizar: ${(res.stderr || res.stdout || '').trim().split('\n').filter(Boolean).slice(-1)[0] || 'verifique o remoto'}`);
       }
       await refreshGitBranches();
       await refreshGitHubIssues();
@@ -5650,31 +5683,91 @@ export const App: React.FC = () => {
     setAtMentionState((prev) => (prev.isOpen ? { ...prev, isOpen: false } : prev));
   }, []);
 
-  // Filtered files for @ mention autocomplete in AI prompt
+  const [designBridgeManifest, setDesignBridgeManifest] = useState<DesignBridgeManifest | null>(() =>
+    getDesignBridgeManifestSync(workspacePath)
+  );
+  const [selectedDesignScreen, setSelectedDesignScreen] = useState<DesignScreenSpec | null>(null);
+  const [selectedDesignPreviewUrl, setSelectedDesignPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!selectedDesignScreen) {
+      setSelectedDesignPreviewUrl(null);
+      return;
+    }
+    let alive = true;
+    resolveDesignScreenPreviewUrl(workspacePath, selectedDesignScreen).then((url) => {
+      if (alive) setSelectedDesignPreviewUrl(url);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [workspacePath, selectedDesignScreen]);
+
+  useEffect(() => {
+    let active = true;
+    loadDesignBridgeManifest(workspacePath).then((m) => {
+      if (active) setDesignBridgeManifest(m);
+    });
+    const onDesignBridgeUpdated = (e: any) => {
+      const detail = e?.detail as DesignBridgeManifest | undefined;
+      if (detail && (!workspacePath || detail.workspacePath === workspacePath.replace(/\/+$/, ''))) {
+        setDesignBridgeManifest(detail);
+      } else {
+        loadDesignBridgeManifest(workspacePath).then((m) => {
+          if (active) setDesignBridgeManifest(m);
+        });
+      }
+    };
+    window.addEventListener('devflow-design-bridge-updated', onDesignBridgeUpdated as EventListener);
+    return () => {
+      active = false;
+      window.removeEventListener('devflow-design-bridge-updated', onDesignBridgeUpdated as EventListener);
+    };
+  }, [workspacePath]);
+
+  // Filtered files & special mentions (@design, @git, @terminal, @rules, @mcp) for @ mention autocomplete in AI prompt
   const filteredAtFiles = useMemo(() => {
     if (!atMentionState.isOpen) return [];
     const q = atMentionState.query.trim().toLowerCase();
-    if (!q) {
-      const result: { name: string; path: string; isGit?: boolean }[] = [];
-      const seen = new Set<string>();
-      for (const ofile of openFiles) {
-        if (!seen.has(ofile.path)) {
-          seen.add(ofile.path);
-          result.push({ name: ofile.name, path: ofile.path, isGit: false });
-        }
-      }
-      for (const wfile of allWorkspaceFiles) {
-        if (!seen.has(wfile.path)) {
-          seen.add(wfile.path);
-          result.push(wfile);
-        }
-      }
-      return result.slice(0, 15);
-    }
-    return allWorkspaceFiles
-      .filter((f) => f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q))
-      .slice(0, 15);
-  }, [atMentionState.isOpen, atMentionState.query, openFiles, allWorkspaceFiles]);
+
+    const designScreens = designBridgeManifest?.screens || [];
+    const systemItems: { name: string; path: string; subtitle: string; isGit?: boolean }[] = [
+      {
+        name: '@design',
+        path: '@design',
+        subtitle:
+          designScreens.length > 0
+            ? `Todas as telas da aba Design (${designScreens.length}: ${designScreens.map((s) => s.name).join(', ')})`
+            : 'Especificação visual, cores, tipografia e layouts da aba Design',
+      },
+      ...designScreens.map((scr) => ({
+        name: `@design:${scr.name}`,
+        path: `@design:${scr.name}`,
+        subtitle: `Tela do Design (${scr.width}x${scr.height}px)`,
+      })),
+      { name: '@git', path: '@git', subtitle: 'Status do repositório, diff e arquivos alterados' },
+      { name: '@terminal', path: '@terminal', subtitle: 'Histórico recente e saídas do terminal integrado' },
+      { name: '@rules', path: '@rules', subtitle: 'Diretrizes, convenções e regras de código do projeto' },
+      { name: '@mcp', path: '@mcp', subtitle: 'Ferramentas e conexões do Model Context Protocol' },
+    ];
+
+    const matchingSystem = systemItems.filter((item) => {
+      if (!q) return true;
+      const cleanName = item.name.replace(/^@+/, '').toLowerCase();
+      return (
+        item.name.toLowerCase().includes(q) ||
+        cleanName.includes(q) ||
+        item.subtitle.toLowerCase().includes(q)
+      );
+    });
+
+    const matchingFiles = allWorkspaceFiles.filter((f) => {
+      if (!q) return true;
+      return f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q);
+    });
+
+    return [...matchingSystem, ...matchingFiles].slice(0, 30);
+  }, [atMentionState.isOpen, atMentionState.query, allWorkspaceFiles, designBridgeManifest]);
 
   const handleSelectAtItem = (file: { name: string; path: string }) => {
     if (promptEditorRef.current) {
@@ -7642,7 +7735,7 @@ export const App: React.FC = () => {
           error?: string;
         }> = [];
 
-        const specialMentions = mentions.filter((m) => /^@(git|terminal|rules|mcp)$/.test(m));
+        const specialMentions = mentions.filter((m) => /^@?(git|terminal|rules|mcp|design(?::.+)?)$/i.test(m));
         for (const mentionPath of mentions) {
           if (specialMentions.includes(mentionPath)) continue;
           const resolvedPath = mentionPath.startsWith('/')
@@ -7678,19 +7771,53 @@ export const App: React.FC = () => {
         const catFiles = (files: string) =>
           `for f in ${files}; do [ -f "$f" ] && { echo "--- $f ---"; head -c 8000 "$f"; echo; }; done`;
         for (const sm of specialMentions) {
+          const normSm = sm.replace(/^@+/, '').toLowerCase();
+          if (normSm === 'design' || normSm.startsWith('design:')) continue;
           let body = '';
-          if (sm === '@git') {
+          if (normSm === 'git') {
             body = await readShell('echo "Branch: $(git branch --show-current)"; git status --short; git diff --stat; git log -5 --oneline');
-          } else if (sm === '@rules') {
+          } else if (normSm === 'rules') {
             body = await readShell(catFiles('CLAUDE.md AGENTS.md GEMINI.md .agents/rules/*.md'));
-          } else if (sm === '@mcp') {
+          } else if (normSm === 'mcp') {
             body = await readShell(catFiles('.mcp.json mcp_config.json .agents/mcp_config.json'));
-          } else if (sm === '@terminal') {
+          } else if (normSm === 'terminal') {
             const hist = activeSessionId ? await window.electronAPI.pty?.getHistory?.(activeSessionId) : '';
             body = (hist || '').replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').slice(-8000);
           }
-          mentionsContextBlock += `\n\n[Contexto ${sm}]:\n${body || '(vazio ou indisponível)'}\n`;
+          mentionsContextBlock += `\n\n[Contexto @${normSm}]:\n${body || '(vazio ou indisponível)'}\n`;
         }
+
+        // Resolução dinâmica de @design, @design:<Tela> ou pedido em linguagem natural sobre designs/telas
+        try {
+          const activeDesignManifest =
+            (designBridgeManifest && designBridgeManifest.workspacePath === effectiveCwd.replace(/\/+$/, '')
+              ? designBridgeManifest
+              : null) ||
+            getDesignBridgeManifestSync(effectiveCwd) ||
+            (await loadDesignBridgeManifest(effectiveCwd));
+
+          const { matchedScreens, isDesignRequest } = matchDesignScreensForRequest(
+            activeDesignManifest,
+            prompt || userDisplayPrompt,
+            specialMentions
+          );
+
+          if (activeDesignManifest && isDesignRequest && matchedScreens.length > 0) {
+            const designSpecBlock = formatDesignContextBlockForAi(activeDesignManifest, matchedScreens);
+            if (designSpecBlock) {
+              mentionsContextBlock += `\n\n${designSpecBlock}\n`;
+            }
+            for (const scr of matchedScreens) {
+              if (scr.imageAbsPath && !mentionedFilesData.some((f) => f.path === scr.imageAbsPath)) {
+                mentionedFilesData.push({
+                  path: scr.imageAbsPath,
+                  name: `${scr.slug}.jpg`,
+                  isImage: true,
+                });
+              }
+            }
+          }
+        } catch {}
         if (mentionedFilesData.length > 0) {
           mentionsContextBlock += `\n\n[Itens Mencionados pelo Usuário via @]:\n`;
           mentionedFilesData.forEach((item) => {
@@ -8313,7 +8440,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           await window.electronAPI.shell.exec('git add -A', effectiveCwd);
           const commitMsg = `feat: resolver tarefa #${issueNumber} - ${safeTitle} (resolves #${issueNumber})`;
           const commitRes = await window.electronAPI.shell.exec(
-            `git commit -m "${commitMsg.replace(/"/g, '\\"')}"`,
+            `git commit -m ${shq(commitMsg)}`,
             effectiveCwd
           );
           if (commitRes.exitCode === 0) {
@@ -11114,6 +11241,77 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   <CodiconBeaker size={20} />
                 </div>
 
+                {/* Design Bridge Activity Bar Button (Telas da aba Design na esquerda da IDE) */}
+                <div
+                  id="df-ide-activity-design-btn"
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 6,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    position: 'relative',
+                    cursor: 'pointer',
+                    background: (showExplorer && activeActivityTab === 'design')
+                      ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
+                      : 'transparent',
+                    color: (showExplorer && activeActivityTab === 'design')
+                      ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
+                      : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
+                    transition: 'all 0.15s ease',
+                  }}
+                  title="Telas do Design"
+                  onClick={() => {
+                    if (showExplorer && activeActivityTab === 'design') {
+                      setShowExplorer(false);
+                    } else {
+                      setActiveActivityTab('design');
+                      setShowExplorer(true);
+                      loadDesignBridgeManifest(workspacePath).then((m) => {
+                        if (m) setDesignBridgeManifest(m);
+                      });
+                    }
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'design')) {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+                      e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : themeTokens.textPrimary;
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'design')) {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = isEffectiveDark ? '#858585' : themeTokens.textSecondary;
+                    }
+                  }}
+                >
+                  <Layers size={19} />
+                  {(designBridgeManifest?.screens?.length ?? 0) > 0 && (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: 5,
+                        right: 5,
+                        minWidth: 13,
+                        height: 13,
+                        padding: '0 3px',
+                        borderRadius: 999,
+                        background: accentColor,
+                        color: '#ffffff',
+                        fontSize: 8.5,
+                        fontWeight: 400,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        lineHeight: 1,
+                      }}
+                    >
+                      {designBridgeManifest!.screens.length}
+                    </span>
+                  )}
+                </div>
+
                 {/* Settings Gear (Pinned to Bottom) */}
                 <div
                   style={{
@@ -11204,6 +11402,44 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     onOpenBranchModal={() => setIsBranchModalOpen(true)}
                     currentBranch={currentBranch}
                     onGenerateCommitMessage={handleGenerateCommitMessage}
+                    designManifest={designBridgeManifest}
+                    selectedDesignScreenId={selectedDesignScreen?.id || null}
+                    onSelectDesignScreen={(scr) => {
+                      setSelectedDesignScreen(scr);
+                      setPreviewTabActive(false);
+                      logSystemActivity('design_bridge', 'preview_design_in_ide', scr.name, {
+                        screenId: scr.id,
+                        width: scr.width,
+                        height: scr.height,
+                      });
+                    }}
+                    onImplementDesignScreen={(scr) => {
+                      if (designBridgeManifest) {
+                        const implPrompt = buildDesignImplementationPrompt(
+                          designBridgeManifest,
+                          scr ? [scr] : undefined
+                        );
+                        setShowAiPanel(true);
+                        handleAiSubmit(undefined, implPrompt);
+                        logSystemActivity('design_bridge', 'implement_design_in_ide', scr ? scr.name : 'Todas as telas');
+                      }
+                    }}
+                    onMentionDesignScreen={(scr) => {
+                      setShowAiPanel(true);
+                      if (scr) {
+                        handleSelectAtItem({ name: `@design:${scr.name}`, path: `@design:${scr.name}` });
+                        setToastMessage(`Menção @design:${scr.name} inserida no chat`);
+                      } else {
+                        handleSelectAtItem({ name: '@design', path: '@design' });
+                        setToastMessage('Menção @design inserida no chat');
+                      }
+                    }}
+                    onRefreshDesignManifest={() => {
+                      loadDesignBridgeManifest(workspacePath).then((m) => {
+                        setDesignBridgeManifest(m);
+                        setToastMessage('Telas do Design atualizadas');
+                      });
+                    }}
                   />
                 ) : (
                   <>
@@ -11827,13 +12063,64 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   transition: 'background 0.2s ease',
                 }}
               >
+                {selectedDesignScreen && (
+                  <div
+                    style={{
+                      height: 28,
+                      paddingLeft: 10,
+                      paddingRight: 8,
+                      borderRadius: 5,
+                      background: isEffectiveDark ? '#1c1c1c' : '#e5e7eb',
+                      alignItems: 'center',
+                      gap: 6,
+                      display: 'flex',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Layers size={13} color={accentColor} />
+                    <div
+                      style={{
+                        color: themeTokens.textPrimary,
+                        fontSize: 12,
+                        fontFamily: 'Poppins',
+                        fontWeight: 400,
+                      }}
+                    >
+                      Design: {selectedDesignScreen.name}
+                    </div>
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedDesignScreen(null);
+                      }}
+                      title="Fechar preview da tela"
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: 3,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <X size={12} color={themeTokens.textSecondary} />
+                    </div>
+                  </div>
+                )}
+
                 {previewTabUrl && (
                   <div
-                    onClick={() => setPreviewTabActive(true)}
-                    style={{ height: 28, paddingLeft: 10, paddingRight: 8, borderRadius: 5, background: previewTabActive ? (isEffectiveDark ? '#1c1c1c' : '#e5e7eb') : 'transparent', alignItems: 'center', gap: 6, display: 'flex', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                    onClick={() => {
+                      setSelectedDesignScreen(null);
+                      setPreviewTabActive(true);
+                    }}
+                    style={{ height: 28, paddingLeft: 10, paddingRight: 8, borderRadius: 5, background: previewTabActive && !selectedDesignScreen ? (isEffectiveDark ? '#1c1c1c' : '#e5e7eb') : 'transparent', alignItems: 'center', gap: 6, display: 'flex', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
                   >
                     <Monitor size={14} color={accentColor} />
-                    <div style={{ color: previewTabActive ? themeTokens.textPrimary : themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: previewTabActive ? 500 : 400 }}>
+                    <div style={{ color: previewTabActive && !selectedDesignScreen ? themeTokens.textPrimary : themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: previewTabActive && !selectedDesignScreen ? 500 : 400 }}>
                       Preview {previewTabUrl.replace(/^https?:\/\//, '')}
                     </div>
                     <div
@@ -11846,11 +12133,11 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   </div>
                 )}
 
-                {openFiles.length === 0 && !previewTabUrl ? (
+                {openFiles.length === 0 && !previewTabUrl && !selectedDesignScreen ? (
                   <div style={{ padding: '0 10px', color: themeTokens.textSecondary, fontSize: 12 }}>Nenhum arquivo aberto</div>
                 ) : (
                   openFiles.map((file, idx) => {
-                    const isActive = activeFileId === file.id && !previewTabActive;
+                    const isActive = activeFileId === file.id && !previewTabActive && !selectedDesignScreen;
 
                     return (
                       <React.Fragment key={file.id}>
@@ -11868,7 +12155,11 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             e.dataTransfer.setData('text/plain', `@[${file.path || file.id}]`);
                             e.dataTransfer.effectAllowed = 'copy';
                           }}
-                          onClick={() => { setActiveFileId(file.id); setPreviewTabActive(false); }}
+                          onClick={() => {
+                            setActiveFileId(file.id);
+                            setPreviewTabActive(false);
+                            setSelectedDesignScreen(null);
+                          }}
                           style={{
                             height: 28,
                             paddingLeft: 10,
@@ -12237,6 +12528,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
             {/* Monaco Code Editor Card */}
             <div
+              id="df-ide-central-editor-card"
               style={{
                 alignSelf: (isCenteredLayout || isZenMode) ? 'center' : 'stretch',
                 maxWidth: (isCenteredLayout || isZenMode) ? 960 : '100%',
@@ -12252,7 +12544,195 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 transition: 'max-width 0.2s ease, background 0.2s ease',
               }}
             >
-              {previewTabActive && previewTabUrl ? (
+              {selectedDesignScreen ? (
+                <div
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                    overflow: 'hidden',
+                  }}
+                >
+                  {/* Top Bar: Screen Info + Mencionar + Implementar */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 10,
+                      paddingBottom: 10,
+                      borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                      <Layers size={15} color={accentColor} />
+                      <span
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 400,
+                          color: themeTokens.textPrimary,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {selectedDesignScreen.name}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 400,
+                          color: themeTokens.textSecondary,
+                          background: isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
+                          padding: '2px 8px',
+                          borderRadius: 5,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {selectedDesignScreen.width} × {selectedDesignScreen.height}px · {selectedDesignScreen.elementCount} elementos
+                      </span>
+                      {selectedDesignScreen.colors.slice(0, 5).map((hex) => (
+                        <span
+                          key={hex}
+                          title={hex}
+                          style={{
+                            width: 12,
+                            height: 12,
+                            borderRadius: 3,
+                            background: hex,
+                            display: 'inline-block',
+                            flexShrink: 0,
+                          }}
+                        />
+                      ))}
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAiPanel(true);
+                          handleSelectAtItem({
+                            name: `@design:${selectedDesignScreen.name}`,
+                            path: `@design:${selectedDesignScreen.name}`,
+                          });
+                          setToastMessage(`Menção @design:${selectedDesignScreen.name} inserida no chat`);
+                        }}
+                        title="Inserir menção desta tela (@design) no campo de prompt da IA"
+                        style={{
+                          height: 28,
+                          padding: '0 10px',
+                          borderRadius: 6,
+                          border: 'none',
+                          background: isEffectiveDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                          color: themeTokens.textPrimary,
+                          fontSize: 11.5,
+                          fontWeight: 400,
+                          fontFamily: 'Poppins, sans-serif',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          transition: 'background 0.15s ease',
+                        }}
+                      >
+                        <AtSign size={13} />
+                        <span>Mencionar</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (designBridgeManifest) {
+                            const implPrompt = buildDesignImplementationPrompt(designBridgeManifest, [selectedDesignScreen]);
+                            setShowAiPanel(true);
+                            handleAiSubmit(undefined, implPrompt);
+                            logSystemActivity('design_bridge', 'implement_design_from_ide_preview', selectedDesignScreen.name);
+                          }
+                        }}
+                        title="Enviar esta tela para a IA da IDE implementar no código do projeto"
+                        style={{
+                          height: 28,
+                          padding: '0 12px',
+                          borderRadius: 6,
+                          border: 'none',
+                          background: accentColor,
+                          color: '#ffffff',
+                          fontSize: 11.5,
+                          fontWeight: 400,
+                          fontFamily: 'Poppins, sans-serif',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          transition: 'opacity 0.15s ease',
+                        }}
+                      >
+                        <span>Implementar</span>
+                        <ArrowRight size={13} />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDesignScreen(null)}
+                        title="Voltar ao editor de código"
+                        style={{
+                          height: 28,
+                          padding: '0 10px',
+                          borderRadius: 6,
+                          border: 'none',
+                          background: isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
+                          color: themeTokens.textSecondary,
+                          fontSize: 11.5,
+                          fontWeight: 400,
+                          fontFamily: 'Poppins, sans-serif',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                        }}
+                      >
+                        <X size={13} />
+                        <span>Fechar</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Fitted Screen Preview Area */}
+                  <div
+                    style={{
+                      flex: 1,
+                      minHeight: 0,
+                      width: '100%',
+                      borderRadius: 8,
+                      background: isEffectiveDark ? '#0b0c0e' : '#f1f5f9',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: 16,
+                      boxSizing: 'border-box',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <img
+                      src={selectedDesignPreviewUrl || buildScreenSvgFallbackDataUrl(selectedDesignScreen)}
+                      alt={selectedDesignScreen.name}
+                      style={{
+                        maxWidth: '100%',
+                        maxHeight: '100%',
+                        width: 'auto',
+                        height: 'auto',
+                        objectFit: 'contain',
+                        borderRadius: 6,
+                        display: 'block',
+                      }}
+                    />
+                  </div>
+                </div>
+              ) : previewTabActive && previewTabUrl ? (
                 <PreviewTabView url={previewTabUrl} onUrlChange={setPreviewTabUrl} themeTokens={themeTokens} isEffectiveDark={isEffectiveDark} accentColor={accentColor} />
               ) : activeReview ? (
                 <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%' }}>
@@ -16184,6 +16664,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         query={atMentionState.query}
                         selectedIndex={atMentionState.selectedIndex}
                         files={allWorkspaceFiles}
+                        designScreens={designBridgeManifest?.screens || []}
                         gitBranch={currentBranch}
                         onSelect={(item) => handleSelectAtItem(item.path ? { name: item.title, path: item.path } : { name: item.title, path: item.title })}
                         themeTokens={themeTokens}
@@ -17463,6 +17944,34 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             const list = activeModels[selectedAiProvider]?.models || [];
             const found = list.find((m) => m.id === modelId);
             if (found) handleSelectModel(found, selectedAiProvider);
+          }}
+          onImplementInIde={({ prompt: implPrompt, manifest }) => {
+            setDesignBridgeManifest(manifest);
+            handleSwitchTab('ide');
+            setIsRightPanelOpen(true);
+            setToastMessage('Enviando design para implementação no chat da IDE');
+            setTimeout(() => setToastMessage(null), 2800);
+            setTimeout(() => {
+              handleAiSubmit(undefined, implPrompt);
+            }, 150);
+          }}
+          onSendToCli={({ prompt: cliPrompt, manifest }) => {
+            setDesignBridgeManifest(manifest);
+            handleSwitchTab('cli');
+            setToastMessage('Enviando design para o agente ativo no Terminal CLI');
+            setTimeout(() => setToastMessage(null), 2800);
+            setTimeout(() => {
+              const sess =
+                cliTerminalSessions.find((s) => s.id === cliActiveSessionId) ||
+                cliTerminalSessions.find((s) => ['claude', 'agy', 'codex'].includes(s.type)) ||
+                cliTerminalSessions[0];
+              if (sess && window.electronAPI?.pty?.write) {
+                window.electronAPI.pty.write(sess.id, `\x1b[200~${cliPrompt}\x1b[201~`);
+                setTimeout(() => {
+                  window.electronAPI?.pty?.write(sess.id, '\r');
+                }, 140);
+              }
+            }, 180);
           }}
         />
       )}

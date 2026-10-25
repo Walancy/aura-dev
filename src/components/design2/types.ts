@@ -212,6 +212,12 @@ export interface Shape {
   parentId?: string;
   pageId?: string;
   isComponent?: boolean;
+  /** Design 3: frame que define um componente reutilizável da biblioteca (nome do componente) */
+  fcDef?: string;
+  /** Design 3: raiz de uma instância de componente da biblioteca (os textos/ícones que mudam em relação ao componente) */
+  fcInst?: { name: string; text?: Record<string, string>; icon?: Record<string, string> };
+  /** Design 3: camada dentro de uma instância (id do shape raiz): o FigCraft desenha só a instância, não estas camadas */
+  fcInside?: string;
   flipX?: boolean;
   flipY?: boolean;
   isMask?: boolean;
@@ -324,6 +330,8 @@ export interface Shape {
   closed?: boolean;
   /** Imagem: modo de ajuste e recorte (frações 0..1 da imagem original) */
   imageFit?: 'fill' | 'fit' | 'stretch';
+  /** produto recortado que sai pelo topo do card: o app o dimensiona pela largura do card */
+  popOut?: boolean;
   imageCrop?: { x: number; y: number; w: number; h: number };
   /** Vídeo como preenchimento (data URL; toca em laço, mudo, no canvas e no protótipo) */
   videoUrl?: string;

@@ -12,6 +12,7 @@ export function wantsNewScreens(prompt: string): boolean {
   const p = norm(prompt);
   // referência direta ao conjunto de telas novas
   if (/\b(outras?|novas?|demais|restantes?|proximas?|seguintes?|mais)\s+(\d+\s+)?(telas?|paginas?)\b/.test(p)) return true;
+  if (/\b(restante|resto|demais|outras|outros)\b[^.]{0,40}\b(telas?|paginas?|ecras?)\b/.test(p)) return true;
   if (/\b(sequencia|fluxo|jornada|passo a passo|etapas)\b.*\b(telas?|paginas?)\b|\b(telas?|paginas?)\b.*\b(sequencia|fluxo|jornada|passo a passo|etapas)\b/.test(p)) return true;
   if (/\b(cri(e|ar)|ger(e|ar)|mont(e|ar)|faca|fazer|desenh(e|ar)|prototip(e|ar))\b[^.]*\b(\d+|duas|dois|tres|quatro|cinco|seis|sete|oito|nove|dez|varias|todas as|as)\s+(telas?|paginas?)\b/.test(p)) return true;
   if (/\b(a partir d(esta|essa|a)|com base n(esta|essa|a)|baseado n(esta|essa|a)|seguindo (esta|essa|a)|igual (a|ao) d(esta|essa|a)|no (mesmo )?(padrao|estilo) d(esta|essa|a))\s+tela\b/.test(p) && /\b(cri(e|ar)|ger(e|ar)|mont(e|ar)|faca|fazer|desenh(e|ar))\b/.test(p)) return true;

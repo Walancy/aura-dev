@@ -22,18 +22,20 @@ export function extractPortFromContent(content: string, filename = ''): number |
     if (isValidPort(port)) return port;
   }
 
-  // 2. vite.config / webpack: server: { port: 5185 } or preview: { port: 4173 }
-  const serverPortMatch = content.match(/(?:server|preview|devServer)\s*:\s*\{[^}]*?\bport\s*:\s*(\d+)/s);
-  if (serverPortMatch) {
-    const port = parseInt(serverPortMatch[1], 10);
-    if (isValidPort(port)) return port;
+  // 2. vite.config / webpack: server: { port: 5185 } or preview: { port: 4173 } (o `port` do próprio bloco, não o de um proxy dentro dele)
+  for (const block of content.matchAll(/\b(?:server|preview|devServer)\s*:\s*\{/g)) {
+    const own = topLevelOfBlock(content, (block.index ?? 0) + block[0].length);
+    const m = own.match(/\bport\s*:\s*(\d+)/);
+    if (m) {
+      const port = parseInt(m[1], 10);
+      if (isValidPort(port)) return port;
+    }
   }
 
-  // 3. package.json scripts: --port 5174, -p 3000, PORT=3333
+  // 3. package.json scripts: --port 5174, -p 3000, PORT=3333 (um `localhost:NNNN` solto é proxy/API/banco, não o servidor de dev)
   const scriptPortMatch =
     content.match(/(?:--port|-p)\s+['"]?(\d+)['"]?/i) ||
-    content.match(/\bPORT=(\d+)/i) ||
-    content.match(/localhost:(\d{4,5})/i);
+    content.match(/\bPORT=(\d+)/i);
   if (scriptPortMatch) {
     const port = parseInt(scriptPortMatch[1], 10);
     if (isValidPort(port)) return port;
@@ -66,6 +68,33 @@ export function extractPortFromContent(content: string, filename = ''): number |
   return null;
 }
 
+/** Texto de um bloco `{ ... }` (a partir do primeiro caractere depois da chave que abre) sem os blocos aninhados. */
+function topLevelOfBlock(content: string, start: number): string {
+  let depth = 1;
+  let out = '';
+  for (let i = start; i < content.length && depth > 0; i++) {
+    const c = content[i];
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; continue; }
+    if (depth === 1) out += c;
+  }
+  return out;
+}
+
+/** Porta padrão do servidor de dev pelo framework do package.json (sem `--port`/`PORT` nos scripts). */
+export function frameworkDefaultPort(packageJson: string): number | null {
+  try {
+    const pkg = JSON.parse(packageJson);
+    const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) } as Record<string, string>;
+    const has = (name: string) => name in deps;
+    if (has('next') || has('react-scripts') || has('nuxt') || has('nuxt3')) return 3000;
+    if (has('@angular/cli') || has('@angular/core')) return 4200;
+    if (has('astro')) return 4321;
+    if (has('vite') || has('@sveltejs/kit')) return 5173;
+  } catch {}
+  return null;
+}
+
 /**
  * Validates whether a number is a usable TCP port
  */
@@ -78,12 +107,14 @@ export function isValidPort(port: number): boolean {
  */
 export function extractPortFromUrl(url?: string | null): number | null {
   if (!url) return null;
-  const match = url.match(/:(\d+)/);
-  if (match) {
-    const port = parseInt(match[1], 10);
-    if (isValidPort(port)) return port;
+  const raw = url.trim();
+  try {
+    // a porta é a da URL (host:porta), não o primeiro ":número" da string ("user:8080@host", ":123" no caminho)
+    const port = parseInt(new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`).port, 10);
+    return isValidPort(port) ? port : null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 /**
@@ -114,6 +145,11 @@ export function normalizeDevUrl(url?: string | null, fallbackPort = 5173): strin
  * Scans the local system for ports currently listening (via Electron ports API).
  */
 export async function scanSystemOccupiedPorts(): Promise<number[]> {
+  return (await scanSystemOccupiedPortsOrNull()) ?? [];
+}
+
+/** Igual, mas `null` quando o scan não funcionou (quem decide subir um servidor não pode tratar "não sei" como "porta livre"). */
+export async function scanSystemOccupiedPortsOrNull(): Promise<number[] | null> {
   try {
     if (typeof window !== 'undefined' && (window as any).electronAPI?.ports?.scan) {
       const res = await (window as any).electronAPI.ports.scan();
@@ -124,7 +160,7 @@ export async function scanSystemOccupiedPorts(): Promise<number[]> {
       }
     }
   } catch {}
-  return [];
+  return null;
 }
 
 /**
@@ -221,6 +257,7 @@ export async function detectProjectPort(projectPath?: string): Promise<number | 
     `${cleanPath}/api/.env`,
   ];
 
+  let defaultPort: number | null = null;
   for (const filePath of candidateFiles) {
     try {
       const res = await window.electronAPI.fs.readFile(filePath);
@@ -230,13 +267,15 @@ export async function detectProjectPort(projectPath?: string): Promise<number | 
         if (port) {
           return port;
         }
+        // sem porta explícita, o framework decide (Next/CRA 3000, Angular 4200, Astro 4321, Vite 5173)
+        if (defaultPort === null && filename === 'package.json') defaultPort = frameworkDefaultPort(res.content);
       }
     } catch {
       // Continue to next candidate
     }
   }
 
-  return null;
+  return defaultPort;
 }
 
 export interface DetectedProjectApp {

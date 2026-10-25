@@ -912,6 +912,19 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                         </span>
                         <span style={{ fontSize: 10.5, color: theme.textMuted }}>@{pull.author}</span>
                         <Pill color={waitColor}>{formatHours(waitingHours)}</Pill>
+                        {m.login.toLowerCase() === ws.currentUserLogin?.toLowerCase() && (
+                          <SmallButton
+                            ctx={ctx}
+                            disabled={busy(`approve-${pull.number}`)}
+                            onClick={(e: React.MouseEvent) => {
+                              e.stopPropagation();
+                              logSystemActivity('time', 'aprovar_review', `${ws.owner}/${ws.repo}`, { member: m.login, pullNumber: pull.number });
+                              ws.actions.approveReview(pull.number, pull.author);
+                            }}
+                          >
+                            Aprovar
+                          </SmallButton>
+                        )}
                         <ExternalLink size={11} color={theme.textMuted} style={{ flexShrink: 0 }} />
                       </div>
                     );

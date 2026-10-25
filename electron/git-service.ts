@@ -1,4 +1,4 @@
-import { execSync, exec } from 'node:child_process';
+import { execSync, exec, execFile, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { githubAuthService } from './github-auth-service';
@@ -373,7 +373,7 @@ export class GitService {
       let authorBlame = '';
       if (activeFilePath && fs.existsSync(activeFilePath)) {
         try {
-          authorBlame = execSync(`git log -1 --format="%an (%cr)" -- "${activeFilePath}"`, {
+          authorBlame = execFileSync('git', ['log', '-1', '--format=%an (%cr)', '--', activeFilePath], {
             cwd: gitDir,
             encoding: 'utf8',
             timeout: 3000,
@@ -664,6 +664,10 @@ export class GitService {
     }
 
     const cleanUrl = repoUrl.trim().replace(/\/+$/, '');
+    // só URLs de git comuns: aspas, crase, $, espaço e quebra de linha nunca fazem parte de uma URL de clone
+    if (!/^(https?:\/\/|ssh:\/\/|git@)[A-Za-z0-9._~:@\/+%-]+$/.test(cleanUrl)) {
+      return { success: false, error: 'URL do repositório inválida' };
+    }
     let folderName = 'repository';
     const lastSlash = cleanUrl.lastIndexOf('/');
     const lastColon = cleanUrl.lastIndexOf(':');
@@ -674,6 +678,7 @@ export class GitService {
     if (folderName.endsWith('.git')) {
       folderName = folderName.slice(0, -4);
     }
+    folderName = folderName.replace(/[^A-Za-z0-9._-]/g, '-').replace(/^[-.]+/, '') || 'repository';
     const repoPath = path.join(targetParentDir, folderName);
 
     if (fs.existsSync(repoPath)) {
@@ -713,10 +718,11 @@ export class GitService {
       }
     };
 
-    const runCmd = (cmd: string, envOverrides: NodeJS.ProcessEnv = {}): Promise<{ ok: boolean; stderr: string; stdout: string }> => {
+    const runCmd = (file: string, args: string[], envOverrides: NodeJS.ProcessEnv = {}): Promise<{ ok: boolean; stderr: string; stdout: string }> => {
       return new Promise((resolve) => {
-        exec(
-          cmd,
+        execFile(
+          file,
+          args,
           {
             cwd: targetParentDir,
             timeout: 240000,
@@ -738,7 +744,7 @@ export class GitService {
     // 1. Tier 1: GitHub CLI (gh repo clone)
     if (ghRepoId) {
       console.log(`[GitService] Tentando clonar via gh repo clone: ${ghRepoId}`);
-      const ghRes = await runCmd(`gh repo clone "${ghRepoId}" "${repoPath}"`);
+      const ghRes = await runCmd('gh', ['repo', 'clone', ghRepoId, repoPath]);
       if (ghRes.ok && fs.existsSync(repoPath)) {
         return { success: true, repoPath };
       }
@@ -750,10 +756,10 @@ export class GitService {
     if (ghRepoId && token) {
       console.log(`[GitService] Tentando clonar via git token auth: ${ghRepoId}`);
       const tokenCloneUrl = `https://x-access-token:${token}@github.com/${ghRepoId}.git`;
-      const tokenRes = await runCmd(`git clone "${tokenCloneUrl}" "${repoPath}"`);
+      const tokenRes = await runCmd('git', ['clone', '--', tokenCloneUrl, repoPath]);
       if (tokenRes.ok && fs.existsSync(repoPath)) {
         try {
-          execSync(`git remote set-url origin "${cleanUrl}"`, {
+          execFileSync('git', ['remote', 'set-url', 'origin', cleanUrl], {
             cwd: repoPath,
             env: baseEnv,
             timeout: 5000,
@@ -768,9 +774,7 @@ export class GitService {
     // 3. Tier 3: Git com gh credential helper embutido
     if (cleanUrl.includes('github.com')) {
       console.log(`[GitService] Tentando clonar com credential.helper gh auth: ${cleanUrl}`);
-      const credRes = await runCmd(
-        `git -c credential.helper= -c "credential.helper=!gh auth git-credential" clone "${cleanUrl}" "${repoPath}"`
-      );
+      const credRes = await runCmd('git', ['-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential', 'clone', '--', cleanUrl, repoPath]);
       if (credRes.ok && fs.existsSync(repoPath)) {
         return { success: true, repoPath };
       }
@@ -782,7 +786,7 @@ export class GitService {
     if (ghRepoId && cleanUrl.startsWith('http')) {
       const sshUrl = `git@github.com:${ghRepoId}.git`;
       console.log(`[GitService] Tentando clonar via SSH: ${sshUrl}`);
-      const sshRes = await runCmd(`git clone "${sshUrl}" "${repoPath}"`);
+      const sshRes = await runCmd('git', ['clone', '--', sshUrl, repoPath]);
       if (sshRes.ok && fs.existsSync(repoPath)) {
         return { success: true, repoPath };
       }
@@ -792,7 +796,7 @@ export class GitService {
 
     // 5. Tier 5: Fallback git clone padrão
     console.log(`[GitService] Tentando git clone padrão: ${cleanUrl}`);
-    const stdRes = await runCmd(`git clone "${cleanUrl}" "${repoPath}"`);
+    const stdRes = await runCmd('git', ['clone', '--', cleanUrl, repoPath]);
     if (stdRes.ok && fs.existsSync(repoPath)) {
       return { success: true, repoPath };
     }
@@ -985,7 +989,7 @@ export class GitService {
     if (!safeBranch) return { success: false, error: 'Nome de branch inválido' };
 
     return new Promise((resolve) => {
-      exec(`git worktree add "${targetDir}" -b "${safeBranch}"`, { cwd: gitDir, timeout: 60000 }, (error, _stdout, stderr) => {
+      execFile('git', ['worktree', 'add', targetDir, '-b', safeBranch], { cwd: gitDir, timeout: 60000 }, (error, _stdout, stderr) => {
         if (error) {
           resolve({ success: false, error: stderr || error.message });
         } else {
@@ -999,7 +1003,7 @@ export class GitService {
     const gitDir = this.resolveGitDir(repoPath);
     if (!gitDir) return { success: false, error: 'Não é um repositório git' };
     return new Promise((resolve) => {
-      exec(`git worktree remove "${worktreePath}" --force`, { cwd: gitDir, timeout: 30000 }, (error, _stdout, stderr) => {
+      execFile('git', ['worktree', 'remove', worktreePath, '--force'], { cwd: gitDir, timeout: 30000 }, (error, _stdout, stderr) => {
         if (error) {
           resolve({ success: false, error: stderr || error.message });
         } else {
@@ -1009,6 +1013,19 @@ export class GitService {
     });
   }
 
+  private git(cwd: string, args: string[], timeout = 60000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+    return new Promise((resolve) => {
+      execFile('git', args, { cwd, timeout }, (error, stdout, stderr) => {
+        // o git escreve alguns erros (ex.: CONFLICT do merge) no stdout: a mensagem de erro usa o que houver
+        resolve({ ok: !error, stdout: String(stdout || '').trim(), stderr: String(stderr || '').trim() || String(stdout || '').trim() || String(error?.message || '').trim() });
+      });
+    });
+  }
+
+  /**
+   * Traz a branch do andar para a base. Recusa se o andar tem alterações não commitadas (o merge não as leva e remover o andar
+   * depois as apagaria) e, em caso de conflito, desfaz o merge e volta para a branch em que o repositório estava.
+   */
   public async landWorktree(
     repoPath: string,
     branchName: string,
@@ -1018,19 +1035,26 @@ export class GitService {
     if (!gitDir) return { success: false, error: 'Não é um repositório git' };
     const safeBranch = branchName.trim().replace(/[^a-zA-Z0-9._/-]/g, '-');
     const safeBase = baseBranch.trim().replace(/[^a-zA-Z0-9._/-]/g, '-');
-    return new Promise((resolve) => {
-      exec(
-        `git checkout "${safeBase}" && git merge --no-edit "${safeBranch}"`,
-        { cwd: gitDir, timeout: 60000 },
-        (error, _stdout, stderr) => {
-          if (error) {
-            resolve({ success: false, error: stderr || error.message });
-          } else {
-            resolve({ success: true });
-          }
-        }
-      );
-    });
+    if (!safeBranch || !safeBase) return { success: false, error: 'Nome de branch inválido' };
+
+    const list = await this.git(gitDir, ['worktree', 'list', '--porcelain']);
+    const block = list.stdout.split(/\n\n+/).find((b) => b.split('\n').includes(`branch refs/heads/${safeBranch}`));
+    const wtPath = block?.split('\n').find((l) => l.startsWith('worktree '))?.slice('worktree '.length);
+    if (wtPath) {
+      const status = await this.git(wtPath, ['status', '--porcelain']);
+      if (status.ok && status.stdout) return { success: false, error: 'O andar tem alterações não commitadas. Faça o commit antes de aterrissar.' };
+    }
+
+    const original = (await this.git(gitDir, ['rev-parse', '--abbrev-ref', 'HEAD'])).stdout;
+    const checkout = await this.git(gitDir, ['checkout', safeBase]);
+    if (!checkout.ok) return { success: false, error: checkout.stderr };
+    const merge = await this.git(gitDir, ['merge', '--no-edit', safeBranch]);
+    if (!merge.ok) {
+      await this.git(gitDir, ['merge', '--abort']);
+      if (original && original !== safeBase && original !== 'HEAD') await this.git(gitDir, ['checkout', original]);
+      return { success: false, error: merge.stderr || 'Conflito ao mesclar; o merge foi desfeito.' };
+    }
+    return { success: true };
   }
 }
 

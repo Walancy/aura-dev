@@ -111,18 +111,14 @@ export class NativePortsService {
   }
 
   async kill(pid: string | number): Promise<{ success: boolean; error?: string }> {
-    return new Promise((resolve) => {
-      if (!pid) {
-        resolve({ success: false, error: 'PID invalido' });
-        return;
-      }
-      exec(`kill -9 ${pid}`, (err) => {
-        if (err) {
-          resolve({ success: false, error: err.message });
-        } else {
-          resolve({ success: true });
-        }
-      });
-    });
+    // só números inteiros > 1: "1; cmd" não executa nada e -1 não mata todos os processos do usuário
+    const n = typeof pid === 'number' ? pid : /^\d+$/.test(String(pid).trim()) ? Number(pid) : NaN;
+    if (!Number.isInteger(n) || n <= 1) return { success: false, error: 'PID invalido' };
+    try {
+      process.kill(n, 'SIGKILL');
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 }

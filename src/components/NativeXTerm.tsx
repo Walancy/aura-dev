@@ -698,6 +698,9 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         cursor: accentColor,
         cursorAccent: isDark ? customTheme.background : '#ffffff',
         selectionBackground: hexToRgba(accentColor, 0.22),
+        scrollbarSliderBackground: isDark ? 'rgba(255, 255, 255, 0.28)' : 'rgba(0, 0, 0, 0.28)',
+        scrollbarSliderHoverBackground: isDark ? 'rgba(255, 255, 255, 0.42)' : 'rgba(0, 0, 0, 0.42)',
+        scrollbarSliderActiveBackground: hexToRgba(accentColor, 0.7),
         black: isDark ? (customTheme.black || '#1a1a1a') : '#e5e5e5',
         red: customTheme.red || '#ef4444',
         green: customTheme.green || '#10b981',
@@ -807,17 +810,20 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
           if (e.altKey && !e.metaKey && !e.ctrlKey) {
             // Option + Backspace: apaga palavra anterior (Ctrl+W)
             pty.write(sessionId, '\x17');
+            typedRef.current = typedRef.current.replace(/\S*\s*$/, ''); // o texto digitado acompanha o que foi apagado (prompt fixo da barra)
             e.preventDefault();
             return false;
           }
           if (e.metaKey && !e.altKey && !e.ctrlKey) {
             // Cmd + Backspace: apaga linha inteira (Ctrl+U)
             pty.write(sessionId, '\x15');
+            typedRef.current = '';
             e.preventDefault();
             return false;
           }
           // Backspace normal: envia \x7f (DEL) diretamente ao PTY
           pty.write(sessionId, '\x7f');
+          typedRef.current = typedRef.current.slice(0, -1);
           e.preventDefault();
           return false;
         }
@@ -899,11 +905,23 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
       let historySeq = 0;
       const pendingLive: Array<{ id: string; data: string; seq?: number }> = [];
       const isAiTui = /^(claude|agy|antigravity|codex|gemini|ollama)$/.test(sessionType);
+      const isAgy = sessionType === 'agy' || sessionType === 'antigravity';
+      // reabrir uma sessão longa: esconde o terminal enquanto o histórico é escrito e rolado até o fim, para não ver a rolagem desde o começo
+      const hostEl = containerRef.current;
+      const reveal = () => { if (hostEl) hostEl.style.visibility = ''; };
+      const revealTimer = setTimeout(reveal, 1500);
       const finishHistory = (replayed: boolean) => {
         historyReady = true;
         pendingLive.splice(0).forEach((p) => { if (!p.seq || p.seq > historySeq) handleLive(p); });
+        // reabrir uma conversa longa deve cair no fim dela, não no começo
+        if (replayed) {
+          term.scrollToBottom();
+          [150, 500].forEach((ms) => setTimeout(() => { if (!disposed) term.scrollToBottom(); }, ms));
+          setTimeout(reveal, isAiTui ? 380 : 60);
+        } else reveal();
         // TUIs redesenham por posição do cursor: um SIGWINCH (tamanho muda e volta) faz a CLI repintar a tela limpa
-        if (replayed && isAiTui && !disposed && term.cols > 6) {
+        // (o agy usa tela alternativa e, ao receber o resize, redesenha a própria rolagem desde o começo da conversa: nele o histórico escrito já basta)
+        if (replayed && isAiTui && !isAgy && !disposed && term.cols > 6) {
           setTimeout(() => {
             if (disposed) return;
             pty.resize(sessionId, term.cols - 1, term.rows);
@@ -912,6 +930,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         }
       };
       if (pty.getHistoryWithSeq) {
+        if (hostEl) hostEl.style.visibility = 'hidden';
         pty.getHistoryWithSeq(sessionId).then((r) => {
           if (r?.history) term.write(r.history, () => { historySeq = r.seq || 0; finishHistory(true); });
           else { historySeq = r?.seq || 0; finishHistory(false); }
@@ -922,6 +941,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         }).catch(() => {});
       }
 
+      let urlTail = '';
       const handleLive = (payload: { id: string; data: string; seq?: number }) => {
         {
           if (Date.now() < hold.until) {
@@ -937,7 +957,10 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
 
           // Detect dev servers starting up (e.g. Vite, Next, React, Nest, Fastify)
           if (onServerUrlDetectedRef.current) {
-            const serverMatch = payload.data.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d+(?:\/[^\s\x1b]*)?/i);
+            // sem os códigos de cor/OSC (o Vite imprime a porta em negrito: "localhost:\x1b[1m5173\x1b[22m") e com a cauda do pedaço anterior (URL partida entre dois chunks)
+            const plain = (urlTail + payload.data).replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
+            urlTail = plain.slice(-200);
+            const serverMatch = plain.match(/https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d+(?:\/[^\s\x1b]*)?/i);
             if (serverMatch) {
               const detectedUrl = serverMatch[0].replace('0.0.0.0', 'localhost');
               const now = Date.now();
@@ -1170,6 +1193,9 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         cursor: accentColor,
         cursorAccent: isDark ? customTheme.background : '#ffffff',
         selectionBackground: hexToRgba(accentColor, 0.22),
+        scrollbarSliderBackground: isDark ? 'rgba(255, 255, 255, 0.28)' : 'rgba(0, 0, 0, 0.28)',
+        scrollbarSliderHoverBackground: isDark ? 'rgba(255, 255, 255, 0.42)' : 'rgba(0, 0, 0, 0.42)',
+        scrollbarSliderActiveBackground: hexToRgba(accentColor, 0.7),
         black: isDark ? (customTheme.black || '#1a1a1a') : '#e5e5e5',
         red: customTheme.red || '#ef4444',
         green: customTheme.green || '#10b981',
@@ -1246,6 +1272,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
             if (window.electronAPI?.pty && termRef.current && termRef.current.cols > 5 && termRef.current.rows > 2) {
               window.electronAPI.pty.resize(sessionId, termRef.current.cols, termRef.current.rows);
             }
+            termRef.current?.scrollToBottom();
             termRef.current?.focus();
           }
         } catch {}

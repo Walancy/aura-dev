@@ -654,6 +654,8 @@ DIRETRIZES:
 
     setPromptInput('');
     setIsThinking(true);
+    // a conversa em que o pedido foi feito: "Novo chat"/apagar sessão durante a espera reordena a lista (índice), e a resposta cairia em outra conversa
+    const sessionId = currentSession?.id;
 
     const userMessage: MaestroChatMessage = {
       id: `msg-${Date.now()}-user`,
@@ -664,8 +666,8 @@ DIRETRIZES:
 
     // Append user message immediately
     setSessions((prev) =>
-      prev.map((s, idx) =>
-        idx === activeSessionIndex
+      prev.map((s) =>
+        s.id === sessionId
           ? {
               ...s,
               updatedAt: Date.now(),
@@ -751,6 +753,8 @@ DIRETRIZES:
               executedActions.push(action);
             } catch (err) {
               console.warn('[Maestro] Error executing add_node:', err);
+              // mantém o índice: os "$node-N" seguintes não podem passar a apontar para o nó errado
+              createdNodeIds.push('');
             }
           } else if (action.action === 'connect_nodes') {
             try {
@@ -767,11 +771,11 @@ DIRETRIZES:
             try {
               const targetId = resolveNodeId(action.nodeId, createdNodeIds);
               if (targetId) {
-                onUpdateNode(targetId, {
-                  title: action.title,
-                  subtitle: action.subtitle,
-                  config: action.config,
-                });
+                const updates: { title?: string; subtitle?: string; config?: any } = {};
+                if (action.title !== undefined) updates.title = action.title;
+                if (action.subtitle !== undefined) updates.subtitle = action.subtitle;
+                if (action.config) updates.config = action.config;
+                onUpdateNode(targetId, updates);
                 executedActions.push(action);
               }
             } catch (err) {
@@ -779,7 +783,7 @@ DIRETRIZES:
             }
           } else if (action.action === 'delete_node') {
             try {
-              const targetNode = nodes.find((n) => n.id === action.nodeId);
+              const targetNode = nodes.find((n) => n.id === resolveNodeId(action.nodeId, createdNodeIds));
               if (targetNode) {
                 onDeleteNode(targetNode);
                 executedActions.push(action);
@@ -827,8 +831,8 @@ DIRETRIZES:
       };
 
       setSessions((prev) =>
-        prev.map((s, idx) =>
-          idx === activeSessionIndex
+        prev.map((s) =>
+          s.id === sessionId
             ? {
                 ...s,
                 updatedAt: Date.now(),
@@ -850,8 +854,8 @@ DIRETRIZES:
         timestamp: Date.now(),
       };
       setSessions((prev) =>
-        prev.map((s, idx) =>
-          idx === activeSessionIndex
+        prev.map((s) =>
+          s.id === sessionId
             ? { ...s, history: [...s.history, errorMessage] }
             : s
         )

@@ -460,7 +460,8 @@ export const OrchestrationBrowserNode: React.FC<OrchestrationBrowserNodeProps> =
     }
 
     // Debounce duplicate incoming URL triggers within 3.5 seconds
-    const cleanForCompare = (u: string) => u.trim().replace(/\/$/, '').toLowerCase();
+    // mesma página = mesma aba: ignora esquema, "www." e barra final (github.com e https://www.github.com/ abriam duas abas)
+    const cleanForCompare = (u: string) => u.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/+$/, '');
     const normalizedTarget = cleanForCompare(targetUrl);
     const now = Date.now();
     if (
@@ -538,7 +539,7 @@ export const OrchestrationBrowserNode: React.FC<OrchestrationBrowserNodeProps> =
   const handleNavigate = (targetUrl: string) => {
     let url = cleanBrowserUrl(targetUrl);
     if (!url) return;
-    if (url.startsWith('file:') && !url.includes('/public/')) {
+    if (/^file:/i.test(url)) {
       setIncomingNotice('Acesso a arquivos locais restrito por segurança');
       return;
     }
@@ -620,6 +621,7 @@ export const OrchestrationBrowserNode: React.FC<OrchestrationBrowserNodeProps> =
       return;
     }
 
+    clearTabLoadTimer(tabIdToClose); // o poll de uma aba fechada não pode continuar rodando
     const tabIndex = tabs.findIndex((t) => t.id === tabIdToClose);
     const updated = tabs.filter((t) => t.id !== tabIdToClose);
     let nextActiveId = activeTabId;
@@ -641,7 +643,7 @@ export const OrchestrationBrowserNode: React.FC<OrchestrationBrowserNodeProps> =
     const newIndex = activeTab.historyIndex - 1;
     const targetUrl = activeTab.history[newIndex];
     setInputUrl(targetUrl);
-    startTabLoadTimer(activeTabId);
+    startTabLoadTimer(activeTabId, targetUrl); // a URL de destino (a da aba ainda é a que está sendo deixada)
     const updated = tabs.map((t) =>
       t.id === activeTabId
         ? {
@@ -665,7 +667,7 @@ export const OrchestrationBrowserNode: React.FC<OrchestrationBrowserNodeProps> =
     const newIndex = activeTab.historyIndex + 1;
     const targetUrl = activeTab.history[newIndex];
     setInputUrl(targetUrl);
-    startTabLoadTimer(activeTabId);
+    startTabLoadTimer(activeTabId, targetUrl); // a URL de destino (a da aba ainda é a que está sendo deixada)
     const updated = tabs.map((t) =>
       t.id === activeTabId
         ? {
@@ -1287,8 +1289,6 @@ export const OrchestrationBrowserNode: React.FC<OrchestrationBrowserNodeProps> =
                 <div
                   key={tab.id}
                   style={{
-                    position: 'absolute',
-                    inset: 0,
                     display: isTabActive ? 'flex' : 'none',
                     flexDirection: 'column',
                     alignItems: 'center',

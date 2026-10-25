@@ -3,6 +3,7 @@ use serde_json::json;
 use std::io::{self, BufRead, Write};
 
 fn main() {
+    devflow_orchestrator::install_signal_handlers();
     for line in io::stdin().lock().lines() {
         let line = match line {
             Ok(line) => line,
@@ -43,7 +44,9 @@ fn main() {
     }
 }
 
+/// Pipe quebrado (quem chamou foi embora) não pode derrubar o orquestrador com um pânico.
 fn emit(value: serde_json::Value) {
-    println!("{}", value);
-    let _ = io::stdout().flush();
+    let mut out = io::stdout().lock();
+    let _ = writeln!(out, "{}", value);
+    let _ = out.flush();
 }

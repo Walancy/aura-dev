@@ -84,6 +84,15 @@ export class NativeFileSystemService {
     if (!fs.existsSync(parent)) {
       fs.mkdirSync(parent, { recursive: true });
     }
+    if (
+      typeof content === 'string' &&
+      /^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(content) &&
+      /\.(jpe?g|png|webp|gif|ico)$/i.test(filePath)
+    ) {
+      const base64Data = content.replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '');
+      fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
+      return;
+    }
     fs.writeFileSync(filePath, content, 'utf8');
   }
 

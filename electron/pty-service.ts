@@ -6,6 +6,7 @@ import * as os from 'node:os';
 import * as https from 'node:https';
 import { execSync, exec } from 'node:child_process';
 import { skillsService } from './skills-service';
+import { ensureClaudeWorkspaceTrust, normalizeClaudeModel, resolveBinaryPath, stripTerminalControl } from './env-utils';
 
 const pty = require('node-pty');
 
@@ -56,14 +57,8 @@ function downloadAndExtractGithubTag(repo: string, tag: string, destDir: string)
   });
 }
 
-function normalizeClaudeModel(model?: string): string {
-  if (!model) return '';
-  const m = model.toLowerCase().trim();
-  if (m.includes('sonnet') || m.includes('claude-3-7') || m.includes('claude-3.7') || m.includes('claude-3-5')) return 'claude-3-7-sonnet-20250219';
-  if (m.includes('haiku')) return 'claude-3-5-haiku-20241022';
-  if (m.includes('opus')) return 'claude-3-opus-20240229';
-  return model;
-}
+/** Aspas simples para o shell: `'` vira `'\\''` (nome de pasta/modelo com `"`, `$()` ou crase não executa nada). */
+const shq = (v: string) => `'${String(v).replace(/'/g, `'\\''`)}'`;
 
 /** duração mínima de uma tarefa (Enter → silêncio) para avisar que a IA terminou */
 const MIN_TURN_MS = 4000;
@@ -77,6 +72,8 @@ export interface NativePtySession {
   cwd: string;
   term: any;
   buffer: string[];
+  /** a CLI está na tela alternativa (TUI de tela cheia): o histórico reproduzido precisa começar do último reset de tela */
+  inAlt?: boolean;
   isAi: boolean;
   isRunning: boolean;
   lastActivity: number;
@@ -115,30 +112,14 @@ export class NativePtyService extends EventEmitter {
 
   constructor() {
     super();
-    const homeClaude = path.join(process.env.HOME || '', '.local/bin/claude');
-    if (fs.existsSync(homeClaude)) {
-      this.claudeBinPath = homeClaude;
-    } else {
-      try {
-        this.claudeBinPath = execSync('which claude', { encoding: 'utf8' }).trim();
-      } catch {
-        this.claudeBinPath = 'claude';
-      }
-    }
+    // app aberto pelo Finder tem PATH mínimo (`which` não acha nada): procura nas pastas conhecidas
+    this.claudeBinPath = resolveBinaryPath('claude');
+    const agy = resolveBinaryPath('agy');
+    this.agyBinPath = path.isAbsolute(agy) && fs.existsSync(agy) ? agy : null;
 
-    const homeAgy = path.join(process.env.HOME || '', '.local/bin/agy');
-    if (fs.existsSync(homeAgy)) {
-      this.agyBinPath = homeAgy;
-    } else {
-      try {
-        this.agyBinPath = execSync('which agy', { encoding: 'utf8' }).trim();
-      } catch {
-        this.agyBinPath = null;
-      }
-    }
-
+    this.ensureAgyAutoApproveSettings();
     console.log(`[Native PTY] Claude at: ${this.claudeBinPath}`);
-    console.log(`[Native PTY] AGY at: ${this.agyBinPath || 'Built-in AGY TUI bridge'}`);
+    console.log(`[Native PTY] AGY at: ${this.agyBinPath || 'nao encontrado'}`);
   }
 
   private currentAccentColor: string = '#FF6A00';
@@ -266,14 +247,59 @@ export class NativePtyService extends EventEmitter {
   // sources the user's real one first (so aliases/tools/exports keep working), then overrides
   // PROMPT with a truecolor version of the app's accent color, then sources live command
   // syntax highlighting if it's been downloaded. Regenerated only when the accent color changes.
+  private ensureAgyAutoApproveSettings(): void {
+    try {
+      const settingsPath = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'settings.json');
+      fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+      let current: Record<string, any> = {};
+      if (fs.existsSync(settingsPath)) {
+        try {
+          current = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) || {};
+        } catch {
+          current = {};
+        }
+      }
+      const requiredAllow = [
+        'command',
+        'command(*)',
+        'command(regex:.*)',
+        'read_file',
+        'read_file(*)',
+        'read_file(regex:.*)',
+        'write_file',
+        'write_file(*)',
+        'write_file(regex:.*)',
+        'read_url',
+        'read_url(*)',
+        'mcp',
+        'mcp(*)',
+      ];
+      const existingAllow = Array.isArray(current?.permissions?.allow) ? current.permissions.allow : [];
+      const mergedAllow = Array.from(new Set([...requiredAllow, ...existingAllow]));
+      const needsWrite =
+        requiredAllow.some((r) => !existingAllow.includes(r)) ||
+        (Array.isArray(current?.permissions?.ask) && current.permissions.ask.length > 0);
+      if (needsWrite) {
+        current.permissions = {
+          ...(current.permissions || {}),
+          allow: mergedAllow,
+          ask: [],
+          deny: Array.isArray(current?.permissions?.deny) ? current.permissions.deny : [],
+        };
+        fs.writeFileSync(settingsPath, JSON.stringify(current, null, 2) + '\n', 'utf8');
+      }
+    } catch {}
+  }
+
   private ensureColoredZshInit(): string {
     this.ensureSyntaxHighlightingPlugin();
+    this.ensureAgyAutoApproveSettings();
     const color = /^#[0-9a-fA-F]{6}$/.test(this.currentAccentColor) ? this.currentAccentColor : '#FF6A00';
     const rcPath = path.join(this.zshInitDir, '.zshrc');
     if (
       this.lastZshInitColor === color &&
       fs.existsSync(rcPath) &&
-      fs.readFileSync(rcPath, 'utf8').includes('DEVFLOW_ZSH_PROMPT_V3')
+      fs.readFileSync(rcPath, 'utf8').includes('DEVFLOW_ZSH_PROMPT_V6')
     ) {
       return this.zshInitDir;
     }
@@ -282,11 +308,14 @@ export class NativePtyService extends EventEmitter {
       const highlightEntry = path.join(this.syntaxHighlightingDir, 'zsh-syntax-highlighting.zsh');
       const rc = [
         '# Auto-generated by DevFlow IDE — do not edit, regenerated on accent color change.',
-        '# DEVFLOW_ZSH_PROMPT_V3',
+        '# DEVFLOW_ZSH_PROMPT_V6',
         '[ -f "$DEVFLOW_REAL_HOME/.zshrc" ] && ZDOTDIR="$DEVFLOW_REAL_HOME" source "$DEVFLOW_REAL_HOME/.zshrc"',
         '[ -n "$DEVFLOW_INITIAL_CWD" ] && [ -d "$DEVFLOW_INITIAL_CWD" ] && cd "$DEVFLOW_INITIAL_CWD"',
         // O login shell (path_helper) e o .zshrc do usuário reordenam o PATH; recoloca os shims na frente.
         '[ -n "$DEVFLOW_SHIM_DIR" ] && export PATH="$DEVFLOW_SHIM_DIR:$PATH"',
+        // Garantir que agy e claude chamados manualmente no terminal rodem sem pedir confirmacao de permissao
+        'alias agy="agy --dangerously-skip-permissions"',
+        'alias claude="claude --dangerously-skip-permissions"',
         'stty erase "^?" 2>/dev/null || true',
         // Garantir que Backspace e Delete sempre funcionem no ZSH do terminal embutido
         'bindkey "^?" backward-delete-char 2>/dev/null || true',
@@ -308,7 +337,9 @@ export class NativePtyService extends EventEmitter {
         '_devflow_refresh_prompt() { _devflow_read_accent; zle reset-prompt 2>/dev/null }',
         'zle -N _devflow_refresh_prompt 2>/dev/null',
         `bindkey '^[[9999~' _devflow_refresh_prompt 2>/dev/null || true`,
-        `PROMPT='%{%F{242}%}%n@%m%{%f%} %{%B%F{\${DEVFLOW_ACCENT}}%}%1~%{%f%b%} %{%F{\${DEVFLOW_ACCENT}}%}%#%{%f%} '`,
+        // O hostname do macOS pode vir corrompido da rede (bytes inválidos viram lixo no prompt): usa o nome local do Mac, só com ASCII seguro
+        'DEVFLOW_HOST="$(scutil --get LocalHostName 2>/dev/null)"; DEVFLOW_HOST="${DEVFLOW_HOST//[^A-Za-z0-9._-]/}"; [ -z "$DEVFLOW_HOST" ] && DEVFLOW_HOST="mac"',
+        `PROMPT='%{%F{242}%}%n@\${DEVFLOW_HOST}%{%f%} %{%B%F{\${DEVFLOW_ACCENT}}%}%~%{%f%b%} %{%F{\${DEVFLOW_ACCENT}}%}%#%{%f%} '`,
         // Sourced last, as recommended by the plugin (it wraps ZLE widgets already defined above).
         `[ -f "${highlightEntry}" ] && source "${highlightEntry}"`,
         '',
@@ -334,6 +365,7 @@ export class NativePtyService extends EventEmitter {
     accentColor?: string,
     extraOptions?: { model?: string; prompt?: string }
   ): NativePtySession {
+    this.ensureAgyAutoApproveSettings();
     if (accentColor) {
       this.currentAccentColor = accentColor;
     }
@@ -343,15 +375,19 @@ export class NativePtyService extends EventEmitter {
       const newCwd = cwd && fs.existsSync(cwd) ? cwd : process.cwd();
       // CLI de IA da Orquestração não troca de diretório sozinha: se o projeto do nó mudou,
       // reinicia a sessão no novo diretório (senão ela continuaria editando o projeto antigo).
-      if (isOrchCli && existing.type !== 'ai-stream' && existing.cwd !== newCwd) {
+      // Sessão só de saída (relay/headless escreveram nela antes do terminal existir): abrir o CLI de verdade a substitui,
+      // senão o "CLI" nunca iniciaria (reaproveitaria a sessão de mentira).
+      if ((existing.type === 'ai-stream' && type !== 'ai-stream') || (isOrchCli && existing.type !== 'ai-stream' && existing.cwd !== newCwd)) {
+        const history = existing.type === 'ai-stream' ? existing.buffer.slice() : [];
         this.kill(id);
+        if (history.length) this.sessionHistories.set(id, history); // o buffer da sessão nova começa com o que já foi escrito
       } else {
       existing.reused = true;
       const cleanCwd = newCwd;
       if (cleanCwd && existing.cwd !== cleanCwd) {
         existing.cwd = cleanCwd;
         if (!isOrchCli && this.isShellIdle(existing)) {
-          existing.term?.write(`cd "${cleanCwd}"\r`);
+          existing.term?.write(`cd ${shq(cleanCwd)}\r`);
         }
       }
       return existing;
@@ -424,6 +460,10 @@ export class NativePtyService extends EventEmitter {
     }
 
     if (type === 'claude') {
+      // tela cheia (alt screen + scroll virtual) deixa a barra de rolagem do xterm sem efeito e quebra o visual ao reabrir a sessão
+      env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN = '1';
+      // terminal de IA da Orquestração em pasta nova: sem isto o diálogo de confiança engole o prompt (e "Enter" = "Não, sair")
+      if (isOrchCli) ensureClaudeWorkspaceTrust(cleanCwd);
       file = this.claudeBinPath;
       args = ['--dangerously-skip-permissions', ...skillsService.cliArgs('claude')];
       if (extraOptions?.model) {
@@ -442,17 +482,17 @@ export class NativePtyService extends EventEmitter {
           args.push('--model', extraOptions.model);
         }
       } else {
-        file = '/opt/homebrew/bin/bun';
-        args = [path.join(__dirname, 'agy-cli.ts')];
+        file = '/bin/zsh';
+        args = ['-l', '-c', 'echo "Antigravity CLI (agy) nao encontrada. Instale a CLI ou ajuste o PATH."; exec zsh -l'];
       }
       title = 'Antigravity CLI (agy)';
     } else if (type === 'gemini') {
       file = '/bin/zsh';
-      args = ['-l', '-c', extraOptions?.model ? `gemini --model "${extraOptions.model}"` : 'gemini'];
+      args = ['-l', '-c', extraOptions?.model ? `gemini --model ${shq(extraOptions.model)}` : 'gemini'];
       title = 'Gemini CLI';
     } else if (type === 'ollama') {
       file = '/bin/zsh';
-      args = ['-l', '-c', `ollama run ${extraOptions?.model || 'llama3'}`];
+      args = ['-l', '-c', `ollama run ${shq(extraOptions?.model || 'llama3')}`];
       title = 'Ollama CLI';
     } else if (type === 'codex') {
       const codexCandidates = [
@@ -512,6 +552,9 @@ export class NativePtyService extends EventEmitter {
     term.onData((data: string) => {
       if (session.buffer.length > 2000) session.buffer.shift();
       session.buffer.push(data);
+      const altOn = data.lastIndexOf('\x1b[?1049h');
+      const altOff = data.lastIndexOf('\x1b[?1049l');
+      if (altOn >= 0 || altOff >= 0) session.inAlt = altOn > altOff;
       session.seq = (session.seq || 0) + 1;
       this.sessionHistories.set(id, session.buffer);
       session.lastActivity = Date.now();
@@ -597,6 +640,8 @@ export class NativePtyService extends EventEmitter {
     });
 
     term.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
+      // a sessão deste id já foi trocada por outra (createSession matou e recriou): o fim do PTY antigo não pode apagar a nova
+      if (this.sessions.get(id) !== session) return;
       console.log(`[Native PTY] ${id} exited (${exitCode})`);
       if (session.completionTimer) clearTimeout(session.completionTimer);
       this.emit('session-exit', { id, exitCode, signal });
@@ -665,12 +710,7 @@ export class NativePtyService extends EventEmitter {
   }
 
   private stripAnsi(t: string): string {
-    return t
-      .replace(
-        /[\u001b\u009b](?:\[[\d:;<=>?]*[ !\"#$%&'()*+,-./]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|[P_X^][^\u001b]*(?:\u001b\\|\u0007)?|[()#%*+-./][0-9A-Za-z]|[@-Z\\-_])/g,
-        ''
-      )
-      .replace(/[\u0000-\u0008\u000b-\u000c\u000e-\u001f\u007f]/g, '');
+    return stripTerminalControl(t);
   }
 
   // Aguarda a TUI da CLI estar pronta: sem saída recente e com a caixa de entrada/rodapé visível.
@@ -753,6 +793,7 @@ export class NativePtyService extends EventEmitter {
         this.removeListener('session-data', onData);
         this.removeListener('session-ai-completed', onCompletedListener);
         this.removeListener('session-exit', onExitListener);
+        this.removeListener('prompt-cancel', onCancelListener);
         resolve(result);
       };
       const buildResponse = () => {
@@ -774,9 +815,15 @@ export class NativePtyService extends EventEmitter {
         );
       };
 
+      // Parar o fluxo: o await do nó termina agora (e não só quando a IA, talvez, avisar que acabou)
+      const onCancelListener = (cancelId: string) => {
+        if (cancelId === id) finish({ response: '', error: 'Execução cancelada pelo usuário.', cancelled: true });
+      };
+
       this.on('session-data', onData);
       this.on('session-ai-completed', onCompletedListener);
       this.on('session-exit', onExitListener);
+      this.on('prompt-cancel', onCancelListener);
 
       try {
         await this.waitCliReady(session);
@@ -802,6 +849,11 @@ export class NativePtyService extends EventEmitter {
     });
   }
 
+  /** Cancela o `runPromptInCli` em andamento nesta sessão (resolve com `cancelled: true`). */
+  cancelPrompt(id: string): void {
+    this.emit('prompt-cancel', id);
+  }
+
   write(id: string, data: string) {
     const session = this.sessions.get(id);
     if (session && session.term) {
@@ -813,7 +865,8 @@ export class NativePtyService extends EventEmitter {
   sendOutput(id: string, data: string) {
     let session = this.sessions.get(id);
     if (!session) {
-      session = this.createSession(id, this.isOrchCliSession(id) ? 'ai-stream' : 'zsh', process.cwd());
+      if (!this.isOrchCliSession(id)) return; // terminal que já foi fechado: não abre um zsh só para mostrar texto
+      session = this.createSession(id, 'ai-stream', process.cwd());
     }
     if (session.buffer.length > 2000) session.buffer.shift();
     session.buffer.push(data);
@@ -846,6 +899,13 @@ export class NativePtyService extends EventEmitter {
       } catch (err) {
         console.warn(`[Native PTY] Resize error:`, err);
       }
+    }
+  }
+
+  /** Encerra todas as sessões (o app está saindo). */
+  killAll() {
+    for (const id of Array.from(this.sessions.keys())) {
+      try { this.kill(id); } catch {}
     }
   }
 
@@ -916,7 +976,13 @@ export class NativePtyService extends EventEmitter {
   getHistory(id: string): string {
     const session = this.sessions.get(id);
     if (session && session.buffer.length > 0) {
-      return session.buffer.join('');
+      const all = session.buffer.join('');
+      if (!session.inAlt) return all;
+      // tela alternativa: o que veio antes do último reset de tela não aparece mais, e o limite do buffer pode ter cortado a entrada nela;
+      // reproduzir o fluxo cortado pela metade jogava a conversa no buffer normal, com o começo à vista
+      const clear = all.lastIndexOf('\x1b[2J');
+      if (clear >= 0) return '\x1b[?1049h' + all.slice(clear);
+      return all.includes('\x1b[?1049h') ? all : '\x1b[?1049h\x1b[2J' + all;
     }
     const cached = this.sessionHistories.get(id);
     return cached ? cached.join('') : '';
@@ -929,7 +995,7 @@ export class NativePtyService extends EventEmitter {
     const cleanCwd = cwd && fs.existsSync(cwd) ? cwd : process.cwd();
     session.cwd = cleanCwd;
     if (session.term && this.isShellIdle(session)) {
-      session.term.write(`cd "${cleanCwd}"\r`);
+      session.term.write(`cd ${shq(cleanCwd)}\r`);
       return true;
     }
     return false;
@@ -941,7 +1007,7 @@ export class NativePtyService extends EventEmitter {
       if (this.isOrchCliSession(session.id)) continue;
       session.cwd = cleanCwd;
       if (session.term && this.isShellIdle(session)) {
-        session.term.write(`cd "${cleanCwd}"\r`);
+        session.term.write(`cd ${shq(cleanCwd)}\r`);
       }
     }
   }

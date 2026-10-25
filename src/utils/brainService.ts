@@ -578,6 +578,29 @@ export function generateBrainAiContext(brain: ProjectBrainContext | null): strin
     .map((n) => `• [${n.type.toUpperCase()}] ${n.label}: ${n.description}`)
     .join('\n');
 
+  let designBridgeSection = '';
+  try {
+    const cleanWs = (brain.workspacePath || '').replace(/\/+$/, '');
+    const rawDesign = cleanWs ? localStorage.getItem(`devflow_design_bridge_v1:${cleanWs}`) : null;
+    if (rawDesign) {
+      const manifest = JSON.parse(rawDesign);
+      if (manifest && Array.isArray(manifest.screens) && manifest.screens.length > 0) {
+        const screensList = manifest.screens
+          .map(
+            (s: any) =>
+              `  • "${s.name}" (${s.width}x${s.height}px, ${s.deviceType}) -> imagem: ${s.imageRelPath}, cores: ${(s.colors || []).slice(0, 6).join(' ')}`
+          )
+          .join('\n');
+        designBridgeSection =
+          `\n- Designs e Prototipos do Projeto (Aba Design / FigCraft):\n` +
+          `  • Especificacao completa disponivel em: ${cleanWs}/.devflow/design/index.md\n` +
+          `  • Paleta Global do Design: ${(manifest.colorPalette || []).slice(0, 12).join(', ')}\n` +
+          `  • Telas desenhadas no projeto (${manifest.screens.length}):\n${screensList}\n` +
+          `  • Sempre que o usuario pedir para implementar, criar ou replicar telas do design, consulte ${cleanWs}/.devflow/design/index.md e as imagens em .devflow/design/screens/ para replicar cores, tipografia, textos, padding e gap fielmente.\n`;
+      }
+    }
+  } catch {}
+
   return (
     `[Contexto do Brain do Projeto (Aura Dev OS Context Switch)]:\n` +
     `- Projeto Ativo: ${brain.projectName}\n` +
@@ -587,6 +610,7 @@ export function generateBrainAiContext(brain: ProjectBrainContext | null): strin
     `${brain.architectureOverview ? `- Visao Arquitetural: ${brain.architectureOverview}\n` : ''}` +
     `${brain.modulesSummary ? `- Modulos Principais: ${brain.modulesSummary}\n` : ''}` +
     `- Diretrizes Obrigatorias de Codificacao para IAs:\n${brain.aiDirectives}\n` +
+    `${designBridgeSection}` +
     `${topNodes ? `\n- Mapa de Componentes & Conexoes Principais:\n${topNodes}\n` : ''}`
   );
 }

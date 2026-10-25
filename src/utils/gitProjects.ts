@@ -17,6 +17,8 @@ export interface GitProjectItem {
   owner?: string;
   branch?: string;
   description?: string;
+  title?: string;
+  devUrl?: string;
 }
 
 /**
@@ -198,7 +200,7 @@ export async function cloneGitRepository(
   }
 
   if (!targetDir) {
-    targetDir = '/Users/walancy/Documents/codes';
+    return { success: false, error: 'Escolha a pasta onde o repositório será clonado.' };
   }
 
   if (!window.electronAPI?.git?.clone) {

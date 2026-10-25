@@ -44,7 +44,7 @@ export function isProjectOpenIntent(text?: string | null): boolean {
   if (!normalized) return false;
 
   // Verbos de abertura / execução / visualização
-  const hasActionVerb = /\b(abrir|abra|abrem|abra-o|rodar|rode|rodam|executar|execute|testar|teste|testam|preview|ver|veja|acessar|acesse|iniciar|inicie|start|dev|run|visualizar|visualize|carregar|carregue|mostrar|mostre|subir|suba)\b/i.test(
+  const hasActionVerb = /\b(abrir|abra|abre|abrem|abra-o|rodar|rode|roda|rodam|executar|execute|executa|testar|teste|testa|testam|preview|ver|veja|acessar|acesse|acessa|iniciar|inicie|inicia|start|run|visualizar|visualize|visualiza|carregar|carregue|carrega|mostrar|mostre|mostra|subir|suba|sobe|navegar|navegue)\b/i.test(
     normalized
   );
 
@@ -172,8 +172,9 @@ export function findProjectsInText(
       const regex = new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`, 'i');
       const m = normalizedText.match(regex);
       if (m && m.index !== undefined) {
-        const idx = m.index;
-        if (bestIndex === -1 || idx < bestIndex || alias.length > bestMatchLen) {
+        const idx = m.index + (m[0].startsWith(' ') ? 1 : 0);
+        // vale o alias mais longo (o mais específico); no empate, o que aparece primeiro
+        if (alias.length > bestMatchLen || (alias.length === bestMatchLen && idx < bestIndex)) {
           bestIndex = idx;
           bestMatchLen = alias.length;
         }
@@ -185,6 +186,17 @@ export function findProjectsInText(
       matched.push({ project: proj, firstIndex: bestIndex, matchLength: bestMatchLen });
     }
   }
+
+  // Projetos irmãos ("estancia-bahia-api" e "estancia-bahia-painel") compartilham aliases curtos: quando o trecho do texto
+  // que casou com um é o mesmo (ou está dentro) do trecho de outro mais específico, só o mais específico vale.
+  const kept: typeof matched = [];
+  for (const m of [...matched].sort((a, b) => b.matchLength - a.matchLength || a.firstIndex - b.firstIndex)) {
+    const end = m.firstIndex + m.matchLength;
+    const shadowed = kept.some((k) => m.firstIndex < k.firstIndex + k.matchLength && k.firstIndex < end);
+    if (!shadowed) kept.push(m);
+  }
+  matched.length = 0;
+  matched.push(...kept);
 
   // Se encontrou projetos específicos citados no texto, retorna-os na ordem de menção
   if (matched.length > 0) {

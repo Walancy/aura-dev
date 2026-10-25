@@ -19,6 +19,8 @@ export interface OrchestratorRunInput {
   additionalDirs?: string[];
   timeoutMs?: number;
   runId?: string;
+  /** de onde veio a execução ('chat' = Parar do chat cancela só as dela, nunca as autônomas ou do canvas) */
+  tag?: string;
 }
 
 export type OrchestratorEvent = {
@@ -42,8 +44,14 @@ export interface OrchestratorRunOutput {
   };
 }
 
+const PROVIDERS: Provider[] = ['claude', 'codex', 'antigravity'];
+
 export class OrchestratorService {
   private readonly activeProcesses = new Map<string, ChildProcess>();
+  /** metadados da execução (para cancelar por origem/pasta) */
+  private readonly runMeta = new Map<string, { cwd: string; tag?: string }>();
+  /** execuções canceladas pelo usuário: o resultado vira `cancelled: true` em vez de falha */
+  private readonly cancelledRuns = new Set<string>();
 
   private getManifestPath(): string {
     const appRoot = app ? app.getAppPath() : process.cwd();
@@ -57,6 +65,13 @@ export class OrchestratorService {
 
   async run(input: OrchestratorRunInput, onEvent?: (event: OrchestratorEvent) => void): Promise<OrchestratorRunOutput> {
     const runId = input.runId || randomUUID();
+    if (!PROVIDERS.includes(input.provider)) {
+      return { stdout: '', stderr: `provedor não suportado: ${String(input.provider)}`, exitCode: 1, requestId: runId, cancelled: false };
+    }
+    if (!input.cwd || !fs.existsSync(input.cwd)) {
+      return { stdout: '', stderr: `pasta de trabalho inexistente: ${String(input.cwd)}`, exitCode: 1, requestId: runId, cancelled: false };
+    }
+    this.runMeta.set(runId, { cwd: input.cwd, tag: input.tag });
     const cliName = input.provider === 'antigravity' ? 'agy' : input.provider;
     const preamble = skillsService.promptPreamble(cliName, { force: input.provider === 'codex' });
     const result = await this.invoke({
@@ -71,6 +86,13 @@ export class OrchestratorService {
       timeout_ms: input.timeoutMs || 300_000,
       run_id: runId,
     }, onEvent, runId);
+
+    this.runMeta.delete(runId);
+    if (this.cancelledRuns.delete(runId)) {
+      const cancelled: OrchestratorRunOutput = { stdout: '', stderr: 'Operação cancelada pelo usuário', exitCode: 130, requestId: runId, cancelled: true };
+      this.persist(input, cancelled, runId);
+      return cancelled;
+    }
 
     if (!result.ok) {
       const response: OrchestratorRunOutput = {
@@ -103,6 +125,7 @@ export class OrchestratorService {
     if (runId) {
       const child = this.activeProcesses.get(runId);
       if (child) {
+        this.cancelledRuns.add(runId);
         this.killProcess(child);
         this.activeProcesses.delete(runId);
         return true;
@@ -112,9 +135,20 @@ export class OrchestratorService {
     return false;
   }
 
+  /** Cancela as execuções de uma origem (e, se informada, de uma pasta): o Parar do chat não toca nas execuções autônomas. */
+  cancelByTag(tag: string, cwd?: string): boolean {
+    let killed = false;
+    for (const [runId, meta] of Array.from(this.runMeta.entries())) {
+      if (meta.tag !== tag || (cwd && meta.cwd !== cwd)) continue;
+      if (this.cancel(runId)) killed = true;
+    }
+    return killed;
+  }
+
   cancelAll(): boolean {
     let killed = false;
-    for (const [, child] of this.activeProcesses.entries()) {
+    for (const [runId, child] of Array.from(this.activeProcesses.entries())) {
+      this.cancelledRuns.add(runId);
       this.killProcess(child);
       killed = true;
     }

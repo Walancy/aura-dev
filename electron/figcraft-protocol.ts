@@ -11,7 +11,10 @@ export function registerFigcraftScheme() {
 }
 
 export function handleFigcraftScheme() {
-  const root = path.join(__dirname, '../dist/figcraft');
+  const fs = require('node:fs');
+  const pubRoot = path.join(__dirname, '../public/figcraft');
+  const distRoot = path.join(__dirname, '../dist/figcraft');
+  const root = fs.existsSync(pubRoot) ? pubRoot : distRoot;
   protocol.handle('figcraft', async (req) => {
     const rel = decodeURIComponent(new URL(req.url).pathname).replace(/^\/+/, '') || 'index.html';
     const file = path.join(root, rel);

@@ -47,8 +47,10 @@ export function createPillNode(filePath: string, fileName?: string): HTMLSpanEle
   // Strip any leading '@' characters so the pill never shows '@'
   name = name.replace(/^@+/, '');
 
+  const lowerPath = cleanPath.toLowerCase();
+  const isDesignMention = lowerPath === 'design' || lowerPath.startsWith('design:');
   const ext = (name.split('.').pop() || '').toLowerCase();
-  const isImage = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'gif'].includes(ext);
+  const isImage = !isDesignMention && ['png', 'jpg', 'jpeg', 'webp', 'svg', 'gif'].includes(ext);
 
   const span = document.createElement('span');
   span.className = 'prompt-mention-pill';
@@ -56,26 +58,26 @@ export function createPillNode(filePath: string, fileName?: string): HTMLSpanEle
   span.setAttribute('data-path', cleanPath);
   span.setAttribute('data-name', name);
   span.setAttribute('data-is-image', isImage ? 'true' : 'false');
-  span.title = cleanPath;
+  span.title = isDesignMention ? `Especificação da aba Design (${cleanPath})` : cleanPath;
 
-  // Antigravity style pill
+  // Antigravity style pill (following design system: no shadow, no harsh border)
   span.style.display = 'inline-flex';
   span.style.alignItems = 'center';
   span.style.gap = '5px';
   span.style.padding = '1.5px 7px 2px 6px';
   span.style.margin = '0 3px';
   span.style.borderRadius = '5px';
-  span.style.background = 'rgba(255, 255, 255, 0.1)';
-  span.style.border = '1px solid rgba(255, 255, 255, 0.16)';
+  span.style.background = isDesignMention ? 'rgba(236, 72, 153, 0.16)' : 'rgba(255, 255, 255, 0.1)';
+  span.style.border = 'none';
   span.style.color = '#ffffff';
   span.style.fontSize = '12px';
-  span.style.fontWeight = '500';
+  span.style.fontWeight = '400';
   span.style.fontFamily = 'Poppins, sans-serif';
   span.style.lineHeight = '18px';
   span.style.verticalAlign = 'baseline';
   span.style.userSelect = 'none';
   span.style.cursor = 'default';
-  span.style.boxShadow = '0 1px 3px rgba(0,0,0,0.25)';
+  span.style.boxShadow = 'none';
 
   // Icon container
   const iconContainer = document.createElement('span');
@@ -84,26 +86,38 @@ export function createPillNode(filePath: string, fileName?: string): HTMLSpanEle
   iconContainer.style.justifyContent = 'center';
   iconContainer.style.flexShrink = '0';
 
-  const iconUrl = getFileSvgUrlForName(name);
-  if (iconUrl) {
-    const img = document.createElement('img');
-    img.src = iconUrl;
-    img.style.width = '13px';
-    img.style.height = '13px';
-    img.style.objectFit = 'contain';
-    img.draggable = false;
-    iconContainer.appendChild(img);
-  } else if (isImage) {
-    iconContainer.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>`;
+  if (isDesignMention) {
+    iconContainer.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ec4899" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>`;
+  } else if (lowerPath === 'git') {
+    iconContainer.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f97316" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>`;
+  } else if (lowerPath === 'terminal') {
+    iconContainer.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/></svg>`;
+  } else if (lowerPath === 'rules') {
+    iconContainer.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>`;
+  } else if (lowerPath === 'mcp') {
+    iconContainer.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/></svg>`;
   } else {
-    iconContainer.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+    const iconUrl = getFileSvgUrlForName(name);
+    if (iconUrl) {
+      const img = document.createElement('img');
+      img.src = iconUrl;
+      img.style.width = '13px';
+      img.style.height = '13px';
+      img.style.objectFit = 'contain';
+      img.draggable = false;
+      iconContainer.appendChild(img);
+    } else if (isImage) {
+      iconContainer.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#c084fc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>`;
+    } else {
+      iconContainer.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+    }
   }
   span.appendChild(iconContainer);
 
   const textNode = document.createElement('span');
   textNode.textContent = name;
   textNode.style.color = '#ffffff';
-  textNode.style.fontWeight = '500';
+  textNode.style.fontWeight = '400';
   span.appendChild(textNode);
 
   return span;

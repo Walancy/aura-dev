@@ -204,6 +204,11 @@ export function useTeamWorkspace({ repoFullName, currentUserLogin, showToast, on
         ok: `Review do PR #${pullNumber} solicitado a @${login}.`,
         history: ['review-request', login, `PR #${pullNumber}`],
       }),
+    approveReview: (pullNumber: number, author: string) =>
+      run(`approve-${pullNumber}`, () => gh?.submitPullReview?.(owner, repo, pullNumber, 'APPROVE') as any, {
+        ok: `PR #${pullNumber} aprovado.`,
+        history: ['review-approve', author, `PR #${pullNumber}`],
+      }),
     assignIssue: (issueNumber: number, login: string) =>
       run(`assign-${issueNumber}`, () => gh?.addAssignees?.(owner, repo, issueNumber, [login]) as any, {
         ok: `Issue #${issueNumber} atribuída a @${login}.`,
@@ -253,6 +258,7 @@ export function useTeamWorkspace({ repoFullName, currentUserLogin, showToast, on
   return {
     owner,
     repo,
+    currentUserLogin,
     raw,
     loading,
     error,

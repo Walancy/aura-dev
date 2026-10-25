@@ -16,13 +16,119 @@ import type { ExecutionStepItem } from '../../types/ide';
 import type { FigcraftCall } from './figcraftAi';
 import { FcSync } from './figcraftShapes';
 import { runFigcraftAi } from './figcraftScreenAi';
+import { cutoutTrimmed, exportNodePng, setImageFill } from './figcraftBg';
+import ContentCutRounded from '@mui/icons-material/ContentCutRounded';
 import { abortAllAiRequests } from '../design2/aiScreenFromLlm';
 import StopRounded from '@mui/icons-material/StopRounded';
 import UnsplashKeyPopup from '../design2/UnsplashKeyPopup';
 import ImageOutlined from '@mui/icons-material/ImageOutlined';
+import DescriptionOutlined from '@mui/icons-material/DescriptionOutlined';
+import ReplayRounded from '@mui/icons-material/ReplayRounded';
+import ErrorOutlineRounded from '@mui/icons-material/ErrorOutlineRounded';
+import ContentCopyRounded from '@mui/icons-material/ContentCopyRounded';
+import { findProjectPrd, mentionsPrd, readPrdFile, type Prd } from './figcraftPrd';
 import { logSystemActivity } from '../../utils/brainService';
 import { renderAiIcon } from '../icons/AiProviderIcons';
 import { AI_PROVIDERS } from '../../constants/ai';
+import {
+  extractDesignManifestFromInspect,
+  syncDesignBridgeToWorkspace,
+  buildDesignImplementationPrompt,
+  buildCliTerminalDesignPrompt,
+  type DesignBridgeManifest,
+  type DesignScreenSpec,
+} from '../../utils/designBridgeService';
+import CodeRounded from '@mui/icons-material/CodeRounded';
+import TerminalRounded from '@mui/icons-material/TerminalRounded';
+import { findFreeSpot } from '../design2/freeSpot';
+
+interface CanvasSelectedItem {
+  id: number;
+  name: string;
+  kind: 'image' | 'screen' | 'element';
+  width: number;
+  height: number;
+}
+
+function extractCanvasSelection(inspected: any): CanvasSelectedItem[] {
+  const sel: number[] = Array.isArray(inspected?.selection) ? inspected.selection.filter((x: any) => typeof x === 'number') : [];
+  if (!sel.length) return [];
+  const page = (inspected?.pages || []).find((p: any) => p.id === inspected?.currentPage) || inspected?.pages?.[0];
+  if (!page) return [];
+  const rawIdx = new Map<number, any>();
+  const rawParentIdx = new Map<number, number>();
+  const walk = (n: any, parentId?: number) => {
+    if (!n || typeof n.id !== 'number') return;
+    rawIdx.set(n.id, n);
+    if (parentId !== undefined) rawParentIdx.set(n.id, parentId);
+    for (const c of n.children || []) walk(c, n.id);
+  };
+  for (const c of page.children || []) walk(c, undefined);
+  const rootOf = (id: number): number => {
+    let cur = id;
+    while (rawParentIdx.has(cur)) cur = rawParentIdx.get(cur)!;
+    return cur;
+  };
+  const isStandaloneImage = (node: any): boolean => {
+    if (!node) return false;
+    const kids = node.children || [];
+    const hasImg = (node.fills || []).some((f: any) => f.type === 'image');
+    if (hasImg && kids.length === 0) return true;
+    if (kids.length === 1 && (kids[0].fills || []).some((f: any) => f.type === 'image') && !(kids[0].children || []).length) return true;
+    return false;
+  };
+  const out: CanvasSelectedItem[] = [];
+  const seen = new Set<number>();
+  for (const id of sel) {
+    const n = rawIdx.get(id);
+    if (!n || n.visible === false) continue;
+    const rId = rootOf(id);
+    const rootNode = rawIdx.get(rId) || n;
+    if (id !== rId && isStandaloneImage(n)) {
+      // imagem dentro de uma tela/grupo: o proprio no e a selecao
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push({
+        id,
+        name: String(n.name || 'Imagem'),
+        kind: 'image',
+        width: Math.round(n.width || 400),
+        height: Math.round(n.height || 300),
+      });
+    } else if (isStandaloneImage(rootNode)) {
+      if (seen.has(rId)) continue;
+      seen.add(rId);
+      out.push({
+        id: rId,
+        name: String(rootNode.name || 'Imagem no canvas'),
+        kind: 'image',
+        width: Math.round(rootNode.width || 400),
+        height: Math.round(rootNode.height || 300),
+      });
+    } else if (id === rId && String(n.type || '').toLowerCase() === 'frame') {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push({
+        id,
+        name: String(n.name || 'Tela'),
+        kind: 'screen',
+        width: Math.round(n.width || 393),
+        height: Math.round(n.height || 852),
+      });
+    } else {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push({
+        id,
+        name: String(n.name || n.type || 'Elemento'),
+        kind: 'element',
+        width: Math.round(n.width || 100),
+        height: Math.round(n.height || 40),
+      });
+    }
+  }
+  return out;
+}
 
 interface ChatMsg { id: string; role: 'user' | 'ai'; text: string; ts: number; steps?: ExecutionStepItem[]; workedDuration?: string; error?: boolean; /** passos do histórico do FigCraft que este pedido gerou (o Desfazer volta todos) */ undoSteps?: number; /** miniaturas das imagens de referência anexadas ao pedido */ images?: string[] }
 interface ChatSession { id: string; title: string; ts: number; messages: ChatMsg[] }
@@ -79,6 +185,10 @@ interface Props {
   onChangeAiModel?: (id: string) => void;
   /** avisa o app quando a IA termina (notificação se o usuário estiver em outra tela) */
   onAiTaskDone?: (r: { ok: boolean; message: string; workspace: string }) => void;
+  /** envia telas geradas no Design para implementação imediata no chat da IDE */
+  onImplementInIde?: (payload: { prompt: string; screens: DesignScreenSpec[]; manifest: DesignBridgeManifest }) => void;
+  /** envia telas geradas no Design para implementação imediata no terminal CLI ativo */
+  onSendToCli?: (payload: { prompt: string; screens: DesignScreenSpec[]; manifest: DesignBridgeManifest }) => void;
 }
 
 /** Aba "Design 2": editor FigCraft (Rust/wasm) em iframe + barra de IA que substitui a barra de ferramentas igual a tela Design. */
@@ -98,6 +208,8 @@ export default function FigcraftStudioView({
   onChangeAiProvider,
   onChangeAiModel,
   onAiTaskDone,
+  onImplementInIde,
+  onSendToCli,
 }: Props) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [prompt, setPrompt] = useState('');
@@ -134,6 +246,14 @@ export default function FigcraftStudioView({
   const [showSendHint, setShowSendHint] = useState(false);
   const [aiImages, setAiImages] = useState<string[]>([]);
   const aiFileRef = useRef<HTMLInputElement>(null);
+  const prdFileRef = useRef<HTMLInputElement>(null);
+  const [prd, setPrd] = useState<Prd | null>(null);
+  const [prdMsg, setPrdMsg] = useState('');
+  const [copiedId, setCopiedId] = useState('');
+  const copyError = (id: string, text: string) => { navigator.clipboard?.writeText(text).catch(() => {}); setCopiedId(id); setTimeout(() => setCopiedId((c) => (c === id ? '' : c)), 1500); };
+  const flashPrdMsg = (m: string) => { setPrdMsg(m); setTimeout(() => setPrdMsg(''), 4000); };
+  /** o que cada pedido enviou (texto, imagens, seleção, PRD): o "Tentar novamente" repete exatamente isso */
+  const runInfo = useRef(new Map<string, { text: string; images: string[]; selection: number[]; prd: Prd | null }>());
 
   const readyResolve = useRef<(() => void) | null>(null);
   const ready = useRef<Promise<void>>(null as any);
@@ -174,8 +294,9 @@ export default function FigcraftStudioView({
 
   // Sincroniza tokens visuais e visibilidade da barra de ferramentas com o padrao da tela Design
   const themeKey = useRef('');
-  const latest = useRef({ isEffectiveDark, accentColor, projectName, projectSubtitle, userInitial, aiModalOpen, docsOpen });
-  latest.current = { isEffectiveDark, accentColor, projectName, projectSubtitle, userInitial, aiModalOpen, docsOpen };
+  const [userInteractedCanvas, setUserInteractedCanvas] = useState(false);
+  const latest = useRef({ isEffectiveDark, accentColor, projectName, projectSubtitle, userInitial, aiModalOpen, docsOpen, workspacePath });
+  latest.current = { isEffectiveDark, accentColor, projectName, projectSubtitle, userInitial, aiModalOpen, docsOpen, workspacePath };
 
   const syncTheme = useCallback(
     (force = false, overrideHideToolbar?: boolean) => {
@@ -266,13 +387,144 @@ export default function FigcraftStudioView({
   // (como o design.json da tela Design), gravado sozinho a cada mudanca e restaurado ao voltar ao projeto.
   const loadedFor = useRef('');
   const switching = useRef(false);
+  const [bridgeManifest, setBridgeManifest] = useState<DesignBridgeManifest | null>(null);
+  const [handoffMenuOpen, setHandoffMenuOpen] = useState(false);
+  const [selectedHandoffScreenId, setSelectedHandoffScreenId] = useState<string>('all');
+  const previewCacheRef = useRef<Record<string, string>>({});
+  const screenSigCacheRef = useRef<Record<string, string>>({});
+
+  const syncDesignBridge = useCallback(
+    async (ws: string, exportPreviews = false): Promise<DesignBridgeManifest | null> => {
+      if (!ws) return null;
+      try {
+        const inspected = await call('document.inspect', { depth: 12 });
+        if (!inspected) return null;
+
+        const manifest = extractDesignManifestFromInspect(
+          inspected,
+          ws,
+          latest.current.projectName,
+          previewCacheRef.current
+        );
+
+        let anyExported = false;
+        for (const screen of manifest.screens) {
+          const sid = String(screen.id);
+          const sigKey = `${ws}:${sid}`;
+          const nextSig = JSON.stringify({
+            name: screen.name,
+            width: screen.width,
+            height: screen.height,
+            backgroundHex: screen.backgroundHex,
+            elementCount: screen.elementCount,
+            texts: screen.texts,
+            colors: screen.colors,
+            components: screen.components,
+          });
+          const sigChanged = screenSigCacheRef.current[sigKey] !== nextSig;
+          if (!previewCacheRef.current[sid] || (exportPreviews && sigChanged)) {
+            const numericId = Number(sid);
+            if (!Number.isNaN(numericId)) {
+              try {
+                const exp = await call('engine.execute', {
+                  command: 'file.export',
+                  params: { ids: [numericId], format: 'jpg', scale: 1 },
+                });
+                anyExported = true;
+                if (exp?.data) {
+                  const dataUrl = `data:image/jpeg;base64,${exp.data}`;
+                  previewCacheRef.current[sid] = dataUrl;
+                  screen.previewDataUrl = dataUrl;
+                  screenSigCacheRef.current[sigKey] = nextSig;
+                }
+              } catch {}
+            }
+          } else if (previewCacheRef.current[sid]) {
+            screen.previewDataUrl = previewCacheRef.current[sid];
+          }
+        }
+
+        // engine.execute(file.export) increments the WASM page revision counter; clear the dirty flag so saveProject(8s) does not loop
+        if (anyExported) {
+          await call('doc.dump', { ifDirty: true }).catch(() => {});
+        }
+
+        setBridgeManifest((prev) => {
+          if (
+            prev &&
+            prev.workspacePath === manifest.workspacePath &&
+            JSON.stringify(prev.selectedScreenIds) === JSON.stringify(manifest.selectedScreenIds) &&
+            prev.screens.length === manifest.screens.length &&
+            prev.screens.every(
+              (s, idx) =>
+                s.id === manifest.screens[idx]?.id &&
+                s.name === manifest.screens[idx]?.name &&
+                s.width === manifest.screens[idx]?.width &&
+                s.height === manifest.screens[idx]?.height &&
+                s.elementCount === manifest.screens[idx]?.elementCount &&
+                s.previewDataUrl === manifest.screens[idx]?.previewDataUrl
+            )
+          ) {
+            return prev;
+          }
+          return manifest;
+        });
+        await syncDesignBridgeToWorkspace(manifest);
+        return manifest;
+      } catch {
+        return null;
+      }
+    },
+    [call]
+  );
+
+  const handleHandoffDesign = useCallback(
+    async (target: 'ide' | 'cli', specificScreenId?: string) => {
+      setHandoffMenuOpen(false);
+      const manifest = (await syncDesignBridge(workspacePath, true)) || bridgeManifest;
+      if (!manifest || manifest.screens.length === 0) return;
+
+      const canvasSelectedIds = manifest.selectedScreenIds || [];
+      let chosenScreens = manifest.screens;
+      if (specificScreenId && specificScreenId !== 'all' && specificScreenId !== 'selected') {
+        chosenScreens = manifest.screens.filter((s) => s.id === specificScreenId || s.slug === specificScreenId);
+      } else if (canvasSelectedIds.length > 0) {
+        chosenScreens = manifest.screens.filter((s) => canvasSelectedIds.includes(s.id));
+      } else if (selectedHandoffScreenId && selectedHandoffScreenId !== 'all') {
+        chosenScreens = manifest.screens.filter((s) => s.id === selectedHandoffScreenId || s.slug === selectedHandoffScreenId);
+      }
+      const finalScreens = chosenScreens.length > 0 ? chosenScreens : manifest.screens;
+
+      if (target === 'ide') {
+        const promptText = buildDesignImplementationPrompt(manifest, finalScreens);
+        onImplementInIde?.({ prompt: promptText, screens: finalScreens, manifest });
+      } else {
+        const promptText = buildCliTerminalDesignPrompt(manifest, finalScreens);
+        onSendToCli?.({ prompt: promptText, screens: finalScreens, manifest });
+      }
+    },
+    [workspacePath, bridgeManifest, selectedHandoffScreenId, syncDesignBridge, onImplementInIde, onSendToCli]
+  );
+
+  // Sincroniza as telas e previews reais ao sair da aba Design para a IDE ou CLI
+  const prevActiveRef = useRef(isActive);
+  useEffect(() => {
+    if (prevActiveRef.current && !isActive && workspacePath && !switching.current && !busy) {
+      syncDesignBridge(workspacePath, true).catch(() => {});
+    }
+    prevActiveRef.current = isActive;
+  }, [isActive, workspacePath, busy, syncDesignBridge]);
+
   const projFile = (ws: string) => `${ws}/.devflow/figcraft/project.json`;
   const saveProject = useCallback(async (ws: string, onlyIfDirty: boolean) => {
     const fs = (window as any).electronAPI?.fs;
     if (!ws || !fs?.writeFile) return;
     const r = await call('doc.dump', { ifDirty: onlyIfDirty });
-    if (r?.data) await fs.writeFile(projFile(ws), JSON.stringify({ version: 1, updatedAt: Date.now(), data: r.data }));
-  }, [call]);
+    if (r?.data) {
+      await fs.writeFile(projFile(ws), JSON.stringify({ version: 1, updatedAt: Date.now(), data: r.data }));
+      syncDesignBridge(ws, true).catch(() => {});
+    }
+  }, [call, syncDesignBridge]);
   useEffect(() => {
     (async () => {
       await ready.current;
@@ -289,11 +541,49 @@ export default function FigcraftStudioView({
           } catch { data = null; }
         }
         await call('doc.restore', data ? { data } : {});
+        await call('engine.execute', { command: 'select.set', params: { ids: [] } }).catch(() => {});
+        setUserInteractedCanvas(false);
         syncRef.current = new FcSync(call);
-        if (!data) await ensureDefaultPages();
+        if (!data) {
+          await ensureDefaultPages();
+        } else {
+          // Remove efeitos que forcam o vello_cpu (retained.rs) a cachear frames/cards como bitmaps que ficam embacados ao dar zoom
+          try {
+            const inspected = await call('document.inspect', { depth: 16 });
+            let anySanitized = false;
+            const idsToClear: number[] = [];
+            const collectEffectNodes = (n: any) => {
+              if (Array.isArray(n.effects) && n.effects.length > 0 && typeof n.id === 'number') {
+                idsToClear.push(n.id);
+              }
+              for (const c of n.children || []) collectEffectNodes(c);
+            };
+            for (const p of inspected?.pages || []) {
+              for (const c of p.children || []) collectEffectNodes(c);
+            }
+            if (idsToClear.length > 0) {
+              anySanitized = true;
+              await call('engine.execute', { command: 'node.set', params: { ids: idsToClear, props: { effects: [] } } }).catch(() => {});
+            }
+            if (anySanitized && workspacePath) {
+              setTimeout(() => {
+                if (!switching.current && loadedFor.current === workspacePath) {
+                  saveProject(workspacePath, false).catch(() => {});
+                }
+              }, 2000);
+            }
+          } catch { /* documento continua utilizavel */ }
+        }
         themeKey.current = '';
         syncTheme(true);
         loadedFor.current = workspacePath;
+        if (workspacePath) {
+          setTimeout(() => {
+            if (!switching.current && loadedFor.current === workspacePath) {
+              syncDesignBridge(workspacePath, true).catch(() => {});
+            }
+          }, 900);
+        }
       } catch { /* sem restaurar: nao grava por cima do projeto */ } finally {
         switching.current = false;
       }
@@ -301,15 +591,169 @@ export default function FigcraftStudioView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspacePath]);
   useEffect(() => {
-    const tick = () => { if (!switching.current && loadedFor.current === workspacePath) saveProject(workspacePath, true).catch(() => {}); };
-    const t = setInterval(tick, 3000);
+    const tick = () => { if (!switching.current && !busy && loadedFor.current === workspacePath) saveProject(workspacePath, true).catch(() => {}); };
+    const t = setInterval(tick, 8000);
     return () => { clearInterval(t); tick(); };
-  }, [workspacePath, saveProject]);
+  }, [workspacePath, busy, saveProject]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pickImageRef = useRef<HTMLInputElement>(null);
+  const [canvasSelection, setCanvasSelection] = useState<CanvasSelectedItem[]>([]);
+
+  const placeImagesOnCanvas = useCallback(
+    async (items: Array<{ dataUrl: string; width?: number; height?: number; name?: string }>, undoInternalPaste?: boolean) => {
+      if (!items.length) return;
+      try {
+        if (undoInternalPaste) {
+          await call('engine.execute', { command: 'edit.undo', params: {} }).catch(() => {});
+        }
+        const inspected = await call('document.inspect', { depth: 4 }).catch(() => null);
+        const page = (inspected?.pages || []).find((p: any) => p.id === inspected?.currentPage) || inspected?.pages?.[0];
+        const existingBoxes = ((page?.children || []) as any[])
+          .filter((c) => c && c.visible !== false)
+          .map((c, idx) => ({
+            id: String(c.id ?? idx),
+            type: 'frame' as const,
+            name: String(c.name || ''),
+            x: Number(c.x || 0),
+            y: Number(c.y || 0),
+            width: Number(c.width || 400),
+            height: Number(c.height || 300),
+            rotation: 0,
+            fill: '#000000',
+            stroke: 'none',
+            strokeWidth: 0,
+            opacity: 1,
+            cornerRadius: 0,
+            visible: true,
+            locked: false,
+            zIndex: idx,
+          }));
+        // como no Figma: a imagem entra no centro do objeto selecionado; sem seleção, no centro da área visível do canvas
+        const container = extractCanvasSelection(inspected).find((c) => c.kind !== 'image') ?? null;
+        const view = container ? null : await call('engine.execute', { command: 'view.get', params: {} }).catch(() => null);
+        const vcx = Number(view?.cx ?? view?.center?.x ?? view?.center?.[0]);
+        const vcy = Number(view?.cy ?? view?.center?.y ?? view?.center?.[1]);
+        const hasView = Number.isFinite(vcx) && Number.isFinite(vcy);
+        const maxRight = existingBoxes.length
+          ? Math.max(...existingBoxes.map((b) => b.x + b.width))
+          : 0;
+        const firstY = existingBoxes.length ? existingBoxes[0].y : 100;
+        let curX = existingBoxes.length ? maxRight + 120 : 100;
+        const curY = firstY;
+
+        const placedIds: number[] = [];
+        const placedItems: CanvasSelectedItem[] = [];
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          const url = String(item.dataUrl || '');
+          const commaIdx = url.indexOf(',');
+          const base64 = commaIdx >= 0 ? url.slice(commaIdx + 1) : url;
+          if (!base64) continue;
+          const rawW = Math.max(48, Math.round(item.width || 400));
+          const rawH = Math.max(48, Math.round(item.height || 300));
+          // Mantém proporção original da imagem colada, limitando lado maior a 960px para caber bem ao lado das telas
+          const scale = Math.min(1, 960 / Math.max(rawW, rawH), container ? Math.min(container.width / rawW, container.height / rawH) : 1);
+          const targetW = Math.max(container ? 8 : 64, Math.round(rawW * scale));
+          const targetH = Math.max(container ? 8 : 64, Math.round(rawH * scale));
+          const spot = container
+            ? { x: Math.round((container.width - targetW) / 2), y: Math.round((container.height - targetH) / 2) }
+            : hasView
+            ? { x: i === 0 ? Math.round(vcx - targetW / 2) : curX, y: Math.round(vcy - targetH / 2) }
+            : i === 0
+            ? findFreeSpot(existingBoxes as any, curX, curY, targetW + 60, targetH + 60)
+            : { x: curX, y: curY };
+          const pr = await call('engine.execute', {
+            command: 'image.place',
+            params: {
+              data: base64,
+              ...(container ? { parent: container.id } : {}),
+              x: spot.x,
+              y: spot.y,
+              width: targetW,
+              height: targetH,
+              mode: 'fill',
+            },
+          }).catch(() => null);
+          const pid = pr?.id ?? pr?.ids?.[0];
+          if (typeof pid === 'number') {
+            const nodeName = item.name || (items.length > 1 ? `Imagem colada ${i + 1}` : 'Imagem colada');
+            await call('engine.execute', {
+              command: 'node.set',
+              params: { ids: [pid], props: { name: nodeName, width: targetW, height: targetH } },
+            }).catch(() => {});
+            placedIds.push(pid);
+            placedItems.push({ id: pid, name: nodeName, kind: 'image', width: targetW, height: targetH });
+            curX = container ? curX : spot.x + targetW + 80;
+          }
+        }
+        if (placedIds.length) {
+          await call('engine.execute', { command: 'select.set', params: { ids: placedIds } }).catch(() => {});
+          setCanvasSelection(placedItems);
+          setUserInteractedCanvas(true);
+          setLog(placedIds.length === 1 ? 'Imagem colada e selecionada no canvas' : `${placedIds.length} imagens coladas e selecionadas no canvas`);
+          logSystemActivity('design', 'Colou imagem no canvas do Design', latest.current.projectName || 'Estudio de Design', {
+            count: placedIds.length,
+          });
+          if (latest.current.workspacePath) {
+            saveProject(latest.current.workspacePath, true).catch(() => {});
+          }
+        }
+      } catch {}
+    },
+    [call, saveProject]
+  );
+
   useEffect(() => {
     const on = (e: MessageEvent) => {
+      if (e.data?.fcCanvasInput) {
+        setUserInteractedCanvas(true);
+      }
+      if (Array.isArray(e.data?.fcPasteImages) && e.data.fcPasteImages.length > 0) {
+        placeImagesOnCanvas(e.data.fcPasteImages, Boolean(e.data?.fcUndoInternalPaste));
+      }
+      if (e.data?.fcSelectionSync) {
+        try {
+          if (e.data?.fcUserInteracted || e.data?.userInteracted) setUserInteractedCanvas(true);
+          const inspected =
+            typeof e.data.fcSelectionSync === 'string'
+              ? JSON.parse(e.data.fcSelectionSync)
+              : e.data.fcSelectionSync;
+          if (inspected) {
+            const nextSel = extractCanvasSelection(inspected);
+            setCanvasSelection((prev) =>
+              JSON.stringify(prev) === JSON.stringify(nextSel) ? prev : nextSel
+            );
+            if (latest.current.workspacePath) {
+              const manifest = extractDesignManifestFromInspect(
+                inspected,
+                latest.current.workspacePath,
+                latest.current.projectName,
+                previewCacheRef.current
+              );
+              setBridgeManifest((prev) => {
+                if (
+                  prev &&
+                  prev.workspacePath === manifest.workspacePath &&
+                  JSON.stringify(prev.selectedScreenIds) === JSON.stringify(manifest.selectedScreenIds) &&
+                  prev.screens.length === manifest.screens.length &&
+                  prev.screens.every(
+                    (s, idx) =>
+                      s.id === manifest.screens[idx]?.id &&
+                      s.name === manifest.screens[idx]?.name &&
+                      s.width === manifest.screens[idx]?.width &&
+                      s.height === manifest.screens[idx]?.height &&
+                      s.elementCount === manifest.screens[idx]?.elementCount
+                  )
+                ) {
+                  return prev;
+                }
+                return manifest;
+              });
+            }
+          }
+        } catch {}
+      }
       if (e.data?.fcReady) {
         readyResolve.current?.();
         themeKey.current = '';
@@ -340,7 +784,51 @@ export default function FigcraftStudioView({
     };
     addEventListener('message', on);
     return () => removeEventListener('message', on);
-  }, [syncTheme, ensureDefaultPages]);
+  }, [syncTheme, ensureDefaultPages, placeImagesOnCanvas]);
+
+  // Também permite colar imagens no canvas quando o foco estiver na janela pai (fora de inputs/textareas)
+  useEffect(() => {
+    if (!isActive) return;
+    const onParentPaste = async (e: ClipboardEvent) => {
+      const active = document.activeElement as HTMLElement | null;
+      if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT' || active.isContentEditable)) {
+        return;
+      }
+      const files = Array.from(e.clipboardData?.files || []).filter((f) => f.type.startsWith('image/'));
+      if (!files.length) return;
+      e.preventDefault();
+      const loaded = await Promise.all(
+        files.slice(0, 6).map(
+          (file, idx) =>
+            new Promise<{ dataUrl: string; width: number; height: number; name: string } | null>((resolve) => {
+              const reader = new FileReader();
+              reader.onload = () => {
+                const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+                if (!dataUrl) return resolve(null);
+                const img = new Image();
+                img.onload = () =>
+                  resolve({
+                    dataUrl,
+                    width: img.naturalWidth || img.width || 400,
+                    height: img.naturalHeight || img.height || 300,
+                    name: file.name ? file.name.replace(/\.[^.]+$/, '') : idx > 0 ? `Imagem colada ${idx + 1}` : 'Imagem colada',
+                  });
+                img.onerror = () => resolve({ dataUrl, width: 400, height: 300, name: 'Imagem colada' });
+                img.src = dataUrl;
+              };
+              reader.onerror = () => resolve(null);
+              reader.readAsDataURL(file);
+            })
+        )
+      );
+      const valid = loaded.filter((x): x is { dataUrl: string; width: number; height: number; name: string } => Boolean(x));
+      if (valid.length) {
+        placeImagesOnCanvas(valid);
+      }
+    };
+    window.addEventListener('paste', onParentPaste);
+    return () => window.removeEventListener('paste', onParentPaste);
+  }, [isActive, placeImagesOnCanvas]);
 
   useEffect(() => {
     syncTheme(true);
@@ -367,8 +855,9 @@ export default function FigcraftStudioView({
         })
         .catch(() => {});
     measure();
-    const id = setInterval(measure, 400);
-    return () => { alive = false; clearInterval(id); };
+    addEventListener('resize', measure);
+    const id = setInterval(measure, 800);
+    return () => { alive = false; removeEventListener('resize', measure); clearInterval(id); };
   }, [aiModalOpen, docsOpen, call]);
 
   const closeAiBar = useCallback(() => {
@@ -401,22 +890,76 @@ export default function FigcraftStudioView({
     setLog('Geração interrompida');
   };
 
-  const run = async () => {
-    const text = prompt.trim() || (aiImages.length ? 'Crie a tela seguindo exatamente o design das imagens de referência anexadas.' : '');
+  const hasSelectedCanvasImage = canvasSelection.some((s) => s.kind === 'image');
+  const [cutBusyId, setCutBusyId] = useState<number | null>(null);
+
+  /** Remove o fundo da imagem selecionada no canvas e troca o preenchimento da própria camada. */
+  const removeImageBg = async (item: CanvasSelectedItem) => {
+    if (cutBusyId !== null || busy) return;
+    setCutBusyId(item.id);
+    setLog('Removendo o fundo da imagem...');
+    try {
+      const src = await exportNodePng(call, item.id);
+      if (!src) throw new Error('Não consegui ler a imagem selecionada');
+      const r = await cutoutTrimmed(src);
+      if (!r.dataUrl) throw new Error(r.error || 'Não consegui remover o fundo da imagem');
+      if (!(await setImageFill(call, item.id, r.dataUrl))) throw new Error('Não consegui aplicar a imagem sem fundo');
+      setLog('Fundo removido');
+      logSystemActivity('design', 'Removeu o fundo de uma imagem no Design', projectName || 'Estudio de Design', { layer: item.name });
+    } catch (e: any) {
+      setLog('Erro: ' + (e?.message || String(e)));
+    } finally {
+      setCutBusyId(null);
+    }
+  };
+
+  const run = async (re?: { aiId: string }) => {
+    const info = re ? runInfo.current.get(re.aiId) : undefined;
+    const failedUserId = re ? `u${re.aiId.slice(1)}` : '';
+    const text =
+      info?.text ??
+      (re ? messages.find((m) => m.id === failedUserId)?.text : undefined) ??
+      (prompt.trim() ||
+        (aiImages.length
+          ? 'Crie a tela seguindo exatamente o design das imagens de referência anexadas.'
+          : hasSelectedCanvasImage
+          ? 'Recrie a tela da imagem selecionada no canvas em camadas editáveis.'
+          : prd
+          ? 'Crie todas as telas do projeto com base no PRD enviado.'
+          : ''));
     if (!text || busy) return;
+    if (re) setMessages((m) => m.filter((x) => x.id !== re.aiId && x.id !== failedUserId));
     setBusy(true);
     setLog('Lendo o documento...');
     const t0 = Date.now();
     const aiId = `a${t0}`;
-    const sentImages = aiImages;
-    const thumbs = (await Promise.all(sentImages.map(thumbOf))).filter(Boolean);
+    const sentImages = info ? info.images : re ? [] : aiImages;
+    let sentPrd: Prd | null = info ? info.prd : re ? null : prd;
+    const chatThumbs = (await Promise.all(sentImages.map(thumbOf))).filter(Boolean);
+    // Miniaturas dos itens selecionados no canvas (imagens coladas e/ou telas selecionadas) para exibir no histórico do chat
+    const canvasThumbs: string[] = [];
+    if (!re && canvasSelection.length > 0) {
+      for (const selItem of canvasSelection.slice(0, 3)) {
+        try {
+          const exp = await call('engine.execute', {
+            command: 'file.export',
+            params: { ids: [selItem.id], format: 'jpg', scale: 0.35 },
+          });
+          if (exp?.data) {
+            const t = await thumbOf(`data:image/jpeg;base64,${exp.data}`);
+            if (t) canvasThumbs.push(t);
+          }
+        } catch {}
+      }
+    }
+    const thumbs = [...chatThumbs, ...canvasThumbs].slice(0, 4);
     setMessages((m) => [...m, { id: `u${t0}`, role: 'user', text, ts: t0, images: thumbs.length ? thumbs : undefined }, { id: aiId, role: 'ai', text: '', ts: t0 }]);
-    setPrompt('');
-    setAiImages([]);
+    if (!re) { setPrompt(''); setAiImages([]); setPrd(null); }
     logSystemActivity('design', 'Iniciou geracao com IA no Design 2', projectName || 'Estudio de Design', {
       prompt: text,
       provider: selectedAiProvider,
       model: selectedModel,
+      canvasSelectionCount: canvasSelection.length,
     });
     // etapas ao vivo no chat: o que a IA está fazendo agora (analisando, planejando, criando a tela X, montando elementos...)
     const liveSteps: ExecutionStepItem[] = [];
@@ -451,11 +994,21 @@ export default function FigcraftStudioView({
     try {
       const cancel = { cancelled: false };
       cancelRef.current = cancel;
+      if (info?.selection.length) await call('engine.execute', { command: 'select.set', params: { ids: info.selection } }).catch(() => {});
+      if (!sentPrd && mentionsPrd(text)) {
+        progress('Lendo o PRD da pasta do projeto…');
+        sentPrd = await findProjectPrd(workspacePath);
+        if (!sentPrd) throw new Error('Não encontrei um PRD na pasta do projeto. Use + > Enviar PRD para anexar o arquivo.');
+      }
       const doc = await call('document.inspect', { depth: 0 });
+      const activeSelectionIds: number[] = Array.isArray(doc.selection) && doc.selection.length
+        ? doc.selection
+        : canvasSelection.map((s) => s.id);
+      runInfo.current.set(aiId, { text, images: sentImages, selection: activeSelectionIds, prd: sentPrd });
       const h0 = doc.history?.undo?.length ?? 0;
       const result = await runFigcraftAi({
         call, sync: syncRef.current!, prompt: text, images: sentImages, ws: workspacePath, projectName, useCtx: useProjectContext, useTokens: tokensFollowing, fastMode,
-        provider: selectedAiProvider, model: selectedModel, accentColor, isDark: isEffectiveDark, selection: doc.selection || [],
+        provider: selectedAiProvider, model: selectedModel, accentColor, isDark: isEffectiveDark, selection: activeSelectionIds, prd: sentPrd?.text,
         onProgress: progress, signal: cancel, onToast: (m) => setLog(m),
       });
       const n = result.layers;
@@ -466,6 +1019,7 @@ export default function FigcraftStudioView({
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
       const steps: ExecutionStepItem[] = [...liveSteps.map((st) => ({ ...st })), { id: 'apply', type: 'edit', label: `Aplicou ${n} camadas no canvas` }];
       setMessages((m) => m.map((x) => (x.id === aiId ? { ...x, text: `Pronto: ${result.message} (${n} camadas).`, steps, workedDuration: `${secs}s`, undoSteps } : x)));
+      await syncDesignBridge(workspacePath, true).catch(() => {});
       onAiTaskDone?.({ ok: true, message: result.message, workspace: workspacePath });
       logSystemActivity('design', 'Concluiu geracao com IA no Design 2', projectName || 'Estudio de Design', {
         prompt: text,
@@ -531,7 +1085,7 @@ export default function FigcraftStudioView({
       />
       <iframe
         ref={frame}
-        src="figcraft://app/index.html?v=7"
+        src="figcraft://app/index.html?v=15"
         title="FigCraft"
         style={{
           flex: 1,
@@ -543,6 +1097,48 @@ export default function FigcraftStudioView({
         }}
         allow="clipboard-read; clipboard-write; gamepad"
       />
+
+      {(() => {
+        const img = canvasSelection.find((c) => c.kind === 'image');
+        if (!img) return null;
+        const working = cutBusyId === img.id;
+        return (
+          <button
+            type="button"
+            title="Remover o fundo da imagem selecionada"
+            disabled={cutBusyId !== null || busy}
+            onClick={() => removeImageBg(img)}
+            style={{
+              position: 'absolute',
+              top: 12,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              height: 32,
+              padding: '0 12px',
+              borderRadius: 8,
+              border: 'none',
+              background: accentColor,
+              color: '#ffffff',
+              fontSize: 12,
+              fontWeight: 400,
+              cursor: cutBusyId !== null || busy ? 'default' : 'pointer',
+              opacity: cutBusyId !== null || busy ? 0.7 : 1,
+              transition: 'opacity 0.15s ease, transform 0.15s ease',
+              zIndex: 5,
+            }}
+          >
+            {working ? (
+              <AutorenewRounded sx={{ fontSize: 16, animation: 'spin 1s linear infinite', '@keyframes spin': { to: { transform: 'rotate(360deg)' } } }} />
+            ) : (
+              <ContentCutRounded sx={{ fontSize: 16 }} />
+            )}
+            {working ? 'Removendo fundo...' : 'Remover fundo'}
+          </button>
+        );
+      })()}
 
       {keysOpen && <UnsplashKeyPopup tokens={themeTokens as any} accentColor={accentColor} onClose={() => setKeysOpen(false)} onSaved={() => {}} />}
 
@@ -588,14 +1184,17 @@ export default function FigcraftStudioView({
         >
           {/* Popover de Selecao de IA e Modelo (duas colunas, ancorado acima da barra) */}
           {aiPickerOpen && providersList.length > 0 && (
+            <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 299 }} onClick={() => setAiPickerOpen(false)} />
             <div
               style={{
                 position: 'absolute',
                 top: 44,
                 left: 8,
                 display: 'flex',
+                flexDirection: 'row',
                 alignItems: 'flex-start',
-                gap: 8,
+                gap: 5,
                 zIndex: 300,
                 userSelect: 'none',
               }}
@@ -611,8 +1210,9 @@ export default function FigcraftStudioView({
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 2,
-                    minWidth: 185,
-                    maxWidth: 230,
+                    order: 2,
+                    width: 230,
+                    flexShrink: 0,
                     maxHeight: 300,
                     overflowY: 'auto',
                   }}
@@ -688,7 +1288,9 @@ export default function FigcraftStudioView({
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 2,
-                  minWidth: 230,
+                  order: 1,
+                  width: 260,
+                  flexShrink: 0,
                 }}
               >
                 <div
@@ -772,6 +1374,7 @@ export default function FigcraftStudioView({
                 })}
               </div>
             </div>
+            </>
           )}
 
           <AiChatHeader
@@ -856,17 +1459,110 @@ export default function FigcraftStudioView({
                         themeTokens={themeTokens}
                         isEffectiveDark={isEffectiveDark}
                       />
-                      {m.text && (
+                      {m.error && m.text && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#ef4444', fontSize: 12 }}>
+                            <ErrorOutlineRounded sx={{ fontSize: 16 }} />
+                            <span>Erro</span>
+                            <button
+                              type="button"
+                              title={copiedId === m.id ? 'Copiado' : 'Copiar o erro'}
+                              onClick={() => copyError(m.id, m.text)}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, padding: 0, border: 'none', borderRadius: 6, background: copiedId === m.id ? 'rgba(239,68,68,0.18)' : 'transparent', color: '#ef4444', cursor: 'pointer', transition: 'background .15s ease, transform .15s ease', transform: copiedId === m.id ? 'scale(1.15)' : 'scale(1)' }}
+                              onMouseEnter={(e) => { if (copiedId !== m.id) e.currentTarget.style.background = 'rgba(239,68,68,0.12)'; }}
+                              onMouseLeave={(e) => { if (copiedId !== m.id) e.currentTarget.style.background = 'transparent'; }}
+                            >
+                              {copiedId === m.id ? <CheckRounded sx={{ fontSize: 15 }} /> : <ContentCopyRounded sx={{ fontSize: 15 }} />}
+                            </button>
+                          </div>
+                          <div style={{ fontSize: 12, lineHeight: 1.5, color: '#ef4444', whiteSpace: 'pre-wrap', wordBreak: 'break-word', userSelect: 'text' }}>{m.text}</div>
+                        </div>
+                      )}
+                      {!m.error && m.text && (
                         <div style={{ fontSize: 12, lineHeight: 1.5, color: m.error ? '#ef4444' : themeTokens.textPrimary, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.text}</div>
                       )}
-                      {!working && !m.error && m.steps && (
+                      {m.error && !working && !busy && (
                         <button
                           type="button"
-                          onClick={async () => { for (let i = 0; i < (m.undoSteps || 1); i++) await call('engine.execute', { command: 'edit.undo', params: {} }).catch(() => {}); setMessages((all) => all.map((x) => (x.id === m.id ? { ...x, undoSteps: undefined, steps: undefined, text: `${x.text} (desfeito)` } : x))); }}
-                          style={{ alignSelf: 'flex-start', background: 'transparent', border: 'none', color: themeTokens.textSecondary, fontSize: 11, cursor: 'pointer', padding: 0, fontFamily: "'Poppins', sans-serif" }}
+                          onClick={() => run({ aiId: m.id })}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)'; const i = e.currentTarget.querySelector('svg'); if (i) (i as SVGElement).style.transform = 'rotate(-180deg)'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)'; const i = e.currentTarget.querySelector('svg'); if (i) (i as SVGElement).style.transform = 'rotate(0deg)'; }}
+                          style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6, height: 28, padding: '0 10px', borderRadius: 6, border: 'none', background: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', color: themeTokens.textPrimary, fontSize: 12, fontWeight: 400, cursor: 'pointer', fontFamily: "'Poppins', sans-serif", transition: 'background .15s ease' }}
                         >
-                          Desfazer
+                          <ReplayRounded sx={{ fontSize: 15, color: accentColor, transition: 'transform .3s ease' }} />
+                          Tentar novamente
                         </button>
+                      )}
+                      {!working && !m.error && m.steps && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', paddingTop: 2 }}>
+                          <button
+                            type="button"
+                            onClick={() => handleHandoffDesign('ide', 'all')}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 5,
+                              height: 24,
+                              padding: '0 8px',
+                              borderRadius: 6,
+                              border: 'none',
+                              background: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
+                              color: themeTokens.textPrimary,
+                              fontSize: 11,
+                              fontWeight: 400,
+                              cursor: 'pointer',
+                              fontFamily: "'Poppins', sans-serif",
+                              transition: 'background 0.15s ease',
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.09)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)';
+                            }}
+                            title="Abrir chat da IDE e implementar este design no código do projeto"
+                          >
+                            <CodeRounded sx={{ fontSize: 13, color: accentColor }} />
+                            Implementar na IDE
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleHandoffDesign('cli', 'all')}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 5,
+                              height: 24,
+                              padding: '0 8px',
+                              borderRadius: 6,
+                              border: 'none',
+                              background: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
+                              color: themeTokens.textPrimary,
+                              fontSize: 11,
+                              fontWeight: 400,
+                              cursor: 'pointer',
+                              fontFamily: "'Poppins', sans-serif",
+                              transition: 'background 0.15s ease',
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.09)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)';
+                            }}
+                            title="Enviar especificação completa e imagens para o agente ativo no Terminal CLI"
+                          >
+                            <TerminalRounded sx={{ fontSize: 13, color: '#22c55e' }} />
+                            Enviar ao CLI
+                          </button>
+                          <button
+                            type="button"
+                            onClick={async () => { for (let i = 0; i < (m.undoSteps || 1); i++) await call('engine.execute', { command: 'edit.undo', params: {} }).catch(() => {}); setMessages((all) => all.map((x) => (x.id === m.id ? { ...x, undoSteps: undefined, steps: undefined, text: `${x.text} (desfeito)` } : x))); }}
+                            style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, fontSize: 11, cursor: 'pointer', padding: '0 4px', height: 24, fontFamily: "'Poppins', sans-serif" }}
+                          >
+                            Desfazer
+                          </button>
+                        </div>
                       )}
                       <span style={{ fontSize: 10, color: themeTokens.textMuted }}>{time}</span>
                     </div>
@@ -898,6 +1594,102 @@ export default function FigcraftStudioView({
               gap: 8,
             }}
           >
+            {canvasSelection.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                {canvasSelection.slice(0, 6).map((item) => (
+                  <div
+                    key={item.id}
+                    title={`${item.kind === 'image' ? 'Imagem selecionada no canvas' : item.kind === 'screen' ? 'Tela selecionada no canvas' : 'Elemento selecionado no canvas'}: ${item.name} (${item.width}x${item.height})`}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      height: 24,
+                      padding: '0 8px',
+                      borderRadius: 6,
+                      background: isEffectiveDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)',
+                      color: themeTokens.textPrimary,
+                      fontSize: 11,
+                      fontWeight: 400,
+                      maxWidth: '100%',
+                      transition: 'background 0.15s ease',
+                    }}
+                  >
+                    {item.kind === 'image' ? (
+                      <ImageOutlined sx={{ fontSize: 13, color: accentColor, flexShrink: 0 }} />
+                    ) : (
+                      <PaletteOutlined sx={{ fontSize: 13, color: accentColor, flexShrink: 0 }} />
+                    )}
+                    <span style={{ color: themeTokens.textSecondary, flexShrink: 0 }}>
+                      {item.kind === 'image' ? 'Imagem:' : item.kind === 'screen' ? 'Tela:' : 'Item:'}
+                    </span>
+                    <span
+                      style={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        maxWidth: 120,
+                      }}
+                    >
+                      {item.name}
+                    </span>
+                    {item.kind === 'image' && (
+                      <button
+                        type="button"
+                        title="Remover fundo da imagem"
+                        disabled={cutBusyId !== null || busy}
+                        onClick={() => removeImageBg(item)}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = accentColor; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = themeTokens.textSecondary; }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          border: 'none',
+                          background: 'transparent',
+                          padding: 0,
+                          fontSize: 11,
+                          fontWeight: 400,
+                          color: themeTokens.textSecondary,
+                          cursor: cutBusyId !== null || busy ? 'default' : 'pointer',
+                          opacity: cutBusyId !== null && cutBusyId !== item.id ? 0.5 : 1,
+                          transition: 'color 0.15s ease, opacity 0.15s ease',
+                        }}
+                      >
+                        {cutBusyId === item.id ? (
+                          <AutorenewRounded sx={{ fontSize: 12, animation: 'spin 1s linear infinite', '@keyframes spin': { to: { transform: 'rotate(360deg)' } } }} />
+                        ) : (
+                          <ContentCutRounded sx={{ fontSize: 12 }} />
+                        )}
+                        Remover fundo
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      title="Remover da seleção"
+                      onClick={() => {
+                        const nextIds = canvasSelection.filter((x) => x.id !== item.id).map((x) => x.id);
+                        setCanvasSelection((prev) => prev.filter((x) => x.id !== item.id));
+                        call('engine.execute', { command: 'select.set', params: { ids: nextIds } }).catch(() => {});
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        border: 'none',
+                        background: 'transparent',
+                        padding: 0,
+                        color: themeTokens.textMuted || themeTokens.textSecondary,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <CloseRounded sx={{ fontSize: 12 }} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {aiImages.length > 0 && (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 {aiImages.map((src, i) => (
@@ -940,6 +1732,21 @@ export default function FigcraftStudioView({
               </div>
             )}
 
+            {(prd || prdMsg) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 28 }}>
+                {prd && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 28, padding: '0 8px', borderRadius: 6, background: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', color: themeTokens.textPrimary, fontSize: 12, minWidth: 0 }}>
+                    <DescriptionOutlined sx={{ fontSize: 15, color: accentColor }} />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 190 }}>{prd.name}</span>
+                    <button type="button" title="Remover PRD" onClick={() => setPrd(null)} style={{ display: 'flex', border: 'none', background: 'transparent', padding: 0, color: themeTokens.textMuted || themeTokens.textSecondary, cursor: 'pointer' }}>
+                      <CloseRounded sx={{ fontSize: 14 }} />
+                    </button>
+                  </div>
+                )}
+                {prdMsg && <span style={{ fontSize: 11, color: themeTokens.textMuted }}>{prdMsg}</span>}
+              </div>
+            )}
+
             <textarea
               ref={textareaRef}
               rows={3}
@@ -964,7 +1771,15 @@ export default function FigcraftStudioView({
                   }
                 }
               }}
-              placeholder="Descreva a tela para a IA prototipar... Ex: 'Tela de login moderna com dark mode e botao Google'"
+              placeholder={
+                canvasSelection.some((s) => s.kind === 'image') && canvasSelection.some((s) => s.kind !== 'image')
+                  ? 'Imagem e tela selecionadas: peça para editar a tela usando a imagem como referência ou criar uma nova tela combinando ambas...'
+                  : canvasSelection.some((s) => s.kind === 'image')
+                  ? 'Imagem selecionada no canvas: peça para recriar como tela editável, usar como referência de estilo ou fazer modificações...'
+                  : canvasSelection.length > 0
+                  ? 'Tela selecionada: peça modificações na seleção ou crie novas telas seguindo este design...'
+                  : "Descreva a tela para a IA prototipar... Ex: 'Tela de login moderna com dark mode e botao Google'"
+              }
               disabled={busy}
               style={{
                 width: '100%',
@@ -1004,6 +1819,19 @@ export default function FigcraftStudioView({
                 onChange={(e) => {
                   addAiImages(Array.from(e.target.files || []));
                   e.target.value = '';
+                }}
+              />
+              <input
+                ref={prdFileRef}
+                type="file"
+                accept=".md,.mdx,.markdown,.txt,text/markdown,text/plain"
+                style={{ display: 'none' }}
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!f) return;
+                  const r = await readPrdFile(f);
+                  if (r) setPrd(r); else flashPrdMsg('Não consegui ler o arquivo. Envie um PRD em .md ou .txt.');
                 }}
               />
               {/* Opcoes do pedido num popup: anexar, design tokens, modo rapido e contexto do projeto */}
@@ -1056,6 +1884,8 @@ export default function FigcraftStudioView({
                   >
                     {[
                       { key: 'attach', label: aiImages.length ? `Anexar imagens (${aiImages.length})` : 'Anexar imagens', icon: <AttachFileRounded sx={{ fontSize: 15 }} />, on: aiImages.length > 0, toggle: false, run: () => { aiFileRef.current?.click(); setPlusOpen(false); } },
+                      { key: 'prd', label: prd ? `PRD: ${prd.name}` : 'Enviar PRD', icon: <DescriptionOutlined sx={{ fontSize: 15 }} />, on: !!prd, toggle: false, run: () => { prdFileRef.current?.click(); setPlusOpen(false); } },
+                      { key: 'prdProj', label: 'PRD do projeto', icon: <DescriptionOutlined sx={{ fontSize: 15 }} />, on: false, toggle: false, run: async () => { setPlusOpen(false); const r = await findProjectPrd(workspacePath); if (r) setPrd(r); else flashPrdMsg('Nenhum PRD encontrado na pasta do projeto'); } },
                       { key: 'tokens', label: 'Design tokens', icon: <PaletteOutlined sx={{ fontSize: 15 }} />, on: tokensFollowing, toggle: true, run: () => setTokensFollowing((v) => !v) },
                       { key: 'fast', label: 'Modo rapido', icon: <BoltRounded sx={{ fontSize: 16 }} />, on: fastMode, toggle: true, run: () => setFastMode((v) => !v) },
                       { key: 'img', label: 'Chaves de imagens (pessoas)', icon: <ImageOutlined sx={{ fontSize: 15 }} />, on: false, toggle: false, run: () => { setKeysOpen(true); setPlusOpen(false); } },
@@ -1080,32 +1910,237 @@ export default function FigcraftStudioView({
                     ))}
                   </div>
                 )}
+
+                {/* Botao e Popover de Handoff: Implementar Design na IDE ou no CLI */}
+                <button
+                  type="button"
+                  title="Implementar telas do Design no código do projeto (IDE ou CLI)"
+                  onClick={async () => {
+                    const next = !handoffMenuOpen;
+                    setHandoffMenuOpen(next);
+                    if (next) {
+                      setPlusOpen(false);
+                      await syncDesignBridge(workspacePath, false);
+                    }
+                  }}
+                  style={{
+                    height: 28,
+                    padding: '0 9px',
+                    border: 'none',
+                    borderRadius: 6,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    background: handoffMenuOpen
+                      ? isEffectiveDark
+                        ? 'rgba(255,255,255,0.12)'
+                        : 'rgba(0,0,0,0.08)'
+                      : isEffectiveDark
+                      ? 'rgba(255,255,255,0.06)'
+                      : 'rgba(0,0,0,0.05)',
+                    color: themeTokens.textPrimary,
+                    fontSize: 11.5,
+                    fontWeight: 400,
+                    fontFamily: "'Poppins', sans-serif",
+                    cursor: 'pointer',
+                    transition: 'background 0.15s ease',
+                  }}
+                >
+                  <CodeRounded sx={{ fontSize: 14, color: accentColor }} />
+                  <span>Implementar</span>
+                  {bridgeManifest?.screens?.length ? (
+                    <span
+                      style={{
+                        fontSize: 10,
+                        padding: '1px 5px',
+                        borderRadius: 4,
+                        background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+                        color: themeTokens.textSecondary,
+                      }}
+                    >
+                      {bridgeManifest.screens.length}
+                    </span>
+                  ) : null}
+                  <KeyboardArrowDownRounded sx={{ fontSize: 14, color: themeTokens.textSecondary }} />
+                </button>
+
+                {handoffMenuOpen && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      bottom: 34,
+                      left: 0,
+                      width: 248,
+                      background: isEffectiveDark ? '#1a1a1c' : '#ffffff',
+                      borderRadius: 10,
+                      padding: 8,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                      zIndex: 330,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 10.5,
+                        color: themeTokens.textSecondary,
+                        padding: '2px 4px 4px',
+                        borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+                      }}
+                    >
+                      Selecione a tela para replicar no projeto
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 150, overflowY: 'auto' }}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedHandoffScreenId('all')}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '6px 8px',
+                          borderRadius: 6,
+                          border: 'none',
+                          background:
+                            selectedHandoffScreenId === 'all'
+                              ? isEffectiveDark
+                                ? 'rgba(255,255,255,0.08)'
+                                : 'rgba(0,0,0,0.06)'
+                              : 'transparent',
+                          color: themeTokens.textPrimary,
+                          fontSize: 11.5,
+                          fontWeight: 400,
+                          fontFamily: "'Poppins', sans-serif",
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                        }}
+                      >
+                        <span>Todas as telas ({bridgeManifest?.screens?.length || 0})</span>
+                        {selectedHandoffScreenId === 'all' && <CheckRounded sx={{ fontSize: 14, color: accentColor }} />}
+                      </button>
+                      {(bridgeManifest?.screens || []).map((scr) => {
+                        const isSel = selectedHandoffScreenId === scr.id;
+                        return (
+                          <button
+                            key={scr.id}
+                            type="button"
+                            onClick={() => setSelectedHandoffScreenId(scr.id)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 6,
+                              padding: '6px 8px',
+                              borderRadius: 6,
+                              border: 'none',
+                              background: isSel
+                                ? isEffectiveDark
+                                  ? 'rgba(255,255,255,0.08)'
+                                  : 'rgba(0,0,0,0.06)'
+                                : 'transparent',
+                              color: themeTokens.textPrimary,
+                              fontSize: 11.5,
+                              fontWeight: 400,
+                              fontFamily: "'Poppins', sans-serif",
+                              cursor: 'pointer',
+                              textAlign: 'left',
+                            }}
+                          >
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                              {scr.name}
+                            </span>
+                            <span style={{ fontSize: 10, color: themeTokens.textSecondary, flexShrink: 0 }}>
+                              {scr.width}x{scr.height}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 6,
+                        paddingTop: 4,
+                        borderTop: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleHandoffDesign('ide')}
+                        style={{
+                          flex: 1,
+                          height: 28,
+                          border: 'none',
+                          borderRadius: 6,
+                          background: accentColor,
+                          color: '#ffffff',
+                          fontSize: 11.5,
+                          fontWeight: 400,
+                          fontFamily: "'Poppins', sans-serif",
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 5,
+                          transition: 'opacity 0.15s ease',
+                        }}
+                      >
+                        <CodeRounded sx={{ fontSize: 14 }} />
+                        Na IDE
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleHandoffDesign('cli')}
+                        style={{
+                          flex: 1,
+                          height: 28,
+                          border: 'none',
+                          borderRadius: 6,
+                          background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)',
+                          color: themeTokens.textPrimary,
+                          fontSize: 11.5,
+                          fontWeight: 400,
+                          fontFamily: "'Poppins', sans-serif",
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 5,
+                          transition: 'background 0.15s ease',
+                        }}
+                      >
+                        <TerminalRounded sx={{ fontSize: 14, color: '#22c55e' }} />
+                        No CLI
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div style={{ flex: 1, minWidth: 0 }} />
 
               <button
                 type="button"
-                disabled={!busy && !prompt.trim() && !aiImages.length}
-                onClick={busy ? stop : run}
+                disabled={!busy && !prompt.trim() && !aiImages.length && !prd && !hasSelectedCanvasImage}
+                onClick={busy ? stop : () => run()}
                 title={busy ? 'Parar a geração' : 'Gerar (Enter)'}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: 6,
                   height: 28,
-                  background: busy || prompt.trim()
+                  background: busy || prompt.trim() || aiImages.length || prd || hasSelectedCanvasImage
                     ? accentColor
                     : isEffectiveDark
                     ? 'rgba(255, 255, 255, 0.08)'
                     : 'rgba(0, 0, 0, 0.08)',
-                  color: busy || prompt.trim() ? '#ffffff' : themeTokens.textMuted || themeTokens.textSecondary,
+                  color: busy || prompt.trim() || aiImages.length || prd || hasSelectedCanvasImage ? '#ffffff' : themeTokens.textMuted || themeTokens.textSecondary,
                   border: 'none',
                   borderRadius: 6,
                   padding: '0 14px',
                   fontSize: 12,
                   fontWeight: 400,
-                  cursor: busy || prompt.trim() ? 'pointer' : 'not-allowed',
+                  cursor: busy || prompt.trim() || aiImages.length || prd || hasSelectedCanvasImage ? 'pointer' : 'not-allowed',
                   transition: 'all 0.15s ease',
                   flexShrink: 0,
                 }}

@@ -74,7 +74,11 @@ export const PT_ICON_TERMS: Record<string, string> = {
   idioma: 'language translate', traduzir: 'translate', livro: 'book menu_book', biblioteca: 'library_books local_library', caderno: 'book notebook note', estudo: 'school menu_book', formatura: 'school', ciencia: 'science biotech', quimica: 'science biotech',
   hospital: 'local_hospital', remedio: 'medication', vacina: 'vaccines', medicamento: 'medication', ambulancia: 'emergency', emergencia: 'emergency warning sos', fogo: 'local_fire_department whatshot', bomba: 'whatshot', agua: 'water_drop water', gota: 'water_drop', folha: 'eco spa', arvore: 'park forest', flor: 'local_florist', cachorro: 'pets', gato: 'pets', patinha: 'pets',
   cafe: 'coffee local_cafe', pizza: 'local_pizza', bolo: 'cake', sorvete: 'icecream', vinho: 'wine_bar', bar: 'local_bar sports_bar', cerveja: 'sports_bar', fruta: 'nutrition', supermercado: 'local_grocery_store shopping_cart', farmacia: 'local_pharmacy', posto: 'local_gas_station', gasolina: 'local_gas_station', estacionamento: 'local_parking', 
-  futebol: 'sports_soccer', basquete: 'sports_basketball', academia: 'fitness_center', musculacao: 'fitness_center', corrida: 'directions_run', natacao: 'pool', ioga: 'self_improvement spa', 
+  futebol: 'sports_soccer', basquete: 'sports_basketball', academia: 'fitness_center', musculacao: 'fitness_center', corrida: 'directions_run', natacao: 'pool', ioga: 'self_improvement spa',
+  agro: 'agriculture grass eco park terrain water_drop local_shipping warehouse', fazenda: 'agriculture grass cottage terrain', pecuaria: 'pets grass agriculture', safra: 'agriculture eco grass', lavoura: 'agriculture grass water_drop',
+  pix: 'qr_code paid bolt payments', boleto: 'receipt barcode qr_code', fatura: 'receipt credit_card description', transferencia: 'swap_horiz send payments', investimento: 'trending_up savings show_chart',
+  imovel: 'home apartment location_city domain key', aluguel: 'home apartment key real_estate_agent', condominio: 'apartment domain location_city',
+  ia: 'auto_awesome bolt psychology smart_toy memory', agente: 'smart_toy auto_awesome hub', automacao: 'bolt settings_suggest account_tree', kanban: 'view_kanban dashboard task', sprint: 'DirectionsRun bolt timeline',
 };
 
 /** minúsculas sem acento */

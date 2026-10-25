@@ -1753,6 +1753,11 @@ class GithubAuthService {
     await this.ghSend('POST', `https://api.github.com/repos/${owner}/${repo}/pulls/${pullNumber}/requested_reviewers`, { reviewers });
   }
 
+  /** Envia um review no PR com o token do usuário logado (APPROVE | REQUEST_CHANGES | COMMENT). */
+  public async submitPullReview(owner: string, repo: string, pullNumber: number, event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT', body?: string): Promise<void> {
+    await this.ghSend('POST', `https://api.github.com/repos/${owner}/${repo}/pulls/${pullNumber}/reviews`, { event, ...(body ? { body } : {}) });
+  }
+
   public async addAssignees(owner: string, repo: string, issueNumber: number, assignees: string[]): Promise<void> {
     await this.ghSend('POST', `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/assignees`, { assignees });
   }

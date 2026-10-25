@@ -51,6 +51,7 @@ export interface ElectronAPI {
     create: (id: string, type: string, cwd: string, cols: number, rows: number, accentColor?: string, extraOptions?: any) => Promise<{ success: boolean; id?: string; title?: string; pid?: number; reused?: boolean; error?: string }>;
     writePrompt?: (id: string, prompt: string) => Promise<{ success: boolean; error?: string }>;
     runPromptInCli?: (id: string, prompt: string, timeoutMs?: number) => Promise<{ response: string; error?: string; cancelled?: boolean }>;
+    cancelPrompt?: (id: string) => void;
     write: (id: string, data: string) => void;
     resize: (id: string, cols: number, rows: number) => void;
     kill: (id: string) => void;
@@ -271,6 +272,7 @@ export interface ElectronAPI {
     removeTeamRepo?: (org: string, teamSlug: string, owner: string, repo: string) => Promise<{ success: boolean; error?: string }>;
     createTeam?: (org: string, name: string, description?: string) => Promise<{ success: boolean; team?: any; error?: string }>;
     requestReviewers?: (owner: string, repo: string, pullNumber: number, reviewers: string[]) => Promise<{ success: boolean; error?: string }>;
+    submitPullReview?: (owner: string, repo: string, pullNumber: number, event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT', body?: string) => Promise<{ success: boolean; error?: string }>;
     addAssignees?: (owner: string, repo: string, issueNumber: number, assignees: string[]) => Promise<{ success: boolean; error?: string }>;
     settings?: (action: string, payload: any) => Promise<{ success: boolean; data?: any; error?: string }>;
     fetchIssueComments: (owner: string, repo: string, issueNumber: number) => Promise<{ success: boolean; comments?: any[]; error?: string }>;

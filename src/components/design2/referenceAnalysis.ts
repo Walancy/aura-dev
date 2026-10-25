@@ -7,13 +7,13 @@ import { requestAiScreenRaw } from './aiScreenFromLlm';
  */
 export function buildReferenceAnalysisPrompt(paths: string[], extra = '', compact = false): string {
   if (compact) return `Você é um designer de produto sênior. Abra TODAS as imagens (arquivos locais) e escreva uma ESPECIFICAÇÃO VISUAL enxuta para recriá-las com FIDELIDADE MÁXIMA. Responda em texto denso, em português, no máximo 6000 caracteres, SEM JSON, nestas seções:
-FORMATO: dispositivo e proporção.
+FORMATO: dispositivo e proporção. Se a imagem é uma FOTO/MOCKUP do aparelho (inclinado, na mão), descreva só a tela do app como se estivesse reta.
 TEMA: cores em hex (fundo, superfícies, primária, acento, textos, bordas).
 TIPOGRAFIA: para cada nível (título, subtítulo, corpo, rótulo, legenda, botão): px (tela de ~393px de largura), peso, espaçamento entre letras, caixa, cor.
 FUNDO: cor do topo/centro/base, degradês (tipo, paradas em hex com alfa e posição %, ângulo ou centro/raio), brilhos, vinhetas; se há foto/ilustração. Mesmo atrás de painéis arredondados: diga o que aparece atrás dos cantos.
 TEXTURAS (se houver): granulado/ruído, quadriculado/grade, pontos ou linhas — onde (fundo, card), cor com alfa, tamanho da célula em px.
 VIDRO/SOMBRAS/EFEITOS: quais componentes, blur, bordas com alfa, sombras (x,y,blur,cor), blur progressivo (onde).
-LAYOUT: de fora para dentro, container | direção | gap px | padding px | fundo | borda | raio. Diferencie cards separados de seções coladas.
+LAYOUT: de fora para dentro, container | direção | gap px | padding px | fundo | borda | raio. Diferencie cards separados de seções coladas, e o que é FULL-BLEED (mapa, foto, mapa de calor ocupando a área toda, sem margem/raio/borda) do que tem padding; controles flutuantes sobre um fundo/mapa são sobrepostos, sem container.
 INVENTÁRIO (o mais importante): UMA LINHA por elemento visível, de cima para baixo, nada omitido (texto, ícone, botão, chip, avatar, divisória, imagem). Indente por nível. Formato: tipo | TEXTO LITERAL entre aspas | caixa em % da tela x,y,largura,altura | preenchimento hex(+alfa) | borda | raio px | fonte px/peso/cor/alinhamento. Itens repetidos listados um a um.
 ${extra}
 Imagens:

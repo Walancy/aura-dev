@@ -47,7 +47,22 @@ import {
   Tag,
   User,
   SlidersHorizontal,
+  Layers,
+  Save,
+  Scissors,
+  ClipboardPaste,
+  Pencil,
 } from 'lucide-react';
+import { CodiconFiles, CodiconSourceControl } from './Codicons';
+import {
+  loadDesignBridgeManifest,
+  getDesignBridgeManifestSync,
+  buildCliTerminalDesignPrompt,
+  resolveDesignScreenPreviewUrl,
+  buildScreenSvgFallbackDataUrl,
+  type DesignBridgeManifest,
+  type DesignScreenSpec,
+} from '../utils/designBridgeService';
 import { FileIcon, FolderIcon } from './FileIcon';
 import { NativeXTerm, scrollTerminalToText, TERMINAL_THEMES } from './NativeXTerm';
 import { TerminalSkinOverlay, skinDividerVars } from './TerminalSkin';
@@ -264,8 +279,127 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   onGenerateCommitMessage,
   onStartReview,
 }) => {
-  // Left sidebar tabs: 'files' | 'git' | 'issues'
-  const [sidebarTab, setSidebarTab] = useState<'files' | 'git' | 'issues'>('files');
+  // Left sidebar tabs: 'files' | 'git' | 'issues' | 'design'
+  const [sidebarTab, setSidebarTab] = useState<'files' | 'git' | 'issues' | 'design'>('files');
+  const [designManifest, setDesignManifest] = useState<DesignBridgeManifest | null>(() =>
+    getDesignBridgeManifestSync(workspacePath)
+  );
+  const [designSearchQuery, setDesignSearchQuery] = useState<string>('');
+  const [previewDesignScreen, setPreviewDesignScreen] = useState<DesignScreenSpec | null>(null);
+  const [previewDesignUrl, setPreviewDesignUrl] = useState<string | null>(null);
+  const [resolvedCliDesignThumbs, setResolvedCliDesignThumbs] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const screens = designManifest?.screens || [];
+    if (screens.length === 0) return;
+    let alive = true;
+    (async () => {
+      const next: Record<string, string> = {};
+      for (const scr of screens) {
+        const url = await resolveDesignScreenPreviewUrl(workspacePath, scr);
+        if (!alive) return;
+        next[scr.id] = url;
+      }
+      if (alive) {
+        setResolvedCliDesignThumbs((prev) => {
+          const changed = Object.keys(next).some((k) => prev[k] !== next[k]);
+          return changed ? { ...prev, ...next } : prev;
+        });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [workspacePath, designManifest]);
+
+  useEffect(() => {
+    if (!previewDesignScreen) {
+      setPreviewDesignUrl(null);
+      return;
+    }
+    let alive = true;
+    resolveDesignScreenPreviewUrl(workspacePath, previewDesignScreen).then((url) => {
+      if (alive) setPreviewDesignUrl(url);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [workspacePath, previewDesignScreen]);
+
+  useEffect(() => {
+    let active = true;
+    loadDesignBridgeManifest(workspacePath).then((m) => {
+      if (active) setDesignManifest(m);
+    });
+    const onBridgeUpdate = (e: any) => {
+      const detail = e?.detail as DesignBridgeManifest | undefined;
+      if (detail && (!workspacePath || detail.workspacePath === workspacePath.replace(/\/+$/, ''))) {
+        setDesignManifest(detail);
+      } else {
+        loadDesignBridgeManifest(workspacePath).then((m) => {
+          if (active) setDesignManifest(m);
+        });
+      }
+    };
+    window.addEventListener('devflow-design-bridge-updated', onBridgeUpdate as EventListener);
+    return () => {
+      active = false;
+      window.removeEventListener('devflow-design-bridge-updated', onBridgeUpdate as EventListener);
+    };
+  }, [workspacePath]);
+
+  const handleSendDesignToTerminal = useCallback(
+    (screen?: DesignScreenSpec, executeNow = false) => {
+      if (!designManifest || designManifest.screens.length === 0) {
+        onToast?.('Nenhuma tela encontrada na aba Design deste projeto');
+        return;
+      }
+      const targetSessionId = activeSessionId || terminalSessions[0]?.id;
+      if (!targetSessionId) {
+        onToast?.('Nenhum terminal ativo para enviar o design');
+        return;
+      }
+      const text = executeNow
+        ? buildCliTerminalDesignPrompt(designManifest, screen ? [screen] : undefined)
+        : screen
+        ? `[Design "${screen.name}" (${screen.width}x${screen.height}px) — spec: .devflow/design/index.md | preview: ${screen.imageRelPath}] `
+        : `[Designs do Projeto (${designManifest.screens.length} telas) — spec: .devflow/design/index.md] `;
+
+      if (window.electronAPI?.pty?.write) {
+        window.electronAPI.pty.write(targetSessionId, `\x1b[200~${text}\x1b[201~`);
+        if (executeNow) {
+          setTimeout(() => {
+            window.electronAPI?.pty?.write(targetSessionId, '\r');
+          }, 120);
+        }
+      } else {
+        navigator.clipboard?.writeText(text);
+      }
+
+      logSystemActivity('terminal', 'send_design_to_terminal', gitRepoName || 'default', {
+        sessionId: targetSessionId,
+        screen: screen?.name || 'all',
+        executeNow,
+      });
+
+      onToast?.(
+        executeNow
+          ? `Implementando design "${screen?.name || 'Todas as telas'}" no terminal`
+          : `Referência do design "${screen?.name || 'Todas as telas'}" inserida no terminal`
+      );
+
+      window.dispatchEvent(new CustomEvent('devflow:focus-terminal', { detail: { sessionId: targetSessionId } }));
+      setTimeout(() => {
+        const helper = (
+          document.querySelector(`[data-session-id="${targetSessionId}"] .xterm-helper-textarea`) ||
+          document.querySelector('[data-session-id] .xterm-helper-textarea') ||
+          document.querySelector('.xterm-helper-textarea')
+        ) as HTMLTextAreaElement | null;
+        if (helper) helper.focus();
+      }, 25);
+    },
+    [designManifest, activeSessionId, terminalSessions, gitRepoName, onToast]
+  );
 
   // Issues tab state
   const [issuesFilter, setIssuesFilter] = useState<'all' | 'open' | 'closed'>('open');
@@ -524,6 +658,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   const [creating, setCreating] = useState<{ parent: string; isDirectory: boolean } | null>(null);
   const [creatingName, setCreatingName] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<ExplorerNode | null>(null);
+  const [fileClipboard, setFileClipboard] = useState<{ path: string; mode: 'copy' | 'cut' } | null>(null);
+  const [renaming, setRenaming] = useState<{ path: string; name: string } | null>(null);
   const [isDeletingItem, setIsDeletingItem] = useState(false);
 
   const confirmDeleteItem = async () => {
@@ -540,8 +676,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
     setDeleteTarget(null);
   };
 
-  const startCreating = (isDirectory: boolean) => {
-    const parent = selectedDir && (selectedDir === workspacePath || selectedDir.startsWith(workspacePath + '/')) ? selectedDir : workspacePath;
+  const startCreating = (isDirectory: boolean, forcedParent?: string) => {
+    const parent = forcedParent || (selectedDir && (selectedDir === workspacePath || selectedDir.startsWith(workspacePath + '/')) ? selectedDir : workspacePath);
     if (parent !== workspacePath) {
       // garante que a pasta alvo esteja visível
       if (!expandedFolders.has(parent)) onToggleFolder(parent);
@@ -560,12 +696,70 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
     try {
       await window.electronAPI?.fs?.createItem(full, info.isDirectory);
       onRefreshTree?.();
-      if (!info.isDirectory) onOpenFile?.(full, name.split('/').pop() || name);
+      if (!info.isDirectory) openViewer(full, name.split('/').pop() || name);
       onToast?.(`${info.isDirectory ? 'Pasta' : 'Arquivo'} criado: ${name}`);
     } catch (err: any) {
       onToast?.(`Erro ao criar: ${err?.message || err}`);
     }
   };
+
+  const parentDirOf = (itemPath: string) => itemPath.split('/').slice(0, -1).join('/') || workspacePath;
+
+  const pasteIntoNode = async (node: ExplorerNode) => {
+    if (!fileClipboard) return;
+    const targetDir = node.isDirectory ? node.path : parentDirOf(node.path);
+    const itemName = fileClipboard.path.split('/').pop() || 'item';
+    const dest = `${targetDir}/${itemName}`;
+    if (dest === fileClipboard.path) {
+      setFileClipboard(null);
+      return;
+    }
+    try {
+      if (fileClipboard.mode === 'copy') await window.electronAPI?.fs?.copyItem(fileClipboard.path, dest);
+      else {
+        await window.electronAPI?.fs?.renameItem(fileClipboard.path, dest);
+        setFileClipboard(null);
+      }
+      logSystemActivity('terminal', fileClipboard.mode === 'copy' ? 'copiar_item' : 'mover_item', gitRepoName || 'default', { from: fileClipboard.path, to: dest });
+      if (targetDir !== workspacePath && !expandedFolders.has(targetDir)) onToggleFolder(targetDir);
+      onRefreshTree?.();
+      onToast?.(`"${itemName}" colado em ${targetDir.split('/').pop()}`);
+    } catch (err: any) {
+      onToast?.(`Erro ao colar: ${err?.message || err}`);
+    }
+  };
+
+  const commitRename = async () => {
+    const info = renaming;
+    setRenaming(null);
+    const name = info?.name.trim();
+    if (!info || !name || name.includes('/') || name === info.path.split('/').pop()) return;
+    const dest = `${parentDirOf(info.path)}/${name}`;
+    try {
+      await window.electronAPI?.fs?.renameItem(info.path, dest);
+      logSystemActivity('terminal', 'renomear_item', gitRepoName || 'default', { from: info.path, to: dest });
+      onRefreshTree?.();
+      onToast?.(`Renomeado para "${name}"`);
+    } catch (err: any) {
+      onToast?.(`Erro ao renomear: ${err?.message || err}`);
+    }
+  };
+
+  const renderRenameInput = () => (
+    <input
+      autoFocus
+      value={renaming?.name || ''}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => setRenaming((r) => (r ? { ...r, name: e.target.value } : r))}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={commitRename}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commitRename();
+        if (e.key === 'Escape') setRenaming(null);
+      }}
+      style={{ flex: 1, minWidth: 0, height: 20, background: 'transparent', border: 'none', outline: 'none', fontSize: 12, fontWeight: 400, color: skinTk.textPrimary, fontFamily: 'inherit' }}
+    />
+  );
 
   const handleTreeDrop = async (e: React.DragEvent, destDir: string) => {
     e.preventDefault();
@@ -1314,23 +1508,136 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   const [cliDockTab, setCliDockTab] = useState('terminal');
   const [issueMenuOpen, setIssueMenuOpen] = useState<number | null>(null);
   const [dockMenuOpen, setDockMenuOpen] = useState(false);
-  // arquivo aberto no visualizador de código (ocupa a área dos terminais até voltar)
-  const [viewer, setViewer] = useState<{ path: string; name: string; content?: string; dataUrl?: string; error?: string } | null>(null);
-  const openViewer = useCallback(async (path: string, name: string) => {
-    setViewer({ path, name });
-    const fsApi = window.electronAPI?.fs;
-    try {
-      if (/\.(png|jpe?g|gif|webp|ico|bmp)$/i.test(name)) {
-        const r = await fsApi?.readFileDataUrl?.(path, 20 * 1024 * 1024);
-        setViewer((v) => (v?.path === path ? { ...v, dataUrl: r?.dataUrl, error: r?.dataUrl ? undefined : r?.error || 'Não foi possível abrir a imagem' } : v));
-      } else {
-        const r = await fsApi?.readFile(path);
-        setViewer((v) => (v?.path === path ? { ...v, content: r?.content ?? '', error: r?.error } : v));
+  // arquivo aberto no editor de código do CLI (ocupa a área dos terminais até voltar)
+  const [viewer, setViewer] = useState<{
+    path: string;
+    name: string;
+    content?: string;
+    savedContent?: string;
+    initialContent?: string;
+    dataUrl?: string;
+    error?: string;
+    isSaving?: boolean;
+    savedAt?: number;
+  } | null>(null);
+  const viewerRef = useRef(viewer);
+  viewerRef.current = viewer;
+  const cliEditorInstanceRef = useRef<any>(null);
+
+  const handleSaveViewerFile = useCallback(
+    async (overrideContent?: string, silent?: boolean): Promise<boolean> => {
+      const cur = viewerRef.current;
+      if (!cur || cur.dataUrl || cur.error || cur.content === undefined) return false;
+      const contentToSave = overrideContent !== undefined ? overrideContent : cur.content;
+      setViewer((prev) => (prev && prev.path === cur.path ? { ...prev, isSaving: true } : prev));
+      try {
+        const res = await window.electronAPI?.fs?.writeFile?.(cur.path, contentToSave);
+        if (res && res.error) {
+          if (!silent) onToast?.(`Erro ao salvar ${cur.name}: ${res.error}`);
+          setViewer((prev) => (prev && prev.path === cur.path ? { ...prev, isSaving: false } : prev));
+          return false;
+        }
+        const now = Date.now();
+        setViewer((prev) =>
+          prev && prev.path === cur.path
+            ? { ...prev, content: contentToSave, savedContent: contentToSave, isSaving: false, savedAt: now }
+            : prev
+        );
+        try {
+          logSystemActivity(
+            workspacePath || '',
+            'file_edit',
+            `Arquivo editado no CLI: ${cur.name}`,
+            `Alterações manuais salvas em ${cur.path}`,
+            { path: cur.path, name: cur.name }
+          );
+        } catch {}
+        if (!silent) onToast?.(`Arquivo salvo: ${cur.name}`);
+        return true;
+      } catch (err: any) {
+        setViewer((prev) => (prev && prev.path === cur.path ? { ...prev, isSaving: false } : prev));
+        if (!silent) onToast?.(`Falha ao salvar ${cur.name}: ${err?.message || err}`);
+        return false;
       }
-    } catch (err: any) {
-      setViewer((v) => (v?.path === path ? { ...v, error: err?.message || 'Falha ao ler o arquivo' } : v));
+    },
+    [workspacePath, onToast]
+  );
+
+  const openViewer = useCallback(
+    async (path: string, name: string) => {
+      const prev = viewerRef.current;
+      if (
+        prev &&
+        prev.path !== path &&
+        prev.content !== undefined &&
+        prev.savedContent !== undefined &&
+        prev.content !== prev.savedContent
+      ) {
+        await handleSaveViewerFile(prev.content, true);
+      }
+      setPreviewDesignScreen(null);
+      setViewer({ path, name });
+      const fsApi = window.electronAPI?.fs;
+      try {
+        if (/\.(png|jpe?g|gif|webp|ico|bmp)$/i.test(name)) {
+          const r = await fsApi?.readFileDataUrl?.(path, 20 * 1024 * 1024);
+          setViewer((v) =>
+            v?.path === path
+              ? { ...v, dataUrl: r?.dataUrl, error: r?.dataUrl ? undefined : r?.error || 'Não foi possível abrir a imagem' }
+              : v
+          );
+        } else {
+          const r = await fsApi?.readFile(path);
+          const text = r?.content ?? '';
+          setViewer((v) =>
+            v?.path === path
+              ? { ...v, content: text, savedContent: text, initialContent: text, error: r?.error }
+              : v
+          );
+        }
+      } catch (err: any) {
+        setViewer((v) => (v?.path === path ? { ...v, error: err?.message || 'Falha ao ler o arquivo' } : v));
+      }
+    },
+    [handleSaveViewerFile]
+  );
+
+  const closeViewer = useCallback(async () => {
+    const cur = viewerRef.current;
+    if (
+      cur &&
+      cur.content !== undefined &&
+      cur.savedContent !== undefined &&
+      cur.content !== cur.savedContent
+    ) {
+      await handleSaveViewerFile(cur.content, true);
     }
-  }, []);
+    setViewer(null);
+  }, [handleSaveViewerFile]);
+
+  // Auto-save silencioso após 1s de inatividade ao editar manualmente no CLI
+  useEffect(() => {
+    if (!viewer || viewer.dataUrl || viewer.error || viewer.content === undefined || viewer.savedContent === undefined) return;
+    if (viewer.content === viewer.savedContent) return;
+    const timer = setTimeout(() => {
+      handleSaveViewerFile(viewer.content, true);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [viewer?.path, viewer?.content, viewer?.savedContent, viewer?.dataUrl, viewer?.error, handleSaveViewerFile]);
+
+  // Atalho global Cmd+S / Ctrl+S enquanto um arquivo está aberto no editor do CLI
+  useEffect(() => {
+    if (!viewer || viewer.dataUrl || viewer.error || viewer.content === undefined) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        e.stopPropagation();
+        handleSaveViewerFile();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [viewer?.path, viewer?.dataUrl, viewer?.error, viewer?.content !== undefined, handleSaveViewerFile]);
 
   // Tooltips imediatos e estilizados para qualquer elemento com title (o title nativo é movido para data-tip ao passar o mouse)
   const viewRootRef = useRef<HTMLDivElement>(null);
@@ -2186,7 +2493,317 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
         </div>
       )}
       {/* =================================================================== */}
-      {/* 1. LEFT PANE: NAVEGAÇÃO DE ARQUIVOS (EXPLORER)                      */}
+      {/* 0. ACTIVITY BAR (VERTICAL LEFT STRIP COM ÍCONES IGUAL À IDE)        */}
+      {/* =================================================================== */}
+      <div
+        style={{
+          alignSelf: 'stretch',
+          width: 48,
+          padding: '10px 0',
+          background: skinActive ? 'transparent' : skinTk.bgCard,
+          borderRadius: 10,
+          border: 'none',
+          boxShadow: 'none',
+          flexDirection: 'column',
+          justifyContent: 'flex-start',
+          alignItems: 'center',
+          gap: 6,
+          display: 'inline-flex',
+          flexShrink: 0,
+          transition: 'background 0.2s ease',
+          userSelect: 'none',
+          position: 'relative',
+        }}
+      >
+        {/* 1. Arquivos / Explorer */}
+        <div
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 6,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative',
+            cursor: 'pointer',
+            background:
+              !isExplorerCollapsed && sidebarTab === 'files'
+                ? isEffectiveDark
+                  ? 'rgba(255, 255, 255, 0.12)'
+                  : 'rgba(0, 0, 0, 0.08)'
+                : 'transparent',
+            color:
+              !isExplorerCollapsed && sidebarTab === 'files'
+                ? isEffectiveDark
+                  ? '#ffffff'
+                  : skinTk.textPrimary
+                : isEffectiveDark
+                ? '#858585'
+                : skinTk.textSecondary,
+            transition: 'all 0.15s ease',
+          }}
+          title="Explorador de Arquivos"
+          onClick={() => {
+            if (!isExplorerCollapsed && sidebarTab === 'files') {
+              setIsExplorerCollapsed(true);
+            } else {
+              setSidebarTab('files');
+              setIsExplorerCollapsed(false);
+            }
+          }}
+          onMouseEnter={(e) => {
+            if (!(!isExplorerCollapsed && sidebarTab === 'files')) {
+              e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+              e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : skinTk.textPrimary;
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!(!isExplorerCollapsed && sidebarTab === 'files')) {
+              e.currentTarget.style.background = 'transparent';
+              e.currentTarget.style.color = isEffectiveDark ? '#858585' : skinTk.textSecondary;
+            }
+          }}
+        >
+          <CodiconFiles size={22} />
+        </div>
+
+        {/* 2. Controle de Versão / Git */}
+        <div
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 6,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative',
+            cursor: 'pointer',
+            background:
+              !isExplorerCollapsed && sidebarTab === 'git'
+                ? isEffectiveDark
+                  ? 'rgba(255, 255, 255, 0.12)'
+                  : 'rgba(0, 0, 0, 0.08)'
+                : 'transparent',
+            color:
+              !isExplorerCollapsed && sidebarTab === 'git'
+                ? isEffectiveDark
+                  ? '#ffffff'
+                  : skinTk.textPrimary
+                : isEffectiveDark
+                ? '#858585'
+                : skinTk.textSecondary,
+            transition: 'all 0.15s ease',
+          }}
+          title="Controle de Versão (Git)"
+          onClick={() => {
+            if (!isExplorerCollapsed && sidebarTab === 'git') {
+              setIsExplorerCollapsed(true);
+            } else {
+              setSidebarTab('git');
+              setIsExplorerCollapsed(false);
+            }
+          }}
+          onMouseEnter={(e) => {
+            if (!(!isExplorerCollapsed && sidebarTab === 'git')) {
+              e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+              e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : skinTk.textPrimary;
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!(!isExplorerCollapsed && sidebarTab === 'git')) {
+              e.currentTarget.style.background = 'transparent';
+              e.currentTarget.style.color = isEffectiveDark ? '#858585' : skinTk.textSecondary;
+            }
+          }}
+        >
+          <CodiconSourceControl size={22} />
+          {(gitModifiedCount ?? 0) > 0 && (
+            <span
+              style={{
+                position: 'absolute',
+                bottom: 4,
+                right: 4,
+                minWidth: 15,
+                height: 15,
+                padding: '0 3.5px',
+                borderRadius: 8,
+                background: accentColor,
+                color: '#ffffff',
+                fontSize: 9.5,
+                fontWeight: 400,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                lineHeight: 1,
+                pointerEvents: 'none',
+              }}
+            >
+              {(gitModifiedCount ?? 0) > 99 ? '99+' : gitModifiedCount}
+            </span>
+          )}
+        </div>
+
+        {/* 3. Issues do GitHub */}
+        <div
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 6,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative',
+            cursor: 'pointer',
+            background:
+              !isExplorerCollapsed && sidebarTab === 'issues'
+                ? isEffectiveDark
+                  ? 'rgba(255, 255, 255, 0.12)'
+                  : 'rgba(0, 0, 0, 0.08)'
+                : 'transparent',
+            color:
+              !isExplorerCollapsed && sidebarTab === 'issues'
+                ? isEffectiveDark
+                  ? '#ffffff'
+                  : skinTk.textPrimary
+                : isEffectiveDark
+                ? '#858585'
+                : skinTk.textSecondary,
+            transition: 'all 0.15s ease',
+          }}
+          title="Issues do GitHub"
+          onClick={() => {
+            if (!isExplorerCollapsed && sidebarTab === 'issues') {
+              setIsExplorerCollapsed(true);
+            } else {
+              setSidebarTab('issues');
+              setIsExplorerCollapsed(false);
+            }
+          }}
+          onMouseEnter={(e) => {
+            if (!(!isExplorerCollapsed && sidebarTab === 'issues')) {
+              e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+              e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : skinTk.textPrimary;
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!(!isExplorerCollapsed && sidebarTab === 'issues')) {
+              e.currentTarget.style.background = 'transparent';
+              e.currentTarget.style.color = isEffectiveDark ? '#858585' : skinTk.textSecondary;
+            }
+          }}
+        >
+          <CircleDot size={20} />
+          {openIssuesCount > 0 && (
+            <span
+              style={{
+                position: 'absolute',
+                bottom: 4,
+                right: 4,
+                minWidth: 15,
+                height: 15,
+                padding: '0 3.5px',
+                borderRadius: 8,
+                background: '#22c55e',
+                color: '#ffffff',
+                fontSize: 9.5,
+                fontWeight: 400,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                lineHeight: 1,
+                pointerEvents: 'none',
+              }}
+            >
+              {openIssuesCount > 99 ? '99+' : openIssuesCount}
+            </span>
+          )}
+        </div>
+
+        {/* 4. Telas do Design */}
+        <div
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 6,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative',
+            cursor: 'pointer',
+            background:
+              !isExplorerCollapsed && sidebarTab === 'design'
+                ? isEffectiveDark
+                  ? 'rgba(255, 255, 255, 0.12)'
+                  : 'rgba(0, 0, 0, 0.08)'
+                : 'transparent',
+            color:
+              !isExplorerCollapsed && sidebarTab === 'design'
+                ? isEffectiveDark
+                  ? '#ffffff'
+                  : skinTk.textPrimary
+                : isEffectiveDark
+                ? '#858585'
+                : skinTk.textSecondary,
+            transition: 'all 0.15s ease',
+          }}
+          title="Telas do Design"
+          onClick={() => {
+            if (!isExplorerCollapsed && sidebarTab === 'design') {
+              setIsExplorerCollapsed(true);
+            } else {
+              setSidebarTab('design');
+              setIsExplorerCollapsed(false);
+              loadDesignBridgeManifest(workspacePath).then((m) => {
+                if (m) setDesignManifest(m);
+              });
+            }
+          }}
+          onMouseEnter={(e) => {
+            if (!(!isExplorerCollapsed && sidebarTab === 'design')) {
+              e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+              e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : skinTk.textPrimary;
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!(!isExplorerCollapsed && sidebarTab === 'design')) {
+              e.currentTarget.style.background = 'transparent';
+              e.currentTarget.style.color = isEffectiveDark ? '#858585' : skinTk.textSecondary;
+            }
+          }}
+        >
+          <Layers size={19} />
+          {(designManifest?.screens?.length ?? 0) > 0 && (
+            <span
+              style={{
+                position: 'absolute',
+                top: 5,
+                right: 5,
+                minWidth: 13,
+                height: 13,
+                padding: '0 3px',
+                borderRadius: 999,
+                background: accentColor,
+                color: '#ffffff',
+                fontSize: 8.5,
+                fontWeight: 400,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                lineHeight: 1,
+                pointerEvents: 'none',
+              }}
+            >
+              {designManifest!.screens.length}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* 5px Spacing */}
+      <div style={{ width: 5, flexShrink: 0 }} />
+
+      {/* =================================================================== */}
+      {/* 1. LEFT PANE: PAINEL LATERAL (ARQUIVOS / GIT / ISSUES / DESIGN)     */}
       {/* =================================================================== */}
       {!isExplorerCollapsed && (
         <div
@@ -2196,7 +2813,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             minHeight: 0,
             background: skinActive ? 'transparent' : skinTk.bgCard,
             borderRadius: 10,
-            border: skinActive ? 'none' : `1px solid ${skinTk.border}`,
+            border: 'none',
+            boxShadow: 'none',
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
@@ -2205,131 +2823,6 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             position: 'relative',
           }}
         >
-          {/* Header Segment Switcher: Arquivos | Git | Issues */}
-          <div
-            className="skin-bar"
-            style={{
-              padding: '6px 8px',
-              borderBottom: `1px solid ${skinTk.border}`,
-              background: skinActive ? 'transparent' : isEffectiveDark ? '#141416' : '#f8f8f8',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-              flexShrink: 0,
-            }}
-          >
-            {/* Tab: Arquivos */}
-            <button
-              type="button"
-              onClick={() => setSidebarTab('files')}
-              className="skin-tab"
-              data-on={sidebarTab === 'files' ? '1' : undefined}
-              title="Explorador de Arquivos"
-              style={{
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 5,
-                padding: '5px 6px',
-                fontSize: 11,
-                fontWeight: sidebarTab === 'files' ? 600 : 500,
-                borderRadius: 6,
-                border: 'none',
-                cursor: 'pointer',
-                background: sidebarTab === 'files' ? (isEffectiveDark ? '#232323' : '#ffffff') : 'transparent',
-                color: sidebarTab === 'files' ? skinTk.textPrimary : skinTk.textSecondary,
-                boxShadow: sidebarTab === 'files' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <FolderOpen size={13} color={sidebarTab === 'files' ? accentColor : skinTk.textSecondary} />
-              <span>Arquivos</span>
-            </button>
-
-            {/* Tab: Git */}
-            <button
-              type="button"
-              onClick={() => setSidebarTab('git')}
-              className="skin-tab"
-              data-on={sidebarTab === 'git' ? '1' : undefined}
-              title="Controle de Versão (Git)"
-              style={{
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 5,
-                padding: '5px 6px',
-                fontSize: 11,
-                fontWeight: sidebarTab === 'git' ? 600 : 500,
-                borderRadius: 6,
-                border: 'none',
-                cursor: 'pointer',
-                background: sidebarTab === 'git' ? (isEffectiveDark ? '#232323' : '#ffffff') : 'transparent',
-                color: sidebarTab === 'git' ? skinTk.textPrimary : skinTk.textSecondary,
-                boxShadow: sidebarTab === 'git' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <GitBranch size={13} color={sidebarTab === 'git' ? accentColor : skinTk.textSecondary} />
-              <span>Git</span>
-              {(gitModifiedCount ?? 0) > 0 && (
-                <span
-                  style={{
-                    color: accentColor,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    lineHeight: 1,
-                  }}
-                >
-                  {(gitModifiedCount ?? 0) > 99 ? '99+' : gitModifiedCount}
-                </span>
-              )}
-            </button>
-
-            {/* Tab: Issues */}
-            <button
-              type="button"
-              onClick={() => setSidebarTab('issues')}
-              className="skin-tab"
-              data-on={sidebarTab === 'issues' ? '1' : undefined}
-              title="Issues do GitHub"
-              style={{
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 5,
-                padding: '5px 6px',
-                fontSize: 11,
-                fontWeight: sidebarTab === 'issues' ? 600 : 500,
-                borderRadius: 6,
-                border: 'none',
-                cursor: 'pointer',
-                background: sidebarTab === 'issues' ? (isEffectiveDark ? '#232323' : '#ffffff') : 'transparent',
-                color: sidebarTab === 'issues' ? skinTk.textPrimary : skinTk.textSecondary,
-                boxShadow: sidebarTab === 'issues' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <CircleDot size={13} color={sidebarTab === 'issues' ? '#22c55e' : skinTk.textSecondary} />
-              <span>Issues</span>
-              {openIssuesCount > 0 && (
-                <span
-                  style={{
-                    color: '#22c55e',
-                    fontSize: 11,
-                    fontWeight: 700,
-                    lineHeight: 1,
-                  }}
-                >
-                  {openIssuesCount > 99 ? '99+' : openIssuesCount}
-                </span>
-              )}
-            </button>
-          </div>
-
           {/* ========================================================= */}
           {/* TAB 1: FILES EXPLORER                                    */}
           {/* ========================================================= */}
@@ -2606,9 +3099,11 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                               {isExpanded ? <ChevronDown size={13} color={accentColor} /> : <ChevronRight size={13} />}
                             </div>
                             <FolderIcon folderName={item.name} isOpen={isExpanded} size={15} />
-                            <span style={{ fontSize: 12, fontWeight: isExpanded ? 500 : 400 }}>
-                              {item.name}
-                            </span>
+                            {renaming?.path === item.path ? renderRenameInput() : (
+                              <span style={{ fontSize: 12, fontWeight: isExpanded ? 500 : 400 }}>
+                                {item.name}
+                              </span>
+                            )}
                           </>
                         ) : (
                           <>
@@ -2625,9 +3120,11 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                             >
                               <FileIcon fileName={item.name} size={15} />
                             </div>
-                            <span style={{ fontSize: 12, fontWeight: isFileActive ? 500 : 400 }}>
-                              {item.name}
-                            </span>
+                            {renaming?.path === item.path ? renderRenameInput() : (
+                              <span style={{ fontSize: 12, fontWeight: isFileActive ? 500 : 400 }}>
+                                {item.name}
+                              </span>
+                            )}
                           </>
                         )}
                       </div>
@@ -2685,8 +3182,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 isEffectiveDark={isEffectiveDark}
                 accentColor={accentColor}
                 accentTextColor="#ffffff"
-                activeFile={activeFileId ? { path: activeFileId, name: activeFileId.split('/').pop() || '' } : null}
-                onOpenFile={(filePath, fileName) => onOpenFile?.(filePath, fileName)}
+                activeFile={viewer ? { path: viewer.path, name: viewer.name } : activeFileId ? { path: activeFileId, name: activeFileId.split('/').pop() || '' } : null}
+                onOpenFile={(filePath, fileName) => openViewer(filePath, fileName || filePath.split('/').pop() || 'file')}
                 onJumpToLine={() => {}}
                 onStartReview={onStartReview}
                 onRunTerminalCommand={(name, cmd) => {
@@ -3211,6 +3708,353 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       </div>
                     );
                   })
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* TAB 4: DESIGN BRIDGE SCREENS & PROTOTYPES                */}
+          {/* ========================================================= */}
+          {sidebarTab === 'design' && (
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+              }}
+            >
+              {/* Top Toolbar: Search + Sync + Implement All */}
+              <div
+                style={{
+                  padding: 8,
+                  borderBottom: `1px solid ${skinTk.border}`,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  flexShrink: 0,
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div
+                    style={{
+                      flex: 1,
+                      height: 26,
+                      borderRadius: 6,
+                      background: isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '0 8px',
+                    }}
+                  >
+                    <Search size={12} color={skinTk.textMuted} />
+                    <input
+                      type="text"
+                      value={designSearchQuery}
+                      onChange={(e) => setDesignSearchQuery(e.target.value)}
+                      placeholder="Buscar tela do design..."
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        height: '100%',
+                        background: 'transparent',
+                        border: 'none',
+                        outline: 'none',
+                        color: skinTk.textPrimary,
+                        fontSize: 11,
+                        fontWeight: 400,
+                        fontFamily: 'inherit',
+                      }}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      loadDesignBridgeManifest(workspacePath).then((m) => {
+                        setDesignManifest(m);
+                        onToast?.('Catálogo de Design atualizado');
+                      });
+                    }}
+                    title="Recarregar telas do Design"
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 6,
+                      border: 'none',
+                      background: isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
+                      color: skinTk.textSecondary,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      transition: 'background 0.15s ease',
+                    }}
+                  >
+                    <RefreshCw size={12} />
+                  </button>
+                </div>
+
+                {(designManifest?.screens?.length ?? 0) > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                    <span style={{ fontSize: 10.5, color: skinTk.textSecondary, fontWeight: 400 }}>
+                      {designManifest!.screens.length} tela{designManifest!.screens.length === 1 ? '' : 's'} sincronizada{designManifest!.screens.length === 1 ? '' : 's'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleSendDesignToTerminal(undefined, true)}
+                      title="Enviar especificação completa de todas as telas para o agente ativo no terminal"
+                      style={{
+                        height: 24,
+                        padding: '0 8px',
+                        borderRadius: 5,
+                        border: 'none',
+                        background: accentColor,
+                        color: '#ffffff',
+                        fontSize: 10.5,
+                        fontWeight: 400,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        transition: 'opacity 0.15s ease',
+                      }}
+                    >
+                      <span>Implementar todas</span>
+                      <ArrowRight size={11} />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Screens List */}
+              <div
+                style={{
+                  flex: 1,
+                  overflowY: 'auto',
+                  overflowX: 'hidden',
+                  padding: 8,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                }}
+              >
+                {!designManifest || designManifest.screens.length === 0 ? (
+                  <div
+                    style={{
+                      padding: '28px 12px',
+                      textAlign: 'center',
+                      fontSize: 11,
+                      color: skinTk.textMuted,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: 8,
+                    }}
+                  >
+                    <LayoutGrid size={22} strokeWidth={1.5} color={skinTk.textMuted} />
+                    <span>Nenhuma tela criada na aba Design ainda.</span>
+                    <span style={{ fontSize: 10, opacity: 0.8, lineHeight: 1.4 }}>
+                      Assim que você desenhar ou gerar telas com IA na aba Design, elas aparecem aqui automaticamente para uso no CLI.
+                    </span>
+                  </div>
+                ) : (
+                  designManifest.screens
+                    .filter((scr) => {
+                      const q = designSearchQuery.trim().toLowerCase();
+                      if (!q) return true;
+                      return (
+                        scr.name.toLowerCase().includes(q) ||
+                        scr.slug.toLowerCase().includes(q) ||
+                        scr.pageName.toLowerCase().includes(q)
+                      );
+                    })
+                    .map((scr) => {
+                      const isPreviewActive = previewDesignScreen?.id === scr.id;
+                      const thumbUrl = resolvedCliDesignThumbs[scr.id] || scr.previewDataUrl || buildScreenSvgFallbackDataUrl(scr);
+                      return (
+                        <div
+                          key={scr.id}
+                          onClick={() => {
+                            setViewer(null);
+                            setPreviewDesignScreen(scr);
+                            logSystemActivity('design_bridge', 'preview_design_in_cli', scr.name, {
+                              screenId: scr.id,
+                              width: scr.width,
+                              height: scr.height,
+                            });
+                          }}
+                          title={`Clique para abrir o preview de "${scr.name}" na área central`}
+                          style={{
+                            padding: 8,
+                            borderRadius: 6,
+                            background: isPreviewActive
+                              ? hexToRgba(accentColor, isEffectiveDark ? 0.18 : 0.12)
+                              : isEffectiveDark
+                              ? 'rgba(255, 255, 255, 0.04)'
+                              : 'rgba(0, 0, 0, 0.03)',
+                            border: 'none',
+                            boxShadow: 'none',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 8,
+                            cursor: 'pointer',
+                            transition: 'background 0.15s ease',
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isPreviewActive) {
+                              e.currentTarget.style.background = isEffectiveDark
+                                ? 'rgba(255, 255, 255, 0.07)'
+                                : 'rgba(0, 0, 0, 0.05)';
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isPreviewActive) {
+                              e.currentTarget.style.background = isEffectiveDark
+                                ? 'rgba(255, 255, 255, 0.04)'
+                                : 'rgba(0, 0, 0, 0.03)';
+                            }
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: '100%',
+                              height: 92,
+                              borderRadius: 5,
+                              overflow: 'hidden',
+                              background: scr.backgroundHex || (isEffectiveDark ? '#121214' : '#f1f5f9'),
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            <img
+                              src={thumbUrl}
+                              alt={scr.name}
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'contain',
+                                display: 'block',
+                              }}
+                            />
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+                              <span
+                                style={{
+                                  fontSize: 11.5,
+                                  fontWeight: 400,
+                                  color: isPreviewActive ? accentColor : skinTk.textPrimary,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                                title={scr.name}
+                              >
+                                {scr.name}
+                              </span>
+                              <span style={{ fontSize: 10, color: skinTk.textSecondary }}>
+                                {scr.width}x{scr.height}px · {scr.elementCount} elementos
+                              </span>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSendDesignToTerminal(scr, false);
+                                }}
+                                title="Mencionar esta tela no prompt do terminal (@)"
+                                style={{
+                                  height: 24,
+                                  width: 24,
+                                  borderRadius: 5,
+                                  border: 'none',
+                                  background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+                                  color: skinTk.textPrimary,
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  transition: 'all 0.15s ease',
+                                }}
+                              >
+                                <AtSign size={12} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSendDesignToTerminal(scr, true);
+                                }}
+                                title="Implementar esta tela agora no terminal ativo"
+                                style={{
+                                  height: 24,
+                                  padding: '0 7px',
+                                  borderRadius: 5,
+                                  border: 'none',
+                                  background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+                                  color: skinTk.textPrimary,
+                                  fontSize: 10.5,
+                                  fontWeight: 400,
+                                  cursor: 'pointer',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  transition: 'all 0.15s ease',
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.color = accentColor;
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.color = skinTk.textPrimary;
+                                }}
+                              >
+                                <span>Implementar</span>
+                                <ArrowRight size={11} />
+                              </button>
+                            </div>
+                          </div>
+
+                          {scr.colors.length > 0 && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                              {scr.colors.slice(0, 7).map((hex) => (
+                                <span
+                                  key={hex}
+                                  title={hex}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 3,
+                                    fontSize: 9.5,
+                                    color: skinTk.textSecondary,
+                                    background: isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
+                                    padding: '1px 5px',
+                                    borderRadius: 4,
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      width: 7,
+                                      height: 7,
+                                      borderRadius: 2,
+                                      background: hex,
+                                      display: 'inline-block',
+                                    }}
+                                  />
+                                  {hex}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
                 )}
               </div>
             </div>
@@ -4208,6 +5052,53 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               )}
             </div>
 
+            {/* Quick Design Bridge Button in CLI Top Bar */}
+            <button
+              id="df-cli-toolbar-design-btn"
+              type="button"
+              onClick={() => {
+                setIsExplorerCollapsed(false);
+                setSidebarTab('design');
+                loadDesignBridgeManifest(workspacePath).then((m) => setDesignManifest(m));
+              }}
+              title="Abrir catálogo de telas da aba Design para enviar ou replicar no terminal"
+              style={{
+                height: 26,
+                padding: '0 8px',
+                borderRadius: 6,
+                background:
+                  sidebarTab === 'design' && !isExplorerCollapsed
+                    ? hexToRgba(accentColor, 0.16)
+                    : isEffectiveDark
+                    ? 'rgba(255, 255, 255, 0.06)'
+                    : 'rgba(0, 0, 0, 0.05)',
+                border: 'none',
+                boxShadow: 'none',
+                color: sidebarTab === 'design' && !isExplorerCollapsed ? accentColor : skinTk.textPrimary,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+                cursor: 'pointer',
+                fontSize: 11.5,
+                fontWeight: 400,
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <LayoutGrid size={13} color={accentColor} />
+              <span>Design</span>
+              {(designManifest?.screens?.length ?? 0) > 0 && (
+                <span
+                  style={{
+                    fontSize: 10.5,
+                    color: accentColor,
+                    fontWeight: 400,
+                  }}
+                >
+                  {designManifest!.screens.length}
+                </span>
+              )}
+            </button>
+
             {/* Quick Toggle Split */}
             <button
               type="button"
@@ -4342,20 +5233,332 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
         )}
 
         {/* Terminal Body with Grid 2x2 / Split Support */}
-        {viewer && (
+        {previewDesignScreen && (
+          <div
+            style={{
+              flex: '1 1 0',
+              minHeight: 0,
+              minWidth: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              background: isEffectiveDark ? '#101010' : '#ffffff',
+              padding: 10,
+              gap: 10,
+              boxSizing: 'border-box',
+              overflow: 'hidden',
+            }}
+          >
+            {/* Top Bar: Voltar aos terminais + Screen Info + Mencionar + Implementar */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 10,
+                paddingBottom: 10,
+                borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+                flexShrink: 0,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                <button
+                  type="button"
+                  onClick={() => setPreviewDesignScreen(null)}
+                  title="Voltar para os terminais"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    height: 28,
+                    padding: '0 10px',
+                    borderRadius: 6,
+                    border: 'none',
+                    background: isEffectiveDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                    color: themeTokens.textPrimary,
+                    fontSize: 11.5,
+                    fontWeight: 400,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <SquareTerminal size={13} />
+                  <span>Voltar aos terminais</span>
+                </button>
+                <span style={{ fontSize: 13, fontWeight: 400, color: themeTokens.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {previewDesignScreen.name}
+                </span>
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 400,
+                    color: themeTokens.textSecondary,
+                    background: isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
+                    padding: '2px 8px',
+                    borderRadius: 5,
+                    flexShrink: 0,
+                  }}
+                >
+                  {previewDesignScreen.width} × {previewDesignScreen.height}px · {previewDesignScreen.elementCount} elementos
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSendDesignToTerminal(previewDesignScreen, false);
+                    setPreviewDesignScreen(null);
+                  }}
+                  title="Inserir menção desta tela no prompt do terminal ativo (@)"
+                  style={{
+                    height: 28,
+                    padding: '0 10px',
+                    borderRadius: 6,
+                    border: 'none',
+                    background: isEffectiveDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                    color: themeTokens.textPrimary,
+                    fontSize: 11.5,
+                    fontWeight: 400,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <AtSign size={13} />
+                  <span>Mencionar</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSendDesignToTerminal(previewDesignScreen, true);
+                    setPreviewDesignScreen(null);
+                  }}
+                  title="Enviar esta tela para o agente no terminal ativo implementar agora"
+                  style={{
+                    height: 28,
+                    padding: '0 12px',
+                    borderRadius: 6,
+                    border: 'none',
+                    background: accentColor,
+                    color: '#ffffff',
+                    fontSize: 11.5,
+                    fontWeight: 400,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <span>Implementar</span>
+                  <ArrowRight size={13} />
+                </button>
+              </div>
+            </div>
+
+            {/* Fitted Screen Preview Container */}
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                width: '100%',
+                borderRadius: 8,
+                background: isEffectiveDark ? '#0b0c0e' : '#f1f5f9',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 16,
+                boxSizing: 'border-box',
+                overflow: 'hidden',
+              }}
+            >
+              <img
+                src={previewDesignUrl || buildScreenSvgFallbackDataUrl(previewDesignScreen)}
+                alt={previewDesignScreen.name}
+                style={{
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  width: 'auto',
+                  height: 'auto',
+                  objectFit: 'contain',
+                  borderRadius: 6,
+                  display: 'block',
+                }}
+              />
+            </div>
+          </div>
+        )}
+        {!previewDesignScreen && viewer && (
           <div style={{ flex: '1 1 0', minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', background: isEffectiveDark ? '#101010' : '#ffffff' }}>
-            <div style={{ height: 34, padding: '0 10px', display: 'flex', alignItems: 'center', gap: 10, borderBottom: `1px solid ${themeTokens.border}`, flexShrink: 0 }}>
+            <div
+              style={{
+                height: 40,
+                padding: '0 12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+                flexShrink: 0,
+              }}
+            >
               <button
                 type="button"
-                onClick={() => setViewer(null)}
+                onClick={closeViewer}
                 title="Voltar para os terminais"
-                style={{ display: 'flex', alignItems: 'center', gap: 5, height: 24, padding: '0 9px', borderRadius: 6, border: 'none', background: accentColor, color: '#ffffff', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  height: 28,
+                  padding: '0 10px',
+                  borderRadius: 6,
+                  border: 'none',
+                  boxShadow: 'none',
+                  background: isEffectiveDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                  color: themeTokens.textPrimary,
+                  fontSize: 11.5,
+                  fontWeight: 400,
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                  transition: 'background 0.15s ease',
+                }}
               >
-                <SquareTerminal size={12} />
+                <SquareTerminal size={13} />
                 <span>Voltar aos terminais</span>
               </button>
-              <span style={{ fontSize: 12, fontWeight: 500, color: themeTokens.textPrimary }}>{viewer.name}</span>
-              <span style={{ fontSize: 11, color: themeTokens.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{viewer.path}</span>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                <FileIcon fileName={viewer.name} size={15} />
+                <span style={{ fontSize: 12.5, fontWeight: 400, color: themeTokens.textPrimary, flexShrink: 0 }}>{viewer.name}</span>
+                <span style={{ fontSize: 11, fontWeight: 400, color: themeTokens.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                  {workspacePath && viewer.path.startsWith(workspacePath)
+                    ? viewer.path.slice(workspacePath.length).replace(/^\/+/, '')
+                    : viewer.path}
+                </span>
+                {viewer.content !== undefined && !viewer.dataUrl && !viewer.error && (
+                  <span
+                    style={{
+                      fontSize: 10.5,
+                      fontWeight: 400,
+                      padding: '2px 7px',
+                      borderRadius: 4,
+                      flexShrink: 0,
+                      background:
+                        viewer.content !== viewer.savedContent
+                          ? 'rgba(245, 158, 11, 0.14)'
+                          : 'rgba(16, 185, 129, 0.12)',
+                      color:
+                        viewer.content !== viewer.savedContent
+                          ? '#f59e0b'
+                          : '#10b981',
+                    }}
+                  >
+                    {viewer.isSaving
+                      ? 'Salvando...'
+                      : viewer.content !== viewer.savedContent
+                        ? 'Modificado'
+                        : 'Salvo'}
+                  </span>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', flexShrink: 0 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    writeToActiveTerminal(`"${viewer.path}" `);
+                    onToast?.(`Arquivo mencionado no terminal: ${viewer.name}`);
+                  }}
+                  title="Inserir caminho deste arquivo no terminal ativo"
+                  style={{
+                    height: 28,
+                    padding: '0 10px',
+                    borderRadius: 6,
+                    border: 'none',
+                    boxShadow: 'none',
+                    background: isEffectiveDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                    color: themeTokens.textPrimary,
+                    fontSize: 11.5,
+                    fontWeight: 400,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    transition: 'background 0.15s ease',
+                  }}
+                >
+                  <AtSign size={13} />
+                  <span>Mencionar</span>
+                </button>
+
+                {viewer.content !== undefined &&
+                  viewer.initialContent !== undefined &&
+                  viewer.content !== viewer.initialContent && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const orig = viewer.initialContent ?? '';
+                        setViewer((prev) => (prev ? { ...prev, content: orig } : null));
+                        if (cliEditorInstanceRef.current && cliEditorInstanceRef.current.getValue() !== orig) {
+                          cliEditorInstanceRef.current.setValue(orig);
+                        }
+                        handleSaveViewerFile(orig, false);
+                      }}
+                      title="Reverter alterações para o conteúdo original de quando o arquivo foi aberto"
+                      style={{
+                        height: 28,
+                        padding: '0 10px',
+                        borderRadius: 6,
+                        border: 'none',
+                        boxShadow: 'none',
+                        background: isEffectiveDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                        color: themeTokens.textSecondary,
+                        fontSize: 11.5,
+                        fontWeight: 400,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        transition: 'background 0.15s ease',
+                      }}
+                    >
+                      <RotateCcw size={13} />
+                      <span>Reverter</span>
+                    </button>
+                  )}
+
+                {viewer.content !== undefined && !viewer.dataUrl && !viewer.error && (
+                  <button
+                    type="button"
+                    onClick={() => handleSaveViewerFile()}
+                    title="Salvar alterações no arquivo (Cmd+S)"
+                    style={{
+                      height: 28,
+                      padding: '0 12px',
+                      borderRadius: 6,
+                      border: 'none',
+                      boxShadow: 'none',
+                      background:
+                        viewer.content !== viewer.savedContent
+                          ? accentColor
+                          : isEffectiveDark
+                            ? 'rgba(255,255,255,0.07)'
+                            : 'rgba(0,0,0,0.05)',
+                      color: viewer.content !== viewer.savedContent ? '#ffffff' : themeTokens.textPrimary,
+                      fontSize: 11.5,
+                      fontWeight: 400,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <Save size={13} />
+                    <span>Salvar</span>
+                  </button>
+                )}
+              </div>
             </div>
             <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: themeTokens.textMuted, fontSize: 12 }}>
               {viewer.error ? (
@@ -4371,6 +5574,10 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     path={viewer.path}
                     language={getFileLanguage(viewer.name)}
                     value={viewer.content}
+                    onChange={(val) => {
+                      const nextVal = val ?? '';
+                      setViewer((prev) => (prev ? { ...prev, content: nextVal } : null));
+                    }}
                     theme={isEffectiveDark ? 'cli-viewer-dark' : 'light'}
                     beforeMount={(monaco) => {
                       monaco.editor.defineTheme('cli-viewer-dark', {
@@ -4396,14 +5603,32 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                         },
                       });
                     }}
-                    options={{ readOnly: true, fontSize: 13, fontFamily: 'JetBrains Mono, Menlo, monospace', minimap: { enabled: false }, automaticLayout: true, scrollBeyondLastLine: false, smoothScrolling: true }}
+                    onMount={(editor, monaco) => {
+                      cliEditorInstanceRef.current = editor;
+                      editor.updateOptions({ readOnly: false, domReadOnly: false });
+                      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+                        handleSaveViewerFile();
+                      });
+                    }}
+                    options={{
+                      readOnly: false,
+                      domReadOnly: false,
+                      fontSize: 13,
+                      fontFamily: 'JetBrains Mono, Menlo, monospace',
+                      minimap: { enabled: false },
+                      automaticLayout: true,
+                      scrollBeyondLastLine: false,
+                      smoothScrolling: true,
+                      cursorBlinking: 'smooth',
+                      bracketPairColorization: { enabled: true },
+                    }}
                   />
                 </div>
               )}
             </div>
           </div>
         )}
-        {!viewer && cliDockTab !== 'terminal' && renderDockContent && (
+        {!previewDesignScreen && !viewer && cliDockTab !== 'terminal' && renderDockContent && (
           <div style={{ flex: '1 1 0', minHeight: 0, minWidth: 0, display: 'flex', overflow: 'auto', padding: 8, background: isEffectiveDark ? '#0c0c0e' : '#ffffff' }}>
             {renderDockContent(cliDockTab)}
           </div>
@@ -4415,7 +5640,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             width: '100%',
             height: '100%',
             minHeight: 0,
-            display: viewer || (cliDockTab !== 'terminal' && renderDockContent) ? 'none' : 'flex',
+            display: previewDesignScreen || viewer || (cliDockTab !== 'terminal' && renderDockContent) ? 'none' : 'flex',
             overflow: 'hidden',
             position: 'relative',
             background: skinActive ? 'transparent' : isEffectiveDark ? '#0c0c0e' : '#ffffff',
@@ -4592,129 +5817,97 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
       {/* =================================================================== */}
       {/* 4. FILE CONTEXT MENU                                                */}
       {/* =================================================================== */}
-      {fileContextMenu && (
-        <div
-          data-file-ctx-menu
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            position: 'fixed',
-            left: Math.min(fileContextMenu.x, window.innerWidth - 220),
-            top: Math.min(fileContextMenu.y, window.innerHeight - 240),
-            width: 210,
-            background: isEffectiveDark ? '#1a1a1c' : '#ffffff',
-            border: `1px solid ${themeTokens.border}`,
-            borderRadius: 8,
-            padding: '4px 0',
-            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
-            zIndex: 99999,
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
+      {fileContextMenu && (() => {
+        const node = fileContextMenu.node;
+        const isDir = node.isDirectory;
+        const close = () => setFileContextMenu(null);
+        type Entry = { divider: true } | { divider: false; icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean; disabled?: boolean };
+        const item = (icon: React.ReactNode, label: string, onClick: () => void, opts?: { danger?: boolean; disabled?: boolean }): Entry => ({ divider: false, icon, label, onClick, ...opts });
+        const divider: Entry = { divider: true };
+        const targetDir = isDir ? node.path : parentDirOf(node.path);
+        const exec = (cmd: string) => window.electronAPI?.shell?.exec?.(cmd);
+        const entries: Entry[] = [];
+        if (!isDir) {
+          entries.push(item(<FileText size={13} />, 'Editar no CLI', () => openViewer(node.path, node.name)));
+          entries.push(item(<ExternalLink size={13} />, 'Abrir no Editor (IDE)', () => onOpenFile?.(node.path, node.name)));
+          entries.push(item(<ExternalLink size={13} />, 'Abrir com o Aplicativo Padrão', () => { exec(`open "${node.path}"`); }));
+        }
+        entries.push(item(<FolderOpen size={13} />, 'Revelar no Finder', () => {
+          if (window.electronAPI?.shell?.showItemInFolder) window.electronAPI.shell.showItemInFolder(node.path);
+          else exec(`open -R "${node.path}"`);
+        }));
+        entries.push(isDir
+          ? item(<CornerDownRight size={13} />, 'cd para esta Pasta no Terminal', () => { writeToActiveTerminal(`cd "${node.path}"\r`); onToast?.(`cd ${node.name}`); })
+          : item(<ArrowRight size={13} />, 'Inserir Caminho no Terminal', () => writeToActiveTerminal(`"${node.path}" `)));
+        entries.push(divider);
+        entries.push(item(<Scissors size={13} />, 'Recortar', () => { setFileClipboard({ path: node.path, mode: 'cut' }); onToast?.(`"${node.name}" recortado`); }));
+        entries.push(item(<Copy size={13} />, 'Copiar', () => { setFileClipboard({ path: node.path, mode: 'copy' }); onToast?.(`"${node.name}" copiado`); }));
+        entries.push(item(<ClipboardPaste size={13} />, 'Colar', () => pasteIntoNode(node), { disabled: !fileClipboard }));
+        entries.push(divider);
+        entries.push(item(<FileText size={13} />, 'Copiar Caminho', () => { navigator.clipboard.writeText(node.path); onToast?.('Caminho absoluto copiado!'); }));
+        entries.push(item(<FileText size={13} />, 'Copiar Caminho Relativo', () => {
+          navigator.clipboard.writeText(node.path.replace(workspacePath, '').replace(/^\//, ''));
+          onToast?.('Caminho relativo copiado!');
+        }));
+        entries.push(divider);
+        entries.push(item(<FilePlus size={13} />, 'Novo Arquivo...', () => startCreating(false, targetDir)));
+        entries.push(item(<FolderPlus size={13} />, 'Nova Pasta...', () => startCreating(true, targetDir)));
+        entries.push(divider);
+        entries.push(item(<Pencil size={13} />, 'Renomear...', () => setRenaming({ path: node.path, name: node.name })));
+        entries.push(item(<Trash2 size={13} />, 'Excluir', () => setDeleteTarget(node), { danger: true }));
+        const divColor = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
+        return (
           <div
+            data-file-ctx-menu
+            onClick={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.preventDefault()}
             style={{
-              padding: '6px 12px',
-              fontSize: 11,
-              fontWeight: 600,
-              color: themeTokens.textMuted,
-              borderBottom: `1px solid ${themeTokens.border}`,
-              marginBottom: 4,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
+              position: 'fixed',
+              left: Math.min(fileContextMenu.x, window.innerWidth - 240),
+              top: Math.min(fileContextMenu.y, Math.max(8, window.innerHeight - entries.length * 30 - 16)),
+              minWidth: 220,
+              background: isEffectiveDark ? '#1f1f22' : '#ffffff',
+              borderRadius: 8,
+              padding: '4px 0',
+              zIndex: 99999,
+              display: 'flex',
+              flexDirection: 'column',
+              animation: 'fadeIn 0.12s ease',
             }}
           >
-            {fileContextMenu.node.name}
+            {entries.map((entry, idx) =>
+              !('label' in entry) ? (
+                <div key={idx} style={{ height: 1, margin: '4px 0', background: divColor }} />
+              ) : (
+                <div
+                  key={idx}
+                  onClick={() => {
+                    if (entry.disabled) return;
+                    close();
+                    entry.onClick();
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontSize: 12,
+                    cursor: entry.disabled ? 'default' : 'pointer',
+                    color: entry.disabled ? themeTokens.textMuted : entry.danger ? '#ef4444' : themeTokens.textPrimary,
+                    opacity: entry.disabled ? 0.5 : 1,
+                    transition: 'background 0.1s ease',
+                  }}
+                  onMouseEnter={(e) => { if (!entry.disabled) e.currentTarget.style.background = themeTokens.hoverBg; }}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', color: entry.danger ? '#ef4444' : accentColor }}>{entry.icon}</span>
+                  <span>{entry.label}</span>
+                </div>
+              )
+            )}
           </div>
-
-          {!fileContextMenu.node.isDirectory && (
-            <div
-              onClick={() => {
-                onOpenFile?.(fileContextMenu.node.path, fileContextMenu.node.name);
-                setFileContextMenu(null);
-              }}
-              style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              <FileText size={14} color={accentColor} />
-              <span>Abrir no Editor (IDE)</span>
-            </div>
-          )}
-
-          {fileContextMenu.node.isDirectory ? (
-            <div
-              onClick={() => {
-                writeToActiveTerminal(`cd "${fileContextMenu.node.path}"\r`);
-                setFileContextMenu(null);
-                if (onToast) onToast(`cd ${fileContextMenu.node.name}`);
-              }}
-              style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              <CornerDownRight size={14} color="#10b981" />
-              <span>cd para esta pasta no terminal</span>
-            </div>
-          ) : (
-            <div
-              onClick={() => {
-                writeToActiveTerminal(`"${fileContextMenu.node.path}" `);
-                setFileContextMenu(null);
-              }}
-              style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              <ArrowRight size={14} color="#10b981" />
-              <span>Inserir caminho no terminal</span>
-            </div>
-          )}
-
-          <div
-            onClick={() => {
-              navigator.clipboard.writeText(fileContextMenu.node.path);
-              setFileContextMenu(null);
-              if (onToast) onToast('Caminho absoluto copiado!');
-            }}
-            style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-          >
-            <Copy size={13} color={themeTokens.textSecondary} />
-            <span>Copiar Caminho Absoluto</span>
-          </div>
-
-          <div
-            onClick={() => {
-              const rel = fileContextMenu.node.path.replace(workspacePath, '').replace(/^\//, '');
-              navigator.clipboard.writeText(rel);
-              setFileContextMenu(null);
-              if (onToast) onToast('Caminho relativo copiado!');
-            }}
-            style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-          >
-            <Copy size={13} color={themeTokens.textSecondary} />
-            <span>Copiar Caminho Relativo</span>
-          </div>
-
-          <div style={{ height: 1, margin: '4px 0', background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }} />
-          <div
-            onClick={() => {
-              setDeleteTarget(fileContextMenu.node);
-              setFileContextMenu(null);
-            }}
-            style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: '#ef4444', transition: 'background 0.1s ease' }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-          >
-            <Trash2 size={13} color="#ef4444" />
-            <span>Excluir</span>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       <ConfirmDeleteModal
         isOpen={deleteTarget !== null}

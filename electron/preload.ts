@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('pty:writePrompt', { id, prompt }),
     runPromptInCli: (id: string, prompt: string, timeoutMs?: number) =>
       ipcRenderer.invoke('pty:runPromptInCli', { id, prompt, timeoutMs }),
+    cancelPrompt: (id: string) =>
+      ipcRenderer.send('pty:cancelPrompt', { id }),
     write: (id: string, data: string) =>
       ipcRenderer.send('pty:write', { id, data }),
     resize: (id: string, cols: number, rows: number) =>
@@ -216,7 +218,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('ai:deleteSavedChat', sessionId),
     saveTranscript: (sessionId: string, history: any[]) =>
       ipcRenderer.invoke('ai:saveTranscript', { sessionId, history }),
-    runCli: (payload: { cliCmd: string; prompt: string; model?: string; cwd?: string; additionalDirs?: string[]; useOrchestrator?: boolean; orchestratorConfig?: any; permissions?: any; streamText?: boolean; streamId?: string }) =>
+    runCli: (payload: { cliCmd: string; prompt: string; model?: string; cwd?: string; additionalDirs?: string[]; useOrchestrator?: boolean; orchestratorConfig?: any; permissions?: any; streamText?: boolean; streamId?: string; effort?: string }) =>
       ipcRenderer.invoke('ai:runCli', payload),
     cancel: (runId?: string, cwd?: string, streamId?: string) =>
       ipcRenderer.invoke('ai:cancel', runId, cwd, streamId),
@@ -353,6 +355,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     createTeam: (org: string, name: string, description?: string) => ipcRenderer.invoke('github:createTeam', { org, name, description }),
     requestReviewers: (owner: string, repo: string, pullNumber: number, reviewers: string[]) =>
       ipcRenderer.invoke('github:requestReviewers', { owner, repo, pullNumber, reviewers }),
+    submitPullReview: (owner: string, repo: string, pullNumber: number, event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT', body?: string) =>
+      ipcRenderer.invoke('github:submitPullReview', { owner, repo, pullNumber, event, body }),
     addAssignees: (owner: string, repo: string, issueNumber: number, assignees: string[]) =>
       ipcRenderer.invoke('github:addAssignees', { owner, repo, issueNumber, assignees }),
     settings: (action: string, payload: any) => ipcRenderer.invoke('github:settings', { action, payload }),

@@ -615,6 +615,7 @@ const ACTION_LABEL: Record<AccessHistoryEntry['action'], { label: string; color:
   'team-role': { label: 'mudou papel do time', color: '#f59e0b' },
   'team-create': { label: 'criou o time', color: '#22c55e' },
   'review-request': { label: 'pediu review a', color: '#3b82f6' },
+  'review-approve': { label: 'aprovou o PR de', color: '#22c55e' },
   assign: { label: 'atribuiu issue a', color: '#3b82f6' },
 };
 
@@ -639,7 +640,7 @@ export const TeamHistoryPanel: React.FC<HistoryProps> = ({ ctx, history, raw, on
     }));
     const all = [...history, ...inv.filter((e) => !history.some((h) => h.action === 'add' && h.target.toLowerCase() === e.target.toLowerCase()))];
     return all
-      .filter((e) => (filter === 'all' ? true : filter === 'work' ? e.action === 'assign' || e.action === 'review-request' : e.action !== 'assign' && e.action !== 'review-request'))
+      .filter((e) => (filter === 'all' ? true : filter === 'work' ? e.action === 'assign' || e.action === 'review-request' || e.action === 'review-approve' : e.action !== 'assign' && e.action !== 'review-request' && e.action !== 'review-approve'))
       .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
   }, [history, raw.invitations, filter]);
 

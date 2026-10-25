@@ -3,11 +3,107 @@ use serde_json::Value;
 use std::{
     io::{BufRead, Read},
     path::PathBuf,
-    process::{Command, Stdio},
-    sync::mpsc,
+    process::{Child, Command, Stdio},
+    sync::{atomic::{AtomicI32, Ordering}, mpsc},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+/// Grupo de processos do provedor em execução: o handler de sinal o encerra se o orquestrador for cancelado.
+static ACTIVE_PGID: AtomicI32 = AtomicI32::new(0);
+
+/// Tempo que o provedor tem para sair depois do SIGTERM antes de levar SIGKILL.
+const KILL_GRACE: Duration = Duration::from_secs(3);
+
+/// Cancelar o orquestrador (SIGTERM/SIGINT/SIGHUP) também encerra o provedor: ele roda em outro grupo de processos
+/// (`process_group(0)`) e, sem isto, continuaria editando arquivos órfão.
+#[cfg(unix)]
+pub fn install_signal_handlers() {
+    extern "C" fn handler(_signal: libc::c_int) {
+        let pgid = ACTIVE_PGID.load(Ordering::SeqCst);
+        unsafe {
+            if pgid > 0 {
+                libc::kill(-pgid, libc::SIGTERM);
+                let pause = libc::timespec { tv_sec: 0, tv_nsec: 300_000_000 };
+                libc::nanosleep(&pause, std::ptr::null_mut());
+                libc::kill(-pgid, libc::SIGKILL);
+            }
+            libc::_exit(143);
+        }
+    }
+    for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+        unsafe { libc::signal(signal, handler as *const () as usize as libc::sighandler_t) };
+    }
+}
+
+#[cfg(not(unix))]
+pub fn install_signal_handlers() {}
+
+/// Encerra o provedor e todos os processos do grupo dele: SIGTERM, espera `grace`, SIGKILL no grupo todo.
+fn terminate_provider(child: &mut Child, grace: Duration) {
+    #[cfg(unix)]
+    {
+        let pgid = child.id() as libc::pid_t;
+        unsafe { libc::kill(-pgid, libc::SIGTERM) };
+        let started = Instant::now();
+        while started.elapsed() < grace {
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        // netos que ignoram o SIGTERM também saem
+        unsafe { libc::kill(-pgid, libc::SIGKILL) };
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = grace;
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
+/// Zera o grupo ativo quando a execução termina (por qualquer caminho).
+struct ActiveGroup;
+impl Drop for ActiveGroup {
+    fn drop(&mut self) {
+        ACTIVE_PGID.store(0, Ordering::SeqCst);
+    }
+}
+
+/// `--version` com limite de tempo: um CLI travado não pode travar a descoberta de provedores.
+fn version_of(path: &PathBuf) -> Option<String> {
+    let mut child = Command::new(path)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait().ok()? {
+            Some(status) => break status,
+            None if started.elapsed() > Duration::from_secs(3) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            None => thread::sleep(Duration::from_millis(20)),
+        }
+    };
+    let mut out = String::new();
+    child.stdout.take()?.read_to_string(&mut out).ok()?;
+    status.success().then(|| out.trim().to_owned()).filter(|v| !v.is_empty())
+}
+
+/// Modelo pedido, sem os valores que significam "o padrão do CLI".
+fn explicit_model(request: &RunRequest) -> Option<&String> {
+    request
+        .model
+        .as_ref()
+        .filter(|m| !m.trim().is_empty() && !m.eq_ignore_ascii_case("default") && !m.eq_ignore_ascii_case("padrão"))
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -77,15 +173,7 @@ pub fn discover() -> Vec<ProviderStatus> {
     .into_iter()
     .map(|id| {
         let executable = find_binary(id.binaries());
-        let version = executable
-            .as_ref()
-            .and_then(|path| Command::new(path).arg("--version").output().ok())
-            .and_then(|out| {
-                out.status
-                    .success()
-                    .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
-            })
-            .filter(|value| !value.is_empty());
+        let version = executable.as_ref().and_then(version_of);
         ProviderStatus {
             id,
             available: executable.is_some(),
@@ -157,11 +245,7 @@ pub fn build_args(request: &RunRequest) -> Vec<String> {
             } else {
                 args.extend(["--permission-mode".into(), "plan".into()]);
             }
-            if let Some(model) = request
-                .model
-                .as_ref()
-                .filter(|m| !m.is_empty() && !m.eq_ignore_ascii_case("default") && !m.eq_ignore_ascii_case("padrão"))
-            {
+            if let Some(model) = explicit_model(request) {
                 args.extend(["--model".into(), model.clone()]);
             }
             for directory in &request.additional_dirs {
@@ -187,11 +271,7 @@ pub fn build_args(request: &RunRequest) -> Vec<String> {
             for directory in &request.additional_dirs {
                 args.extend(["--add-dir".into(), directory.display().to_string()]);
             }
-            if let Some(model) = request
-                .model
-                .as_ref()
-                .filter(|m| !m.is_empty() && !m.eq_ignore_ascii_case("default") && !m.eq_ignore_ascii_case("padrão"))
-            {
+            if let Some(model) = explicit_model(request) {
                 args.extend(["-m".into(), model.clone()]);
             }
             args.extend(request.extra_args.iter().cloned());
@@ -199,16 +279,14 @@ pub fn build_args(request: &RunRequest) -> Vec<String> {
             args.push(request.request.clone());
         }
         ProviderId::Antigravity => {
-            args.extend([
-                "--output-format".into(),
-                "stream-json".into(),
-                "--dangerously-skip-permissions".into(),
-            ]);
-            if let Some(model) = request
-                .model
-                .as_ref()
-                .filter(|m| !m.is_empty() && !m.eq_ignore_ascii_case("default") && !m.eq_ignore_ascii_case("padrão"))
-            {
+            args.extend(["--output-format".into(), "stream-json".into()]);
+            if request.mode == TaskMode::Execute {
+                args.push("--dangerously-skip-permissions".into());
+            } else {
+                // planejar/perguntar não pode editar arquivos
+                args.extend(["--mode".into(), "plan".into()]);
+            }
+            if let Some(model) = explicit_model(request) {
                 args.extend(["--model".into(), model.clone()]);
             }
             args.extend([
@@ -270,6 +348,8 @@ where
     let mut child = command
         .spawn()
         .map_err(|error| format!("failed to start provider: {error}"))?;
+    ACTIVE_PGID.store(child.id() as i32, Ordering::SeqCst);
+    let _active = ActiveGroup;
     let stdout = child
         .stdout
         .take()
@@ -279,11 +359,21 @@ where
         .take()
         .ok_or_else(|| "provider stderr unavailable".to_owned())?;
 
+    // Lê por bytes: uma linha com UTF-8 inválido não pode encerrar o leitor (o pipe encheria e o provedor travaria).
     let (sender, receiver) = mpsc::channel::<String>();
     let _stdout_reader = thread::spawn(move || {
-        for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
-            if sender.send(line).is_err() {
-                break;
+        let mut reader = std::io::BufReader::new(stdout);
+        let mut buffer = Vec::new();
+        loop {
+            buffer.clear();
+            match reader.read_until(b'\n', &mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    let line = String::from_utf8_lossy(&buffer).trim_end_matches(['\n', '\r']).to_owned();
+                    if sender.send(line).is_err() {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -295,48 +385,8 @@ where
         let _ = err_sender.send(bytes);
     });
 
-    let started = Instant::now();
-    let mut lines = Vec::new();
-    let status = loop {
-        while let Ok(line) = receiver.try_recv() {
-            if let Ok(value) = serde_json::from_str::<Value>(&line) {
-                on_event(OrchestratorEvent {
-                    provider: request.provider,
-                    kind: event_kind(&value).into(),
-                    message: event_message(&value),
-                    timestamp_ms: now_ms(),
-                    payload: value,
-                });
-            }
-            lines.push(line);
-        }
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("failed waiting for provider: {error}"))?
-        {
-            break status;
-        }
-        if started.elapsed() >= Duration::from_millis(request.timeout_ms.max(1)) {
-            #[cfg(unix)]
-            unsafe {
-                let pid = child.id() as libc::pid_t;
-                libc::kill(-pid, libc::SIGTERM);
-            }
-            #[cfg(not(unix))]
-            let _ = child.kill();
-
-            let _ = child.wait();
-            let stderr_bytes = err_receiver.recv_timeout(Duration::from_millis(50)).unwrap_or_default();
-            return Err(format!(
-                "provider timed out after {}ms: {}",
-                request.timeout_ms,
-                String::from_utf8_lossy(&stderr_bytes).trim()
-            ));
-        }
-        thread::sleep(Duration::from_millis(10));
-    };
-
-    while let Ok(line) = receiver.recv_timeout(Duration::from_millis(25)) {
+    let mut lines: Vec<String> = Vec::new();
+    let mut handle_line = |line: String, on_event: &mut F| {
         if let Ok(value) = serde_json::from_str::<Value>(&line) {
             on_event(OrchestratorEvent {
                 provider: request.provider,
@@ -347,6 +397,41 @@ where
             });
         }
         lines.push(line);
+    };
+
+    #[cfg(unix)]
+    let parent = unsafe { libc::getppid() };
+    let started = Instant::now();
+    let status = loop {
+        while let Ok(line) = receiver.try_recv() {
+            handle_line(line, &mut on_event);
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("failed waiting for provider: {error}"))?
+        {
+            break status;
+        }
+        // quem iniciou o orquestrador morreu (app fechado): não deixa o provedor órfão
+        #[cfg(unix)]
+        if unsafe { libc::getppid() } != parent {
+            terminate_provider(&mut child, KILL_GRACE);
+            return Err("orchestrator parent process exited".to_owned());
+        }
+        if started.elapsed() >= Duration::from_millis(request.timeout_ms.max(1)) {
+            terminate_provider(&mut child, KILL_GRACE);
+            let stderr_bytes = err_receiver.recv_timeout(Duration::from_millis(100)).unwrap_or_default();
+            return Err(format!(
+                "provider timed out after {}ms: {}",
+                request.timeout_ms,
+                String::from_utf8_lossy(&stderr_bytes).trim()
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+
+    while let Ok(line) = receiver.recv_timeout(Duration::from_millis(25)) {
+        handle_line(line, &mut on_event);
     }
 
     let stderr = err_receiver.recv_timeout(Duration::from_millis(50)).unwrap_or_default();

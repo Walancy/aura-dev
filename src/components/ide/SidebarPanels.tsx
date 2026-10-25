@@ -24,14 +24,26 @@ import {
   MoreHorizontal,
   ChevronDown,
   Sparkles,
+  Layers,
+  AtSign,
+  ArrowRight,
+  LayoutGrid,
 } from 'lucide-react';
 import { FileIcon } from '../FileIcon';
+import { shq, parseStatusZ, discardCommand, stageCommand, unstageCommand, SYNC_COMMAND } from '../../utils/gitShell';
+import { logSystemActivity } from '../../utils/brainService';
+import {
+  type DesignBridgeManifest,
+  type DesignScreenSpec,
+  buildScreenSvgFallbackDataUrl,
+  resolveDesignScreenPreviewUrl,
+} from '../../utils/designBridgeService';
 
 export interface SidebarPanelsProps {
   previewUrl: string | null;
   projects?: Array<{ name: string; localDir?: string }>;
   onOpenPreview: (url: string) => void;
-  activeTab: 'search' | 'git' | 'debug' | 'preview' | 'testing';
+  activeTab: 'search' | 'git' | 'debug' | 'preview' | 'testing' | 'design';
   workspacePath: string;
   themeTokens: {
     bgCard: string;
@@ -53,6 +65,12 @@ export interface SidebarPanelsProps {
   onOpenBranchModal?: () => void;
   currentBranch?: string;
   onGenerateCommitMessage?: (repoDir: string) => Promise<string>;
+  designManifest?: DesignBridgeManifest | null;
+  selectedDesignScreenId?: string | null;
+  onSelectDesignScreen?: (screen: DesignScreenSpec) => void;
+  onImplementDesignScreen?: (screen?: DesignScreenSpec) => void;
+  onMentionDesignScreen?: (screen?: DesignScreenSpec) => void;
+  onRefreshDesignManifest?: () => void;
 }
 
 export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
@@ -74,7 +92,39 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
   onOpenBranchModal,
   currentBranch = 'main',
   onGenerateCommitMessage,
+  designManifest,
+  selectedDesignScreenId,
+  onSelectDesignScreen,
+  onImplementDesignScreen,
+  onMentionDesignScreen,
+  onRefreshDesignManifest,
 }) => {
+  const [designSearchQuery, setDesignSearchQuery] = useState('');
+  const [resolvedDesignThumbs, setResolvedDesignThumbs] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const screens = designManifest?.screens || [];
+    if (screens.length === 0) return;
+    let alive = true;
+    (async () => {
+      const next: Record<string, string> = {};
+      for (const scr of screens) {
+        const url = await resolveDesignScreenPreviewUrl(workspacePath, scr);
+        if (!alive) return;
+        next[scr.id] = url;
+      }
+      if (alive) {
+        setResolvedDesignThumbs((prev) => {
+          const changed = Object.keys(next).some((k) => prev[k] !== next[k]);
+          return changed ? { ...prev, ...next } : prev;
+        });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [workspacePath, designManifest]);
+
   const hexToRgba = (hex: string, alpha: number) => {
     const cleanHex = hex.replace('#', '');
     const num = parseInt(cleanHex.length === 3 ? cleanHex.split('').map((c) => c + c).join('') : cleanHex, 16);
@@ -226,19 +276,15 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
       const results = await Promise.all(
         repoDirs.map(async ({ dir, name }) => {
           const [statusRes, branchRes] = await Promise.all([
-            window.electronAPI!.shell!.exec('git status --porcelain=v1', dir),
-            window.electronAPI!.shell!.exec('git rev-parse --abbrev-ref HEAD', dir),
+            window.electronAPI!.shell!.exec('GIT_OPTIONAL_LOCKS=0 git status --porcelain=v1 -z', dir),
+            // `--show-current` funciona também em repositório novo (sem commits); em HEAD solto devolve vazio
+            window.electronAPI!.shell!.exec('git branch --show-current || true; git rev-parse --short HEAD 2>/dev/null', dir),
           ]);
-          const changes: Array<{ path: string; status: string; staged: boolean }> = [];
-          const lines = (statusRes?.stdout || '').split('\n').filter(Boolean);
-          for (const line of lines) {
-            const x = line[0];
-            const y = line[1];
-            const fPath = line.substring(3).trim();
-            if (x !== ' ' && x !== '?') changes.push({ path: fPath, status: x, staged: true });
-            if (y !== ' ') changes.push({ path: fPath, status: y === '?' ? '??' : y, staged: false });
-          }
-          return { dir, name, branch: (branchRes?.stdout || 'main').trim() || 'main', changes };
+          const changes = parseStatusZ(statusRes?.stdout || '');
+          const [curBranch, shortHead] = (branchRes?.stdout || '').split('\n').map((l) => l.trim());
+          // com HEAD solto (sem branch) mostra o commit; sem nada é uma branch ainda sem commits
+          const branch = curBranch || (shortHead ? `(${shortHead})` : 'main');
+          return { dir, name, branch, changes };
         })
       );
 
@@ -265,11 +311,11 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
     }
   }, [workspacePath]);
 
-  const handleGitCommit = async (repoDir: string) => {
+  const handleGitCommit = async (repoDir: string): Promise<boolean> => {
     const repo = gitRepos.find((r) => r.dir === repoDir);
     if (!repo || !repo.commitMsg.trim()) {
       onToast('Digite uma mensagem de commit');
-      return;
+      return false;
     }
     updateRepo(repoDir, { isLoading: true });
     try {
@@ -277,29 +323,29 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
       if (!hasStaged) {
         await window.electronAPI?.shell?.exec('git add -A', repoDir);
       }
-      const escaped = repo.commitMsg.replace(/"/g, '\\"');
-      const commitRes = await window.electronAPI?.shell?.exec(`git commit -m "${escaped}"`, repoDir);
+      const commitRes = await window.electronAPI?.shell?.exec(`git commit -m ${shq(repo.commitMsg.trim())}`, repoDir);
       if (commitRes?.exitCode === 0) {
         updateRepo(repoDir, { commitMsg: '' });
         onToast(`Commit realizado em ${repo.name}!`);
+        logSystemActivity('git', 'commit', repoDir, { mensagem: repo.commitMsg.trim().slice(0, 120) });
         await discoverAndRefreshRepos();
+        return true;
       } else {
-        onToast(commitRes?.stderr || 'Erro ao commitar');
+        onToast((commitRes?.stderr || commitRes?.stdout || 'Erro ao commitar').trim().split('\n')[0]);
       }
     } catch (err: any) {
       onToast(`Erro no commit: ${err.message}`);
     } finally {
       updateRepo(repoDir, { isLoading: false });
     }
+    return false;
   };
 
   const handleGitDiscard = async (repoDir: string, filePath: string) => {
     try {
-      await window.electronAPI?.shell?.exec(
-        `git checkout -- "${filePath}" || git restore "${filePath}" || rm -rf "${filePath}"`,
-        repoDir
-      );
-      onToast(`Alterações descartadas em ${filePath}`);
+      const res = await window.electronAPI?.shell?.exec(discardCommand(filePath), repoDir);
+      onToast(res?.exitCode === 0 ? `Alterações descartadas em ${filePath}` : `Erro ao descartar: ${(res?.stderr || '').trim().split('\n')[0]}`);
+      logSystemActivity('git', 'descartar_alteracoes', repoDir, { arquivo: filePath });
       discoverAndRefreshRepos();
     } catch (err: any) {
       onToast(`Erro ao descartar: ${err.message}`);
@@ -307,24 +353,27 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
   };
 
   const handleGitStage = async (repoDir: string, filePath: string) => {
-    await window.electronAPI?.shell?.exec(`git add "${filePath}"`, repoDir);
+    const res = await window.electronAPI?.shell?.exec(stageCommand(filePath), repoDir);
+    if (res?.exitCode !== 0) onToast(`Erro ao adicionar: ${(res?.stderr || '').trim().split('\n')[0]}`);
     discoverAndRefreshRepos();
   };
 
   const handleGitUnstage = async (repoDir: string, filePath: string) => {
-    await window.electronAPI?.shell?.exec(`git reset HEAD "${filePath}"`, repoDir);
+    const res = await window.electronAPI?.shell?.exec(unstageCommand(filePath), repoDir);
+    if (res?.exitCode !== 0) onToast(`Erro ao remover do stage: ${(res?.stderr || '').trim().split('\n')[0]}`);
     discoverAndRefreshRepos();
   };
 
   const handleGitSync = async (repoDir: string, repoName: string) => {
     onToast(`Sincronizando ${repoName}...`);
     try {
-      const res = await window.electronAPI?.shell?.exec('git pull --rebase && git push', repoDir);
+      const res = await window.electronAPI?.shell?.exec(SYNC_COMMAND, repoDir);
       if (res?.exitCode === 0) {
         onToast(`${repoName} sincronizado com sucesso!`);
       } else {
-        onToast(res?.stderr || 'Sincronização concluída com avisos');
+        onToast(`Erro ao sincronizar: ${(res?.stderr || res?.error || '').trim().split('\n').filter(Boolean).slice(-1)[0] || 'verifique o remoto'}`);
       }
+      logSystemActivity('git', 'sincronizar', repoDir, { ok: res?.exitCode === 0 });
       discoverAndRefreshRepos();
     } catch (e: any) {
       onToast(`Erro na sincronização: ${e.message}`);
@@ -487,7 +536,17 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
   }, [activeTab, discoverAndRefreshRepos, loadPackageScripts, scanActivePorts]);
 
   return (
-    <>
+    <div
+      style={{
+        width: '100%',
+        flex: '1 1 0',
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 5,
+        overflow: 'hidden',
+      }}
+    >
       {/* -------------------------------------------------- */}
       {/* 1. Search Panel (Border-free)                      */}
       {/* -------------------------------------------------- */}
@@ -1031,7 +1090,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                                 <span>Commit</span>
                               </button>
                               <button
-                                onClick={() => handleGitCommit(repo.dir).then(() => handleGitSync(repo.dir, repo.name))}
+                                onClick={() => handleGitCommit(repo.dir).then((ok) => ok && handleGitSync(repo.dir, repo.name))}
                                 disabled={repo.isLoading || !repo.commitMsg.trim()}
                                 title="Commit e sincronizar"
                                 style={{
@@ -1092,7 +1151,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                                     <Plus size={11} />
                                   </button>
                                   <button
-                                    onClick={() => window.electronAPI?.shell?.exec('git reset HEAD', repo.dir).then(() => discoverAndRefreshRepos())}
+                                    onClick={() => window.electronAPI?.shell?.exec('git reset -q', repo.dir).then(() => discoverAndRefreshRepos())}
                                     title="Remover todas do stage (Unstage All)"
                                     style={iconBtnStyle}
                                   >
@@ -1703,6 +1762,281 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
           </div>
         </div>
       )}
-    </>
+
+      {/* ------------------------------------------------------------------- */}
+      {/* 6. DESIGN BRIDGE PANEL (Telas da aba Design na esquerda da IDE)     */}
+      {/* ------------------------------------------------------------------- */}
+      {activeTab === 'design' && (
+        <div
+          style={{
+            width: '100%',
+            flex: '1 1 0',
+            minHeight: 0,
+            padding: 10,
+            background: themeTokens.bgCard,
+            borderRadius: 10,
+            border: 'none',
+            boxShadow: 'none',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10,
+            boxSizing: 'border-box',
+            overflow: 'hidden',
+          }}
+        >
+          {/* Search + Refresh Bar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            <div
+              style={{
+                flex: 1,
+                height: 28,
+                borderRadius: 6,
+                background: isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '0 8px',
+              }}
+            >
+              <Search size={12} color={themeTokens.textMuted} />
+              <input
+                type="text"
+                value={designSearchQuery}
+                onChange={(e) => setDesignSearchQuery(e.target.value)}
+                placeholder="Buscar tela do design..."
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  height: '100%',
+                  background: 'transparent',
+                  border: 'none',
+                  outline: 'none',
+                  color: themeTokens.textPrimary,
+                  fontSize: 11.5,
+                  fontWeight: 400,
+                  fontFamily: 'Poppins, sans-serif',
+                }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => onRefreshDesignManifest?.()}
+              title="Recarregar telas da aba Design"
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 6,
+                border: 'none',
+                background: isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
+                color: themeTokens.textSecondary,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'background 0.15s ease',
+              }}
+            >
+              <RefreshCw size={12} />
+            </button>
+          </div>
+
+          {(designManifest?.screens?.length ?? 0) > 0 && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 6,
+                paddingBottom: 8,
+                borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+                flexShrink: 0,
+              }}
+            >
+              <span style={{ fontSize: 11, color: themeTokens.textSecondary, fontWeight: 400 }}>
+                {designManifest!.screens.length} tela{designManifest!.screens.length === 1 ? '' : 's'}
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <button
+                  type="button"
+                  onClick={() => onMentionDesignScreen?.(undefined)}
+                  title="Mencionar todas as telas (@design) no chat da IDE"
+                  style={{
+                    height: 26,
+                    padding: '0 8px',
+                    borderRadius: 5,
+                    border: 'none',
+                    background: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
+                    color: themeTokens.textPrimary,
+                    fontSize: 10.5,
+                    fontWeight: 400,
+                    fontFamily: 'Poppins, sans-serif',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                >
+                  <AtSign size={11} />
+                  <span>Todas</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onImplementDesignScreen?.(undefined)}
+                  title="Implementar todas as telas da aba Design no projeto"
+                  style={{
+                    height: 26,
+                    padding: '0 8px',
+                    borderRadius: 5,
+                    border: 'none',
+                    background: accentColor,
+                    color: '#ffffff',
+                    fontSize: 10.5,
+                    fontWeight: 400,
+                    fontFamily: 'Poppins, sans-serif',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                >
+                  <span>Implementar todas</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Screens List */}
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+              overflowX: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 8,
+            }}
+          >
+            {!designManifest || designManifest.screens.length === 0 ? (
+              <div
+                style={{
+                  padding: '28px 12px',
+                  textAlign: 'center',
+                  fontSize: 11.5,
+                  color: themeTokens.textSecondary,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: 8,
+                }}
+              >
+                <LayoutGrid size={22} strokeWidth={1.5} color={themeTokens.textMuted} />
+                <span>Nenhuma tela sincronizada na aba Design.</span>
+                <span style={{ fontSize: 10.5, color: themeTokens.textMuted, lineHeight: 1.4 }}>
+                  Crie ou gere telas na aba Design para visualizá-las e implementá-las aqui.
+                </span>
+              </div>
+            ) : (
+              designManifest.screens
+                .filter((scr) => {
+                  const q = designSearchQuery.trim().toLowerCase();
+                  if (!q) return true;
+                  return (
+                    scr.name.toLowerCase().includes(q) ||
+                    scr.slug.toLowerCase().includes(q) ||
+                    scr.pageName.toLowerCase().includes(q)
+                  );
+                })
+                .map((scr) => {
+                  const isSelected = selectedDesignScreenId === scr.id;
+                  const thumbUrl = resolvedDesignThumbs[scr.id] || scr.previewDataUrl || buildScreenSvgFallbackDataUrl(scr);
+                  return (
+                    <div
+                      key={scr.id}
+                      onClick={() => onSelectDesignScreen?.(scr)}
+                      title={`Clique para abrir o preview de "${scr.name}" na área central`}
+                      style={{
+                        padding: 8,
+                        borderRadius: 6,
+                        background: isSelected
+                          ? hexToRgba(accentColor, isEffectiveDark ? 0.18 : 0.12)
+                          : isEffectiveDark
+                          ? 'rgba(255, 255, 255, 0.04)'
+                          : 'rgba(0, 0, 0, 0.03)',
+                        border: 'none',
+                        boxShadow: 'none',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
+                        cursor: 'pointer',
+                        transition: 'background 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isSelected) {
+                          e.currentTarget.style.background = isEffectiveDark
+                            ? 'rgba(255, 255, 255, 0.07)'
+                            : 'rgba(0, 0, 0, 0.05)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isSelected) {
+                          e.currentTarget.style.background = isEffectiveDark
+                            ? 'rgba(255, 255, 255, 0.04)'
+                            : 'rgba(0, 0, 0, 0.03)';
+                        }
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: '100%',
+                          height: 88,
+                          borderRadius: 5,
+                          overflow: 'hidden',
+                          background: scr.backgroundHex || (isEffectiveDark ? '#121214' : '#f1f5f9'),
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <img
+                          src={thumbUrl}
+                          alt={scr.name}
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'contain',
+                            display: 'block',
+                          }}
+                        />
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+                          <span
+                            style={{
+                              fontSize: 11.5,
+                              fontWeight: 400,
+                              color: isSelected ? accentColor : themeTokens.textPrimary,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {scr.name}
+                          </span>
+                          <span style={{ fontSize: 10, color: themeTokens.textSecondary }}>
+                            {scr.width}×{scr.height}px · {scr.elementCount} elem
+                          </span>
+                        </div>
+                        <Eye size={13} color={isSelected ? accentColor : themeTokens.textSecondary} />
+                      </div>
+                    </div>
+                  );
+                })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
