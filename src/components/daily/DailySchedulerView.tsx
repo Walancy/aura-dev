@@ -43,6 +43,7 @@ import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
 import { DailyAiChatPanel } from './DailyAiChatPanel';
 import { logSystemActivity } from '../../utils/brainService';
 import { hexToRgba } from '../../utils/color';
+import { getFieldTokens } from '../../utils/fieldTokens';
 import { getProjectSettings } from '../settings/projectSettingsStore';
 import { GLOBAL_PROJECTS_CACHE } from '../ProjectsSchedulerView';
 import type { HeaderActiveProjectInfo, HeaderProjectItem } from '../HeaderProjectSelector';
@@ -2198,6 +2199,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
             }}
           >
             <input
+              className="df-field"
               value={aiHint}
               onChange={(e) => {
                 setAiHint(e.target.value);
@@ -2208,10 +2210,12 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                 height: 28,
                 padding: '0 10px',
                 borderRadius: 8,
-                border: theme.shelfBorder,
-                background: theme.bgShelf,
+                border: getFieldTokens(isEffectiveDark).fieldBorder,
+                background: getFieldTokens(isEffectiveDark).fieldBg,
+                boxShadow: 'none',
                 color: theme?.textPrimary,
                 fontSize: 12,
+                fontWeight: 400,
                 outline: 'none',
                 boxSizing: 'border-box',
                 flexShrink: 0,
@@ -3265,7 +3269,7 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
         flexDirection: 'column',
         gap: 10,
         boxSizing: 'border-box',
-        boxShadow: isEffectiveDark ? '0 4px 16px rgba(0,0,0,0.35)' : '0 2px 8px rgba(0,0,0,0.08)',
+        boxShadow: 'none',
         position: 'relative',
       }}
     >
@@ -3537,16 +3541,17 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
             {/* Popup do ColorPicker */}
             {isColorPickerOpen && (
               <div
+                className="df-dropdown-menu"
                 style={{
                   position: 'absolute',
                   top: 26,
                   left: 0,
                   zIndex: 200,
-                  background: isEffectiveDark ? '#222226' : '#ffffff',
-                  border: isEffectiveDark ? '1px solid rgba(255,255,255,0.12)' : '1px solid rgba(0,0,0,0.1)',
+                  background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                  border: getFieldTokens(isEffectiveDark).dropdownBorder,
                   borderRadius: 8,
                   padding: 8,
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
+                  boxShadow: 'none',
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 8,
@@ -3984,14 +3989,15 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
           {/* Popup com opções para o card */}
           {isMenuOpen && (
             <div
+              className="df-dropdown-menu"
               style={{
                 position: 'absolute',
                 top: 28,
                 right: 0,
-                background: isEffectiveDark ? '#222225' : '#ffffff',
-                border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(0, 0, 0, 0.12)',
+                background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                border: getFieldTokens(isEffectiveDark).dropdownBorder,
                 borderRadius: 8,
-                boxShadow: isEffectiveDark ? '0 12px 32px rgba(0,0,0,0.65)' : '0 8px 24px rgba(0,0,0,0.18)',
+                boxShadow: 'none',
                 padding: 4,
                 display: 'flex',
                 flexDirection: 'column',

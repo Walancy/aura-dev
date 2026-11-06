@@ -376,6 +376,7 @@ export const TeamWorkspaceView: React.FC<Props> = ({
     >
       {/* Sidebar */}
       <div
+        data-tour="time-left-sidebar"
         style={{
           width: 'clamp(160px, 20%, 220px)',
           minWidth: 160,
@@ -452,6 +453,7 @@ export const TeamWorkspaceView: React.FC<Props> = ({
 
       {/* Conteúdo */}
       <div
+        data-tour="time-content-area"
         style={{
           flex: 1,
           minWidth: 0,

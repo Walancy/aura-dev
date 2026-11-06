@@ -17,6 +17,7 @@ import {
 import type { GitHubIssueItem } from '../../types/ide';
 import { issueBelongsToSprint } from '../ProjectsSchedulerView';
 import { logSystemActivity } from '../../utils/brainService';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 interface ProjectTasksDockTabProps {
   issues: GitHubIssueItem[];
@@ -674,15 +675,19 @@ export const ProjectTasksDockTab: React.FC<ProjectTasksDockTabProps> = ({
         {/* Right: Search & Refresh */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <div
+            className="df-search-box"
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: 6,
-              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
-              border: 'none',
+              height: 26,
+              background: getFieldTokens(isEffectiveDark).fieldBg,
+              border: getFieldTokens(isEffectiveDark).fieldBorder,
+              boxShadow: 'none',
               borderRadius: 6,
-              padding: '4px 8px',
+              padding: '0 8px',
               width: 170,
+              boxSizing: 'border-box',
             }}
           >
             <Search size={12} color={textSecondary} />

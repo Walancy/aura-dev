@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { getFieldTokens } from '../utils/fieldTokens';
 
 export interface OrchestrationPaletteItem {
   id: string;
@@ -115,17 +116,18 @@ export const OrchestrationCommandPalette: React.FC<OrchestrationCommandPalettePr
           maxWidth: 'calc(100vw - 32px)',
           maxHeight: '60vh',
           background: bgCard,
-          border: `1px solid ${border}`,
+          border: getFieldTokens(isEffectiveDark).dropdownBorder,
           borderRadius: 12,
-          boxShadow: isEffectiveDark ? '0 24px 64px rgba(0, 0, 0, 0.8)' : '0 24px 64px rgba(0, 0, 0, 0.2)',
+          boxShadow: 'none',
           zIndex: 999999,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
         }}
       >
-        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${border}` }}>
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${getFieldTokens(isEffectiveDark).fieldBorderColor}` }}>
           <input
+            className="df-field"
             ref={inputRef}
             type="text"
             value={query}
@@ -135,13 +137,16 @@ export const OrchestrationCommandPalette: React.FC<OrchestrationCommandPalettePr
             aria-label="Buscar na paleta de comandos"
             style={{
               width: '100%',
+              boxSizing: 'border-box',
               padding: '8px 10px',
               borderRadius: 8,
-              border: 'none',
+              border: getFieldTokens(isEffectiveDark).fieldBorder,
+              boxShadow: 'none',
               outline: 'none',
-              background: isEffectiveDark ? '#0f0f0f' : '#f1f5f9',
+              background: getFieldTokens(isEffectiveDark).fieldBg,
               color: textPrimary,
               fontSize: 13,
+              fontWeight: 400,
             }}
           />
         </div>

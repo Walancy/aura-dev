@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import type { ProjectIssue } from '../ProjectsSchedulerView';
 import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface MilestoneItem {
   id?: string;
@@ -177,6 +178,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
 }) => {
   // Paleta de cores 100% neutra monocromática (R = G = B, ZERO tom azulado ou slate)
   const c = useMemo(() => {
+    const ft = getFieldTokens(isEffectiveDark);
     if (isEffectiveDark) {
       return {
         shelf: '#101010',
@@ -186,7 +188,8 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
         cardSelected: '#2a2a2a',
         pillBg: '#202020',
         pillActive: '#2a2a2a',
-        inputBg: '#202020',
+        inputBg: ft.fieldBg,
+        inputBorder: ft.fieldBorder,
         divider: 'rgba(255, 255, 255, 0.07)',
         textPrimary: '#ffffff',
         textSecondary: '#a3a3a3',
@@ -207,7 +210,8 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
       cardSelected: '#e5e5e5',
       pillBg: '#eeeeee',
       pillActive: '#ffffff',
-      inputBg: '#f0f0f0',
+      inputBg: ft.fieldBg,
+      inputBorder: ft.fieldBorder,
       divider: 'rgba(0, 0, 0, 0.05)',
       textPrimary: '#111111',
       textSecondary: '#777777',
@@ -938,6 +942,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
       {/* COLUNA ESQUERDA: LISTA MODULAR DE MARCOS                                   */}
       {/* ========================================================================= */}
       <div
+        data-tour="marcos-left-sidebar"
         style={{
           width: leftSidebarWidth,
           minWidth: 180,
@@ -999,6 +1004,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
 
         {/* Campo de Busca de Marcos */}
         <div
+          className="df-search-box"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -1006,7 +1012,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
             background: c.inputBg,
             borderRadius: 6,
             padding: '6px 9px',
-            border: 'none',
+            border: c.inputBorder,
             boxShadow: 'none',
           }}
         >
@@ -1404,6 +1410,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
       {/* ÁREA DIREITA: CARDS MODULARES DE DETALHES (NUNCA UM CARD GRANDÃO)         */}
       {/* ========================================================================= */}
       <div
+        data-tour="marcos-detail-area"
         style={{
           flex: 1,
           minWidth: 0,
@@ -1420,6 +1427,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
         {milestones.length === 0 ? (
           /* Empty state modular elegante */
           <div
+            data-tour="marcos-detail-header"
             style={{
               flex: 1,
               background: c.card,
@@ -1497,6 +1505,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
             {/* LINHA SUPERIOR: CABEÇALHO DO MARCO + 3 MÉTRICAS À DIREITA        */}
             {/* ----------------------------------------------------------------- */}
             <div
+              data-tour="marcos-detail-header"
               style={{
                 display: 'flex',
                 gap: 5,
@@ -1584,10 +1593,12 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                         onChange={(e) => setEditStartDate(e.target.value)}
                         style={{
                           background: c.inputBg,
-                          border: 'none',
+                          border: c.inputBorder,
+                          boxShadow: 'none',
                           borderRadius: 4,
                           padding: '2px 6px',
                           fontSize: 11,
+                          fontWeight: 400,
                           color: c.textPrimary,
                           colorScheme: isEffectiveDark ? 'dark' : 'light',
                           outline: 'none',
@@ -1600,10 +1611,12 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                         onChange={(e) => setEditDueDate(e.target.value)}
                         style={{
                           background: c.inputBg,
-                          border: 'none',
+                          border: c.inputBorder,
+                          boxShadow: 'none',
                           borderRadius: 4,
                           padding: '2px 6px',
                           fontSize: 11,
+                          fontWeight: 400,
                           color: c.textPrimary,
                           colorScheme: isEffectiveDark ? 'dark' : 'light',
                           outline: 'none',
@@ -1935,6 +1948,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                 >
                   {/* Busca Rápida de Tarefas */}
                   <div
+                    className="df-search-box"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -1942,7 +1956,8 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                       background: c.inputBg,
                       borderRadius: 6,
                       padding: '5px 9px',
-                      border: 'none',
+                      border: c.inputBorder,
+                      boxShadow: 'none',
                       flexShrink: 0,
                     }}
                   >
@@ -2310,11 +2325,14 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
 
                   {/* Input Rápido para Novo Critério */}
                   <div
+                    className="df-search-box"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: 4,
                       background: c.inputBg,
+                      border: c.inputBorder,
+                      boxShadow: 'none',
                       borderRadius: 4,
                       padding: '3px 6px',
                       flexShrink: 0,
@@ -2782,6 +2800,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
             </div>
 
             <div
+              className="df-search-box"
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -2789,7 +2808,8 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                 background: c.inputBg,
                 borderRadius: 6,
                 padding: '6px 10px',
-                border: 'none',
+                border: c.inputBorder,
+                boxShadow: 'none',
               }}
             >
               <Search size={12} color={c.textSecondary} />

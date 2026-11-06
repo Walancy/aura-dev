@@ -16,6 +16,7 @@ import {
   FileText,
   Clock,
 } from 'lucide-react';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface IdeProblem {
   id: string;
@@ -198,16 +199,20 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
         {/* Left: Search input & Scope */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 260 }}>
           <div
+            className="df-search-box"
             style={{
               position: 'relative',
               display: 'flex',
               alignItems: 'center',
               flex: 1,
               maxWidth: 340,
-              background: isEffectiveDark ? '#141417' : '#ffffff',
+              height: 28,
+              background: getFieldTokens(isEffectiveDark).fieldBg,
               borderRadius: 6,
-              border: '1px solid ' + themeTokens.border,
+              border: getFieldTokens(isEffectiveDark).fieldBorder,
+              boxShadow: 'none',
               padding: '0 8px',
+              boxSizing: 'border-box',
             }}
           >
             <Search size={13} color={themeTokens.textSecondary} style={{ marginRight: 6, flexShrink: 0 }} />

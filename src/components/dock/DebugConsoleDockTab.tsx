@@ -11,6 +11,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { logSystemActivity } from '../../utils/brainService';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface DebugHistoryItem {
   id: string;
@@ -355,14 +356,16 @@ export const DebugConsoleDockTab: React.FC<DebugConsoleDockTabProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
           {/* Search Box */}
           <div
+            className="df-search-box"
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
               padding: '4px 8px',
-              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
-              borderRadius: 4,
-              border: 'none',
+              background: getFieldTokens(isEffectiveDark).fieldBg,
+              borderRadius: 5,
+              border: getFieldTokens(isEffectiveDark).fieldBorder,
+              boxShadow: 'none',
               height: 26,
               boxSizing: 'border-box',
             }}
@@ -552,6 +555,7 @@ export const DebugConsoleDockTab: React.FC<DebugConsoleDockTabProps> = ({
 
       {/* Expression Input Form at Bottom */}
       <form
+        className="df-search-box"
         onSubmit={(e) => {
           e.preventDefault();
           evaluateCommand(commandInput);
@@ -561,10 +565,12 @@ export const DebugConsoleDockTab: React.FC<DebugConsoleDockTabProps> = ({
           alignItems: 'center',
           gap: '8px',
           padding: '6px 8px',
-          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.03)',
-          borderRadius: 4,
-          border: 'none',
+          background: getFieldTokens(isEffectiveDark).fieldBg,
+          borderRadius: 5,
+          border: getFieldTokens(isEffectiveDark).fieldBorder,
+          boxShadow: 'none',
           flexShrink: 0,
+          boxSizing: 'border-box',
         }}
       >
         <span style={{ color: accentColor, fontWeight: 600, fontSize: 13, fontFamily: 'JetBrains Mono, Menlo, monospace' }}>

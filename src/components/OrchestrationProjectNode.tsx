@@ -27,6 +27,7 @@ import Editor from '@monaco-editor/react';
 import { FileIcon, FolderIcon } from './FileIcon';
 import { fetchAllGitProjects, cloneGitRepository, type GitProjectItem } from '../utils/gitProjects';
 import { allocateUniqueDevUrl, detectProjectPort, scanSystemOccupiedPorts, scanSystemOccupiedPortsOrNull, extractPortFromUrl, detectProjectApps, DetectedProjectApp } from '../utils/projectDevUrl';
+import { getFieldTokens } from '../utils/fieldTokens';
 
 export interface FileTreeNode {
   name: string;
@@ -711,6 +712,7 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
         {/* Project Selector Dropdown */}
         <div style={{ position: 'relative', marginTop: 6 }}>
           <button
+            className="df-dropdown-trigger"
             type="button"
             onClick={(e) => {
               e.stopPropagation();
@@ -723,13 +725,16 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
               justifyContent: 'space-between',
               padding: '6px 10px',
               borderRadius: 8,
-              border: isEffectiveDark
-                ? '1px solid rgba(255, 255, 255, 0.1)'
-                : '1px solid rgba(0, 0, 0, 0.1)',
-              background: isEffectiveDark ? '#1c1c20' : '#f8fafc',
+              border: isProjectsDropdownOpen
+                ? getFieldTokens(isEffectiveDark).fieldBorderFocus
+                : getFieldTokens(isEffectiveDark).fieldBorder,
+              background: isProjectsDropdownOpen
+                ? getFieldTokens(isEffectiveDark).fieldBgHover
+                : getFieldTokens(isEffectiveDark).fieldBg,
+              boxShadow: 'none',
               color: isEffectiveDark ? '#e4e4e7' : '#1e293b',
               fontSize: 11.5,
-              fontWeight: 500,
+              fontWeight: 400,
               cursor: 'pointer',
               outline: 'none',
             }}
@@ -742,18 +747,17 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
 
           {isProjectsDropdownOpen && (
             <div
+              className="df-dropdown-menu"
               style={{
                 position: 'absolute',
                 top: '100%',
                 left: 0,
                 right: 0,
                 marginTop: 4,
-                background: isEffectiveDark ? '#18181b' : '#ffffff',
-                border: isEffectiveDark
-                  ? '1px solid rgba(255, 255, 255, 0.15)'
-                  : '1px solid rgba(0, 0, 0, 0.15)',
+                background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                border: getFieldTokens(isEffectiveDark).dropdownBorder,
                 borderRadius: 8,
-                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)',
+                boxShadow: 'none',
                 zIndex: 60,
                 maxHeight: 220,
                 overflowY: 'auto',
@@ -1174,9 +1178,14 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
         >
           {/* Tree search bar */}
           <div
+            className="df-search-box"
             style={{
-              padding: '6px 8px',
-              borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'}`,
+              margin: '6px 6px 4px',
+              padding: '4px 8px',
+              borderRadius: 6,
+              background: getFieldTokens(isEffectiveDark).fieldBg,
+              border: getFieldTokens(isEffectiveDark).fieldBorder,
+              boxShadow: 'none',
               display: 'flex',
               alignItems: 'center',
               gap: 6,

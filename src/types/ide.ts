@@ -13,6 +13,13 @@ export interface ThemeTokens {
   border: string;
   borderSubtle: string;
   hoverBg: string;
+  fieldBg?: string;
+  fieldBgHover?: string;
+  fieldBorderColor?: string;
+  fieldBorder?: string;
+  fieldBorderFocus?: string;
+  dropdownBg?: string;
+  dropdownBorder?: string;
 }
 
 export interface TerminalSessionItem {

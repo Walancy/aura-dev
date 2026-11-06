@@ -18,6 +18,7 @@ import {
 import { renderAiIcon } from '../icons/AiProviderIcons';
 import { timeAgo, type CenterNotification } from './notificationStore';
 import { logSystemActivity } from '../../utils/brainService';
+import { TutorialTriggerButton, useRegisterTutorialOverlay } from '../tutorial/TutorialTriggerButton';
 
 interface Props {
   /** controla a abertura; o painel anima a saída antes de sair da tela */
@@ -223,6 +224,8 @@ export default function NotificationCenterPanel({
     </button>
   );
 
+  useRegisterTutorialOverlay('panel_notifications', open);
+
   if (!mounted) return null;
 
   return (
@@ -264,9 +267,19 @@ export default function NotificationCenterPanel({
           animation: `${closing ? 'notifPanelOut' : 'notifPanelIn'} ${ANIM_MS}ms cubic-bezier(0.22, 1, 0.36, 1) both`,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 16px 0' }}>
+        <div data-tour="notifications-header" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 16px 0' }}>
           <Bell size={16} color={accentColor} />
           <span style={{ fontSize: 14, fontWeight: 500, flex: 1 }}>Notificações</span>
+          <TutorialTriggerButton
+            contextId="panel_notifications"
+            isDark={true}
+            accentColor={accentColor}
+            textColor={C.text}
+            mutedColor={C.textSecondary}
+            compact
+            height={26}
+            contextName="Central de Notificações"
+          />
           <button
             type="button"
             title="Fechar (Esc)"
@@ -286,12 +299,12 @@ export default function NotificationCenterPanel({
           </button>
         </div>
 
-        <div style={{ display: 'flex', borderBottom: `1px solid ${C.border}`, marginTop: 6 }}>
+        <div data-tour="notifications-tabs" style={{ display: 'flex', borderBottom: `1px solid ${C.border}`, marginTop: 6 }}>
           {tabBtn('new', 'Novas', fresh.length)}
           {tabBtn('history', 'Histórico', history.length)}
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div data-tour="notifications-list" style={{ flex: 1, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
           {list.length === 0 && (
             <div
               style={{

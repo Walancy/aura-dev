@@ -17,6 +17,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import type { RepoCollaborator } from '../ProjectsSchedulerView';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface AccessItem {
   id: string;
@@ -557,14 +558,16 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
               {/* Filtro Type */}
               <div style={{ position: 'relative' }}>
                 <button
+                  className="df-dropdown-trigger"
                   type="button"
                   onClick={() => {
                     setIsTypeDropdownOpen((prev) => !prev);
                     setIsRoleDropdownOpen(false);
                   }}
                   style={{
-                    background: typeFilter !== 'all' ? theme.controlHoverBg : 'transparent',
-                    border: 'none',
+                    background: typeFilter !== 'all' ? getFieldTokens(isEffectiveDark).fieldBgHover : getFieldTokens(isEffectiveDark).fieldBg,
+                    border: getFieldTokens(isEffectiveDark).fieldBorder,
+                    boxShadow: 'none',
                     color: typeFilter !== 'all' ? accentColor : theme.textSecondary,
                     fontSize: 12,
                     fontWeight: 400,
@@ -575,13 +578,8 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                     padding: '4px 8px',
                     borderRadius: 6,
                     height: 28,
-                    transition: 'background 0.15s ease',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (typeFilter === 'all') e.currentTarget.style.background = theme.controlHoverBg;
-                  }}
-                  onMouseLeave={(e) => {
-                    if (typeFilter === 'all') e.currentTarget.style.background = 'transparent';
+                    transition: 'background 0.15s ease, border-color 0.15s ease',
+                    boxSizing: 'border-box',
                   }}
                 >
                   <span>
@@ -592,15 +590,16 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
 
                 {isTypeDropdownOpen && (
                   <div
+                    className="df-dropdown-menu"
                     style={{
                       position: 'absolute',
                       top: 'calc(100% + 4px)',
                       left: 0,
                       zIndex: 35,
-                      background: theme.dropdownBg,
-                      border: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+                      background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                      border: getFieldTokens(isEffectiveDark).dropdownBorder,
                       borderRadius: 8,
-                      boxShadow: theme.dropdownShadow,
+                      boxShadow: 'none',
                       minWidth: 140,
                       padding: 4,
                       display: 'flex',
@@ -648,14 +647,16 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
               {/* Filtro Role */}
               <div style={{ position: 'relative' }}>
                 <button
+                  className="df-dropdown-trigger"
                   type="button"
                   onClick={() => {
                     setIsRoleDropdownOpen((prev) => !prev);
                     setIsTypeDropdownOpen(false);
                   }}
                   style={{
-                    background: roleFilter !== 'all' ? theme.controlHoverBg : 'transparent',
-                    border: 'none',
+                    background: roleFilter !== 'all' ? getFieldTokens(isEffectiveDark).fieldBgHover : getFieldTokens(isEffectiveDark).fieldBg,
+                    border: getFieldTokens(isEffectiveDark).fieldBorder,
+                    boxShadow: 'none',
                     color: roleFilter !== 'all' ? accentColor : theme.textSecondary,
                     fontSize: 12,
                     fontWeight: 400,
@@ -666,13 +667,8 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                     padding: '4px 8px',
                     borderRadius: 6,
                     height: 28,
-                    transition: 'background 0.15s ease',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (roleFilter === 'all') e.currentTarget.style.background = theme.controlHoverBg;
-                  }}
-                  onMouseLeave={(e) => {
-                    if (roleFilter === 'all') e.currentTarget.style.background = 'transparent';
+                    transition: 'background 0.15s ease, border-color 0.15s ease',
+                    boxSizing: 'border-box',
                   }}
                 >
                   <span>{roleFilter === 'all' ? 'Role' : `Role: ${roleFilter}`}</span>
@@ -681,15 +677,16 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
 
                 {isRoleDropdownOpen && (
                   <div
+                    className="df-dropdown-menu"
                     style={{
                       position: 'absolute',
                       top: 'calc(100% + 4px)',
                       left: 0,
                       zIndex: 35,
-                      background: theme.dropdownBg,
-                      border: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+                      background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                      border: getFieldTokens(isEffectiveDark).dropdownBorder,
                       borderRadius: 8,
-                      boxShadow: theme.dropdownShadow,
+                      boxShadow: 'none',
                       minWidth: 150,
                       padding: 4,
                       display: 'flex',
@@ -738,21 +735,23 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
               </div>
             </div>
 
-            {/* Direita: Campo de Busca Padronizado DevFlow (Sem bordas duras) */}
+            {/* Direita: Campo de Busca Padronizado DevFlow */}
             <div
+              className="df-search-box"
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,
-                background: isEffectiveDark ? '#141414' : '#ffffff',
-                borderRadius: 8,
+                background: getFieldTokens(isEffectiveDark).fieldBg,
+                borderRadius: 6,
                 padding: '0 10px',
-                height: 30,
+                height: 28,
                 width: 220,
                 maxWidth: '100%',
-                border: 'none',
+                border: getFieldTokens(isEffectiveDark).fieldBorder,
                 boxShadow: 'none',
-                transition: 'background 0.15s ease',
+                transition: 'background 0.15s ease, border-color 0.15s ease',
+                boxSizing: 'border-box',
               }}
             >
               <Search size={13} color={theme.textSecondary} />
@@ -933,13 +932,15 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                       {/* Botão de Papel (Role: admin ▾) */}
                       <div style={{ position: 'relative' }}>
                         <button
+                          className="df-dropdown-trigger"
                           type="button"
                           onClick={() =>
                             canManage && setActiveRolePickerId((prev) => (prev === item.id ? null : item.id))
                           }
                           style={{
-                            background: theme.controlBg,
-                            border: 'none',
+                            background: getFieldTokens(isEffectiveDark).fieldBg,
+                            border: getFieldTokens(isEffectiveDark).fieldBorder,
+                            boxShadow: 'none',
                             borderRadius: 6,
                             padding: '0 10px',
                             height: 28,
@@ -950,10 +951,9 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                             display: 'flex',
                             alignItems: 'center',
                             gap: 5,
-                            transition: 'background 0.15s ease',
+                            transition: 'background 0.15s ease, border-color 0.15s ease',
+                            boxSizing: 'border-box',
                           }}
-                          onMouseEnter={(e) => (e.currentTarget.style.background = theme.controlHoverBg)}
-                          onMouseLeave={(e) => (e.currentTarget.style.background = theme.controlBg)}
                         >
                           <span>Role: {item.role}</span>
                           <ChevronDown size={11} color={theme.textSecondary} />
@@ -962,21 +962,21 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                         {/* Dropdown de Papéis */}
                         {activeRolePickerId === item.id && (
                           <div
+                            className="df-dropdown-menu"
                             style={{
                               position: 'absolute',
                               top: 'calc(100% + 4px)',
                               right: 0,
                               zIndex: 35,
-                              background: theme.dropdownBg,
-                              border: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+                              background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                              border: getFieldTokens(isEffectiveDark).dropdownBorder,
                               borderRadius: 8,
-                              boxShadow: theme.dropdownShadow,
+                              boxShadow: 'none',
                               width: 250,
                               padding: 4,
                               display: 'flex',
                               flexDirection: 'column',
                               gap: 1,
-                              backdropFilter: 'blur(16px)',
                             }}
                           >
                             <div
@@ -1214,11 +1214,13 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                   style={{
                     width: '100%',
                     boxSizing: 'border-box',
-                    background: theme.modalInputBg || theme.controlBg,
-                    border: 'none',
+                    background: getFieldTokens(isEffectiveDark).fieldBg,
+                    border: getFieldTokens(isEffectiveDark).fieldBorder,
+                    boxShadow: 'none',
                     borderRadius: 6,
                     padding: '8px 10px',
                     fontSize: 12.5,
+                    fontWeight: 400,
                     color: theme.textPrimary,
                     outline: 'none',
                   }}
@@ -1236,11 +1238,13 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                   style={{
                     width: '100%',
                     boxSizing: 'border-box',
-                    background: theme.modalInputBg || theme.controlBg,
-                    border: 'none',
+                    background: getFieldTokens(isEffectiveDark).fieldBg,
+                    border: getFieldTokens(isEffectiveDark).fieldBorder,
+                    boxShadow: 'none',
                     borderRadius: 6,
                     padding: '8px 10px',
                     fontSize: 12.5,
+                    fontWeight: 400,
                     color: theme.textPrimary,
                     outline: 'none',
                   }}
@@ -1352,11 +1356,13 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                   style={{
                     width: '100%',
                     boxSizing: 'border-box',
-                    background: theme.modalInputBg || theme.controlBg,
-                    border: 'none',
+                    background: getFieldTokens(isEffectiveDark).fieldBg,
+                    border: getFieldTokens(isEffectiveDark).fieldBorder,
+                    boxShadow: 'none',
                     borderRadius: 6,
                     padding: '8px 10px',
                     fontSize: 12.5,
+                    fontWeight: 400,
                     color: theme.textPrimary,
                     outline: 'none',
                   }}
@@ -1382,11 +1388,13 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                   style={{
                     width: '100%',
                     boxSizing: 'border-box',
-                    background: theme.modalInputBg || theme.controlBg,
-                    border: 'none',
+                    background: getFieldTokens(isEffectiveDark).fieldBg,
+                    border: getFieldTokens(isEffectiveDark).fieldBorder,
+                    boxShadow: 'none',
                     borderRadius: 6,
                     padding: '8px 10px',
                     fontSize: 12.5,
+                    fontWeight: 400,
                     color: theme.textPrimary,
                     outline: 'none',
                   }}
@@ -1497,11 +1505,13 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                   style={{
                     width: '100%',
                     boxSizing: 'border-box',
-                    background: theme.modalInputBg || theme.controlBg,
-                    border: 'none',
+                    background: getFieldTokens(isEffectiveDark).fieldBg,
+                    border: getFieldTokens(isEffectiveDark).fieldBorder,
+                    boxShadow: 'none',
                     borderRadius: 6,
                     padding: '8px 10px',
                     fontSize: 12.5,
+                    fontWeight: 400,
                     color: theme.textPrimary,
                     outline: 'none',
                   }}
@@ -1521,11 +1531,13 @@ export const ManageAccessView: React.FC<ManageAccessViewProps> = ({
                   style={{
                     width: '100%',
                     boxSizing: 'border-box',
-                    background: theme.modalInputBg || theme.controlBg,
-                    border: 'none',
+                    background: getFieldTokens(isEffectiveDark).fieldBg,
+                    border: getFieldTokens(isEffectiveDark).fieldBorder,
+                    boxShadow: 'none',
                     borderRadius: 6,
                     padding: '8px 10px',
                     fontSize: 12,
+                    fontWeight: 400,
                     color: theme.textPrimary,
                     outline: 'none',
                     resize: 'none',

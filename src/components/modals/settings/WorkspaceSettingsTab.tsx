@@ -14,6 +14,7 @@ import {
 import { MiniSwitch } from '../../ui/MiniSwitch';
 import type { ThemeTokens, GitBranchItem } from '../../../types/ide';
 import { logSystemActivity } from '../../../utils/brainService';
+import { getFieldTokens } from '../../../utils/fieldTokens';
 
 export interface WorkspaceSettingsTabProps {
   themeTokens: ThemeTokens;
@@ -555,6 +556,7 @@ export const WorkspaceSettingsTab: React.FC<WorkspaceSettingsTabProps> = ({
                 }}
               />
               <input
+                className="df-field"
                 type="text"
                 placeholder="Filtrar arquivos..."
                 value={changesFilter}
@@ -562,16 +564,17 @@ export const WorkspaceSettingsTab: React.FC<WorkspaceSettingsTabProps> = ({
                 style={{
                   width: '100%',
                   height: 28,
-                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
-                  border: 'none',
+                  background: getFieldTokens(isEffectiveDark).fieldBg,
+                  border: getFieldTokens(isEffectiveDark).fieldBorder,
                   boxShadow: 'none',
                   borderRadius: 6,
                   padding: '0 10px 0 28px',
                   fontSize: 11,
+                  fontWeight: 400,
                   color: themeTokens.textPrimary,
                   outline: 'none',
                   boxSizing: 'border-box',
-                  transition: 'background 0.15s ease',
+                  transition: 'background 0.15s ease, border-color 0.15s ease',
                 }}
               />
             </div>
@@ -748,6 +751,7 @@ export const WorkspaceSettingsTab: React.FC<WorkspaceSettingsTabProps> = ({
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input
+                className="df-field"
                 type="text"
                 placeholder="Nome da nova branch (ex: feat/minha-feature)..."
                 value={newBranchInput}
@@ -760,16 +764,17 @@ export const WorkspaceSettingsTab: React.FC<WorkspaceSettingsTabProps> = ({
                 style={{
                   flex: 1,
                   height: 28,
-                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
-                  border: 'none',
+                  background: getFieldTokens(isEffectiveDark).fieldBg,
+                  border: getFieldTokens(isEffectiveDark).fieldBorder,
                   boxShadow: 'none',
                   borderRadius: 6,
                   padding: '0 10px',
                   fontSize: 11.5,
+                  fontWeight: 400,
                   color: themeTokens.textPrimary,
                   outline: 'none',
                   boxSizing: 'border-box',
-                  transition: 'background 0.15s ease',
+                  transition: 'background 0.15s ease, border-color 0.15s ease',
                 }}
               />
               <button
@@ -847,6 +852,7 @@ export const WorkspaceSettingsTab: React.FC<WorkspaceSettingsTabProps> = ({
               }}
             />
             <input
+              className="df-field"
               type="text"
               placeholder="Filtrar branches..."
               value={searchQuery}
@@ -854,16 +860,17 @@ export const WorkspaceSettingsTab: React.FC<WorkspaceSettingsTabProps> = ({
               style={{
                 width: '100%',
                 height: 28,
-                background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
-                border: 'none',
+                background: getFieldTokens(isEffectiveDark).fieldBg,
+                border: getFieldTokens(isEffectiveDark).fieldBorder,
                 boxShadow: 'none',
                 borderRadius: 6,
                 padding: '0 10px 0 28px',
                 fontSize: 11,
+                fontWeight: 400,
                 color: themeTokens.textPrimary,
                 outline: 'none',
                 boxSizing: 'border-box',
-                transition: 'background 0.15s ease',
+                transition: 'background 0.15s ease, border-color 0.15s ease',
               }}
             />
           </div>

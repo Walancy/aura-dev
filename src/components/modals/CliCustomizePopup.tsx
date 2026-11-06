@@ -7,6 +7,7 @@ import { DevFlowSelect } from '../ui/DevFlowSelect';
 import { TERMINAL_SKINS, TerminalSkinBackground, TerminalSkinOverlay, skinGlow, type TerminalSkinId } from '../TerminalSkin';
 import { TYPING_EFFECTS, getTypingEffect, setTypingEffect, type TypingEffectId } from '../typingEffects';
 import { logSystemActivity } from '../../utils/brainService';
+import { TutorialTriggerButton, useRegisterTutorialOverlay } from '../tutorial/TutorialTriggerButton';
 
 const FONT_SIZES = [10, 11, 12, 13, 14, 16, 18];
 const LINE_HEIGHTS = [
@@ -83,9 +84,10 @@ const CompactTerminalOptions: React.FC<TerminalSettingsTabProps> = (t) => {
   );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div data-tour="cli-customize-options" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {/* preview pequeno */}
       <div
+        data-tour="cli-customize-preview"
         style={{
           position: 'relative',
           overflow: 'hidden',
@@ -193,7 +195,8 @@ const CompactTerminalOptions: React.FC<TerminalSettingsTabProps> = (t) => {
 
 /** Popup arrastável "Personalizar CLI": as mesmas opções de Configurações → Terminal, com preview ao vivo */
 export const CliCustomizePopup: React.FC<TerminalSettingsTabProps & { onClose: () => void }> = ({ onClose, ...tab }) => {
-  const { themeTokens, accentColor } = tab;
+  useRegisterTutorialOverlay('popup_cli_customize', true);
+  const { themeTokens, accentColor, isEffectiveDark } = tab;
   const W = 340;
   const [pos, setPos] = React.useState(() => ({ x: Math.max(20, window.innerWidth - W - 40), y: 65 }));
   const drag = React.useRef<{ mx: number; my: number; x: number; y: number } | null>(null);
@@ -234,8 +237,8 @@ export const CliCustomizePopup: React.FC<TerminalSettingsTabProps & { onClose: (
         maxHeight: 'calc(100vh - 90px)',
         background: themeTokens.bgCard,
         borderRadius: 10,
-        border: `1px solid ${themeTokens.border}`,
-        boxShadow: '0 24px 64px rgba(0, 0, 0, 0.85)',
+        border: 'none',
+        boxShadow: 'none',
         zIndex: 999999,
         display: 'flex',
         flexDirection: 'column',
@@ -246,6 +249,7 @@ export const CliCustomizePopup: React.FC<TerminalSettingsTabProps & { onClose: (
       }}
     >
       <div
+        data-tour="cli-customize-header"
         onMouseDown={(e) => {
           if (e.button !== 0) return;
           drag.current = { mx: e.clientX, my: e.clientY, x: pos.x, y: pos.y };
@@ -268,17 +272,29 @@ export const CliCustomizePopup: React.FC<TerminalSettingsTabProps & { onClose: (
           <SquareTerminal size={14} color={accentColor} />
           <span style={{ fontSize: 12.5, fontWeight: 600, color: themeTokens.textPrimary }}>Personalizar CLI</span>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          onMouseDown={(e) => e.stopPropagation()}
-          title="Fechar (Esc)"
-          style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 3, display: 'flex', borderRadius: 4 }}
-          onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = '#ff5f56')}
-          onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary)}
-        >
-          <X size={15} />
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <TutorialTriggerButton
+            contextId="popup_cli_customize"
+            isDark={isEffectiveDark}
+            accentColor={accentColor}
+            textColor={themeTokens.textPrimary}
+            mutedColor={themeTokens.textSecondary}
+            compact
+            height={24}
+            contextName="Personalizar CLI"
+          />
+          <button
+            type="button"
+            onClick={onClose}
+            onMouseDown={(e) => e.stopPropagation()}
+            title="Fechar (Esc)"
+            style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', padding: 3, display: 'flex', borderRadius: 4 }}
+            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = '#ff5f56')}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary)}
+          >
+            <X size={15} />
+          </button>
+        </div>
       </div>
       <div style={{ padding: 12, overflowY: 'auto', minHeight: 0 }}>
         <CompactTerminalOptions {...tab} />

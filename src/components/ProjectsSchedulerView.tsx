@@ -84,6 +84,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 import { getContrastTextColor, hexToRgba } from '../utils/color';
+import { getFieldTokens } from '../utils/fieldTokens';
 import { DatePickerField } from './ui/DatePickerField';
 import { renderAiIcon } from './icons/AiProviderIcons';
 import { AI_PROVIDERS } from '../constants/ai';
@@ -102,6 +103,7 @@ import { ProjectSettingsView } from './settings/ProjectSettingsView';
 import { getLanguageSvgUrl } from './FileIcon';
 import { ProjectIconModal } from './modals/ProjectIconModal';
 import { logSystemActivity } from '../utils/brainService';
+import { setProjectSubflowContext, type ProjectSubTutorialId } from './tutorial/tutorialStore';
 import { computeProjectHealthScore } from '../utils/gitProjects';
 export { computeProjectHealthScore };
 
@@ -2196,6 +2198,7 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
 
   const accentContrastText = getContrastTextColor(accentColor);
   const isAccentContrastDark = accentContrastText === '#000000';
+  const ft = getFieldTokens(isEffectiveDark);
 
   const theme = {
     bgApp: themeTokens?.bgApp || (isEffectiveDark ? '#0a0a0a' : '#f5f5f5'),
@@ -2205,14 +2208,14 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
     cardBg: isEffectiveDark ? '#181818' : '#ffffff',
     cardHoverBg: isEffectiveDark ? '#222222' : '#f0f0f0',
     cardBorder: 'none',
-    controlBg: isEffectiveDark ? '#1e1e1e' : '#f0f0f0',
-    controlHoverBg: isEffectiveDark ? '#262626' : '#e5e5e5',
-    controlBorder: 'none',
+    controlBg: ft.fieldBg,
+    controlHoverBg: ft.fieldBgHover,
+    controlBorder: ft.fieldBorder,
     controlShadow: 'none',
-    dropdownBg: isEffectiveDark ? '#181818' : '#ffffff',
+    dropdownBg: ft.dropdownMenuBg,
     dropdownShadow: 'none',
-    dropdownBorder: 'none',
-    dropdownItemHover: isEffectiveDark ? '#242424' : '#f0f0f0',
+    dropdownBorder: ft.dropdownBorder,
+    dropdownItemHover: ft.dropdownItemHoverBg,
     textPrimary: themeTokens?.textPrimary || (isEffectiveDark ? '#ffffff' : '#111111'),
     textSecondary: themeTokens?.textSecondary || (isEffectiveDark ? '#888888' : '#777777'),
     textMuted: themeTokens?.textMuted || (isEffectiveDark ? '#555555' : '#999999'),
@@ -2228,8 +2231,8 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
     modalBg: isEffectiveDark ? '#181818' : '#ffffff',
     modalBorder: 'none',
     modalShadow: 'none',
-    modalInputBg: isEffectiveDark ? '#1e1e1e' : '#f0f0f0',
-    modalInputBorder: 'none',
+    modalInputBg: ft.fieldBg,
+    modalInputBorder: ft.fieldBorder,
     avatarBorder: isEffectiveDark ? '#181818' : '#ffffff',
   };
   const [hoveredCardId, setHoveredCardId] = useState<number | string | null>(null);
@@ -2264,6 +2267,28 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
   const effectiveProjectLayoutMode = isGridMode ? projectLayoutMode : 'grid';
   const [selectedSection, setSelectedSection] = useState<ProjectSectionId>('sprints');
   const [hoveredSectionId, setHoveredSectionId] = useState<ProjectSectionId | null>(null);
+
+  useEffect(() => {
+    if (isGridMode) {
+      setProjectSubflowContext(null);
+      return;
+    }
+    const sectionMap: Record<ProjectSectionId, ProjectSubTutorialId> = {
+      tarefas: 'projeto_tarefas',
+      issues: 'projeto_issues',
+      sprints: 'projeto_sprints',
+      riscos: 'projeto_riscos',
+      marcos: 'projeto_marcos',
+      relatorio: 'projeto_relatorio',
+      links: 'projeto_links',
+      time: 'projeto_time',
+      configuracoes: 'projeto_configuracoes',
+    };
+    setProjectSubflowContext(sectionMap[selectedSection]);
+    return () => {
+      setProjectSubflowContext(null);
+    };
+  }, [isGridMode, selectedSection]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSprint, setSelectedSprint] = useState('Todas as Linguagens');
   const [selectedStatus, setSelectedStatus] = useState('Todos os Projetos');
@@ -6482,6 +6507,7 @@ Formate com seções bem organizadas:
               <div style={{ position: 'relative' }}>
                 <div
                   ref={sprintTriggerRef}
+                  className="df-dropdown-trigger"
                   onClick={(e) => {
                     e.stopPropagation();
                     setSprintDropdownOpen((prev) => !prev);
@@ -6493,17 +6519,21 @@ Formate com seções bem organizadas:
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 6,
-                    padding: '4px 2px',
+                    gap: 8,
+                    height: 32,
+                    boxSizing: 'border-box',
+                    padding: '0 12px',
+                    borderRadius: 8,
                     cursor: 'pointer',
-                    color: theme.textSecondary,
-                    fontSize: 13,
+                    background: theme.controlBg,
+                    color: theme.textPrimary,
+                    fontSize: 12.5,
                     fontWeight: 400,
-                    border: 'none',
-                    transition: 'color 0.15s ease',
+                    border: theme.controlBorder,
+                    transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = theme.textPrimary)}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = theme.textSecondary)}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = theme.controlHoverBg)}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = theme.controlBg)}
                 >
                   <span>{selectedSprint}</span>
                   <ChevronDown size={14} color={theme.textSecondary} />
@@ -6624,6 +6654,7 @@ Formate com seções bem organizadas:
                   </span>
                   <div
                     ref={orgTriggerRef}
+                    className="df-dropdown-trigger"
                     onClick={(e) => {
                       e.stopPropagation();
                       setOrgDropdownOpen((prev) => !prev);
@@ -6636,12 +6667,14 @@ Formate com seções bem organizadas:
                       display: 'flex',
                       alignItems: 'center',
                       gap: 8,
+                      height: 32,
+                      boxSizing: 'border-box',
                       background: theme.controlBg,
                       borderRadius: 8,
-                      padding: '6px 12px',
+                      padding: '0 12px',
                       cursor: 'pointer',
                       border: theme.controlBorder,
-                      transition: 'background 0.15s ease',
+                      transition: 'background 0.15s ease, border-color 0.15s ease',
                     }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = theme.controlHoverBg)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = theme.controlBg)}
@@ -6855,9 +6888,11 @@ Formate com seções bem organizadas:
                     display: 'flex',
                     alignItems: 'center',
                     gap: 8,
+                    height: 32,
+                    boxSizing: 'border-box',
                     background: theme.controlBg,
                     borderRadius: 8,
-                    padding: '6px 12px',
+                    padding: '0 12px',
                     cursor: 'pointer',
                     border: selectedGithubProjectNumber != null ? `1px solid ${accentColor}` : theme.controlBorder,
                     transition: 'background 0.15s ease, border-color 0.15s ease',
@@ -6866,13 +6901,13 @@ Formate com seções bem organizadas:
                   onMouseEnter={(e) => {
                     e.currentTarget.style.background = theme.controlHoverBg;
                     if (selectedGithubProjectNumber == null) {
-                      e.currentTarget.style.borderColor = accentColor;
+                      e.currentTarget.style.borderColor = ft.fieldBorderFocusColor;
                     }
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.background = theme.controlBg;
                     if (selectedGithubProjectNumber == null) {
-                      e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
+                      e.currentTarget.style.borderColor = ft.fieldBorderColor;
                     }
                   }}
                 >
@@ -6880,7 +6915,7 @@ Formate com seções bem organizadas:
                   <span
                     style={{
                       fontSize: 12.5,
-                      fontWeight: selectedGithubProjectNumber != null ? 500 : 400,
+                      fontWeight: 400,
                       color: selectedGithubProjectNumber != null ? accentColor : theme.textPrimary,
                       maxWidth: 160,
                       overflow: 'hidden',
@@ -6909,23 +6944,26 @@ Formate com seções bem organizadas:
                     }}
                     title="Abrir Project no GitHub"
                     style={{
+                      height: 32,
+                      boxSizing: 'border-box',
                       background: theme.controlBg,
                       border: theme.controlBorder,
-                      borderRadius: 7,
-                      padding: '6px 8px',
+                      borderRadius: 8,
+                      padding: '0 8px',
                       color: theme.textSecondary,
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
+                      transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
                     }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.color = accentColor;
-                      e.currentTarget.style.borderColor = accentColor;
+                      e.currentTarget.style.borderColor = ft.fieldBorderFocusColor;
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.color = theme.textSecondary;
-                      e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
+                      e.currentTarget.style.borderColor = ft.fieldBorderColor;
                     }}
                   >
                     <ExternalLink size={12} />
@@ -6936,16 +6974,17 @@ Formate com seções bem organizadas:
                 {githubProjectDropdownOpen && projectTriggerRef.current && createPortal(
                   <div
                     ref={projectDropdownRef}
+                    className="df-dropdown-menu"
                     onClick={(e) => e.stopPropagation()}
                     style={{
                       position: 'fixed',
                       top: projectTriggerRef.current.getBoundingClientRect().bottom + 6,
                       left: Math.max(8, Math.min(projectTriggerRef.current.getBoundingClientRect().left, window.innerWidth - 328)),
                       zIndex: 999999,
-                      background: isEffectiveDark ? '#161616' : '#ffffff',
-                      border: `1px solid ${isEffectiveDark ? '#2e2e2e' : '#e2e8f0'}`,
+                      background: theme.dropdownBg,
+                      border: theme.dropdownBorder,
                       borderRadius: 10,
-                      boxShadow: isEffectiveDark ? '0 12px 32px rgba(0,0,0,0.6)' : '0 12px 32px rgba(0,0,0,0.12)',
+                      boxShadow: 'none',
                       padding: '6px',
                       minWidth: 260,
                       maxWidth: 320,
@@ -6964,7 +7003,7 @@ Formate com seções bem organizadas:
                         borderBottom: `1px solid ${hexToRgba(theme.textSecondary, isEffectiveDark ? 0.12 : 0.08)}`,
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, color: theme.textSecondary, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 400, color: theme.textSecondary, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                         <FolderKanban size={12} color={accentColor} />
                         <span>Projects (GitHub)</span>
                       </div>
@@ -6992,14 +7031,18 @@ Formate com seções bem organizadas:
                     {/* Campo de Busca de Projects */}
                     <div style={{ padding: '4px 4px 2px' }}>
                       <div
+                        className="df-search-box"
                         style={{
                           display: 'flex',
                           alignItems: 'center',
                           gap: 6,
-                          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : '#f1f5f9',
+                          height: 28,
+                          boxSizing: 'border-box',
+                          background: theme.controlBg,
                           borderRadius: 6,
-                          padding: '5px 8px',
-                          border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
+                          padding: '0 8px',
+                          border: theme.controlBorder,
+                          boxShadow: 'none',
                         }}
                       >
                         <Search size={12} color={theme.textSecondary} style={{ flexShrink: 0 }} />
@@ -7268,6 +7311,7 @@ Formate com seções bem organizadas:
                   </span>
                   <div
                     ref={statusTriggerRef}
+                    className="df-dropdown-trigger"
                     onClick={(e) => {
                       e.stopPropagation();
                       setStatusDropdownOpen((prev) => !prev);
@@ -7280,12 +7324,14 @@ Formate com seções bem organizadas:
                       display: 'flex',
                       alignItems: 'center',
                       gap: 8,
+                      height: 32,
+                      boxSizing: 'border-box',
                       background: theme.controlBg,
                       borderRadius: 8,
-                      padding: '6px 12px',
+                      padding: '0 12px',
                       cursor: 'pointer',
                       border: theme.controlBorder,
-                      transition: 'background 0.15s ease',
+                      transition: 'background 0.15s ease, border-color 0.15s ease',
                     }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = theme.controlHoverBg)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = theme.controlBg)}
@@ -7364,11 +7410,13 @@ Formate com seções bem organizadas:
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
+                      height: 32,
+                      boxSizing: 'border-box',
                       background: isEffectiveDark ? '#1a1a1a' : '#f1f5f9',
                       borderRadius: 8,
                       padding: 3,
                       gap: 2,
-                      border: theme.controlBorder,
+                      border: 'none',
                     }}
                   >
                     <button
@@ -7379,15 +7427,16 @@ Formate com seções bem organizadas:
                         display: 'flex',
                         alignItems: 'center',
                         gap: 5,
-                        padding: '4px 9px',
+                        height: '100%',
+                        padding: '0 9px',
                         borderRadius: 6,
                         background: projectLayoutMode === 'grid' ? (isEffectiveDark ? '#262626' : '#ffffff') : 'transparent',
                         color: projectLayoutMode === 'grid' ? theme.textPrimary : theme.textSecondary,
                         fontSize: 12,
-                        fontWeight: projectLayoutMode === 'grid' ? 500 : 400,
+                        fontWeight: 400,
                         border: 'none',
                         cursor: 'pointer',
-                        boxShadow: projectLayoutMode === 'grid' ? (isEffectiveDark ? '0 1px 3px rgba(0,0,0,0.4)' : '0 1px 2px rgba(0,0,0,0.06)') : 'none',
+                        boxShadow: 'none',
                         transition: 'all 0.15s ease',
                       }}
                     >
@@ -7402,15 +7451,16 @@ Formate com seções bem organizadas:
                         display: 'flex',
                         alignItems: 'center',
                         gap: 5,
-                        padding: '4px 9px',
+                        height: '100%',
+                        padding: '0 9px',
                         borderRadius: 6,
                         background: projectLayoutMode === 'list' ? (isEffectiveDark ? '#262626' : '#ffffff') : 'transparent',
                         color: projectLayoutMode === 'list' ? theme.textPrimary : theme.textSecondary,
                         fontSize: 12,
-                        fontWeight: projectLayoutMode === 'list' ? 500 : 400,
+                        fontWeight: 400,
                         border: 'none',
                         cursor: 'pointer',
-                        boxShadow: projectLayoutMode === 'list' ? (isEffectiveDark ? '0 1px 3px rgba(0,0,0,0.4)' : '0 1px 2px rgba(0,0,0,0.06)') : 'none',
+                        boxShadow: 'none',
                         transition: 'all 0.15s ease',
                       }}
                     >
@@ -8710,6 +8760,7 @@ Formate com seções bem organizadas:
             {/* BARRA LATERAL ESQUERDA (SIDEBAR GITHUB ISSUES)                     */}
             {/* ----------------------------------------------------------------- */}
             <div
+              data-tour="issues-left-sidebar"
               style={{
                 width: 'clamp(150px, 20%, 210px)',
                 minWidth: 150,
@@ -8891,6 +8942,7 @@ Formate com seções bem organizadas:
             >
               {/* Tabela de Issues (Contêiner no Design de Tarefas) */}
               <div
+                data-tour="issues-table-area"
                 style={{
                   background: theme.viewCanvasBg,
                   borderRadius: 8,
@@ -8919,6 +8971,7 @@ Formate com seções bem organizadas:
 
                 {/* Cabeçalho da Tabela (Barra de Ações do GitHub) */}
                 <div
+                  data-tour="issues-table-header"
                   style={{
                     background: theme.controlBg,
                     padding: '8px 12px',
@@ -9101,12 +9154,14 @@ Formate com seções bem organizadas:
 
                       {activeIssuesDropdown === 'author' && (
                         <div
+                          className="df-dropdown-menu"
                           style={{
                             position: 'absolute',
                             top: '100%',
                             right: 0,
                             marginTop: 4,
                             background: theme.dropdownBg,
+                            border: theme.dropdownBorder,
                             borderRadius: 8,
                             boxShadow: theme.dropdownShadow,
                             zIndex: 40,
@@ -9192,12 +9247,14 @@ Formate com seções bem organizadas:
 
                       {activeIssuesDropdown === 'label' && (
                         <div
+                          className="df-dropdown-menu"
                           style={{
                             position: 'absolute',
                             top: '100%',
                             right: 0,
                             marginTop: 4,
                             background: theme.dropdownBg,
+                            border: theme.dropdownBorder,
                             borderRadius: 8,
                             boxShadow: theme.dropdownShadow,
                             zIndex: 40,
@@ -9333,12 +9390,14 @@ Formate com seções bem organizadas:
 
                       {activeIssuesDropdown === 'assignee' && (
                         <div
+                          className="df-dropdown-menu"
                           style={{
                             position: 'absolute',
                             top: '100%',
                             right: 0,
                             marginTop: 4,
                             background: theme.dropdownBg,
+                            border: theme.dropdownBorder,
                             borderRadius: 8,
                             boxShadow: theme.dropdownShadow,
                             zIndex: 40,
@@ -9431,12 +9490,14 @@ Formate com seções bem organizadas:
 
                       {activeIssuesDropdown === 'sort' && (
                         <div
+                          className="df-dropdown-menu"
                           style={{
                             position: 'absolute',
                             top: '100%',
                             right: 0,
                             marginTop: 4,
                             background: theme.dropdownBg,
+                            border: theme.dropdownBorder,
                             borderRadius: 8,
                             boxShadow: theme.dropdownShadow,
                             zIndex: 40,
@@ -10510,6 +10571,7 @@ Formate com seções bem organizadas:
         {/* CONTAINER UNIFICADO: Controles + Visualizador (Timeline, Kanban, Planilha) */}
         {/* ========================================================================= */}
         <div
+          data-tour="tarefas-main-container"
           style={{
             width: '100%',
             background: theme.bgShelf,
@@ -10528,6 +10590,7 @@ Formate com seções bem organizadas:
         >
           {/* Barra Superior de Controles: Seletor de visualização + Ações (direto no card, sem div interna) */}
           <div
+            data-tour="tarefas-topbar"
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -10544,6 +10607,7 @@ Formate com seções bem organizadas:
           {/* Lado Esquerdo: Switcher em Pílula (Spreadsheet, Timeline, Kanban) + Info do Projeto */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <div
+              data-tour="tarefas-view-switcher"
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -10702,9 +10766,10 @@ Formate com seções bem organizadas:
           </div>
 
           {/* Lado Direito: Busca, Filtro, Ordenação e Adicionar Tarefa */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div data-tour="tarefas-toolbar-right" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             {/* Campo de Busca de Tarefas */}
             <div
+              className="df-search-box"
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -10715,7 +10780,7 @@ Formate com seções bem organizadas:
                 height: 32,
                 boxSizing: 'border-box',
                 width: 190,
-                border: 'none',
+                border: theme.controlBorder,
                 boxShadow: 'none',
               }}
             >
@@ -10731,7 +10796,7 @@ Formate com seções bem organizadas:
                   outline: 'none',
                   color: theme.textPrimary,
                   fontSize: 12,
-                  fontWeight: '300',
+                  fontWeight: 400,
                   width: '100%',
                   fontFamily: 'inherit',
                 }}
@@ -10750,6 +10815,7 @@ Formate com seções bem organizadas:
             <div style={{ position: 'relative' }}>
               <button
                 ref={filterTriggerRef}
+                className="df-dropdown-trigger"
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -10762,7 +10828,7 @@ Formate com seções bem organizadas:
                   height: 32,
                   boxSizing: 'border-box',
                   background: theme.controlBg,
-                  border: 'none',
+                  border: theme.controlBorder,
                   outline: 'none',
                   boxShadow: 'none',
                   borderRadius: 8,
@@ -10772,7 +10838,7 @@ Formate com seções bem organizadas:
                   fontWeight: 400,
                   fontFamily: 'inherit',
                   cursor: 'pointer',
-                  transition: 'all 0.15s ease',
+                  transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = theme.controlHoverBg)}
                 onMouseLeave={(e) => (e.currentTarget.style.background = theme.controlBg)}
@@ -10840,6 +10906,7 @@ Formate com seções bem organizadas:
             {/* Botão de Ordenação */}
             <button
               type="button"
+              className="df-dropdown-trigger"
               onClick={() => {
                 setSortMode((prev) => (prev === 'default' ? 'priority' : prev === 'priority' ? 'date' : 'default'));
               }}
@@ -10850,7 +10917,7 @@ Formate com seções bem organizadas:
                 height: 32,
                 boxSizing: 'border-box',
                 background: theme.controlBg,
-                border: 'none',
+                border: theme.controlBorder,
                 outline: 'none',
                 boxShadow: 'none',
                 borderRadius: 8,
@@ -10860,7 +10927,7 @@ Formate com seções bem organizadas:
                 fontWeight: 400,
                 fontFamily: 'inherit',
                 cursor: 'pointer',
-                transition: 'all 0.15s ease',
+                transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
               }}
               onMouseEnter={(e) => (e.currentTarget.style.background = theme.controlHoverBg)}
               onMouseLeave={(e) => (e.currentTarget.style.background = theme.controlBg)}
@@ -12624,7 +12691,7 @@ Formate com seções bem organizadas:
                           borderRadius: 6,
                           padding: '8px 12px',
                           fontSize: 13,
-                          fontWeight: '300',
+                          fontWeight: 400,
                           color: theme.textPrimary,
                           outline: 'none',
                           boxSizing: 'border-box',
@@ -12635,15 +12702,17 @@ Formate com seções bem organizadas:
 
                     {/* Descrição */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      <label style={{ fontSize: 12, fontWeight: '300', color: theme.textSecondary }}>
+                      <label style={{ fontSize: 12, fontWeight: 400, color: theme.textSecondary }}>
                         Descrição
                       </label>
 
                       <div
+                        className="df-search-box"
                         style={{
-                          border: 'none',
+                          border: theme.modalInputBorder,
                           borderRadius: 6,
                           background: theme.modalInputBg,
+                          boxShadow: 'none',
                           overflow: 'visible',
                           display: 'flex',
                           flexDirection: 'column',
@@ -12900,6 +12969,7 @@ Formate com seções bem organizadas:
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
                             {/* Pill Seletor de IA e Modelo */}
                             <div
+                              className="df-dropdown-trigger"
                               onClick={() => {
                                 setIsAiSelectorOpen((prev) => !prev);
                                 setActiveSubmenuProvider(localAiProvider);
@@ -12908,26 +12978,26 @@ Formate com seções bem organizadas:
                                 display: 'flex',
                                 alignItems: 'center',
                                 gap: 6,
-                                background: isAiSelectorOpen
-                                  ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
-                                  : (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)'),
-                                border: 'none',
+                                height: 28,
+                                boxSizing: 'border-box',
+                                background: isAiSelectorOpen ? theme.controlHoverBg : theme.controlBg,
+                                border: theme.controlBorder,
                                 borderRadius: 6,
-                                padding: '4px 8px',
+                                padding: '0 8px',
                                 cursor: 'pointer',
                                 fontSize: 11.5,
                                 color: theme.textPrimary,
-                                transition: 'all 0.15s ease',
+                                transition: 'background 0.15s ease, border-color 0.15s ease',
                                 userSelect: 'none',
                               }}
                               onMouseEnter={(e) => {
                                 if (!isAiSelectorOpen) {
-                                  e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.09)' : 'rgba(0, 0, 0, 0.07)';
+                                  e.currentTarget.style.background = theme.controlHoverBg;
                                 }
                               }}
                               onMouseLeave={(e) => {
                                 if (!isAiSelectorOpen) {
-                                  e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)';
+                                  e.currentTarget.style.background = theme.controlBg;
                                 }
                               }}
                               title="Clique para trocar a IA e o modelo"
@@ -12935,7 +13005,7 @@ Formate com seções bem organizadas:
                               <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
                                 {renderAiIcon(localAiProvider, 14)}
                               </div>
-                              <span style={{ fontWeight: 600, color: theme.textPrimary, fontSize: 12 }}>
+                              <span style={{ fontWeight: 400, color: theme.textPrimary, fontSize: 12 }}>
                                 {AI_PROVIDERS.find((p) => p.id === localAiProvider)?.name || 'IA'}
                               </span>
                               <span style={{ color: theme.textSecondary, opacity: 0.6, fontSize: 11 }}>•</span>
@@ -12952,7 +13022,7 @@ Formate com seções bem organizadas:
                               />
                             </div>
 
-                            {/* Dropdown Menu de IA e Modelos (Padrão do sistema, sem bordas) */}
+                            {/* Dropdown Menu de IA e Modelos */}
                             {isAiSelectorOpen && (
                               <>
                                 <div
@@ -12960,12 +13030,13 @@ Formate com seções bem organizadas:
                                   onClick={() => setIsAiSelectorOpen(false)}
                                 />
                                 <div
+                                  className="df-dropdown-menu"
                                   style={{
                                     position: 'absolute',
                                     bottom: 'calc(100% + 6px)',
                                     right: 0,
                                     background: theme.dropdownBg,
-                                    border: 'none',
+                                    border: theme.dropdownBorder,
                                     borderRadius: 10,
                                     boxShadow: theme.dropdownShadow,
                                     padding: '6px',
@@ -13056,7 +13127,7 @@ Formate com seções bem organizadas:
                                               right: 'calc(100% + 4px)',
                                               ...(pIdx <= 1 ? { top: 0 } : { bottom: 0 }),
                                               background: theme.dropdownBg,
-                                              border: 'none',
+                                              border: theme.dropdownBorder,
                                               borderRadius: 10,
                                               boxShadow: theme.dropdownShadow,
                                               padding: '6px',
@@ -13233,18 +13304,21 @@ Formate com seções bem organizadas:
                     >
                       {/* Sprint */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                        <label style={{ fontSize: 11.5, color: theme.textSecondary, fontWeight: '300' }}>Sprint (Milestone)</label>
+                        <label style={{ fontSize: 11.5, color: theme.textSecondary, fontWeight: 400 }}>Sprint (Milestone)</label>
                         <select
+                          className="df-field"
                           value={newTaskMilestoneNumber ?? ''}
                           onChange={(e) => setNewTaskMilestoneNumber(e.target.value ? Number(e.target.value) : null)}
                           style={{
+                            height: 32,
+                            boxSizing: 'border-box',
                             background: theme.modalInputBg,
-                            border: 'none',
+                            border: theme.modalInputBorder,
                             borderRadius: 6,
-                            padding: '7px 10px',
+                            padding: '0 10px',
                             color: theme.textPrimary,
                             fontSize: 12,
-                            fontWeight: '300',
+                            fontWeight: 400,
                             fontFamily: 'inherit',
                             outline: 'none',
                           }}
@@ -13261,18 +13335,21 @@ Formate com seções bem organizadas:
 
                       {/* Prioridade */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                        <label style={{ fontSize: 11.5, color: theme.textSecondary, fontWeight: '300' }}>Prioridade</label>
+                        <label style={{ fontSize: 11.5, color: theme.textSecondary, fontWeight: 400 }}>Prioridade</label>
                         <select
+                          className="df-field"
                           value={newTaskPriority}
                           onChange={(e) => setNewTaskPriority(e.target.value as any)}
                           style={{
+                            height: 32,
+                            boxSizing: 'border-box',
                             background: theme.modalInputBg,
-                            border: 'none',
+                            border: theme.modalInputBorder,
                             borderRadius: 6,
-                            padding: '7px 10px',
+                            padding: '0 10px',
                             color: theme.textPrimary,
                             fontSize: 12,
-                            fontWeight: '300',
+                            fontWeight: 400,
                             fontFamily: 'inherit',
                             outline: 'none',
                           }}
@@ -13286,18 +13363,21 @@ Formate com seções bem organizadas:
 
                       {/* Status */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                        <label style={{ fontSize: 11.5, color: theme.textSecondary, fontWeight: '300' }}>Status Inicial</label>
+                        <label style={{ fontSize: 11.5, color: theme.textSecondary, fontWeight: 400 }}>Status Inicial</label>
                         <select
+                          className="df-field"
                           value={newTaskStatus}
                           onChange={(e) => setNewTaskStatus(e.target.value as any)}
                           style={{
+                            height: 32,
+                            boxSizing: 'border-box',
                             background: theme.modalInputBg,
-                            border: 'none',
+                            border: theme.modalInputBorder,
                             borderRadius: 6,
-                            padding: '7px 10px',
+                            padding: '0 10px',
                             color: theme.textPrimary,
                             fontSize: 12,
-                            fontWeight: '300',
+                            fontWeight: 400,
                             fontFamily: 'inherit',
                             outline: 'none',
                           }}
@@ -13786,10 +13866,10 @@ Formate com seções bem organizadas:
               style={{
                 width: '100%',
                 maxWidth: 440,
-                background: theme.cardBg,
-                border: theme.cardBorder,
+                background: theme.modalBg,
+                border: 'none',
                 borderRadius: 14,
-                boxShadow: theme.dropdownShadow,
+                boxShadow: 'none',
                 padding: '22px 24px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -13800,7 +13880,7 @@ Formate com seções bem organizadas:
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <FolderKanban size={18} color={accentColor} />
                   <div>
-                    <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: theme.textPrimary }}>
+                    <h3 style={{ margin: 0, fontSize: 16, fontWeight: 400, color: theme.textPrimary }}>
                       Adicionar GitHub Project
                     </h3>
                     <p style={{ margin: '2px 0 0', fontSize: 12, color: theme.textSecondary }}>
@@ -13826,22 +13906,25 @@ Formate com seções bem organizadas:
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: theme.textSecondary, marginBottom: 5 }}>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 400, color: theme.textSecondary, marginBottom: 5 }}>
                     Título / Nome do Project (opcional)
                   </label>
                   <input
+                    className="df-field"
                     type="text"
                     value={customProjectInputTitle}
                     onChange={(e) => setCustomProjectInputTitle(e.target.value)}
                     placeholder="ex: Sprint Board Mobile"
                     style={{
                       width: '100%',
-                      padding: '8px 12px',
+                      height: 36,
+                      padding: '0 12px',
                       borderRadius: 8,
-                      border: theme.controlBorder,
-                      background: theme.controlBg,
+                      border: theme.modalInputBorder,
+                      background: theme.modalInputBg,
                       color: theme.textPrimary,
                       fontSize: 13,
+                      fontWeight: 400,
                       boxSizing: 'border-box',
                       outline: 'none',
                     }}
@@ -13849,22 +13932,25 @@ Formate com seções bem organizadas:
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: theme.textSecondary, marginBottom: 5 }}>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 400, color: theme.textSecondary, marginBottom: 5 }}>
                     URL ou Número do Project *
                   </label>
                   <input
+                    className="df-field"
                     type="text"
                     value={customProjectInputUrl}
                     onChange={(e) => setCustomProjectInputUrl(e.target.value)}
                     placeholder="ex: https://github.com/orgs/appmoove/projects/1 ou 1"
                     style={{
                       width: '100%',
-                      padding: '8px 12px',
+                      height: 36,
+                      padding: '0 12px',
                       borderRadius: 8,
-                      border: theme.controlBorder,
-                      background: theme.controlBg,
+                      border: theme.modalInputBorder,
+                      background: theme.modalInputBg,
                       color: theme.textPrimary,
                       fontSize: 13,
+                      fontWeight: 400,
                       boxSizing: 'border-box',
                       outline: 'none',
                     }}
@@ -14108,8 +14194,8 @@ Formate com seções bem organizadas:
                 width: 230,
                 background: theme.dropdownBg,
                 borderRadius: 8,
-                border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
-                boxShadow: theme.dropdownShadow,
+                border: theme.dropdownBorder,
+                boxShadow: 'none',
                 padding: '4px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -15027,7 +15113,7 @@ function SprintDetailPanel(props: {
                 zIndex: 9999,
                 minWidth: 195,
                 background: theme.dropdownBg,
-                border: 'none',
+                border: theme.dropdownBorder,
                 borderRadius: 10,
                 boxShadow: theme.dropdownShadow,
                 padding: '5px',
@@ -15127,7 +15213,7 @@ function SprintDetailPanel(props: {
                       maxHeight: 240,
                       overflowY: 'auto',
                       background: theme.dropdownBg,
-                      border: 'none',
+                      border: theme.dropdownBorder,
                       borderRadius: 10,
                       boxShadow: theme.dropdownShadow,
                       padding: '5px',
@@ -15533,6 +15619,7 @@ function SprintDetailPanel(props: {
       {/* BARRA LATERAL RETRÁTIL (COM ANIMAÇÃO SUAVE IN/OUT)                        */}
       {/* ========================================================================= */}
       <div
+        data-tour="sprint-sidebar"
         style={{
           position: 'relative',
           display: 'flex',
@@ -16247,6 +16334,7 @@ function SprintDetailPanel(props: {
           >
             {/* Cabeçalho da Sprint Ativa (direto no fundo, fora da div de tarefas) */}
             <div
+              data-tour="sprint-header-kpis"
               style={{
                 padding: '12px 14px',
                 display: 'flex',
@@ -16360,15 +16448,19 @@ function SprintDetailPanel(props: {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                       <span style={{ fontSize: 11, color: theme.textSecondary }}>De:</span>
                       <input
+                        className="df-field"
                         type="date"
                         value={editSprintStartDate}
                         onChange={(e) => setEditSprintStartDate(e.target.value)}
                         style={{
-                          background: isEffectiveDark ? '#222' : '#f1f5f9',
-                          border: `1px solid ${isEffectiveDark ? '#444' : '#cbd5e1'}`,
+                          height: 28,
+                          boxSizing: 'border-box',
+                          background: theme.controlBg,
+                          border: theme.controlBorder,
                           borderRadius: 6,
-                          padding: '4px 8px',
+                          padding: '0 8px',
                           fontSize: 12,
+                          fontWeight: 400,
                           color: theme.textPrimary,
                           colorScheme: isEffectiveDark ? 'dark' : 'light',
                           outline: 'none',
@@ -16378,15 +16470,19 @@ function SprintDetailPanel(props: {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                       <span style={{ fontSize: 11, color: theme.textSecondary }}>Até:</span>
                       <input
+                        className="df-field"
                         type="date"
                         value={editSprintDueDate}
                         onChange={(e) => setEditSprintDueDate(e.target.value)}
                         style={{
-                          background: isEffectiveDark ? '#222' : '#f1f5f9',
-                          border: `1px solid ${isEffectiveDark ? '#444' : '#cbd5e1'}`,
+                          height: 28,
+                          boxSizing: 'border-box',
+                          background: theme.controlBg,
+                          border: theme.controlBorder,
                           borderRadius: 6,
-                          padding: '4px 8px',
+                          padding: '0 8px',
                           fontSize: 12,
+                          fontWeight: 400,
                           color: theme.textPrimary,
                           colorScheme: isEffectiveDark ? 'dark' : 'light',
                           outline: 'none',
@@ -16542,6 +16638,7 @@ function SprintDetailPanel(props: {
               }}
             >
               <div
+                data-tour="sprint-view-modes"
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -16653,18 +16750,23 @@ function SprintDetailPanel(props: {
                 <div style={{ position: 'relative' }}>
                   <button
                     type="button"
+                    className="df-dropdown-trigger"
                     onClick={() => setIsSprintTaskFilterOpen((prev) => !prev)}
                     style={{
-                      background: isEffectiveDark ? '#242424' : '#e2e8f0',
+                      height: 30,
+                      boxSizing: 'border-box',
+                      background: theme.controlBg,
                       color: theme.textPrimary,
-                      border: 'none',
+                      border: theme.controlBorder,
                       borderRadius: 6,
-                      padding: '6px 12px',
+                      padding: '0 12px',
                       fontSize: 12,
+                      fontWeight: 400,
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       gap: 6,
+                      transition: 'background 0.15s ease, border-color 0.15s ease',
                     }}
                     title="Filtrar tarefas da sprint"
                   >
@@ -16681,7 +16783,7 @@ function SprintDetailPanel(props: {
                           borderRadius: 10,
                           background: isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : '#cbd5e1',
                           color: theme.textSecondary,
-                          fontWeight: 500,
+                          fontWeight: 400,
                         }}
                       >
                         {sprintDetailTasks.length}
@@ -16697,6 +16799,7 @@ function SprintDetailPanel(props: {
                         style={{ position: 'fixed', inset: 0, zIndex: 30 }}
                       />
                       <div
+                        className="df-dropdown-menu no-scrollbar"
                         style={{
                           position: 'absolute',
                           top: '100%',
@@ -16704,13 +16807,12 @@ function SprintDetailPanel(props: {
                           marginTop: 4,
                           background: theme.dropdownBg,
                           borderRadius: 10,
-                          boxShadow: theme.dropdownShadow || '0 8px 24px rgba(0,0,0,0.45)',
-                          border: 'none',
+                          boxShadow: 'none',
+                          border: theme.dropdownBorder,
                           zIndex: 40,
                           minWidth: 200,
                           padding: '5px',
                         }}
-                        className="no-scrollbar"
                       >
                         {sprintFilterOptions.map((opt) => {
                           const isSelected = sprintTaskFilter === opt.key;
@@ -16785,18 +16887,23 @@ function SprintDetailPanel(props: {
                 <div style={{ position: 'relative' }}>
                   <button
                     type="button"
+                    className="df-dropdown-trigger"
                     onClick={() => setIsAddExistingTaskOpen((prev) => !prev)}
                     style={{
-                      background: isEffectiveDark ? '#242424' : '#e2e8f0',
+                      height: 30,
+                      boxSizing: 'border-box',
+                      background: theme.controlBg,
                       color: theme.textPrimary,
-                      border: 'none',
+                      border: theme.controlBorder,
                       borderRadius: 6,
-                      padding: '6px 12px',
+                      padding: '0 12px',
                       fontSize: 12,
+                      fontWeight: 400,
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       gap: 5,
+                      transition: 'background 0.15s ease, border-color 0.15s ease',
                     }}
                   >
                     <span>Adicionar tarefa existente</span>
@@ -16806,21 +16913,22 @@ function SprintDetailPanel(props: {
                     <>
                       <div onClick={() => setIsAddExistingTaskOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 30 }} />
                       <div
+                        className="df-dropdown-menu no-scrollbar"
                         style={{
                           position: 'absolute',
                           top: '100%',
                           right: 0,
                           marginTop: 4,
                           background: theme.dropdownBg,
+                          border: theme.dropdownBorder,
                           borderRadius: 8,
-                          boxShadow: theme.dropdownShadow,
+                          boxShadow: 'none',
                           zIndex: 40,
                           minWidth: 240,
                           maxHeight: 260,
                           overflowY: 'auto',
                           padding: '4px 0',
                         }}
-                        className="no-scrollbar"
                       >
                         {tasksAvailableToAddToSprint.length === 0 ? (
                           <div style={{ padding: '10px 12px', fontSize: 12, color: theme.textSecondary }}>
@@ -17201,22 +17309,23 @@ function SprintDetailPanel(props: {
                             <div style={{ position: 'relative' }}>
                               <button
                                 type="button"
+                                className="df-dropdown-trigger"
                                 onClick={() => setBatchActiveDropdown(batchActiveDropdown === 'assign' ? null : 'assign')}
                                 style={{
                                   display: 'flex',
                                   alignItems: 'center',
                                   gap: 6,
-                                  background: batchActiveDropdown === 'assign'
-                                    ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
-                                    : (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)'),
-                                  border: 'none',
+                                  height: 28,
+                                  boxSizing: 'border-box',
+                                  background: batchActiveDropdown === 'assign' ? theme.controlHoverBg : theme.controlBg,
+                                  border: theme.controlBorder,
                                   borderRadius: 6,
-                                  padding: '5px 10px',
+                                  padding: '0 10px',
                                   color: theme.textPrimary,
                                   fontSize: 12,
-                                  fontWeight: 500,
+                                  fontWeight: 400,
                                   cursor: 'pointer',
-                                  transition: 'background 0.12s ease',
+                                  transition: 'background 0.15s ease, border-color 0.15s ease',
                                 }}
                                 title="Atribuir responsável às issues selecionadas"
                               >
@@ -17229,20 +17338,21 @@ function SprintDetailPanel(props: {
                                 <>
                                   <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setBatchActiveDropdown(null)} />
                                   <div
+                                    className="df-dropdown-menu no-scrollbar"
                                     style={{
                                       position: 'absolute',
                                       top: 'calc(100% + 4px)',
                                       right: 0,
                                       background: theme.dropdownBg,
+                                      border: theme.dropdownBorder,
                                       borderRadius: 8,
-                                      boxShadow: theme.dropdownShadow,
+                                      boxShadow: 'none',
                                       padding: '4px',
                                       zIndex: 9999,
                                       minWidth: 190,
                                       maxHeight: 240,
                                       overflowY: 'auto',
                                     }}
-                                    className="no-scrollbar"
                                   >
                                     <div style={{ padding: '4px 8px', fontSize: 10.5, fontWeight: 600, color: theme.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
                                       Atribuir a
@@ -17385,21 +17495,21 @@ function SprintDetailPanel(props: {
                           <>
                             <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setIssueActiveDropdown(null)} />
                             <div
+                              className="df-dropdown-menu no-scrollbar"
                               style={{
                                 position: 'absolute',
                                 top: 'calc(100% + 4px)',
                                 right: 0,
                                 background: theme.dropdownBg,
-                                border: 'none',
+                                border: theme.dropdownBorder,
                                 borderRadius: 8,
-                                boxShadow: theme.dropdownShadow,
+                                boxShadow: 'none',
                                 padding: '4px',
                                 zIndex: 9999,
                                 minWidth: 160,
                                 maxHeight: 220,
                                 overflowY: 'auto',
                               }}
-                              className="no-scrollbar"
                             >
                               <div style={{ padding: '4px 8px', fontSize: 10.5, fontWeight: 600, color: theme.textSecondary, textTransform: 'uppercase' }}>
                                 Filtrar por autor
@@ -17454,21 +17564,21 @@ function SprintDetailPanel(props: {
                           <>
                             <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setIssueActiveDropdown(null)} />
                             <div
+                              className="df-dropdown-menu no-scrollbar"
                               style={{
                                 position: 'absolute',
                                 top: 'calc(100% + 4px)',
                                 right: 0,
                                 background: theme.dropdownBg,
-                                border: 'none',
+                                border: theme.dropdownBorder,
                                 borderRadius: 8,
-                                boxShadow: theme.dropdownShadow,
+                                boxShadow: 'none',
                                 padding: '4px',
                                 zIndex: 9999,
                                 minWidth: 175,
                                 maxHeight: 220,
                                 overflowY: 'auto',
                               }}
-                              className="no-scrollbar"
                             >
                               <div style={{ padding: '4px 8px', fontSize: 10.5, fontWeight: 600, color: theme.textSecondary, textTransform: 'uppercase' }}>
                                 Filtrar por etiqueta
@@ -17530,14 +17640,15 @@ function SprintDetailPanel(props: {
                           <>
                             <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setProjectPickerOpen(false)} />
                             <div
+                              className="df-dropdown-menu"
                               style={{
                                 position: 'absolute',
                                 top: 'calc(100% + 4px)',
                                 left: 0,
                                 background: theme.dropdownBg,
-                                border: `1px solid ${hexToRgba(theme.textSecondary, isEffectiveDark ? 0.2 : 0.15)}`,
+                                border: theme.dropdownBorder,
                                 borderRadius: 8,
-                                boxShadow: theme.dropdownShadow,
+                                boxShadow: 'none',
                                 padding: '6px',
                                 zIndex: 9999,
                                 width: 280,
@@ -17549,13 +17660,18 @@ function SprintDetailPanel(props: {
                             >
                               {/* Campo de busca de projetos */}
                               <div
+                                className="df-search-box"
                                 style={{
-                                  padding: '4px 7px',
+                                  height: 28,
+                                  boxSizing: 'border-box',
+                                  padding: '0 8px',
                                   display: 'flex',
                                   alignItems: 'center',
                                   gap: 6,
-                                  background: isEffectiveDark ? '#1a1a1a' : '#f1f5f9',
-                                  borderRadius: 5,
+                                  background: theme.controlBg,
+                                  border: theme.controlBorder,
+                                  borderRadius: 6,
+                                  boxShadow: 'none',
                                 }}
                               >
                                 <Search size={12} color={theme.textSecondary} />
@@ -17707,21 +17823,21 @@ function SprintDetailPanel(props: {
                           <>
                             <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setIssueActiveDropdown(null)} />
                             <div
+                              className="df-dropdown-menu no-scrollbar"
                               style={{
                                 position: 'absolute',
                                 top: 'calc(100% + 4px)',
                                 right: 0,
                                 background: theme.dropdownBg,
-                                border: 'none',
+                                border: theme.dropdownBorder,
                                 borderRadius: 8,
-                                boxShadow: theme.dropdownShadow,
+                                boxShadow: 'none',
                                 padding: '4px',
                                 zIndex: 9999,
                                 minWidth: 175,
                                 maxHeight: 220,
                                 overflowY: 'auto',
                               }}
-                              className="no-scrollbar"
                             >
                               <div style={{ padding: '4px 8px', fontSize: 10.5, fontWeight: 600, color: theme.textSecondary, textTransform: 'uppercase' }}>
                                 Filtrar por responsável
@@ -17778,14 +17894,15 @@ function SprintDetailPanel(props: {
                           <>
                             <div style={{ position: 'fixed', inset: 0, zIndex: 9998 }} onClick={() => setIssueActiveDropdown(null)} />
                             <div
+                              className="df-dropdown-menu"
                               style={{
                                 position: 'absolute',
                                 top: 'calc(100% + 4px)',
                                 right: 0,
                                 background: theme.dropdownBg,
-                                border: 'none',
+                                border: theme.dropdownBorder,
                                 borderRadius: 8,
-                                boxShadow: theme.dropdownShadow,
+                                boxShadow: 'none',
                                 padding: '4px',
                                 zIndex: 9999,
                                 minWidth: 150,

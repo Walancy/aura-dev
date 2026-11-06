@@ -14,6 +14,7 @@ import { SnippetsSettingsTab } from './settings/SnippetsSettingsTab';
 import { TasksSettingsTab } from './settings/TasksSettingsTab';
 import { WorkspaceSettingsTab } from './settings/WorkspaceSettingsTab';
 import { logSystemActivity } from '../../utils/brainService';
+import { TutorialTriggerButton, useRegisterTutorialOverlay } from '../tutorial/TutorialTriggerButton';
 import type { TerminalSkinId } from '../TerminalSkin';
 import type { GitBranchItem } from '../../types/ide';
 
@@ -214,6 +215,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
   } = props;
 
   const isMouseDownOnBackdrop = useRef(false);
+  useRegisterTutorialOverlay('modal_settings', true);
 
   return (
     <>
@@ -264,6 +266,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
       >
         {/* Header */}
         <div
+          data-tour="settings-header"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -284,34 +287,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
               </div>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              width: 28,
-              height: 28,
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              color: themeTokens.textSecondary,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderRadius: 6,
-              transition: 'color 0.15s ease',
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = isEffectiveDark ? '#ffffff' : '#000000')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textSecondary)}
-            title="Fechar (Esc)"
-          >
-            <X size={16} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <TutorialTriggerButton
+              contextId="modal_settings"
+              isDark={isEffectiveDark}
+              accentColor={accentColor}
+              textColor={themeTokens.textPrimary}
+              mutedColor={themeTokens.textSecondary}
+              height={28}
+              contextName="Configurações"
+            />
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                width: 28,
+                height: 28,
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                color: themeTokens.textSecondary,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 6,
+                transition: 'color 0.15s ease',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = isEffectiveDark ? '#ffffff' : '#000000')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textSecondary)}
+              title="Fechar (Esc)"
+            >
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         {/* Body */}
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
           {/* Left Sidebar Tabs */}
           <div
+            data-tour="settings-sidebar-tabs"
             style={{
               width: 220,
               flexShrink: 0,
@@ -426,7 +441,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = (props) => {
           </div>
 
           {/* Right Content Pane */}
-          <div style={{ flex: 1, padding: '20px 24px', overflowY: 'auto' }}>
+          <div data-tour="settings-content-pane" style={{ flex: 1, padding: '20px 24px', overflowY: 'auto' }}>
             {settingsActiveTab === 'general' && (
               <GeneralSettingsTab
                 themeTokens={themeTokens}

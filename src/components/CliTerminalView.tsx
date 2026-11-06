@@ -1,4 +1,5 @@
 import type { TerminalSkinId } from './TerminalSkin';
+import { getFieldTokens } from '../utils/fieldTokens';
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   SquareTerminal,
@@ -2174,17 +2175,18 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 {/* Session Switcher Dropdown for this slot */}
                 {activeSlotMenuIndex === slotIndex && (
                   <div
+                    className="df-dropdown-menu"
                     onClick={(e) => e.stopPropagation()}
                     style={{
                       position: 'absolute',
                       top: 'calc(100% + 4px)',
                       left: 0,
                       width: 180,
-                      background: isEffectiveDark ? '#1f1f1f' : '#ffffff',
-                      border: `1px solid ${skinTk.border}`,
+                      background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                      border: getFieldTokens(isEffectiveDark).dropdownBorder,
                       borderRadius: 6,
                       padding: '4px 0',
-                      boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
+                      boxShadow: 'none',
                       zIndex: 9999,
                       display: 'flex',
                       flexDirection: 'column',
@@ -2994,13 +2996,17 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           {/* Search Filter Input (expandable) */}
           {isSearchOpen && (
             <div
+              className="df-search-box"
               style={{
-                padding: '6px 10px',
-                borderBottom: `1px solid ${skinTk.border}`,
+                margin: '6px 8px 4px',
+                padding: '5px 8px',
+                borderRadius: 6,
+                border: getFieldTokens(isEffectiveDark).fieldBorder,
+                boxShadow: 'none',
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
-                background: isEffectiveDark ? '#161616' : '#f8f8f8',
+                background: getFieldTokens(isEffectiveDark).fieldBg,
               }}
             >
               <Search size={12} color={skinTk.textSecondary} />
@@ -3364,17 +3370,18 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               >
                 <div ref={issuesFilterRef} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div
-                  className="skin-field"
+                  className="skin-field df-search-box"
                   style={{
                     flex: 1,
                     minWidth: 0,
                     display: 'flex',
                     alignItems: 'center',
                     gap: 6,
-                    background: isEffectiveDark ? '#1f1f1f' : '#ffffff',
+                    background: getFieldTokens(isEffectiveDark).fieldBg,
                     padding: '4px 8px',
                     borderRadius: 5,
-                    border: `1px solid ${skinTk.border}`,
+                    border: getFieldTokens(isEffectiveDark).fieldBorder,
+                    boxShadow: 'none',
                   }}
                 >
                   <Search size={11} color={skinTk.textSecondary} />
@@ -3409,7 +3416,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     type="button"
                     onClick={() => setIsIssuesFilterOpen((v) => !v)}
                     title="Filtros"
-                    className="skin-field"
+                    className="skin-field df-dropdown-trigger"
                     style={{
                       position: 'relative',
                       width: 26,
@@ -3419,8 +3426,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       alignItems: 'center',
                       justifyContent: 'center',
                       borderRadius: 5,
-                      border: `1px solid ${skinTk.border}`,
-                      background: isIssuesFilterOpen ? `${accentColor}22` : (isEffectiveDark ? '#1f1f1f' : '#ffffff'),
+                      border: isIssuesFilterOpen ? getFieldTokens(isEffectiveDark).fieldBorderFocus : getFieldTokens(isEffectiveDark).fieldBorder,
+                      background: isIssuesFilterOpen ? `${accentColor}22` : getFieldTokens(isEffectiveDark).fieldBg,
+                      boxShadow: 'none',
                       color: activeIssueFilters > 0 || isIssuesFilterOpen ? accentColor : skinTk.textSecondary,
                       cursor: 'pointer',
                     }}
@@ -3433,6 +3441,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
 
                   {isIssuesFilterOpen && (
                     <div
+                      className="df-dropdown-menu"
                       style={{
                         position: 'absolute',
                         top: 32,
@@ -3444,9 +3453,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                         flexDirection: 'column',
                         gap: 2,
                         borderRadius: 8,
-                        border: `1px solid ${skinTk.border}`,
-                        background: isEffectiveDark ? '#1c1c1c' : '#ffffff',
-                        boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+                        border: getFieldTokens(isEffectiveDark).dropdownBorder,
+                        background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                        boxShadow: 'none',
                       }}
                     >
                       <div style={{ padding: '2px 8px', fontSize: 9.5, fontWeight: 600, letterSpacing: 0.5, textTransform: 'uppercase', color: skinTk.textMuted }}>Estado</div>
@@ -3657,7 +3666,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                               {issueMenuOpen === issue.number && (
                                 <>
                                   <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setIssueMenuOpen(null)} />
-                                  <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: 4, minWidth: 190, background: isEffectiveDark ? '#1f1f1f' : '#ffffff', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', padding: 4, zIndex: 100, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                  <div className="df-dropdown-menu" style={{ position: 'absolute', right: 0, top: '100%', marginTop: 4, minWidth: 190, background: getFieldTokens(isEffectiveDark).dropdownMenuBg, border: getFieldTokens(isEffectiveDark).dropdownBorder, borderRadius: 8, boxShadow: 'none', padding: 4, zIndex: 100, display: 'flex', flexDirection: 'column', gap: 1 }}>
                                     {([
                                       [<AtSign size={12} key="a" />, 'Mencionar no terminal', () => handleMentionIssueInTerminal(issue)],
                                       [<GitBranch size={12} key="b" />, `Criar branch issue-${issue.number}`, () => handleCheckoutIssueBranch(issue)],
@@ -4368,9 +4377,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     <button
                       type="button"
                       onClick={() => setDockMenuOpen((v) => !v)}
-                      className="skin-chip"
+                      className="skin-chip df-dropdown-trigger"
                       title="Painel: Problems, Output, Debug console, Terminal, Ports, Tarefas"
-                      style={{ height: 26, padding: '0 8px 0 10px', borderRadius: 5, border: 'none', background: isEffectiveDark ? '#2E2E2E' : '#e5e7eb', color: skinTk.textPrimary, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap' }}
+                      style={{ height: 26, padding: '0 8px 0 10px', borderRadius: 5, border: dockMenuOpen ? getFieldTokens(isEffectiveDark).fieldBorderFocus : getFieldTokens(isEffectiveDark).fieldBorder, boxShadow: 'none', background: dockMenuOpen ? getFieldTokens(isEffectiveDark).fieldBgHover : getFieldTokens(isEffectiveDark).fieldBg, color: skinTk.textPrimary, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, fontWeight: 400, whiteSpace: 'nowrap' }}
                     >
                       <span>{cur.label}</span>
                       {countBadge(cur.count, true)}
@@ -4379,7 +4388,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     {dockMenuOpen && (
                       <>
                         <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setDockMenuOpen(false)} />
-                        <div className="skin-menu" style={{ position: 'absolute', top: 30, left: 0, minWidth: 170, background: isEffectiveDark ? '#1f1f1f' : '#ffffff', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', padding: 4, zIndex: 100, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <div className="skin-menu df-dropdown-menu" style={{ position: 'absolute', top: 30, left: 0, minWidth: 170, background: getFieldTokens(isEffectiveDark).dropdownMenuBg, border: getFieldTokens(isEffectiveDark).dropdownBorder, borderRadius: 8, boxShadow: 'none', padding: 4, zIndex: 100, display: 'flex', flexDirection: 'column', gap: 1 }}>
                           {dockTabs.map((st) => {
                             const isActive = cur.id === st.id;
                             return (
@@ -4528,8 +4537,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       autoFocus
                       onClick={(e) => e.stopPropagation()}
                       style={{
-                        background: isEffectiveDark ? '#141416' : '#ffffff',
-                        border: 'none',
+                        background: getFieldTokens(isEffectiveDark).fieldBgSolid,
+                        border: getFieldTokens(isEffectiveDark).fieldBorderFocus,
                         boxShadow: 'none',
                         color: skinTk.textPrimary,
                         fontSize: 11.5,
@@ -4648,17 +4657,17 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               {/* Presets Popup Dropdown */}
               {newTabMenuOpen && (
                 <div
-                  className="skin-menu"
+                  className="skin-menu df-dropdown-menu"
                   style={{
                     position: 'absolute',
                     top: 'calc(100% + 4px)',
                     left: 0,
                     width: 220,
-                    background: isEffectiveDark ? '#1c1c1c' : '#ffffff',
-                    border: `1px solid ${skinTk.border}`,
+                    background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                    border: getFieldTokens(isEffectiveDark).dropdownBorder,
                     borderRadius: 8,
                     padding: '4px 0',
-                    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
+                    boxShadow: 'none',
                     zIndex: 9999,
                     display: 'flex',
                     flexDirection: 'column',
@@ -4808,8 +4817,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   height: 26,
                   padding: '0 8px',
                   borderRadius: 6,
-                  background: gridMode !== '1x1' ? hexToRgba(accentColor, 0.14) : (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)'),
-                  border: 'none',
+                  background: gridMode !== '1x1' ? hexToRgba(accentColor, 0.14) : getFieldTokens(isEffectiveDark).fieldBg,
+                  border: getFieldTokens(isEffectiveDark).fieldBorder,
                   boxShadow: 'none',
                   color: gridMode !== '1x1' ? accentColor : skinTk.textSecondary,
                   display: 'flex',
@@ -4818,7 +4827,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   cursor: 'pointer',
                   fontSize: 11.5,
                   fontWeight: 400,
-                  transition: 'background 0.15s ease, color 0.15s ease',
+                  transition: 'background 0.15s ease, color 0.15s ease, border-color 0.15s ease',
                 }}
                 onMouseEnter={(e) => {
                   if (gridMode === '1x1') e.currentTarget.style.color = skinTk.textPrimary;
@@ -4846,15 +4855,15 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               {/* Layout Dropdown Menu */}
               {layoutMenuOpen && (
                 <div
-                  className="skin-menu"
+                  className="skin-menu df-dropdown-menu"
                   onClick={(e) => e.stopPropagation()}
                   style={{
                     position: 'absolute',
                     top: 'calc(100% + 5px)',
                     right: 0,
                     width: 230,
-                    background: isEffectiveDark ? '#1c1c1c' : '#ffffff',
-                    border: 'none',
+                    background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                    border: getFieldTokens(isEffectiveDark).dropdownBorder,
                     borderRadius: 8,
                     padding: '4px 0',
                     boxShadow: 'none',
@@ -5966,6 +5975,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
         const divColor = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
         return (
           <div
+            className="df-dropdown-menu"
             data-file-ctx-menu
             onClick={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}
@@ -5974,7 +5984,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               left: Math.min(fileContextMenu.x, window.innerWidth - 240),
               top: Math.min(fileContextMenu.y, Math.max(8, window.innerHeight - entries.length * 30 - 16)),
               minWidth: 220,
-              background: isEffectiveDark ? '#1f1f22' : '#ffffff',
+              background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+              border: getFieldTokens(isEffectiveDark).dropdownBorder,
+              boxShadow: 'none',
               borderRadius: 8,
               padding: '4px 0',
               zIndex: 99999,

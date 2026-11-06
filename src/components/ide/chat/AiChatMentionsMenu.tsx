@@ -10,6 +10,7 @@ import {
   Layout,
 } from 'lucide-react';
 import { FileIcon } from '../../FileIcon';
+import { getFieldTokens } from '../../../utils/fieldTokens';
 
 export interface MentionItem {
   id: string;
@@ -126,7 +127,8 @@ export const AiChatMentionsMenu: React.FC<AiChatMentionsMenuProps> = ({
 
   const clampedIndex = Math.min(Math.max(0, selectedIndex), Math.max(0, allItems.length - 1));
 
-  const bgMenu = isEffectiveDark ? '#181818' : '#ffffff';
+  const ft = getFieldTokens(isEffectiveDark);
+  const bgMenu = ft.dropdownMenuBg;
   const divider = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)';
 
   const renderIcon = (item: MentionItem) => {
@@ -152,7 +154,7 @@ export const AiChatMentionsMenu: React.FC<AiChatMentionsMenuProps> = ({
         right: 0,
         background: bgMenu,
         borderRadius: 8,
-        border: 'none',
+        border: ft.dropdownBorder,
         boxShadow: 'none',
         padding: 8,
         display: 'flex',

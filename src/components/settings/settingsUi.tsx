@@ -1,6 +1,7 @@
 import React from 'react';
 import type { TeamUiCtx } from '../team/teamUi';
 import type { ProjectSettings } from './projectSettingsStore';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export type { TeamUiCtx as SettingsCtx } from '../team/teamUi';
 
@@ -148,55 +149,66 @@ export const NumberInput: React.FC<{ ctx: TeamUiCtx; value: number; onChange: (v
   max = 9999,
   suffix,
   width = 70,
-}) => (
-  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-    <input
-      type="number"
-      value={value}
-      min={min}
-      max={max}
-      onChange={(e) => {
-        const n = Number(e.target.value);
-        if (!Number.isNaN(n)) onChange(Math.max(min, Math.min(max, n)));
-      }}
-      style={{
-        width,
-        height: 28,
-        border: 'none',
-        borderRadius: 6,
-        padding: '0 8px',
-        fontSize: 12,
-        fontFamily: 'inherit',
-        background: ctx.isEffectiveDark ? '#1c1c1c' : ctx.theme.controlBg,
-        color: ctx.theme.textPrimary,
-        outline: 'none',
-        boxShadow: 'none',
-      }}
-    />
-    {suffix && <span style={{ fontSize: 11.5, color: ctx.theme.textSecondary }}>{suffix}</span>}
-  </span>
-);
+}) => {
+  const ft = getFieldTokens(ctx.isEffectiveDark);
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+      <input
+        type="number"
+        className="df-field"
+        value={value}
+        min={min}
+        max={max}
+        onChange={(e) => {
+          const n = Number(e.target.value);
+          if (!Number.isNaN(n)) onChange(Math.max(min, Math.min(max, n)));
+        }}
+        style={{
+          width,
+          height: 28,
+          border: ft.fieldBorder,
+          borderRadius: 6,
+          padding: '0 8px',
+          fontSize: 12,
+          fontWeight: 400,
+          fontFamily: 'inherit',
+          background: ft.fieldBg,
+          color: ctx.theme.textPrimary,
+          outline: 'none',
+          boxShadow: 'none',
+          transition: 'background 0.15s ease, border-color 0.15s ease',
+        }}
+      />
+      {suffix && <span style={{ fontSize: 11.5, color: ctx.theme.textSecondary }}>{suffix}</span>}
+    </span>
+  );
+};
 
 export const Notice: React.FC<{ ctx: TeamUiCtx; tone?: 'warning' | 'info' | 'danger'; children: React.ReactNode }> = ({ ctx, tone = 'info', children }) => {
   const color = tone === 'warning' ? '#f59e0b' : tone === 'danger' ? '#ef4444' : '#3b82f6';
   return <div style={{ fontSize: 11.5, color, background: `${color}14`, borderRadius: 6, padding: '6px 10px', lineHeight: 1.45 }}>{children}</div>;
 };
 
-export const textareaStyle = (ctx: TeamUiCtx, minHeight = 140): React.CSSProperties => ({
-  width: '100%',
-  boxSizing: 'border-box',
-  minHeight,
-  resize: 'vertical',
-  border: 'none',
-  borderRadius: 6,
-  padding: 10,
-  fontSize: 12,
-  lineHeight: 1.5,
-  fontFamily: "'JetBrains Mono', 'SF Mono', Menlo, monospace",
-  background: ctx.isEffectiveDark ? '#1c1c1c' : ctx.theme.controlBg,
-  color: ctx.theme.textPrimary,
-  outline: 'none',
-  boxShadow: 'none',
-});
+export const textareaStyle = (ctx: TeamUiCtx, minHeight = 140): React.CSSProperties => {
+  const ft = getFieldTokens(ctx.isEffectiveDark);
+  return {
+    width: '100%',
+    boxSizing: 'border-box',
+    minHeight,
+    resize: 'vertical',
+    border: ft.fieldBorder,
+    borderRadius: 6,
+    padding: 10,
+    fontSize: 12,
+    fontWeight: 400,
+    lineHeight: 1.5,
+    fontFamily: "'JetBrains Mono', 'SF Mono', Menlo, monospace",
+    background: ft.fieldBg,
+    color: ctx.theme.textPrimary,
+    outline: 'none',
+    boxShadow: 'none',
+    transition: 'background 0.15s ease, border-color 0.15s ease',
+  };
+};
 
 export const WEEKDAYS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];

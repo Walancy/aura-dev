@@ -3,6 +3,7 @@ import { Plus, RefreshCw, Search, Tags, Trash2, Wand2 } from 'lucide-react';
 import { EmptyState, Panel, Pill, SmallButton, inputStyle } from '../../team/teamUi';
 import { Notice, ghSettings, type SectionProps } from '../settingsUi';
 import { logSystemActivity } from '../../../utils/brainService';
+import { getFieldTokens } from '../../../utils/fieldTokens';
 
 interface Label {
   name: string;
@@ -138,9 +139,9 @@ export const LabelsSection: React.FC<SectionProps> = ({ ctx, owner, repo, isAdmi
         title={`Labels (${labels?.length ?? '…'})`}
         right={
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg, borderRadius: 6, padding: '0 8px', height: 26 }}>
+            <div className="df-search-box" style={{ display: 'flex', alignItems: 'center', gap: 5, background: getFieldTokens(ctx.isEffectiveDark).fieldBg, border: getFieldTokens(ctx.isEffectiveDark).fieldBorder, boxShadow: 'none', borderRadius: 6, padding: '0 8px', height: 28, boxSizing: 'border-box' }}>
               <Search size={12} color={theme.textSecondary} />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar" style={{ ...inputStyle(ctx), background: 'transparent', padding: 0, width: 120, height: 24 }} />
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar" style={{ ...inputStyle(ctx), background: 'transparent', border: 'none', padding: 0, width: 120, height: 24 }} />
             </div>
             {isAdmin && (
               <SmallButton ctx={ctx} primary onClick={() => { setCreating(true); setEditing(null); setDraft({ name: '', color: randomColor(), description: '' }); }}>

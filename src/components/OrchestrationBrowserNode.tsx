@@ -25,6 +25,7 @@ import {
   detectProjectApps,
   type DetectedProjectApp,
 } from '../utils/projectDevUrl';
+import { getFieldTokens } from '../utils/fieldTokens';
 
 export function cleanBrowserUrl(url?: string | null): string {
   if (!url) return '';
@@ -1155,12 +1156,14 @@ export const OrchestrationBrowserNode: React.FC<OrchestrationBrowserNodeProps> =
 
           {/* Interactive URL Input Bar */}
           <div
+            className="df-search-box"
             style={{
               flex: 1,
               display: 'flex',
               alignItems: 'center',
-              background: barBg,
-              border: `1px solid ${borderColor}`,
+              background: getFieldTokens(isEffectiveDark).fieldBg,
+              border: getFieldTokens(isEffectiveDark).fieldBorder,
+              boxShadow: 'none',
               borderRadius: 8,
               padding: '3px 8px',
               gap: 6,
@@ -1379,19 +1382,20 @@ export const OrchestrationBrowserNode: React.FC<OrchestrationBrowserNodeProps> =
 
                     {/* Central Quick URL Bar */}
                     <div
+                      className="df-search-box"
                       style={{
                         width: '100%',
                         maxWidth: 390,
                         display: 'flex',
                         alignItems: 'center',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.12)',
+                        background: getFieldTokens(true).fieldBg,
+                        border: getFieldTokens(true).fieldBorder,
                         borderRadius: 10,
                         padding: '7px 12px',
                         gap: 8,
                         marginTop: 4,
-                        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.3)',
-                        transition: 'border-color 0.2s, box-shadow 0.2s',
+                        boxShadow: 'none',
+                        transition: 'border-color 0.15s ease, background 0.15s ease',
                       }}
                     >
                       <Globe size={15} color="#71717a" />

@@ -30,6 +30,7 @@ import { findProjectPrd, mentionsPrd, readPrdFile, type Prd } from './figcraftPr
 import { logSystemActivity } from '../../utils/brainService';
 import { renderAiIcon } from '../icons/AiProviderIcons';
 import { AI_PROVIDERS } from '../../constants/ai';
+import { getFieldTokens } from '../../utils/fieldTokens';
 import {
   extractDesignManifestFromInspect,
   syncDesignBridgeToWorkspace,
@@ -1203,10 +1204,12 @@ export default function FigcraftStudioView({
               {/* Coluna da Esquerda: Modelos da IA ativa/hovered */}
               {hoveredModels.length > 0 && (
                 <div
+                  className="df-dropdown-menu"
                   style={{
-                    background: isEffectiveDark ? '#1a1a1c' : '#ffffff',
+                    background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
                     borderRadius: 12,
-                    border: 'none',
+                    border: getFieldTokens(isEffectiveDark).dropdownBorder,
+                    boxShadow: 'none',
                     padding: 6,
                     display: 'flex',
                     flexDirection: 'column',
@@ -1281,10 +1284,12 @@ export default function FigcraftStudioView({
 
               {/* Coluna da Direita: Selecionar IA */}
               <div
+                className="df-dropdown-menu"
                 style={{
-                  background: isEffectiveDark ? '#1a1a1c' : '#ffffff',
+                  background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
                   borderRadius: 12,
-                  border: 'none',
+                  border: getFieldTokens(isEffectiveDark).dropdownBorder,
+                  boxShadow: 'none',
                   padding: 6,
                   display: 'flex',
                   flexDirection: 'column',
@@ -1576,6 +1581,7 @@ export default function FigcraftStudioView({
 
           {/* Container interno do prompt com linha divisoria e barra de acoes */}
           <div
+            className="df-search-box"
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
               const files = Array.from(e.dataTransfer.files || []);
@@ -1587,8 +1593,9 @@ export default function FigcraftStudioView({
             style={{
               display: 'flex',
               flexDirection: 'column',
-              background: isEffectiveDark ? 'rgba(0, 0, 0, 0.35)' : 'rgba(0, 0, 0, 0.04)',
-              border: 'none',
+              background: getFieldTokens(isEffectiveDark).fieldBg,
+              border: getFieldTokens(isEffectiveDark).fieldBorder,
+              boxShadow: 'none',
               borderRadius: 8,
               padding: '8px 10px',
               margin: '0 8px 8px',
@@ -1869,12 +1876,15 @@ export default function FigcraftStudioView({
                 </button>
                 {plusOpen && (
                   <div
+                    className="df-dropdown-menu"
                     style={{
                       position: 'absolute',
                       bottom: 34,
                       left: 0,
                       minWidth: 210,
-                      background: isEffectiveDark ? '#1f1f1f' : '#e2e8f0',
+                      background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                      border: getFieldTokens(isEffectiveDark).dropdownBorder,
+                      boxShadow: 'none',
                       borderRadius: 10,
                       padding: 4,
                       display: 'flex',
@@ -1914,6 +1924,7 @@ export default function FigcraftStudioView({
 
                 {/* Botao e Popover de Handoff: Implementar Design na IDE ou no CLI */}
                 <button
+                  className="df-dropdown-trigger"
                   type="button"
                   title="Implementar telas do Design no código do projeto (IDE ou CLI)"
                   onClick={async () => {
@@ -1927,24 +1938,21 @@ export default function FigcraftStudioView({
                   style={{
                     height: 28,
                     padding: '0 9px',
-                    border: 'none',
+                    border: handoffMenuOpen ? getFieldTokens(isEffectiveDark).fieldBorderFocus : getFieldTokens(isEffectiveDark).fieldBorder,
+                    boxShadow: 'none',
                     borderRadius: 6,
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: 5,
                     background: handoffMenuOpen
-                      ? isEffectiveDark
-                        ? 'rgba(255,255,255,0.12)'
-                        : 'rgba(0,0,0,0.08)'
-                      : isEffectiveDark
-                      ? 'rgba(255,255,255,0.06)'
-                      : 'rgba(0,0,0,0.05)',
+                      ? getFieldTokens(isEffectiveDark).fieldBgHover
+                      : getFieldTokens(isEffectiveDark).fieldBg,
                     color: themeTokens.textPrimary,
                     fontSize: 11.5,
                     fontWeight: 400,
                     fontFamily: "'Poppins', sans-serif",
                     cursor: 'pointer',
-                    transition: 'background 0.15s ease',
+                    transition: 'background 0.15s ease, border-color 0.15s ease',
                   }}
                 >
                   <CodeRounded sx={{ fontSize: 14, color: accentColor }} />
@@ -1967,12 +1975,15 @@ export default function FigcraftStudioView({
 
                 {handoffMenuOpen && (
                   <div
+                    className="df-dropdown-menu"
                     style={{
                       position: 'absolute',
                       bottom: 34,
                       left: 0,
                       width: 248,
-                      background: isEffectiveDark ? '#1a1a1c' : '#ffffff',
+                      background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                      border: getFieldTokens(isEffectiveDark).dropdownBorder,
+                      boxShadow: 'none',
                       borderRadius: 10,
                       padding: 8,
                       display: 'flex',

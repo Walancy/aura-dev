@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { ProjectIssue, RepoCollaborator } from '../ProjectsSchedulerView';
 import { hexToRgba } from '../../utils/color';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface AssignMemberModalProps {
   isOpen: boolean;
@@ -137,8 +138,8 @@ export const AssignMemberModal: React.FC<AssignMemberModalProps> = ({
           maxWidth: 420,
           background: theme.modalBg || (isEffectiveDark ? '#161616' : '#ffffff'),
           borderRadius: 12,
-          border: theme.modalBorder || `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#e2e8f0'}`,
-          boxShadow: theme.modalShadow || '0 20px 40px rgba(0, 0, 0, 0.45)',
+          border: 'none',
+          boxShadow: 'none',
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
@@ -247,6 +248,7 @@ export const AssignMemberModal: React.FC<AssignMemberModalProps> = ({
               }}
             />
             <input
+              className="df-field"
               ref={searchInputRef}
               type="text"
               value={searchQuery}
@@ -254,22 +256,21 @@ export const AssignMemberModal: React.FC<AssignMemberModalProps> = ({
               placeholder="Buscar membro do repositório..."
               style={{
                 width: '100%',
-                background: isEffectiveDark ? '#1f1f1f' : '#f8fafc',
-                border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#cbd5e1'}`,
+                height: 32,
+                background: getFieldTokens(isEffectiveDark).fieldBg,
+                border: getFieldTokens(isEffectiveDark).fieldBorder,
+                boxShadow: 'none',
                 borderRadius: 7,
-                padding: '7px 10px 7px 32px',
+                padding: '0 10px 0 32px',
                 fontSize: 12.5,
+                fontWeight: 400,
                 color: theme.textPrimary,
                 outline: 'none',
-                transition: 'border-color 0.12s ease',
+                transition: 'background 0.15s ease, border-color 0.15s ease',
                 boxSizing: 'border-box',
               }}
-              onFocus={(e) => (e.currentTarget.style.borderColor = accentColor)}
-              onBlur={(e) =>
-                (e.currentTarget.style.borderColor = isEffectiveDark
-                  ? 'rgba(255, 255, 255, 0.1)'
-                  : '#cbd5e1')
-              }
+              onFocus={(e) => (e.currentTarget.style.borderColor = getFieldTokens(isEffectiveDark).fieldBorderFocusColor)}
+              onBlur={(e) => (e.currentTarget.style.borderColor = getFieldTokens(isEffectiveDark).fieldBorderColor)}
             />
             {searchQuery && (
               <button

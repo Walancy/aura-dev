@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import type { BrainEdge, BrainNode, BrainNodeType, BrainCategoryFilter } from '../../types/brain';
 import { logBrainActivity } from '../../utils/brainService';
+import { getFieldTokens } from '../../utils/fieldTokens';
 import {
   Zap,
   FolderGit2,
@@ -1264,15 +1265,18 @@ export const BrainGraphCanvas: React.FC<BrainGraphCanvasProps> = ({
       >
         {/* Search Input with Instant Node Jump */}
         <div
+          className="df-search-box"
           style={{
             display: 'flex',
             alignItems: 'center',
             gap: 8,
-            padding: 8,
-            background: floatingBg,
+            height: 32,
+            padding: '0 10px',
+            boxSizing: 'border-box',
+            background: getFieldTokens(isEffectiveDark).fieldBgSolid,
             borderRadius: 6,
             width: 250,
-            border: 'none',
+            border: getFieldTokens(isEffectiveDark).fieldBorder,
             boxShadow: 'none',
             pointerEvents: 'auto',
           }}

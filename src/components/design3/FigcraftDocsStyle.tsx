@@ -4,6 +4,7 @@ import AutorenewRounded from '@mui/icons-material/AutorenewRounded';
 import PictureAsPdfOutlined from '@mui/icons-material/PictureAsPdfOutlined';
 import { DevFlowSelect } from '../ui/DevFlowSelect';
 import { COVER_VARIANTS, DOC_FONTS, type DocTheme } from './figcraftDocs';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 const PAGE_W = 794; // A4 a 96 dpi
 
@@ -42,11 +43,12 @@ export function AiComposer({ c, title, value, onChange, placeholder, onSubmit, b
   const hex = c.accent.replace('#', '');
   const rgba = (a: number) => `rgba(${parseInt(hex.slice(0, 2), 16)}, ${parseInt(hex.slice(2, 4), 16)}, ${parseInt(hex.slice(4, 6), 16)}, ${a})`;
   const off = busy || disabled;
+  const ft = getFieldTokens(c.dark);
   return (
     <div style={{ flexShrink: 0, borderRadius: 10, padding: 8, display: 'flex', flexDirection: 'column', gap: 8, fontFamily: font, background: c.dark ? `radial-gradient(ellipse 120% 160% at 5.85% 100%, ${rgba(0.2)} 0%, #101010 100%)` : `radial-gradient(ellipse 120% 160% at 5.85% 100%, ${rgba(0.22)} 0%, #ffffff 100%)`, transition: 'background .2s ease' }}>
       <span style={{ fontSize: 12, color: c.text, padding: '2px 4px' }}>{title}</span>
       {status && <span style={{ fontSize: 11.5, lineHeight: 1.4, color: error ? '#f87171' : c.muted, padding: '0 4px', userSelect: 'text', wordBreak: 'break-word' }}>{status}</span>}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderRadius: 8, padding: '8px 10px', background: c.dark ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.04)' }}>
+      <div className="df-search-box" style={{ display: 'flex', flexDirection: 'column', gap: 8, borderRadius: 8, padding: '8px 10px', background: ft.fieldBg, border: ft.fieldBorder, boxShadow: 'none' }}>
         <textarea
           rows={rows}
           value={value}
@@ -84,7 +86,8 @@ function Field({ label, children, c, span = 1 }: { label?: string; children: Rea
 }
 
 function Box({ c, children, style }: { c: Colors; children: React.ReactNode; style?: React.CSSProperties }) {
-  return <div style={{ height: FIELD, borderRadius: 6, background: c.field, display: 'flex', alignItems: 'center', gap: 8, padding: '0 8px', minWidth: 0, ...style }}>{children}</div>;
+  const ft = getFieldTokens(c.dark);
+  return <div className="df-field" style={{ height: FIELD, borderRadius: 6, background: c.field, border: ft.fieldBorder, boxShadow: 'none', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8, padding: '0 8px', minWidth: 0, ...style }}>{children}</div>;
 }
 
 function SliderField({ value, min, max, step, onChange, unit = '', c }: { value: number; min: number; max: number; step: number; onChange: (v: number) => void; unit?: string; c: Colors }) {

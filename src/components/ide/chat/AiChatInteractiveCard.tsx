@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Info, HelpCircle, AlertTriangle, AlertCircle, Lightbulb, Check, ArrowRight } from 'lucide-react';
+import { getFieldTokens } from '../../../utils/fieldTokens';
 
 export interface InteractiveQuestionData {
   question: string;
@@ -140,6 +141,7 @@ export const InteractiveQuestionCard: React.FC<InteractiveQuestionCardProps> = (
       {!hasSubmitted && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <input
+            className="df-field"
             type="text"
             placeholder="Outra observação ou resposta..."
             value={writeIn}
@@ -153,11 +155,13 @@ export const InteractiveQuestionCard: React.FC<InteractiveQuestionCardProps> = (
             style={{
               height: 26,
               padding: '0 8px',
-              borderRadius: 4,
-              border: 'none',
-              background: isEffectiveDark ? 'rgba(0, 0, 0, 0.3)' : 'rgba(255, 255, 255, 0.8)',
+              borderRadius: 5,
+              border: getFieldTokens(isEffectiveDark).fieldBorder,
+              background: getFieldTokens(isEffectiveDark).fieldBg,
+              boxShadow: 'none',
               color: themeTokens.textPrimary,
               fontSize: 11.5,
+              fontWeight: 400,
               outline: 'none',
               width: '100%',
               boxSizing: 'border-box',

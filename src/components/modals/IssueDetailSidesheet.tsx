@@ -60,6 +60,7 @@ import {
 import type { ProjectIssue, RepoCollaborator, SprintOption } from '../ProjectsSchedulerView';
 import { renderMarkdownPreview } from '../../utils/markdown';
 import { hexToRgba } from '../../utils/color';
+import { getFieldTokens } from '../../utils/fieldTokens';
 import type { GithubIssueDetails, GithubProjectFieldDef, GithubProjectItemDetails } from '../../electron.d';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
@@ -320,26 +321,23 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
 
   // Design system tokens derivados do tema e accentColor
   // Cor de fundo para cards neutra DevFlow (#181818 / #161616 no dark / #f8fafc no light)
+  const ft = getFieldTokens(isEffectiveDark);
   const sysCardBg = isEffectiveDark
     ? (theme?.bgCardSecondary || theme?.cardBg || '#161616')
     : (theme?.bgCardSecondary || (theme?.cardBg && theme.cardBg !== '#ffffff' ? theme.cardBg : '#f8fafc'));
   const sysCardHeaderBg = isEffectiveDark
     ? 'rgba(255, 255, 255, 0.02)'
     : 'rgba(0, 0, 0, 0.02)';
-  const sysBorder = (theme?.border && theme.border !== 'transparent')
-    ? theme.border
-    : (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : '#e2e8f0');
-  const sysBorderHover = (theme?.borderHover && theme.borderHover !== 'transparent')
-    ? theme.borderHover
-    : (isEffectiveDark ? 'rgba(255, 255, 255, 0.14)' : '#cbd5e1');
+  const sysBorder = ft.fieldBorderColor;
+  const sysBorderHover = ft.fieldBorderFocusColor;
   const sysTextPrimary = theme?.textPrimary || (isEffectiveDark ? '#ffffff' : '#0f172a');
   const sysTextSecondary = theme?.textSecondary || (isEffectiveDark ? '#888888' : '#64748b');
   const sysTextMuted = theme?.textMuted || (isEffectiveDark ? '#555555' : '#94a3b8');
-  const sysPopupBg = theme?.modalBg || (isEffectiveDark ? '#1a1a1a' : '#ffffff');
-  const sysPopupBorder = theme?.modalBorder || (isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#e2e8f0');
-  const sysPopupShadow = theme?.modalShadow || (isEffectiveDark ? '0 16px 36px rgba(0, 0, 0, 0.65)' : '0 16px 36px rgba(0, 0, 0, 0.12)');
-  const sysHoverBg = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
-  const sysInputBg = isEffectiveDark ? '#121212' : '#f8fafc';
+  const sysPopupBg = ft.dropdownMenuBg;
+  const sysPopupBorder = ft.fieldBorderColor;
+  const sysPopupShadow = 'none';
+  const sysHoverBg = ft.dropdownItemHoverBg;
+  const sysInputBg = ft.fieldBg;
 
   // Local closing state for smooth exit animation
   const [isLocalClosing, setIsLocalClosing] = useState(false);
@@ -1608,9 +1606,9 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   const rightSidebarBg = isEffectiveDark ? '#141414' : '#f8fafc';
   const cardSurfaceBg = isEffectiveDark ? '#181818' : '#ffffff';
   const cardHeaderBg = isEffectiveDark ? '#1f1f1f' : '#f1f5f9';
-  const controlElementBg = isEffectiveDark ? '#1e1e1e' : '#ffffff';
-  const controlElementHoverBg = isEffectiveDark ? '#262626' : '#f1f5f9';
-  const dropdownSurfaceBg = isEffectiveDark ? '#1e1e1e' : '#ffffff';
+  const controlElementBg = ft.fieldBg;
+  const controlElementHoverBg = ft.fieldBgHover;
+  const dropdownSurfaceBg = ft.dropdownMenuBg;
   const isClosing = isLocalClosing || !isOpen;
 
   if (!issue) return null;
@@ -1645,7 +1643,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
           background: sidesheetBg,
           borderRadius: '16px 0 0 16px',
           border: 'none',
-          boxShadow: isEffectiveDark ? '-16px 0 48px rgba(0, 0, 0, 0.8)' : '-12px 0 36px rgba(0, 0, 0, 0.14)',
+          boxShadow: 'none',
           display: 'flex',
           flexDirection: 'column',
           zIndex: 99991,
@@ -1708,6 +1706,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     </button>
                   )}
                   <input
+                    className="df-field"
                     type="text"
                     autoFocus
                     value={editedTitle}
@@ -1720,9 +1719,10 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       flex: 1,
                       fontSize: 24,
                       fontWeight: 400,
-                      background: isEffectiveDark ? '#1a1a1a' : '#f4f4f5',
+                      background: ft.fieldBg,
                       color: theme?.textPrimary || '#fff',
-                      border: 'none',
+                      border: ft.fieldBorder,
+                      boxShadow: 'none',
                       borderRadius: 8,
                       padding: '8px 14px',
                       outline: 'none',
@@ -2158,15 +2158,16 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
               {/* Dropdown do Mais Opções */}
               {isMoreMenuOpen && (
                 <div
+                  className="df-dropdown-menu"
                   style={{
                     position: 'absolute',
                     top: '100%',
                     right: 0,
                     marginTop: 6,
-                    background: isEffectiveDark ? '#1e1e24' : '#ffffff',
+                    background: ft.dropdownMenuBg,
                     borderRadius: 10,
-                    border: 'none',
-                    boxShadow: isEffectiveDark ? '0 10px 30px rgba(0,0,0,0.6)' : '0 10px 26px rgba(0,0,0,0.12)',
+                    border: ft.dropdownBorder,
+                    boxShadow: 'none',
                     padding: 6,
                     minWidth: 200,
                     zIndex: 1000,
@@ -2868,6 +2869,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
 
                   {descTab === 'write' ? (
                     <textarea
+                      className="df-field"
                       rows={12}
                       value={editedDescription}
                       onChange={(e) => setEditedDescription(e.target.value)}
@@ -2876,8 +2878,9 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       style={{
                         width: '100%',
                         boxSizing: 'border-box',
-                        background: sysInputBg,
-                        border: 'none',
+                        background: ft.fieldBg,
+                        border: ft.fieldBorder,
+                        boxShadow: 'none',
                         borderRadius: 8,
                         padding: 12,
                         color: sysTextPrimary,
@@ -3804,8 +3807,9 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             height: 30,
                             borderRadius: 6,
                             overflow: 'hidden',
-                            border: `1px solid ${sysBorder}`,
-                            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f8fafc',
+                            border: ft.fieldBorder,
+                            background: ft.fieldBg,
+                            boxShadow: 'none',
                           }}
                         >
                           <button
@@ -4663,8 +4667,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           onFocus={(e) => {
                             const p = e.currentTarget.parentElement;
                             if (p) {
-                              p.style.borderColor = accentColor;
-                              p.style.boxShadow = `0 0 0 1px ${accentColor}`;
+                              p.style.borderColor = sysBorderHover;
+                              p.style.boxShadow = 'none';
                             }
                           }}
                           onBlur={(e) => {
@@ -4761,8 +4765,9 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           height: 32,
                           borderRadius: 6,
                           overflow: 'hidden',
-                          border: `1px solid ${sysBorder}`,
-                          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f8fafc',
+                          border: ft.fieldBorder,
+                          background: ft.fieldBg,
+                          boxShadow: 'none',
                         }}
                       >
                         <button
@@ -4907,16 +4912,17 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                               {/* Barra de Busca de Issues */}
                               <div style={{ padding: '8px 10px', borderBottom: `1px solid ${sysBorder}` }}>
                                 <div
+                                  className="df-search-box"
                                   style={{
                                     display: 'flex',
                                     alignItems: 'center',
                                     gap: 8,
                                     padding: '5px 10px',
                                     borderRadius: 6,
-                                    border: `1px solid ${sysBorder}`,
-                                    background: sysInputBg,
-                                    boxShadow: `0 0 0 2px ${hexToRgba(accentColor, 0.2)}`,
-                                    transition: 'all 0.15s ease',
+                                    border: ft.fieldBorder,
+                                    background: ft.fieldBg,
+                                    boxShadow: 'none',
+                                    transition: 'background 0.15s ease, border-color 0.15s ease',
                                   }}
                                 >
                                   <Search size={14} color={sysTextSecondary} />
@@ -5419,8 +5425,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         onFocus={(e) => {
                           const p = e.currentTarget.parentElement;
                           if (p) {
-                            p.style.borderColor = accentColor;
-                            p.style.boxShadow = `0 0 0 1px ${accentColor}`;
+                            p.style.borderColor = sysBorderHover;
+                            p.style.boxShadow = 'none';
                           }
                         }}
                         onBlur={(e) => {
@@ -5686,8 +5692,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         onFocus={(e) => {
                           const p = e.currentTarget.parentElement;
                           if (p) {
-                            p.style.borderColor = accentColor;
-                            p.style.boxShadow = `0 0 0 1px ${accentColor}`;
+                            p.style.borderColor = sysBorderHover;
+                            p.style.boxShadow = 'none';
                           }
                         }}
                         onBlur={(e) => {
@@ -6022,8 +6028,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         onFocus={(e) => {
                           const p = e.currentTarget.parentElement;
                           if (p) {
-                            p.style.borderColor = accentColor;
-                            p.style.boxShadow = `0 0 0 1px ${accentColor}`;
+                            p.style.borderColor = sysBorderHover;
+                            p.style.boxShadow = 'none';
                           }
                         }}
                         onBlur={(e) => {
@@ -6168,6 +6174,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
               </div>
 
               <div
+                className="df-dropdown-trigger"
                 data-sidebar-trigger="priority"
                 onClick={() => {
                   setActiveSidebarPopup((prev) => (prev === 'priority' ? null : 'priority'));
@@ -6180,8 +6187,9 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   padding: '6px 8px',
                   borderRadius: 6,
                   cursor: 'pointer',
-                  background: isEffectiveDark ? 'rgba(255,255,255,0.03)' : '#f6f8fa',
-                  border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.06)' : '1px solid #d0d7de',
+                  background: ft.fieldBg,
+                  border: ft.fieldBorder,
+                  boxShadow: 'none',
                 }}
               >
                 <span style={{ fontSize: 12, color: theme?.textSecondary || '#8b949e' }}>Priority</span>
@@ -6259,8 +6267,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         onFocus={(e) => {
                           const p = e.currentTarget.parentElement;
                           if (p) {
-                            p.style.borderColor = accentColor;
-                            p.style.boxShadow = `0 0 0 1px ${accentColor}`;
+                            p.style.borderColor = sysBorderHover;
+                            p.style.boxShadow = 'none';
                           }
                         }}
                         onBlur={(e) => {
@@ -6433,8 +6441,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         onFocus={(e) => {
                           const p = e.currentTarget.parentElement;
                           if (p) {
-                            p.style.borderColor = accentColor;
-                            p.style.boxShadow = `0 0 0 1px ${accentColor}`;
+                            p.style.borderColor = sysBorderHover;
+                            p.style.boxShadow = 'none';
                           }
                         }}
                         onBlur={(e) => {
@@ -6705,10 +6713,10 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   top: 'calc(100% + 4px)',
                   right: 0,
                   background: dropdownSurfaceBg,
-                  border: 'none',
+                  border: ft.dropdownBorder,
                   borderRadius: 8,
                   padding: 4,
-                  boxShadow: isEffectiveDark ? '0 8px 24px rgba(0,0,0,0.7)' : '0 4px 16px rgba(0,0,0,0.1)',
+                  boxShadow: 'none',
                   zIndex: 100,
                   minWidth: 180,
                   maxHeight: 260,
@@ -6949,8 +6957,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         onFocus={(e) => {
                           const p = e.currentTarget.parentElement;
                           if (p) {
-                            p.style.borderColor = accentColor;
-                            p.style.boxShadow = `0 0 0 1px ${accentColor}`;
+                            p.style.borderColor = sysBorderHover;
+                            p.style.boxShadow = 'none';
                           }
                         }}
                         onBlur={(e) => {
@@ -7354,8 +7362,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         onFocus={(e) => {
                           const p = e.currentTarget.parentElement;
                           if (p) {
-                            p.style.borderColor = accentColor;
-                            p.style.boxShadow = `0 0 0 1px ${accentColor}`;
+                            p.style.borderColor = sysBorderHover;
+                            p.style.boxShadow = 'none';
                           }
                         }}
                         onBlur={(e) => {
@@ -7926,6 +7934,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 Repositório de Destino (owner/repo)
               </label>
               <input
+                className="df-field"
                 type="text"
                 autoFocus
                 placeholder="ex: organizacao/meu-outro-repo"
@@ -7934,10 +7943,12 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 style={{
                   padding: '8px 12px',
                   borderRadius: 6,
-                  border: 'none',
-                  background: isEffectiveDark ? '#262626' : '#f5f5f5',
+                  border: ft.fieldBorder,
+                  background: ft.fieldBg,
+                  boxShadow: 'none',
                   color: sysTextPrimary,
                   fontSize: 13,
+                  fontWeight: 400,
                   outline: 'none',
                 }}
               />

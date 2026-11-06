@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Upload, Globe, Sparkles, RefreshCw, Check, Image as ImageIcon, Trash2 } from 'lucide-react';
 import { getLanguageSvgUrl } from '../FileIcon';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface ProjectIconModalProps {
   isOpen: boolean;
@@ -62,15 +63,14 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
 
   if (!isOpen || !project) return null;
 
+  const ft = getFieldTokens(isEffectiveDark);
   const bgModal = themeTokens?.modalBg || themeTokens?.bgCard || (isEffectiveDark ? '#18181b' : '#ffffff');
-  const borderModal = themeTokens?.modalBorder && themeTokens.modalBorder !== 'none'
-    ? themeTokens.modalBorder
-    : (isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(0, 0, 0, 0.12)');
+  const borderModal = 'none';
   const textPrimary = themeTokens?.textPrimary || (isEffectiveDark ? '#f4f4f5' : '#18181b');
   const textSecondary = themeTokens?.textSecondary || (isEffectiveDark ? '#a1a1aa' : '#71717a');
   const modalOverlay = themeTokens?.modalOverlay || 'rgba(0, 0, 0, 0.65)';
-  const inputBg = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)';
-  const inputBorder = isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.15)';
+  const inputBg = ft.fieldBg;
+  const inputBorder = ft.fieldBorderColor;
 
   const langSvg = getLanguageSvgUrl(project.language);
 
@@ -184,7 +184,7 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
           background: bgModal,
           border: borderModal,
           borderRadius: 14,
-          boxShadow: '0 20px 40px rgba(0, 0, 0, 0.45)',
+          boxShadow: 'none',
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
@@ -377,6 +377,7 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <input
+                className="df-field"
                 type="text"
                 placeholder="https://exemplo.com/logo.png"
                 value={urlInput}
@@ -390,8 +391,10 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
                   borderRadius: 8,
                   background: inputBg,
                   border: `1px solid ${inputBorder}`,
+                  boxShadow: 'none',
                   color: textPrimary,
                   fontSize: 12,
+                  fontWeight: 400,
                   outline: 'none',
                 }}
               />

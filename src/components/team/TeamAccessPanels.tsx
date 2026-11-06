@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckSquare, ChevronDown, ChevronRight, History, RefreshCw, Search, ShieldAlert, ShieldCheck, Square, X } from 'lucide-react';
 import { relativeTime, type AccessHistoryEntry, type AuditFinding, type MemberStats, type RepoRole, type TeamInsightsRaw } from './teamTypes';
+import { getFieldTokens } from '../../utils/fieldTokens';
 import { Avatar, EmptyState, Panel, Pill, ROLE_COLOR, SEVERITY_COLOR, SmallButton, selectStyle, type TeamUiCtx } from './teamUi';
 
 // ---------------------------------------------------------------------------
@@ -301,29 +302,33 @@ export const TeamMatrixPanel: React.FC<MatrixProps> = ({ ctx, repoFullName, repo
                   style={{ position: 'fixed', inset: 0, zIndex: 40 }}
                 />
                 <div
+                  className="df-dropdown-menu"
                   style={{
                     position: 'absolute',
                     top: 'calc(100% + 4px)',
                     right: 0,
                     zIndex: 45,
                     width: 290,
-                    background: isEffectiveDark ? '#141414' : '#ffffff',
+                    background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
                     borderRadius: 8,
                     padding: 8,
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 6,
-                    border: 'none',
+                    border: getFieldTokens(isEffectiveDark).dropdownBorder,
                     boxShadow: 'none',
                   }}
                 >
                   {/* Campo de Busca */}
                   <div
+                    className="df-search-box"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: 6,
-                      background: isEffectiveDark ? '#1c1c1c' : '#f0f0f0',
+                      background: getFieldTokens(isEffectiveDark).fieldBg,
+                      border: getFieldTokens(isEffectiveDark).fieldBorder,
+                      boxShadow: 'none',
                       borderRadius: 6,
                       padding: '4px 8px',
                       height: 28,

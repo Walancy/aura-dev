@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Pipette } from 'lucide-react';
 import { hexToRgb, hexToRgba, hexToHsv, hsvToRgb, rgbToHex } from '../../utils/color';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export const DevFlowColorPicker: React.FC<{
   color: string;
@@ -271,13 +272,16 @@ export const DevFlowColorPicker: React.FC<{
 
         {/* HEX Input */}
         <div
+          className="df-search-box"
           style={{
             display: 'flex',
             alignItems: 'center',
-            background: isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.07)',
+            background: getFieldTokens(isDark).fieldBg,
             borderRadius: 5,
-            padding: '2px 6px',
-            border: 'none',
+            height: 24,
+            padding: '0 6px',
+            border: getFieldTokens(isDark).fieldBorder,
+            boxShadow: 'none',
             flex: 1,
             maxWidth: 82,
           }}
@@ -296,7 +300,7 @@ export const DevFlowColorPicker: React.FC<{
               outline: 'none',
               color: isDark ? '#f0f0f0' : '#111111',
               fontSize: 10.5,
-              fontWeight: 600,
+              fontWeight: 400,
               fontFamily: 'monospace',
               textAlign: 'center',
               textTransform: 'uppercase',

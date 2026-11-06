@@ -22,6 +22,8 @@ import {
   generateBrainAiContext,
 } from '../../utils/brainService';
 import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
+import { TutorialTriggerButton, useRegisterTutorialOverlay } from '../tutorial/TutorialTriggerButton';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 interface ProjectBrainModalProps {
   isOpen: boolean;
@@ -46,6 +48,7 @@ export const ProjectBrainModal: React.FC<ProjectBrainModalProps> = ({
   onOpenFile,
   onToast,
 }) => {
+  useRegisterTutorialOverlay('modal_brain', isOpen);
   const [brain, setBrain] = useState<ProjectBrainContext | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -237,6 +240,7 @@ export const ProjectBrainModal: React.FC<ProjectBrainModalProps> = ({
 
   if (!isOpen) return null;
 
+  const ft = getFieldTokens(isEffectiveDark);
   // Design Tokens do sistema DevFlow
   const colors = {
     overlay: isEffectiveDark ? 'rgba(0, 0, 0, 0.75)' : 'rgba(0, 0, 0, 0.45)',
@@ -245,7 +249,7 @@ export const ProjectBrainModal: React.FC<ProjectBrainModalProps> = ({
     sidebarBg: isEffectiveDark ? '#141414' : '#ffffff',
     panelBg: isEffectiveDark ? '#1a1a1a' : '#f8fafc',
     hoverBg: isEffectiveDark ? '#222222' : '#f1f5f9',
-    inputBg: isEffectiveDark ? '#1e1e1e' : '#f1f5f9',
+    inputBg: ft.fieldBg,
     textPrimary: isEffectiveDark ? '#f4f4f5' : '#0f172a',
     textSecondary: isEffectiveDark ? '#a1a1aa' : '#64748b',
     textMuted: isEffectiveDark ? '#71717a' : '#94a3b8',
@@ -264,7 +268,7 @@ export const ProjectBrainModal: React.FC<ProjectBrainModalProps> = ({
     width: '100%',
     padding: 10,
     background: colors.inputBg,
-    border: 'none',
+    border: ft.fieldBorder,
     boxShadow: 'none',
     outline: 'none',
     color: colors.textPrimary,
@@ -272,6 +276,7 @@ export const ProjectBrainModal: React.FC<ProjectBrainModalProps> = ({
     fontWeight: 400,
     borderRadius: 6,
     boxSizing: 'border-box',
+    transition: 'background 0.15s ease, border-color 0.15s ease',
     fontFamily: "'Poppins', -apple-system, sans-serif",
   };
 
@@ -320,6 +325,7 @@ export const ProjectBrainModal: React.FC<ProjectBrainModalProps> = ({
       >
         {/* Header Bar */}
         <div
+          data-tour="brain-header"
           style={{
             height: 52,
             padding: 16,
@@ -411,7 +417,16 @@ export const ProjectBrainModal: React.FC<ProjectBrainModalProps> = ({
           </div>
 
           {/* Botões de Ação do Cabeçalho */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div data-tour="brain-header-actions" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <TutorialTriggerButton
+              contextId="modal_brain"
+              isDark={isEffectiveDark}
+              accentColor={accentColor}
+              textColor={colors.textPrimary}
+              mutedColor={colors.textSecondary}
+              height={30}
+              contextName={brain?.projectName || projectName || 'Brain'}
+            />
             <button
               onClick={handleRescan}
               disabled={isScanning}
@@ -519,6 +534,7 @@ export const ProjectBrainModal: React.FC<ProjectBrainModalProps> = ({
             >
               {/* Sidebar Navigation Tabs */}
               <div
+                data-tour="brain-sidebar-tabs"
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -1067,6 +1083,7 @@ export const ProjectBrainModal: React.FC<ProjectBrainModalProps> = ({
 
           {/* Right Main Area: Obsidian Graph (Layout Flex Vertical Limpo - Sem Divs Ocultando Botões) */}
           <div
+            data-tour="brain-graph-area"
             style={{
               flex: 1,
               display: 'flex',

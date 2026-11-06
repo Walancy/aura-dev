@@ -4,6 +4,7 @@ import { hexToRgba, getContrastTextColor } from '../../utils/color';
 import { AI_BRAND_COLORS } from '../../constants/ai';
 import { DevFlowColorPicker } from '../ui/DevFlowColorPicker';
 import { MiniSwitch } from '../ui/MiniSwitch';
+import { TutorialTriggerButton, useRegisterTutorialOverlay } from '../tutorial/TutorialTriggerButton';
 import type { ThemeTokens } from '../../types/ide';
 
 export interface ThemePopupProps {
@@ -47,6 +48,7 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
   rainbow,
   setRainbow,
 }) => {
+  useRegisterTutorialOverlay('popup_theme', true);
   const [selStop, setSelStop] = React.useState(0);
   const stopIdx = Math.min(selStop, rainbow.stops.length - 1);
   const setStop = (i: number, c: string) => setRainbow({ ...rainbow, stops: rainbow.stops.map((x, k) => (k === i ? c : x)) });
@@ -61,8 +63,8 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
         maxWidth: 'calc(100vw - 32px)',
         background: themeTokens.bgCard,
         borderRadius: 10,
-        border: `1px solid ${themeTokens.border}`,
-        boxShadow: '0 24px 64px rgba(0, 0, 0, 0.85)',
+        border: 'none',
+        boxShadow: 'none',
         zIndex: 999999,
         display: 'flex',
         flexDirection: 'column',
@@ -75,6 +77,7 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
     >
       {/* Draggable Header */}
       <div
+        data-tour="theme-popup-header"
         onMouseDown={onMouseDown}
         style={{
           display: 'flex',
@@ -96,6 +99,16 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <TutorialTriggerButton
+            contextId="popup_theme"
+            isDark={isEffectiveDark}
+            accentColor={accentColor}
+            textColor={themeTokens.textPrimary}
+            mutedColor={themeTokens.textSecondary}
+            compact
+            height={24}
+            contextName="Aparência e Tema"
+          />
           <button
             type="button"
             onClick={() => setAccentColor('#FF6A00')}
@@ -140,7 +153,7 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
       {/* Content Body */}
       <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 13, maxHeight: 'calc(88vh - 40px)', overflowY: 'auto' }}>
         {/* Section 1: Modo de Tema */}
-        <div>
+        <div data-tour="theme-mode-selector">
           <div style={{ fontSize: 10, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 7 }}>
             Modo de Exibição
           </div>
@@ -181,6 +194,7 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
         </div>
 
         {/* Section 2: Cor de Destaque (Presets - Apenas Bolinhas Coloridas) */}
+        <div data-tour="theme-accent-section" style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
         {!rainbow.on && <div style={useAiSystemAccent ? { opacity: 0.35, pointerEvents: 'none' } : undefined}>
           <div style={{ fontSize: 10, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
             Cor de Destaque
@@ -323,8 +337,10 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
             </div>
           </div>}
         </div>
+        </div>
 
         {/* Section 4: Sincronizar Cor do Chat com a IA */}
+        <div data-tour="theme-ai-sync" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div
           style={{
             display: 'flex',
@@ -384,6 +400,7 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
             onChange={() => setUseAiSystemAccent(!useAiSystemAccent)}
             accentColor={AI_BRAND_COLORS[selectedAiProvider] || accentColor}
           />
+        </div>
         </div>
 
         {/* Subtle footer tip */}

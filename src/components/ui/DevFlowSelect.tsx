@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, Check } from 'lucide-react';
 import { hexToRgba } from '../../utils/color';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface DevFlowSelectOption<T = string | number> {
   value: T;
@@ -118,9 +119,10 @@ export const DevFlowSelect = <T extends string | number>({
     };
   }, [isOpen, options.length]);
 
+  const ft = getFieldTokens(isEffectiveDark);
   const textColor = themeTokens?.textPrimary || (isEffectiveDark ? '#ffffff' : '#0f172a');
   const secondaryColor = themeTokens?.textSecondary || (isEffectiveDark ? '#94a3b8' : '#64748b');
-  const menuBg = isEffectiveDark ? '#17171a' : '#ffffff';
+  const menuBg = ft.dropdownMenuBg;
 
   return (
     <div
@@ -138,15 +140,16 @@ export const DevFlowSelect = <T extends string | number>({
         type="button"
         onClick={handleToggle}
         disabled={disabled}
+        data-open={isOpen ? 'true' : undefined}
         style={{
           width: '100%',
           height: 28,
           padding: '0 8px',
           gap: 8,
           borderRadius: 6,
-          border: 'none',
+          border: isOpen ? ft.fieldBorderFocus : ft.fieldBorder,
           boxShadow: 'none',
-          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
+          background: isOpen ? ft.fieldBgHover : ft.fieldBg,
           color: selectedOption ? textColor : secondaryColor,
           fontSize: 11.5,
           fontWeight: 400,
@@ -156,21 +159,19 @@ export const DevFlowSelect = <T extends string | number>({
           justifyContent: 'space-between',
           outline: 'none',
           opacity: disabled ? 0.5 : 1,
-          transition: 'background 0.15s ease, color 0.15s ease',
+          transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
           boxSizing: 'border-box',
         }}
         onMouseEnter={(e) => {
           if (!disabled) {
-            e.currentTarget.style.background = isEffectiveDark
-              ? 'rgba(255, 255, 255, 0.07)'
-              : 'rgba(0, 0, 0, 0.07)';
+            e.currentTarget.style.background = ft.fieldBgHover;
+            e.currentTarget.style.borderColor = ft.fieldBorderFocusColor;
           }
         }}
         onMouseLeave={(e) => {
           if (!disabled) {
-            e.currentTarget.style.background = isEffectiveDark
-              ? 'rgba(255, 255, 255, 0.04)'
-              : 'rgba(0, 0, 0, 0.04)';
+            e.currentTarget.style.background = isOpen ? ft.fieldBgHover : ft.fieldBg;
+            e.currentTarget.style.borderColor = isOpen ? ft.fieldBorderFocusColor : ft.fieldBorderColor;
           }
         }}
       >
@@ -226,7 +227,7 @@ export const DevFlowSelect = <T extends string | number>({
               maxHeight: 220,
               overflowY: 'auto',
               background: menuBg,
-              border: 'none',
+              border: ft.dropdownBorder,
               boxShadow: 'none',
               borderRadius: 6,
               padding: 4,
@@ -276,9 +277,7 @@ export const DevFlowSelect = <T extends string | number>({
                   onMouseEnter={(e) => {
                     onOptionHover?.(opt.value);
                     if (!isSelected) {
-                      e.currentTarget.style.background = isEffectiveDark
-                        ? 'rgba(255, 255, 255, 0.06)'
-                        : 'rgba(0, 0, 0, 0.05)';
+                      e.currentTarget.style.background = ft.dropdownItemHoverBg;
                     }
                   }}
                   onMouseLeave={(e) => {

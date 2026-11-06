@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Download, ExternalLink, FolderOpen, FolderInput, Globe, Loader2, Pencil, Pin, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { logSystemActivity } from '../../utils/brainService';
+import { getFieldTokens } from '../../utils/fieldTokens';
+import { TutorialTriggerButton, useRegisterTutorialOverlay } from '../tutorial/TutorialTriggerButton';
 
 export interface InstalledSkill {
   id: string;
@@ -77,13 +79,17 @@ interface Props {
 }
 
 export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark, accentColor, accentContrastText, onToast }) => {
+  useRegisterTutorialOverlay('modal_skills', isOpen);
+
+  const ft = useMemo(() => getFieldTokens(isEffectiveDark), [isEffectiveDark]);
+
   const c = useMemo(
     () => ({
       overlay: isEffectiveDark ? 'rgba(0,0,0,0.7)' : 'rgba(0,0,0,0.4)',
       bg: isEffectiveDark ? '#141414' : '#ffffff',
       panel: isEffectiveDark ? '#1a1a1a' : '#f8fafc',
       hover: isEffectiveDark ? '#222222' : '#f1f5f9',
-      input: isEffectiveDark ? '#1f1f1f' : '#f1f5f9',
+      input: ft.fieldBg,
       text: isEffectiveDark ? '#f4f4f5' : '#0f172a',
       sub: isEffectiveDark ? '#a1a1aa' : '#64748b',
       muted: isEffectiveDark ? '#71717a' : '#94a3b8',
@@ -91,7 +97,7 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
       danger: '#ef4444',
       success: '#22c55e',
     }),
-    [isEffectiveDark],
+    [isEffectiveDark, ft],
   );
 
   const [tab, setTab] = useState<'installed' | 'explore' | 'system'>('installed');
@@ -297,14 +303,30 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
   const inputStyle: React.CSSProperties = {
     width: '100%',
     boxSizing: 'border-box',
-    border: 'none',
+    border: ft.fieldBorder,
+    boxShadow: 'none',
     borderRadius: 6,
-    background: c.input,
+    background: ft.fieldBg,
     color: c.text,
     fontSize: 12.5,
+    fontWeight: 400,
     fontFamily: 'inherit',
     padding: '8px 10px',
     outline: 'none',
+    transition: 'background 0.15s ease, border-color 0.15s ease',
+  };
+
+  const searchWrapperStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    background: ft.fieldBg,
+    border: ft.fieldBorder,
+    boxShadow: 'none',
+    borderRadius: 6,
+    padding: '0 10px',
+    height: 28,
+    transition: 'background 0.15s ease, border-color 0.15s ease',
   };
 
   const Toggle = ({ on, onChange, disabled }: { on: boolean; onChange: () => void; disabled?: boolean }) => (
@@ -348,7 +370,10 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
         }}
       >
         {/* Cabeçalho */}
-        <div style={{ padding: '12px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottom: `1px solid ${c.border}`, flexShrink: 0 }}>
+        <div
+          data-tour="skills-header"
+          style={{ padding: '12px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottom: `1px solid ${c.border}`, flexShrink: 0 }}
+        >
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flex: 1, minWidth: 0 }}>
             <span style={{ fontSize: 14, fontWeight: 500, color: c.text }}>Skills</span>
             <span style={{ fontSize: 11.5, fontWeight: 400, color: c.sub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -356,6 +381,15 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
             </span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            <TutorialTriggerButton
+              contextId="modal_skills"
+              isDark={isEffectiveDark}
+              accentColor={accentColor}
+              textColor={c.text}
+              mutedColor={c.sub}
+              height={28}
+              contextName="Skills"
+            />
             <button
               type="button"
               style={btn()}
@@ -396,6 +430,7 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
         {/* Barra Funcional: Tabs à esquerda, Ações à direita */}
         <div style={{ padding: '8px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottom: `1px solid ${c.border}`, flexShrink: 0 }}>
           <div
+            data-tour="skills-tabs"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -440,7 +475,7 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
             )}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          <div data-tour="skills-actions" style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
             {availableUpdatesCount > 0 && (
               <button
                 type="button"
@@ -497,6 +532,7 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
 
         {/* Corpo Principal */}
         <div
+          data-tour="skills-body"
           onScroll={tab === 'installed' || tab === 'system' ? handleBodyScroll : undefined}
           className={tab === 'installed' || tab === 'system' ? `scroll-auto-hide ${isBodyScrolling ? 'is-scrolling' : ''}` : ''}
           style={{
@@ -511,14 +547,9 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
           {tab === 'installed' && (
             <>
               <div
+                className="df-search-box"
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  background: c.input,
-                  borderRadius: 6,
-                  padding: '0 10px',
-                  height: 28,
+                  ...searchWrapperStyle,
                   marginBottom: 12,
                 }}
               >
@@ -527,7 +558,7 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Buscar skill instalada…"
-                  style={{ ...inputStyle, padding: 0, background: 'transparent', height: 28, fontSize: 12 }}
+                  style={{ ...inputStyle, padding: 0, background: 'transparent', border: 'none', height: 26, fontSize: 12 }}
                 />
               </div>
 
@@ -744,14 +775,9 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
                   <>
                     {/* Campo de busca na div principal */}
                     <div
+                      className="df-search-box"
                       style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        background: c.input,
-                        borderRadius: 6,
-                        padding: '0 10px',
-                        height: 28,
+                        ...searchWrapperStyle,
                         marginBottom: 10,
                       }}
                     >
@@ -760,7 +786,7 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
                         value={registryQuery}
                         onChange={(e) => setRegistryQuery(e.target.value)}
                         placeholder="Buscar no skills.sh: flutter, supabase, testes, git, stripe…"
-                        style={{ ...inputStyle, padding: 0, background: 'transparent', height: 28, fontSize: 12 }}
+                        style={{ ...inputStyle, padding: 0, background: 'transparent', border: 'none', height: 26, fontSize: 12 }}
                       />
                       {registryLoading && (
                         <Loader2 size={12} color={c.sub} style={{ animation: 'spin 1s linear infinite' }} />
@@ -856,14 +882,9 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
                       </div>
                     )}
                     <div
+                      className="df-search-box"
                       style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        background: c.input,
-                        borderRadius: 6,
-                        padding: '0 10px',
-                        height: 28,
+                        ...searchWrapperStyle,
                         marginBottom: 10,
                       }}
                     >
@@ -872,7 +893,7 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
                         placeholder={`Buscar em ${currentSource?.label || 'fonte'}…`}
-                        style={{ ...inputStyle, padding: 0, background: 'transparent', height: 28, fontSize: 12 }}
+                        style={{ ...inputStyle, padding: 0, background: 'transparent', border: 'none', height: 26, fontSize: 12 }}
                       />
                     </div>
                     {catalogError && <div style={{ fontSize: 11.5, color: '#f59e0b', padding: '6px 0' }}>{catalogError}</div>}
@@ -950,14 +971,9 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
                 Skills encontradas nas pastas dos CLIs. Importe para gerenciá-las aqui e usá-las em todos os CLIs (o original não é alterado).
               </div>
               <div
+                className="df-search-box"
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  background: c.input,
-                  borderRadius: 6,
-                  padding: '0 10px',
-                  height: 28,
+                  ...searchWrapperStyle,
                   marginBottom: 12,
                 }}
               >
@@ -966,7 +982,7 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Buscar skill no sistema…"
-                  style={{ ...inputStyle, padding: 0, background: 'transparent', height: 28, fontSize: 12 }}
+                  style={{ ...inputStyle, padding: 0, background: 'transparent', border: 'none', height: 26, fontSize: 12 }}
                 />
               </div>
               {external.filter(match).map((s) => (

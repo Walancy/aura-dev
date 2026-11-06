@@ -8,6 +8,16 @@
   --text-primary: #ffffff;
   --text-secondary: #888888;
   --border-color: transparent;
+  --field-bg: rgba(255, 255, 255, 0.05);
+  --field-bg-hover: rgba(255, 255, 255, 0.075);
+  --field-bg-solid: #1e1e20;
+  --field-border-color: rgba(255, 255, 255, 0.06);
+  --field-border: 1px solid rgba(255, 255, 255, 0.06);
+  --field-border-focus-color: rgba(255, 255, 255, 0.12);
+  --field-border-focus: 1px solid rgba(255, 255, 255, 0.12);
+  --dropdown-bg: #1b1b1d;
+  --dropdown-border: 1px solid rgba(255, 255, 255, 0.06);
+  --dropdown-item-hover: rgba(255, 255, 255, 0.06);
 }
 
 :root[data-theme="light"] {
@@ -16,6 +26,16 @@
   --text-primary: #0f172a;
   --text-secondary: #475569;
   --border-color: transparent;
+  --field-bg: #f6f6f7;
+  --field-bg-hover: #efefef;
+  --field-bg-solid: #f6f6f7;
+  --field-border-color: rgba(0, 0, 0, 0.06);
+  --field-border: 1px solid rgba(0, 0, 0, 0.06);
+  --field-border-focus-color: rgba(0, 0, 0, 0.12);
+  --field-border-focus: 1px solid rgba(0, 0, 0, 0.12);
+  --dropdown-bg: #f8f8f9;
+  --dropdown-border: 1px solid rgba(0, 0, 0, 0.06);
+  --dropdown-item-hover: rgba(0, 0, 0, 0.045);
 }
 
 ::placeholder {
@@ -55,6 +75,40 @@ textarea,
 select,
 button {
   font-family: inherit;
+}
+
+/* Padrao global para inputs, dropdowns e campos de busca (.df-field / .df-search-box) */
+.df-field,
+.df-search-box,
+.df-dropdown-trigger {
+  background: var(--field-bg);
+  border: var(--field-border);
+  box-shadow: none;
+  font-weight: 400;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.df-field:hover,
+.df-search-box:hover,
+.df-dropdown-trigger:hover {
+  background: var(--field-bg-hover);
+}
+
+.df-field:focus,
+.df-search-box:focus-within,
+.df-dropdown-trigger[data-open="true"] {
+  border-color: var(--field-border-focus-color);
+}
+
+.df-dropdown-menu {
+  background: var(--dropdown-bg);
+  border: var(--dropdown-border);
+  box-shadow: none;
+}
+
+select {
+  font-weight: 400;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 /* Scrollbars */

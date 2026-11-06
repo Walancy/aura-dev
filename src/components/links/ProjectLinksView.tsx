@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
 import { logSystemActivity } from '../../utils/brainService';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 function GithubIcon({ size = 15, color = 'currentColor' }: { size?: number; color?: string }) {
   return (
@@ -106,6 +107,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
 
   // Paleta de cores 100% neutra monocromática (R = G = B, ZERO tom azulado ou slate) alinhada à aba Marcos
   const c = useMemo(() => {
+    const ft = getFieldTokens(isEffectiveDark);
     if (isEffectiveDark) {
       return {
         shelf: '#101010',
@@ -115,7 +117,8 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
         cardSelected: '#2a2a2a',
         pillBg: '#202020',
         pillActive: '#2a2a2a',
-        inputBg: '#202020',
+        inputBg: ft.fieldBg,
+        inputBorder: ft.fieldBorder,
         divider: 'rgba(255, 255, 255, 0.07)',
         borderSubtle: 'rgba(255, 255, 255, 0.07)',
         textPrimary: '#ffffff',
@@ -135,7 +138,8 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
       cardSelected: '#e5e5e5',
       pillBg: '#eeeeee',
       pillActive: '#ffffff',
-      inputBg: '#f0f0f0',
+      inputBg: ft.fieldBg,
+      inputBorder: ft.fieldBorder,
       divider: 'rgba(0, 0, 0, 0.05)',
       borderSubtle: 'rgba(0, 0, 0, 0.05)',
       textPrimary: '#111111',
@@ -287,6 +291,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
       {/* 1. BARRA FUNCIONAL: FILTROS À ESQUERDA, BUSCA E AÇÃO À DIREITA              */}
       {/* ========================================================================= */}
       <div
+        data-tour="links-toolbar"
         style={{
           background: c.card,
           borderRadius: 8,
@@ -351,6 +356,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           {/* Campo de Busca */}
           <div
+            className="df-search-box"
             style={{
               height: 28,
               boxSizing: 'border-box',
@@ -361,7 +367,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
               borderRadius: 6,
               padding: '0 8px',
               width: 190,
-              border: 'none',
+              border: c.inputBorder,
               boxShadow: 'none',
             }}
           >
@@ -424,6 +430,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
       {/* 2. ÁREA DE LINKS: CARDS MODULARES EM GRADE                                 */}
       {/* ========================================================================= */}
       <div
+        data-tour="links-grid-area"
         style={{
           display: 'flex',
           flexDirection: 'column',
@@ -796,7 +803,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                     width: '100%',
                     height: 32,
                     background: c.inputBg,
-                    border: 'none',
+                    border: c.inputBorder,
                     boxShadow: 'none',
                     borderRadius: 6,
                     padding: '0 10px',
@@ -824,7 +831,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                     width: '100%',
                     height: 32,
                     background: c.inputBg,
-                    border: 'none',
+                    border: c.inputBorder,
                     boxShadow: 'none',
                     borderRadius: 6,
                     padding: '0 10px',
@@ -849,7 +856,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                     width: '100%',
                     height: 32,
                     background: c.inputBg,
-                    border: 'none',
+                    border: c.inputBorder,
                     boxShadow: 'none',
                     borderRadius: 6,
                     padding: '0 10px',

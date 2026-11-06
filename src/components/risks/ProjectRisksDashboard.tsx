@@ -439,6 +439,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
       >
         {/* COLUNA ESQUERDA: CARD DE SAÚDE + 2 CARDS ADICIONAIS COM DADOS */}
         <div
+          data-tour="riscos-left-column"
           style={{
             width: 'clamp(280px, 28%, 340px)',
             minWidth: 280,
@@ -1132,6 +1133,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
 
         {/* LADO DIREITO: DIV PRINCIPAL COM CONTROLES + LISTA DE ALERTAS / MATRIZ */}
         <div
+          data-tour="riscos-right-panel"
           style={{
             flex: 1,
             minWidth: 0,
@@ -1165,6 +1167,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
           {/* Barra Superior: Segmented Control & Botão Ação */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
             <div
+              data-tour="riscos-mode-tabs"
               style={{
                 display: 'flex',
                 alignItems: 'center',

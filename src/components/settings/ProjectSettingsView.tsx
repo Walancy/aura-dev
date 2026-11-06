@@ -18,8 +18,10 @@ import {
   Workflow,
 } from 'lucide-react';
 import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
+import { TutorialTriggerButton } from '../tutorial/TutorialTriggerButton';
 import { SmallButton, type TeamUiCtx } from '../team/teamUi';
 import { logSystemActivity } from '../../utils/brainService';
+import { getFieldTokens } from '../../utils/fieldTokens';
 import { getProjectSettings, saveProjectSettings, subscribeProjectSettings, type ProjectSettings } from './projectSettingsStore';
 import { ghSettings, type ConfirmRequest, type SectionProps } from './settingsUi';
 import { GeneralSection } from './sections/GeneralSection';
@@ -314,6 +316,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
       {/* 1. SIDEBAR ESQUERDA: LISTA MODULAR DE SEÇÕES COM BUSCA E REDIMENSIONAMENTO */}
       {/* ========================================================================= */}
       <div
+        data-tour="proj-settings-sidebar"
         style={{
           width: leftSidebarWidth,
           minWidth: 180,
@@ -366,6 +369,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
             }}
           />
           <input
+            className="df-field"
             type="text"
             value={sidebarSearch}
             onChange={(e) => setSidebarSearch(e.target.value)}
@@ -373,12 +377,13 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
             style={{
               width: '100%',
               height: 28,
-              border: 'none',
+              border: getFieldTokens(isEffectiveDark).fieldBorder,
               borderRadius: 6,
               padding: '0 8px 0 26px',
               fontSize: 11.5,
+              fontWeight: 400,
               fontFamily: 'inherit',
-              background: isEffectiveDark ? '#1c1c1c' : theme.controlBg,
+              background: getFieldTokens(isEffectiveDark).fieldBg,
               color: theme.textPrimary,
               outline: 'none',
               boxSizing: 'border-box',
@@ -516,6 +521,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
       >
         {/* LINHA SUPERIOR: Card de Contexto da Seção + 3 Cards de Status */}
         <div
+          data-tour="proj-settings-topbar"
           style={{
             display: 'flex',
             gap: 5,
@@ -563,9 +569,20 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
               </div>
             </div>
 
-            <SmallButton ctx={ctx} onClick={reloadRepo} title="Recarregar informações do repositório">
-              <RefreshCw size={11} /> Sincronizar
-            </SmallButton>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+              <TutorialTriggerButton
+                contextId="projeto_configuracoes"
+                isDark={isEffectiveDark}
+                accentColor={accentColor}
+                textColor={theme.textPrimary}
+                mutedColor={theme.textSecondary}
+                height={28}
+                contextName={repoFullName || 'Configurações do Projeto'}
+              />
+              <SmallButton ctx={ctx} onClick={reloadRepo} title="Recarregar informações do repositório">
+                <RefreshCw size={11} /> Sincronizar
+              </SmallButton>
+            </div>
           </div>
 
           {/* Cards Modulares de Status à Direita (Estilo Marcos) */}
@@ -641,6 +658,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
 
         {/* Área de Conteúdo da Seção Selecionada */}
         <div
+          data-tour="proj-settings-content"
           style={{
             flex: 1,
             minWidth: 0,

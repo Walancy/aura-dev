@@ -11,6 +11,7 @@ import {
   Pin,
 } from 'lucide-react';
 import type { ProjectIssue } from '../ProjectsSchedulerView';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface GithubProjectsRoadmapViewProps {
   issues: ProjectIssue[];
@@ -451,19 +452,24 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
 
           <div style={{ position: 'relative' }}>
             <button
+              className="df-dropdown-trigger"
               type="button"
               onClick={() => setIsMonthPickerOpen((p) => !p)}
               style={{
                 fontSize: 11.5,
+                fontWeight: 400,
                 color: isMonthPickerOpen ? accentColor : textSecondary,
                 padding: '3px 7px',
-                background: 'transparent',
-                border: 'none',
+                height: 26,
+                background: getFieldTokens(!!isEffectiveDark).fieldBg,
+                border: getFieldTokens(!!isEffectiveDark).fieldBorder,
+                boxShadow: 'none',
                 cursor: 'pointer',
-                borderRadius: 4,
+                borderRadius: 5,
                 display: 'flex',
                 alignItems: 'center',
                 gap: 4,
+                boxSizing: 'border-box',
               }}
               title="Mudar mês do roadmap"
             >
@@ -472,12 +478,13 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
             </button>
             {isMonthPickerOpen && (
               <div
+                className="df-dropdown-menu"
                 style={{
                   position: 'absolute',
-                  top: 24,
+                  top: 28,
                   right: 0,
-                  background: isEffectiveDark ? '#1a1a1a' : '#ffffff',
-                  border: 'none',
+                  background: getFieldTokens(!!isEffectiveDark).dropdownMenuBg,
+                  border: getFieldTokens(!!isEffectiveDark).dropdownBorder,
                   borderRadius: 6,
                   boxShadow: 'none',
                   padding: 6,

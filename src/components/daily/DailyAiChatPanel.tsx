@@ -20,6 +20,7 @@ import { renderAiIcon } from '../icons/AiProviderIcons';
 import { DailyItem, WeeklyGoal } from './DailySchedulerView';
 import { AI_BRAND_COLORS, AI_PROVIDERS, formatModelDisplayName } from '../../constants/ai';
 import { logSystemActivity } from '../../utils/brainService';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 function hexToRgba(hex: string, alpha: number): string {
   if (!hex) return `rgba(255, 255, 255, ${alpha})`;
@@ -1156,7 +1157,9 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
           style={{
             display: 'flex',
             alignItems: 'center',
-            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
+            background: getFieldTokens(isEffectiveDark).fieldBg,
+            border: getFieldTokens(isEffectiveDark).fieldBorder,
+            boxShadow: 'none',
             borderRadius: 6,
             padding: 2,
             gap: 2,
@@ -1229,13 +1232,14 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                   onClick={() => setIsAiDropdownOpen(false)}
                 />
                 <div
+                  className="df-dropdown-menu"
                   style={{
                     position: 'absolute',
                     top: 'calc(100% + 4px)',
                     left: 0,
-                    background: isEffectiveDark ? '#1a1a1c' : '#ffffff',
+                    background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
                     borderRadius: 8,
-                    border: 'none',
+                    border: getFieldTokens(isEffectiveDark).dropdownBorder,
                     boxShadow: 'none',
                     padding: 4,
                     display: 'flex',
@@ -1396,9 +1400,9 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                     position: 'absolute',
                     top: 'calc(100% + 4px)',
                     left: 0,
-                    background: isEffectiveDark ? '#1a1a1c' : '#ffffff',
+                    background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
                     borderRadius: 8,
-                    border: 'none',
+                    border: getFieldTokens(isEffectiveDark).dropdownBorder,
                     boxShadow: 'none',
                     padding: 4,
                     display: 'flex',
@@ -1411,7 +1415,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                     overflowY: 'auto',
                     animation: 'fadeIn 0.12s ease-out',
                   }}
-                  className="no-scrollbar"
+                  className="df-dropdown-menu no-scrollbar"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <div
@@ -2096,16 +2100,17 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
         }}
       >
         <div
+          className="df-search-box"
           style={{
-            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
+            background: getFieldTokens(isEffectiveDark).fieldBg,
             borderRadius: 8,
-            border: 'none',
+            border: getFieldTokens(isEffectiveDark).fieldBorder,
             boxShadow: 'none',
             padding: 8,
             display: 'flex',
             flexDirection: 'column',
             gap: 8,
-            transition: 'background 0.15s ease',
+            transition: 'background 0.15s ease, border-color 0.15s ease',
           }}
         >
           <textarea

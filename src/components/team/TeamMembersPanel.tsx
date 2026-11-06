@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { AlertCircle, ArrowUpDown, AtSign, Clock, Eye, GraduationCap, LayoutGrid, Search, Table, UserPlus, Users } from 'lucide-react';
 import { logSystemActivity } from '../../utils/brainService';
+import { getFieldTokens } from '../../utils/fieldTokens';
 import {
   isAwayNow,
   relativeTime,
@@ -119,9 +120,9 @@ export const TeamMembersPanel: React.FC<Props> = ({ ctx, raw, members, people, d
     <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
       {/* Toolbar */}
       <div style={{ background: ctx.isEffectiveDark ? '#141414' : '#ffffff', borderRadius: 8, padding: '8px 12px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', border: 'none', boxShadow: 'none' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg, borderRadius: 6, padding: '0 8px', height: 28, flex: '1 1 200px', maxWidth: 280 }}>
+        <div className="df-search-box" style={{ display: 'flex', alignItems: 'center', gap: 6, background: getFieldTokens(ctx.isEffectiveDark).fieldBg, border: getFieldTokens(ctx.isEffectiveDark).fieldBorder, boxShadow: 'none', borderRadius: 6, padding: '0 8px', height: 28, flex: '1 1 200px', maxWidth: 280, boxSizing: 'border-box' }}>
           <Search size={13} color={theme.textSecondary} />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por nome, skill ou time..." style={{ ...inputStyle(ctx), background: 'transparent', padding: 0 }} />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por nome, skill ou time..." style={{ ...inputStyle(ctx), background: 'transparent', border: 'none', padding: 0 }} />
         </div>
         {raw.teams.length > 0 && (
           <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)} style={selectStyle(ctx)}>

@@ -9,6 +9,7 @@ import {
   Copy,
 } from 'lucide-react';
 import type { ProjectIssue } from '../ProjectsSchedulerView';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface GithubProjectsKanbanBoardProps {
   issues: ProjectIssue[];
@@ -463,12 +464,13 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
 
                     {columnMenuOpenId === col.id && (
                       <div
+                        className="df-dropdown-menu"
                         style={{
                           position: 'absolute',
                           top: 24,
                           right: 0,
-                          background: isEffectiveDark ? '#1a1a1a' : '#ffffff',
-                          border: 'none',
+                          background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                          border: getFieldTokens(isEffectiveDark).dropdownBorder,
                           borderRadius: 6,
                           boxShadow: 'none',
                           padding: 4,

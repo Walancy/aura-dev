@@ -26,6 +26,7 @@ import { descendantIds, reparentDropped, resizeDescendants } from './constraints
 import { buildExportSvg, collectSubtree, type ExportBounds } from './exportDesign';
 import { relayoutAll } from './autoLayout';
 import { MoreHorizontal, RefreshCw, Trash2 } from 'lucide-react';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface CanvasViewport {
   x: number;
@@ -2555,10 +2556,11 @@ export default function DesignCanvas({
           const BH = 22;
           const open = frameMenuFor === f.id;
           // mesmo padrão visual dos menus do sistema (FigmaContextMenu)
-          const bgMenu = isEffectiveDark ? '#1a1a1a' : '#ffffff';
+          const ft = getFieldTokens(isEffectiveDark);
+          const bgMenu = ft.dropdownMenuBg;
           const textPrimary = isEffectiveDark ? '#f1f1f1' : '#1e293b';
-          const hoverBg = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
-          const borderCol = isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
+          const hoverBg = ft.dropdownItemHoverBg;
+          const borderCol = ft.fieldBorderColor;
           const dividerBg = isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.07)';
           const danger = isEffectiveDark ? '#f87171' : '#dc2626';
           const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px', height: 27, boxSizing: 'border-box', borderRadius: 5, fontSize: 12, fontWeight: 400, fontFamily: "'Poppins', -apple-system, BlinkMacSystemFont, sans-serif", color: textPrimary, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', transition: 'background 0.1s ease' };
@@ -2570,14 +2572,14 @@ export default function DesignCanvas({
                   title="Mais opções do frame"
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => { e.stopPropagation(); setFrameMenuFor(open ? null : f.id); }}
-                  style={{ position: 'absolute', right: 0, top: 0, width: BW, height: BH, borderRadius: 6, border: `1px solid ${open ? accentColor : borderCol}`, background: open ? accentColor : bgMenu, color: open ? '#fff' : textPrimary, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'auto', padding: 0, transition: 'all 0.12s ease' }}
+                  style={{ position: 'absolute', right: 0, top: 0, width: BW, height: BH, borderRadius: 6, border: `1px solid ${open ? accentColor : borderCol}`, background: open ? accentColor : ft.fieldBgSolid, color: open ? '#fff' : textPrimary, boxShadow: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'auto', padding: 0, transition: 'all 0.12s ease' }}
                 >
                   <MoreHorizontal size={14} />
                 </button>
                 {open && (
                   <div
                     onMouseDown={(e) => e.stopPropagation()}
-                    style={{ position: 'absolute', right: 0, top: BH + 4, minWidth: 190, background: bgMenu, border: `1px solid ${borderCol}`, borderRadius: 8, boxShadow: isEffectiveDark ? '0 10px 30px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05)' : '0 10px 25px rgba(0, 0, 0, 0.15)', padding: 4, pointerEvents: 'auto' }}
+                    style={{ position: 'absolute', right: 0, top: BH + 4, minWidth: 190, background: bgMenu, border: `1px solid ${borderCol}`, borderRadius: 8, boxShadow: 'none', padding: 4, pointerEvents: 'auto' }}
                   >
                     <div
                       style={row}
@@ -2660,7 +2662,7 @@ export default function DesignCanvas({
                   if (e.key === 'Enter') e.currentTarget.blur();
                   else if (e.key === 'Escape') finish(e.currentTarget.value, true);
                 }}
-                style={{ width: W, height: 22, transform: `scale(${1 / zoom})`, transformOrigin: 'top left', boxSizing: 'border-box', background: '#1a1a1c', color: '#fff', border: `1px solid ${accentColor}`, borderRadius: 4, outline: 'none', fontSize: 11, fontWeight: 500, fontFamily: "'Poppins', sans-serif", padding: '0 6px' }}
+                style={{ width: W, height: 22, transform: `scale(${1 / zoom})`, transformOrigin: 'top left', boxSizing: 'border-box', background: getFieldTokens(true).fieldBgSolid, color: '#fff', border: getFieldTokens(true).fieldBorderFocus, boxShadow: 'none', borderRadius: 4, outline: 'none', fontSize: 11, fontWeight: 400, fontFamily: "'Poppins', sans-serif", padding: '0 6px' }}
               />
             </foreignObject>
           );
@@ -2696,7 +2698,7 @@ export default function DesignCanvas({
                 <div
                   ref={editorBarRef}
                   onMouseDown={(e) => { if ((e.target as HTMLElement).tagName !== 'INPUT') e.preventDefault(); }}
-                  style={{ transform: `scale(${1 / zoom})`, transformOrigin: 'top left', display: 'flex', alignItems: 'center', gap: 4, height: 28, marginBottom: 6 / zoom, padding: '0 6px', width: 'fit-content', background: '#1e1e1e', border: '1px solid #333', borderRadius: 6, boxShadow: '0 4px 14px rgba(0,0,0,0.4)', fontFamily: "'Poppins', sans-serif" }}
+                  style={{ transform: `scale(${1 / zoom})`, transformOrigin: 'top left', display: 'flex', alignItems: 'center', gap: 4, height: 28, marginBottom: 6 / zoom, padding: '0 6px', width: 'fit-content', background: getFieldTokens(true).dropdownMenuBg, border: getFieldTokens(true).dropdownBorder, borderRadius: 6, boxShadow: 'none', fontFamily: "'Poppins', sans-serif" }}
                 >
                   {(() => {
                     const ta = editorTaRef.current;
@@ -2717,8 +2719,8 @@ export default function DesignCanvas({
                         {btn('U', is('textDecoration', 'underline'), () => toggle('textDecoration', 'underline'), 'Sublinhado', { textDecoration: 'underline' })}
                         {btn('S', is('textDecoration', 'line-through'), () => toggle('textDecoration', 'line-through'), 'Tachado', { textDecoration: 'line-through' })}
                         <input type="color" title="Cor do trecho" defaultValue={typeof t.fill === 'string' && t.fill.startsWith('#') ? t.fill.slice(0, 7) : '#000000'} onChange={(e) => apply({ fill: e.target.value })} style={{ width: 22, height: 22, padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }} />
-                        <input type="number" title="Tamanho do trecho" placeholder={String(fontSize)} min={4} max={400} onKeyDown={(e) => e.stopPropagation()} onChange={(e) => apply({ fontSize: e.target.value ? Number(e.target.value) : undefined })} style={{ width: 44, height: 22, background: '#111', border: '1px solid #333', borderRadius: 4, color: '#ddd', fontSize: 11, padding: '0 4px' }} />
-                        <input type="text" title="Link (URL) do trecho" placeholder="link" onKeyDown={(e) => e.stopPropagation()} onChange={(e) => apply({ href: e.target.value.trim() || undefined })} style={{ width: 70, height: 22, background: '#111', border: '1px solid #333', borderRadius: 4, color: '#ddd', fontSize: 11, padding: '0 4px' }} />
+                        <input type="number" title="Tamanho do trecho" placeholder={String(fontSize)} min={4} max={400} onKeyDown={(e) => e.stopPropagation()} onChange={(e) => apply({ fontSize: e.target.value ? Number(e.target.value) : undefined })} style={{ width: 44, height: 22, background: getFieldTokens(true).fieldBg, border: getFieldTokens(true).fieldBorder, boxShadow: 'none', borderRadius: 4, color: '#ddd', fontSize: 11, fontWeight: 400, padding: '0 4px', outline: 'none' }} />
+                        <input type="text" title="Link (URL) do trecho" placeholder="link" onKeyDown={(e) => e.stopPropagation()} onChange={(e) => apply({ href: e.target.value.trim() || undefined })} style={{ width: 70, height: 22, background: getFieldTokens(true).fieldBg, border: getFieldTokens(true).fieldBorder, boxShadow: 'none', borderRadius: 4, color: '#ddd', fontSize: 11, fontWeight: 400, padding: '0 4px', outline: 'none' }} />
                         {btn('✕', false, () => { editorRunsRef.current = applyRunStyle(editorRunsRef.current, range[0], range[1], { fontWeight: undefined, fontStyle: undefined, textDecoration: undefined, fill: undefined, fontSize: undefined, href: undefined }, len); bumpEditor((n) => n + 1); }, 'Limpar formatação')}
                       </>
                     );

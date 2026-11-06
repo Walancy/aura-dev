@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Calendar, CalendarClock, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { hexToRgba } from '../../utils/color';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 const POPUP_WIDTH = 240;
 const POPUP_HEIGHT_ESTIMATE = 320;
@@ -141,6 +142,12 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
   const isSameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
   const isDisabled = (d: Date) => !!minDate && d.getTime() < minDate.getTime();
 
+  const ft = getFieldTokens(isEffectiveDark);
+  const resolvedInputBg = ft.fieldBg;
+  const resolvedInputBorder = isOpen ? ft.fieldBorderFocus : ft.fieldBorder;
+  const resolvedDropdownBg = ft.dropdownMenuBg;
+  const resolvedDropdownBorder = ft.dropdownBorder;
+
   return (
     <div ref={containerRef} style={{ position: 'relative' }}>
       <button
@@ -151,17 +158,29 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
           alignItems: 'center',
           gap: 8,
           width: '100%',
-          background: inputBg,
-          border: inputBorder,
+          height: 32,
+          background: isOpen ? ft.fieldBgHover : resolvedInputBg,
+          border: resolvedInputBorder,
+          boxShadow: 'none',
           borderRadius: 6,
-          padding: '7px 10px',
+          padding: '0 10px',
           color: value ? textPrimary : textSecondary,
           fontSize: 12.5,
-          fontWeight: '300',
+          fontWeight: 400,
           outline: 'none',
           cursor: 'pointer',
           textAlign: 'left',
           fontFamily: 'inherit',
+          transition: 'background 0.15s ease, border-color 0.15s ease',
+          boxSizing: 'border-box',
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = ft.fieldBgHover;
+          e.currentTarget.style.borderColor = ft.fieldBorderFocusColor;
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = isOpen ? ft.fieldBgHover : resolvedInputBg;
+          e.currentTarget.style.borderColor = isOpen ? ft.fieldBorderFocusColor : ft.fieldBorderColor;
         }}
       >
         <Calendar size={13} color={isOpen ? accentColor : textSecondary} style={{ flexShrink: 0 }} />
@@ -207,11 +226,11 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
             left: popupPos.left,
             zIndex: 100000,
             width: POPUP_WIDTH,
-            background: dropdownBg,
+            background: resolvedDropdownBg,
             borderRadius: 10,
             padding: 10,
-            boxShadow: dropdownShadow,
-            border: dropdownBorder,
+            boxShadow: 'none',
+            border: resolvedDropdownBorder,
           }}
         >
           {/* Cabeçalho: mês/ano + navegação */}

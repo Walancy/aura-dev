@@ -1,6 +1,7 @@
 import React from 'react';
 import { Trash2 } from 'lucide-react';
 import type { UnifiedConvoItem } from '../../types/ide';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface ChatHistoryModalProps {
   onClose: () => void;
@@ -67,9 +68,9 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
           width: 580,
           maxWidth: 'calc(100vw - 32px)',
           background: '#1c1c1f',
-          border: '1px solid rgba(255, 255, 255, 0.12)',
+          border: 'none',
           borderRadius: 10,
-          boxShadow: '0 24px 64px rgba(0, 0, 0, 0.85)',
+          boxShadow: 'none',
           zIndex: 999999,
           display: 'flex',
           flexDirection: 'column',
@@ -82,6 +83,7 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
         {/* Top Search Input Bar */}
         <div style={{ padding: '12px 14px 8px 14px', background: '#1c1c1f' }}>
           <input
+            className="df-field"
             ref={inputRef}
             type="text"
             value={chatHistorySearch}
@@ -94,16 +96,18 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
             autoFocus
             style={{
               width: '100%',
+              height: 36,
               boxSizing: 'border-box',
-              background: 'rgba(255, 255, 255, 0.04)',
-              border: '1.5px solid #3b82f6',
+              background: getFieldTokens(true).fieldBg,
+              border: getFieldTokens(true).fieldBorder,
               borderRadius: 8,
-              padding: '8px 12px',
+              padding: '0 12px',
               color: '#ffffff',
               fontSize: 13,
+              fontWeight: 400,
               fontFamily: 'Poppins, sans-serif',
               outline: 'none',
-              boxShadow: '0 0 0 1px rgba(59, 130, 246, 0.25)',
+              boxShadow: 'none',
             }}
           />
         </div>

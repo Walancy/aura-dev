@@ -14,6 +14,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { renderAiIcon } from '../../icons/AiProviderIcons';
+import { getFieldTokens } from '../../../utils/fieldTokens';
 
 interface AiChatHeaderProps {
   sessionTitle: string;
@@ -120,6 +121,7 @@ export const AiChatHeader: React.FC<AiChatHeaderProps> = ({
             style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, flex: 1 }}
           >
             <input
+              className="df-field"
               autoFocus
               type="text"
               value={editingTitleValue}
@@ -134,15 +136,17 @@ export const AiChatHeader: React.FC<AiChatHeaderProps> = ({
               style={{
                 height: 22,
                 fontSize: 12,
-                fontWeight: 500,
+                fontWeight: 400,
                 color: themeTokens.textPrimary,
-                background: isEffectiveDark ? 'rgba(0, 0, 0, 0.3)' : 'rgba(255, 255, 255, 0.8)',
-                border: 'none',
+                background: getFieldTokens(isEffectiveDark).fieldBg,
+                border: getFieldTokens(isEffectiveDark).fieldBorder,
+                boxShadow: 'none',
                 borderRadius: 4,
                 padding: '0 6px',
                 outline: 'none',
                 minWidth: 0,
                 flex: 1,
+                boxSizing: 'border-box',
               }}
             />
             <button
@@ -345,13 +349,14 @@ export const AiChatHeader: React.FC<AiChatHeaderProps> = ({
 
           {isMenuOpen && (
             <div
+              className="df-dropdown-menu"
               style={{
                 position: 'absolute',
                 top: 'calc(100% + 4px)',
                 right: 0,
-                background: isEffectiveDark ? '#1a1a1a' : '#ffffff',
+                background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
                 borderRadius: 6,
-                border: 'none',
+                border: getFieldTokens(isEffectiveDark).dropdownBorder,
                 boxShadow: 'none',
                 padding: 6,
                 display: 'flex',

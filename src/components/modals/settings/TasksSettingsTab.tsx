@@ -3,6 +3,7 @@ import { Play, Plus, Trash2, Edit2, ListChecks, ExternalLink, Check, Terminal, F
 import { MiniSwitch } from '../../ui/MiniSwitch';
 import type { ThemeTokens } from '../../../types/ide';
 import { logSystemActivity } from '../../../utils/brainService';
+import { getFieldTokens } from '../../../utils/fieldTokens';
 
 export interface TaskItem {
   id: string;
@@ -189,8 +190,10 @@ export const TasksSettingsTab: React.FC<TasksSettingsTabProps> = ({
     }
   };
 
+  const ft = getFieldTokens(isEffectiveDark);
   const cardBg = isEffectiveDark ? 'rgba(255, 255, 255, 0.035)' : 'rgba(0, 0, 0, 0.025)';
-  const inputBg = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)';
+  const inputBg = ft.fieldBg;
+  const inputBorder = ft.fieldBorder;
   const divider = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)';
 
   return (
@@ -656,6 +659,7 @@ export const TasksSettingsTab: React.FC<TasksSettingsTabProps> = ({
               <div>
                 <div style={{ fontSize: 11, color: themeTokens.textSecondary, marginBottom: 4 }}>Nome da Tarefa</div>
                 <input
+                  className="df-field"
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
                   placeholder="ex: Build de Produção"
@@ -664,11 +668,14 @@ export const TasksSettingsTab: React.FC<TasksSettingsTabProps> = ({
                     padding: '0 8px',
                     borderRadius: 6,
                     background: inputBg,
-                    border: 'none',
+                    border: inputBorder,
+                    boxShadow: 'none',
                     color: themeTokens.textPrimary,
                     fontSize: 11.5,
+                    fontWeight: 400,
                     width: '100%',
                     boxSizing: 'border-box',
+                    outline: 'none',
                   }}
                 />
               </div>
@@ -676,6 +683,7 @@ export const TasksSettingsTab: React.FC<TasksSettingsTabProps> = ({
               <div>
                 <div style={{ fontSize: 11, color: themeTokens.textSecondary, marginBottom: 4 }}>Comando a Executar</div>
                 <input
+                  className="df-field"
                   value={formCommand}
                   onChange={(e) => setFormCommand(e.target.value)}
                   placeholder="ex: npm run build"
@@ -684,12 +692,15 @@ export const TasksSettingsTab: React.FC<TasksSettingsTabProps> = ({
                     padding: '0 8px',
                     borderRadius: 6,
                     background: inputBg,
-                    border: 'none',
+                    border: inputBorder,
+                    boxShadow: 'none',
                     color: themeTokens.textPrimary,
                     fontSize: 11.5,
+                    fontWeight: 400,
                     fontFamily: "'JetBrains Mono', monospace",
                     width: '100%',
                     boxSizing: 'border-box',
+                    outline: 'none',
                   }}
                 />
               </div>
@@ -698,6 +709,7 @@ export const TasksSettingsTab: React.FC<TasksSettingsTabProps> = ({
                 <div>
                   <div style={{ fontSize: 11, color: themeTokens.textSecondary, marginBottom: 4 }}>Grupo</div>
                   <select
+                    className="df-field"
                     value={formGroup}
                     onChange={(e) => setFormGroup(e.target.value as any)}
                     style={{
@@ -705,11 +717,14 @@ export const TasksSettingsTab: React.FC<TasksSettingsTabProps> = ({
                       padding: '0 8px',
                       borderRadius: 6,
                       background: inputBg,
-                      border: 'none',
+                      border: inputBorder,
+                      boxShadow: 'none',
                       color: themeTokens.textPrimary,
                       fontSize: 11.5,
+                      fontWeight: 400,
                       width: '100%',
                       boxSizing: 'border-box',
+                      outline: 'none',
                     }}
                   >
                     <option value="build">Build</option>
@@ -722,6 +737,7 @@ export const TasksSettingsTab: React.FC<TasksSettingsTabProps> = ({
                 <div>
                   <div style={{ fontSize: 11, color: themeTokens.textSecondary, marginBottom: 4 }}>Descrição</div>
                   <input
+                    className="df-field"
                     value={formDesc}
                     onChange={(e) => setFormDesc(e.target.value)}
                     placeholder="Objetivo da tarefa…"
@@ -730,11 +746,14 @@ export const TasksSettingsTab: React.FC<TasksSettingsTabProps> = ({
                       padding: '0 8px',
                       borderRadius: 6,
                       background: inputBg,
-                      border: 'none',
+                      border: inputBorder,
+                      boxShadow: 'none',
                       color: themeTokens.textPrimary,
                       fontSize: 11.5,
+                      fontWeight: 400,
                       width: '100%',
                       boxSizing: 'border-box',
+                      outline: 'none',
                     }}
                   />
                 </div>

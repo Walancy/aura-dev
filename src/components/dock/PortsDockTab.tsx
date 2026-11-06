@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
 import { logSystemActivity } from '../../utils/brainService';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface OpenPortItem {
   port: number;
@@ -276,14 +277,16 @@ export const PortsDockTab: React.FC<PortsDockTabProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           {/* Search Input */}
           <div
+            className="df-search-box"
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
               padding: '4px 8px',
-              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
-              borderRadius: 4,
-              border: 'none',
+              background: getFieldTokens(isEffectiveDark).fieldBg,
+              borderRadius: 5,
+              border: getFieldTokens(isEffectiveDark).fieldBorder,
+              boxShadow: 'none',
               height: 26,
               boxSizing: 'border-box',
             }}
@@ -393,6 +396,7 @@ export const PortsDockTab: React.FC<PortsDockTabProps> = ({
             Porta:
           </span>
           <input
+            className="df-field"
             type="number"
             min="1"
             max="65535"
@@ -401,15 +405,18 @@ export const PortsDockTab: React.FC<PortsDockTabProps> = ({
             onChange={(e) => setNewPortInput(e.target.value)}
             style={{
               width: 90,
-              padding: '4px 8px',
-              background: isEffectiveDark ? 'rgba(0, 0, 0, 0.3)' : 'rgba(255, 255, 255, 0.7)',
-              border: 'none',
-              borderRadius: 4,
+              height: 26,
+              padding: '0 8px',
+              background: getFieldTokens(isEffectiveDark).fieldBg,
+              border: getFieldTokens(isEffectiveDark).fieldBorder,
+              boxShadow: 'none',
+              borderRadius: 5,
               color: themeTokens.textPrimary,
               fontSize: 11,
               fontFamily: 'JetBrains Mono, Menlo, monospace',
               fontWeight: 400,
               outline: 'none',
+              boxSizing: 'border-box',
             }}
             autoFocus
           />
@@ -417,21 +424,25 @@ export const PortsDockTab: React.FC<PortsDockTabProps> = ({
             Nome do Serviço:
           </span>
           <input
+            className="df-field"
             type="text"
             placeholder="Ex: API Gateway / Swagger"
             value={newPortServiceName}
             onChange={(e) => setNewPortServiceName(e.target.value)}
             style={{
               flex: 1,
-              padding: '4px 8px',
-              background: isEffectiveDark ? 'rgba(0, 0, 0, 0.3)' : 'rgba(255, 255, 255, 0.7)',
-              border: 'none',
-              borderRadius: 4,
+              height: 26,
+              padding: '0 8px',
+              background: getFieldTokens(isEffectiveDark).fieldBg,
+              border: getFieldTokens(isEffectiveDark).fieldBorder,
+              boxShadow: 'none',
+              borderRadius: 5,
               color: themeTokens.textPrimary,
               fontSize: 11,
               fontFamily: 'Poppins, -apple-system, sans-serif',
               fontWeight: 400,
               outline: 'none',
+              boxSizing: 'border-box',
             }}
           />
           <button

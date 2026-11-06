@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Search, Plus, Trash2, Edit2, Copy, Check, Code2, Sparkles, X } from 'lucide-react';
 import type { ThemeTokens } from '../../../types/ide';
 import { logSystemActivity } from '../../../utils/brainService';
+import { getFieldTokens } from '../../../utils/fieldTokens';
 
 export interface SnippetItem {
   id: string;
@@ -212,8 +213,10 @@ export const SnippetsSettingsTab: React.FC<SnippetsSettingsTabProps> = ({
     });
   }, [snippets, selectedLanguage, search]);
 
+  const ft = getFieldTokens(isEffectiveDark);
   const cardBg = isEffectiveDark ? 'rgba(255, 255, 255, 0.035)' : 'rgba(0, 0, 0, 0.025)';
-  const inputBg = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)';
+  const inputBg = ft.fieldBg;
+  const inputBorder = ft.fieldBorder;
   const divider = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)';
 
   return (
@@ -222,14 +225,18 @@ export const SnippetsSettingsTab: React.FC<SnippetsSettingsTabProps> = ({
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 260 }}>
           <div
+            className="df-search-box"
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: 8,
               background: inputBg,
+              border: inputBorder,
+              boxShadow: 'none',
               borderRadius: 6,
               padding: '0 10px',
               height: 28,
+              boxSizing: 'border-box',
               flex: 1,
             }}
           >
@@ -242,7 +249,7 @@ export const SnippetsSettingsTab: React.FC<SnippetsSettingsTabProps> = ({
                 background: 'transparent',
                 border: 'none',
                 outline: 'none',
-                height: 28,
+                height: 26,
                 fontSize: 11.5,
                 color: themeTokens.textPrimary,
                 width: '100%',
@@ -253,13 +260,16 @@ export const SnippetsSettingsTab: React.FC<SnippetsSettingsTabProps> = ({
           </div>
 
           <select
+            className="df-field"
             value={selectedLanguage}
             onChange={(e) => setSelectedLanguage(e.target.value)}
             style={{
               height: 28,
+              boxSizing: 'border-box',
               padding: '0 8px',
               borderRadius: 6,
-              border: 'none',
+              border: inputBorder,
+              boxShadow: 'none',
               background: inputBg,
               color: themeTokens.textPrimary,
               fontSize: 11.5,
@@ -511,6 +521,7 @@ export const SnippetsSettingsTab: React.FC<SnippetsSettingsTabProps> = ({
                 <div>
                   <div style={{ fontSize: 11, color: themeTokens.textSecondary, marginBottom: 4 }}>Título</div>
                   <input
+                    className="df-field"
                     value={formTitle}
                     onChange={(e) => setFormTitle(e.target.value)}
                     placeholder="ex: React Functional Component"
@@ -519,17 +530,21 @@ export const SnippetsSettingsTab: React.FC<SnippetsSettingsTabProps> = ({
                       padding: '0 8px',
                       borderRadius: 6,
                       background: inputBg,
-                      border: 'none',
+                      border: inputBorder,
+                      boxShadow: 'none',
                       color: themeTokens.textPrimary,
                       fontSize: 11.5,
+                      fontWeight: 400,
                       width: '100%',
                       boxSizing: 'border-box',
+                      outline: 'none',
                     }}
                   />
                 </div>
                 <div>
                   <div style={{ fontSize: 11, color: themeTokens.textSecondary, marginBottom: 4 }}>Prefixo (Trigger)</div>
                   <input
+                    className="df-field"
                     value={formPrefix}
                     onChange={(e) => setFormPrefix(e.target.value)}
                     placeholder="ex: rfc"
@@ -538,17 +553,21 @@ export const SnippetsSettingsTab: React.FC<SnippetsSettingsTabProps> = ({
                       padding: '0 8px',
                       borderRadius: 6,
                       background: inputBg,
-                      border: 'none',
+                      border: inputBorder,
+                      boxShadow: 'none',
                       color: themeTokens.textPrimary,
                       fontSize: 11.5,
+                      fontWeight: 400,
                       width: '100%',
                       boxSizing: 'border-box',
+                      outline: 'none',
                     }}
                   />
                 </div>
                 <div>
                   <div style={{ fontSize: 11, color: themeTokens.textSecondary, marginBottom: 4 }}>Linguagem</div>
                   <input
+                    className="df-field"
                     value={formLanguage}
                     onChange={(e) => setFormLanguage(e.target.value)}
                     placeholder="ex: typescript"
@@ -557,11 +576,14 @@ export const SnippetsSettingsTab: React.FC<SnippetsSettingsTabProps> = ({
                       padding: '0 8px',
                       borderRadius: 6,
                       background: inputBg,
-                      border: 'none',
+                      border: inputBorder,
+                      boxShadow: 'none',
                       color: themeTokens.textPrimary,
                       fontSize: 11.5,
+                      fontWeight: 400,
                       width: '100%',
                       boxSizing: 'border-box',
+                      outline: 'none',
                     }}
                   />
                 </div>
@@ -570,6 +592,7 @@ export const SnippetsSettingsTab: React.FC<SnippetsSettingsTabProps> = ({
               <div>
                 <div style={{ fontSize: 11, color: themeTokens.textSecondary, marginBottom: 4 }}>Descrição</div>
                 <input
+                  className="df-field"
                   value={formDescription}
                   onChange={(e) => setFormDescription(e.target.value)}
                   placeholder="Finalidade do snippet…"
@@ -578,11 +601,14 @@ export const SnippetsSettingsTab: React.FC<SnippetsSettingsTabProps> = ({
                     padding: '0 8px',
                     borderRadius: 6,
                     background: inputBg,
-                    border: 'none',
+                    border: inputBorder,
+                    boxShadow: 'none',
                     color: themeTokens.textPrimary,
                     fontSize: 11.5,
+                    fontWeight: 400,
                     width: '100%',
                     boxSizing: 'border-box',
+                    outline: 'none',
                   }}
                 />
               </div>
@@ -590,6 +616,7 @@ export const SnippetsSettingsTab: React.FC<SnippetsSettingsTabProps> = ({
               <div>
                 <div style={{ fontSize: 11, color: themeTokens.textSecondary, marginBottom: 4 }}>Código do Snippet</div>
                 <textarea
+                  className="df-field"
                   value={formCode}
                   onChange={(e) => setFormCode(e.target.value)}
                   placeholder="Insira o modelo de código do snippet…"
@@ -599,9 +626,11 @@ export const SnippetsSettingsTab: React.FC<SnippetsSettingsTabProps> = ({
                     padding: 8,
                     borderRadius: 6,
                     background: inputBg,
-                    border: 'none',
+                    border: inputBorder,
+                    boxShadow: 'none',
                     color: themeTokens.textPrimary,
                     fontSize: 11.5,
+                    fontWeight: 400,
                     fontFamily: "'JetBrains Mono', Menlo, monospace",
                     boxSizing: 'border-box',
                     resize: 'vertical',

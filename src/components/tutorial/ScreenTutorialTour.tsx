@@ -4,10 +4,19 @@ import type { ThemeTokens } from '../../types/ide';
 import { logSystemActivity } from '../../utils/brainService';
 import { ScreenTutorialThemeContext, ScreenTutorialTooltip } from './ScreenTutorialTooltip';
 import {
+  getActiveTutorialOverlay,
+  getProjectSubflowContext,
   hasSeenScreenTutorial,
+  isOverlayTutorialContext,
   markScreenTutorialSeen,
+  resolveActiveTutorialContext,
   resolveStepsForScreen,
   SCREEN_TUTORIAL_LABELS,
+  subscribeTutorialContextChange,
+  subscribeTutorialRequests,
+  type OverlayTutorialId,
+  type ProjectSubTutorialId,
+  type TutorialContextId,
   type TutorialScreenId,
 } from './tutorialStore';
 
@@ -32,8 +41,9 @@ export const ScreenTutorialTour: React.FC<ScreenTutorialTourProps> = ({
 }) => {
   const [run, setRun] = useState(false);
   const [steps, setSteps] = useState<Step[]>([]);
-  const [tourScreen, setTourScreen] = useState<TutorialScreenId>(activeScreen);
+  const [tourContext, setTourContext] = useState<TutorialContextId>(activeScreen);
   const [tourInstanceKey, setTourInstanceKey] = useState(0);
+  const [contextRevision, setContextRevision] = useState(0);
 
   const prevManualCounterRef = useRef(manualStartCounter);
   const activeScreenRef = useRef(activeScreen);
@@ -41,77 +51,186 @@ export const ScreenTutorialTour: React.FC<ScreenTutorialTourProps> = ({
   const contextNameRef = useRef(contextName);
   contextNameRef.current = contextName;
 
-  // Encerra o tour anterior imediatamente se o usuário trocar de aba no meio do guia
+  // Evita exibir dois tutoriais seguidos sem interação logo após o tour inicial de Projetos
+  const suppressedSubflowRef = useRef<ProjectSubTutorialId | null>(null);
+  const tourSnapshotRef = useRef<{
+    screen: TutorialScreenId;
+    overlay: OverlayTutorialId | null;
+    subflow: ProjectSubTutorialId | null;
+  }>({
+    screen: activeScreen,
+    overlay: getActiveTutorialOverlay(),
+    subflow: getProjectSubflowContext(),
+  });
+
   useEffect(() => {
-    if (run && activeScreen !== tourScreen) {
-      setRun(false);
+    return subscribeTutorialContextChange(() => {
+      setContextRevision((prev) => prev + 1);
+    });
+  }, []);
+
+  const activeOverlay = useMemo(() => {
+    void contextRevision;
+    return getActiveTutorialOverlay();
+  }, [contextRevision]);
+
+  const activeSubflow = useMemo(() => {
+    void contextRevision;
+    return getProjectSubflowContext();
+  }, [contextRevision]);
+
+  useEffect(() => {
+    if (
+      suppressedSubflowRef.current &&
+      (activeScreen !== 'projetos' ||
+        activeOverlay !== null ||
+        activeSubflow !== suppressedSubflowRef.current)
+    ) {
+      suppressedSubflowRef.current = null;
     }
-  }, [activeScreen, run, tourScreen]);
+  }, [activeScreen, activeOverlay, activeSubflow]);
 
-  // Exibição automática na primeira vez que o usuário acessa cada tela
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    if (hasSeenScreenTutorial(activeScreen)) return;
-
-    const timer = window.setTimeout(() => {
-      if (activeScreenRef.current !== activeScreen) return;
-      if (hasSeenScreenTutorial(activeScreen)) return;
-
-      const resolved = resolveStepsForScreen(activeScreen);
-      markScreenTutorialSeen(activeScreen);
-      setTourScreen(activeScreen);
+  const startTutorialForContext = useCallback(
+    (targetContext: TutorialContextId, mode: 'primeira_vez' | 'manual') => {
+      const resolved = resolveStepsForScreen(targetContext);
+      if (mode === 'primeira_vez' && targetContext === 'projetos') {
+        suppressedSubflowRef.current = getProjectSubflowContext();
+      }
+      markScreenTutorialSeen(targetContext);
+      tourSnapshotRef.current = {
+        screen: activeScreenRef.current,
+        overlay: getActiveTutorialOverlay(),
+        subflow: getProjectSubflowContext(),
+      };
+      setTourContext(targetContext);
       setSteps(resolved);
       setTourInstanceKey((prev) => prev + 1);
       setRun(true);
 
-      logSystemActivity('tutorial', 'iniciar_primeira_vez', contextNameRef.current || 'Sistema', {
-        tela: activeScreen,
-        passos: resolved.length,
-      });
-    }, 420);
+      logSystemActivity(
+        'tutorial',
+        mode === 'primeira_vez' ? 'iniciar_primeira_vez' : 'iniciar_manual',
+        contextNameRef.current || 'Sistema',
+        {
+          fluxo: targetContext,
+          passos: resolved.length,
+        }
+      );
+    },
+    []
+  );
+
+  // Encerra o tour em andamento se a tela base, o overlay ativo ou o submódulo mudarem
+  useEffect(() => {
+    if (!run) return;
+    const snap = tourSnapshotRef.current;
+    const screenChanged = activeScreen !== snap.screen;
+    const overlayChanged = activeOverlay !== snap.overlay;
+    const subflowChanged =
+      !isOverlayTutorialContext(tourContext) &&
+      tourContext !== snap.screen &&
+      activeSubflow !== snap.subflow;
+
+    if (screenChanged || overlayChanged || subflowChanged) {
+      setRun(false);
+    }
+  }, [run, activeScreen, activeOverlay, activeSubflow, tourContext]);
+
+  // Exibição automática na primeira vez em cada tela, modal, popup ou submódulo
+  useEffect(() => {
+    if (!isAuthenticated || run) return;
+
+    const targetContext = resolveActiveTutorialContext(activeScreen);
+    if (
+      targetContext === suppressedSubflowRef.current &&
+      activeOverlay === null &&
+      activeScreen === 'projetos'
+    ) {
+      return;
+    }
+    if (hasSeenScreenTutorial(targetContext)) return;
+
+    const delayMs = isOverlayTutorialContext(targetContext) ? 340 : 420;
+    const timer = window.setTimeout(() => {
+      const latestContext = resolveActiveTutorialContext(activeScreenRef.current);
+      if (latestContext !== targetContext) return;
+      if (hasSeenScreenTutorial(latestContext)) return;
+      startTutorialForContext(latestContext, 'primeira_vez');
+    }, delayMs);
 
     return () => window.clearTimeout(timer);
-  }, [activeScreen, isAuthenticated]);
+  }, [
+    activeScreen,
+    activeOverlay,
+    activeSubflow,
+    contextRevision,
+    isAuthenticated,
+    run,
+    startTutorialForContext,
+  ]);
 
-  // Exibição manual ao clicar em "Tutorial" no popup de configurações da header
+  // Exibição manual via botão "Tutorial" no menu de configurações da header
   useEffect(() => {
     if (manualStartCounter === prevManualCounterRef.current) return;
     prevManualCounterRef.current = manualStartCounter;
     if (manualStartCounter <= 0 || !isAuthenticated) return;
 
-    const targetScreen = activeScreenRef.current;
     const timer = window.setTimeout(() => {
-      const resolved = resolveStepsForScreen(targetScreen);
-      markScreenTutorialSeen(targetScreen);
-      setTourScreen(targetScreen);
-      setSteps(resolved);
-      setTourInstanceKey((prev) => prev + 1);
-      setRun(true);
-
-      logSystemActivity('tutorial', 'iniciar_manual', contextNameRef.current || 'Sistema', {
-        tela: targetScreen,
-        passos: resolved.length,
+      const targetContext = resolveActiveTutorialContext(activeScreenRef.current, {
+        preferSubflow: true,
       });
-    }, 80);
+      startTutorialForContext(targetContext, 'manual');
+    }, 90);
 
     return () => window.clearTimeout(timer);
-  }, [manualStartCounter, isAuthenticated]);
+  }, [manualStartCounter, isAuthenticated, startTutorialForContext]);
 
-  // Tecla Escape fecha o tutorial inteiro de forma limpa
+  // Exibição manual via TutorialTriggerButton em modais, popups e painéis
+  useEffect(() => {
+    let pendingTimer: number | null = null;
+    const unsubscribe = subscribeTutorialRequests((explicitContextId) => {
+      if (!isAuthenticated) return;
+      if (pendingTimer !== null) {
+        window.clearTimeout(pendingTimer);
+      }
+      pendingTimer = window.setTimeout(() => {
+        pendingTimer = null;
+        const targetContext =
+          explicitContextId ||
+          resolveActiveTutorialContext(activeScreenRef.current, { preferSubflow: true });
+        startTutorialForContext(targetContext, 'manual');
+      }, 90);
+    });
+
+    return () => {
+      if (pendingTimer !== null) {
+        window.clearTimeout(pendingTimer);
+      }
+      unsubscribe();
+    };
+  }, [isAuthenticated, startTutorialForContext]);
+
+  // Tecla Escape fecha apenas o tutorial sem fechar o modal/painel aberto por baixo
   useEffect(() => {
     if (!run) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        e.preventDefault();
         e.stopPropagation();
+        e.stopImmediatePropagation();
         setRun(false);
         logSystemActivity('tutorial', 'fechar_esc', contextNameRef.current || 'Sistema', {
-          tela: tourScreen,
+          fluxo: tourContext,
         });
       }
     };
     window.addEventListener('keydown', handleKeyDown, true);
-    return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [run, tourScreen]);
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+      document.removeEventListener('keydown', handleKeyDown, true);
+    };
+  }, [run, tourContext]);
 
   const handleJoyrideEvent = useCallback(
     (data: EventData) => {
@@ -126,13 +245,13 @@ export const ScreenTutorialTour: React.FC<ScreenTutorialTourProps> = ({
           data.status === STATUS.FINISHED ? 'concluir_tutorial' : 'pular_tutorial',
           contextNameRef.current || 'Sistema',
           {
-            tela: tourScreen,
+            fluxo: tourContext,
             passoFinal: data.index + 1,
           }
         );
       }
     },
-    [tourScreen]
+    [tourContext]
   );
 
   const tooltipBg = isEffectiveDark ? '#161618' : '#ffffff';
@@ -143,9 +262,9 @@ export const ScreenTutorialTour: React.FC<ScreenTutorialTourProps> = ({
       themeTokens,
       isEffectiveDark,
       accentColor,
-      screenLabel: `Tutorial · ${SCREEN_TUTORIAL_LABELS[tourScreen]}`,
+      screenLabel: `Tutorial · ${SCREEN_TUTORIAL_LABELS[tourContext]}`,
     }),
-    [themeTokens, isEffectiveDark, accentColor, tourScreen]
+    [themeTokens, isEffectiveDark, accentColor, tourContext]
   );
 
   const joyrideOptions = useMemo(
@@ -164,7 +283,7 @@ export const ScreenTutorialTour: React.FC<ScreenTutorialTourProps> = ({
       spotlightRadius: 10,
       spotlightPadding: 6,
       offset: 10,
-      zIndex: 1000005,
+      zIndex: 2000005,
     }),
     [tooltipBg, accentColor, themeTokens.textPrimary, overlayColor]
   );
@@ -197,7 +316,7 @@ export const ScreenTutorialTour: React.FC<ScreenTutorialTourProps> = ({
   return (
     <ScreenTutorialThemeContext.Provider value={themeContextValue}>
       <Joyride
-        key={`auradev-tour-${tourScreen}-${tourInstanceKey}`}
+        key={`auradev-tour-${tourContext}-${tourInstanceKey}`}
         steps={steps}
         run={run}
         continuous

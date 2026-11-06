@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, ShieldAlert, Check } from 'lucide-react';
 import type { StrategicRisk, StrategicRiskCategory, StrategicRiskStatus } from './types';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 interface StrategicRiskModalProps {
   isOpen: boolean;
@@ -88,8 +89,10 @@ export const StrategicRiskModal: React.FC<StrategicRiskModalProps> = ({
     onClose();
   };
 
+  const fieldTokens = getFieldTokens(isEffectiveDark);
   const bgModal = theme.modalBg || (isEffectiveDark ? '#181818' : '#ffffff');
-  const inputBg = theme.modalInputBg || (isEffectiveDark ? '#222222' : '#f1f5f9');
+  const inputBg = fieldTokens.fieldBg;
+  const inputBorder = fieldTokens.fieldBorder;
   const textPrimary = theme.textPrimary || (isEffectiveDark ? '#ffffff' : '#111111');
   const textSecondary = theme.textSecondary || (isEffectiveDark ? '#a8a8a8' : '#666666');
 
@@ -209,7 +212,8 @@ export const StrategicRiskModal: React.FC<StrategicRiskModalProps> = ({
                 padding: '9px 12px',
                 borderRadius: 6,
                 background: inputBg,
-                border: 'none',
+                border: inputBorder,
+                boxShadow: 'none',
                 color: textPrimary,
                 fontSize: 12.5,
                 fontWeight: 400,
@@ -233,7 +237,8 @@ export const StrategicRiskModal: React.FC<StrategicRiskModalProps> = ({
                   padding: '8px 10px',
                   borderRadius: 6,
                   background: inputBg,
-                  border: 'none',
+                  border: inputBorder,
+                  boxShadow: 'none',
                   color: textPrimary,
                   fontSize: 12,
                   fontWeight: 400,
@@ -260,7 +265,8 @@ export const StrategicRiskModal: React.FC<StrategicRiskModalProps> = ({
                   padding: '8px 10px',
                   borderRadius: 6,
                   background: inputBg,
-                  border: 'none',
+                  border: inputBorder,
+                  boxShadow: 'none',
                   color: textPrimary,
                   fontSize: 12,
                   fontWeight: 400,
@@ -352,7 +358,8 @@ export const StrategicRiskModal: React.FC<StrategicRiskModalProps> = ({
                 padding: '8px 12px',
                 borderRadius: 6,
                 background: inputBg,
-                border: 'none',
+                border: inputBorder,
+                boxShadow: 'none',
                 color: textPrimary,
                 fontSize: 12,
                 fontWeight: 400,
@@ -379,7 +386,8 @@ export const StrategicRiskModal: React.FC<StrategicRiskModalProps> = ({
                 padding: '8px 12px',
                 borderRadius: 6,
                 background: inputBg,
-                border: 'none',
+                border: inputBorder,
+                boxShadow: 'none',
                 color: textPrimary,
                 fontSize: 12,
                 fontWeight: 400,

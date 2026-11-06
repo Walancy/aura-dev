@@ -7,6 +7,7 @@ import VisibilityOffOutlined from '@mui/icons-material/VisibilityOffOutlined';
 import DescriptionOutlined from '@mui/icons-material/DescriptionOutlined';
 import { logSystemActivity } from '../../utils/brainService';
 import { DevFlowSelect } from '../ui/DevFlowSelect';
+import { getFieldTokens } from '../../utils/fieldTokens';
 import { DOC_STYLES, buildDocHtml, buildDocPrompt, buildThemePrompt, collectFrameInfo, coverCss, defaultTheme, parseDoc, sampleDoc, sanitizeTheme, type CoverVariant, type DocResult, type DocStyle, type DocTheme, type FrameInfo } from './figcraftDocs';
 import { AiComposer, DocPreview, DocStylePanel } from './FigcraftDocsStyle';
 import type { FigcraftCall } from './figcraftAi';
@@ -240,11 +241,11 @@ export default function FigcraftDocsPanel({ call, rect, shell, onClose, themeTok
   const colors = {
     dark: isEffectiveDark, accent, text: themeTokens.textPrimary, muted: themeTokens.textMuted,
     card: isEffectiveDark ? '#101010' : '#ffffff', canvas: isEffectiveDark ? '#181818' : '#f1f5f9',
-    bg: isEffectiveDark ? '#000000' : '#eaedf1', line: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', field: isEffectiveDark ? '#181818' : '#f1f5f9',
+    bg: isEffectiveDark ? '#000000' : '#eaedf1', line: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', field: getFieldTokens(isEffectiveDark).fieldBg,
   };
 
   const soft = isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
-  const label: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: themeTokens.textPrimary, margin: '4px 0 6px' };
+  const label: React.CSSProperties = { fontSize: 11, fontWeight: 400, color: themeTokens.textPrimary, margin: '4px 0 6px' };
 
   return (
     <>

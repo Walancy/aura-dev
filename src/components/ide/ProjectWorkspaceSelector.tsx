@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { ChevronDown, ChevronUp, Search, X, FolderGit2, DownloadCloud, Loader2, Check } from 'lucide-react';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface ProjectWorkspaceItem {
   id: string | number;
@@ -363,13 +364,14 @@ export const ProjectWorkspaceSelector: React.FC<ProjectWorkspaceSelectorProps> =
       {/* DIV FINA NO TOPO DO EXPLORER: CARD ÚNICO DO PROJETO ATIVO             */}
       {/* ===================================================================== */}
       <div
+        className="df-dropdown-trigger"
         onClick={() => setIsOpen(!isOpen)}
         style={{
           width: '100%',
           padding: '8px 10px',
-          background: themeTokens.bgCard,
+          background: getFieldTokens(isEffectiveDark).fieldBg,
           borderRadius: 8,
-          border: `1px solid ${isOpen ? accentColor : themeTokens.border}`,
+          border: isOpen ? `1px solid ${accentColor}` : getFieldTokens(isEffectiveDark).fieldBorder,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -377,13 +379,13 @@ export const ProjectWorkspaceSelector: React.FC<ProjectWorkspaceSelectorProps> =
           boxSizing: 'border-box',
           opacity: activeProject.isCloned ? 1 : 0.55,
           transition: 'all 0.15s ease',
-          boxShadow: isEffectiveDark ? 'none' : '0 1px 2px rgba(0,0,0,0.03)',
+          boxShadow: 'none',
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = themeTokens.hoverBg;
+          e.currentTarget.style.background = getFieldTokens(isEffectiveDark).fieldBgHover;
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.background = themeTokens.bgCard;
+          e.currentTarget.style.background = getFieldTokens(isEffectiveDark).fieldBg;
         }}
         title={activeProject.isCloned ? 'Projeto atual (clonado)' : 'Projeto atual (não clonado)'}
       >
@@ -437,15 +439,16 @@ export const ProjectWorkspaceSelector: React.FC<ProjectWorkspaceSelectorProps> =
       {/* ===================================================================== */}
       {isOpen && (
         <div
+          className="df-dropdown-menu"
           style={{
             position: 'absolute',
             top: 'calc(100% + 4px)',
             left: 0,
             right: 0,
-            background: themeTokens.bgCard,
+            background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
             borderRadius: 8,
-            border: `1px solid ${themeTokens.border}`,
-            boxShadow: isEffectiveDark ? '0 12px 28px rgba(0,0,0,0.65)' : '0 12px 28px rgba(0,0,0,0.12)',
+            border: getFieldTokens(isEffectiveDark).dropdownBorder,
+            boxShadow: 'none',
             zIndex: 1000,
             overflow: 'hidden',
             display: 'flex',
@@ -455,16 +458,20 @@ export const ProjectWorkspaceSelector: React.FC<ProjectWorkspaceSelectorProps> =
           }}
         >
           {/* Campo de Busca no Topo */}
-          <div
-            style={{
-              padding: '7px 8px',
-              borderBottom: `1px solid ${themeTokens.border}`,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              background: isEffectiveDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.02)',
-            }}
-          >
+          <div style={{ padding: 6, borderBottom: getFieldTokens(isEffectiveDark).dropdownBorder }}>
+            <div
+              className="df-search-box"
+              style={{
+                padding: '5px 8px',
+                borderRadius: 6,
+                border: getFieldTokens(isEffectiveDark).fieldBorder,
+                background: getFieldTokens(isEffectiveDark).fieldBg,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                boxSizing: 'border-box',
+              }}
+            >
             <Search size={13} color={themeTokens.textMuted} style={{ flexShrink: 0 }} />
             <input
               ref={searchInputRef}
@@ -499,6 +506,7 @@ export const ProjectWorkspaceSelector: React.FC<ProjectWorkspaceSelectorProps> =
                 <X size={12} />
               </button>
             )}
+            </div>
           </div>
 
           {/* Lista com Scroll dos Projetos */}

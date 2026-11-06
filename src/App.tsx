@@ -118,6 +118,7 @@ import { AiChatPermissionsModal, DEFAULT_AI_PERMISSIONS } from './components/ide
 import { AiChatTimeline, type TerminalExecutionRecord } from './components/ide/chat/AiChatTimeline';
 import { InteractiveQuestionCard, AlertCallout, type InteractiveQuestionData } from './components/ide/chat/AiChatInteractiveCard';
 import { AiChatMessageQueue, type QueuedMessageItem } from './components/ide/chat/AiChatMessageQueue';
+import { getFieldTokens } from './utils/fieldTokens';
 import { MermaidDiagram } from './components/ide/chat/MermaidDiagram';
 import { AiChatMentionsMenu, type MentionItem } from './components/ide/chat/AiChatMentionsMenu';
 import {
@@ -186,7 +187,10 @@ import { useNotificationCenter } from './components/notifications/useNotificatio
 import { useProjectNotifier } from './components/notifications/useProjectNotifier';
 import { SkillsModal } from './components/skills/SkillsModal';
 import { ScreenTutorialTour } from './components/tutorial/ScreenTutorialTour';
-import { SCREEN_TUTORIAL_LABELS } from './components/tutorial/tutorialStore';
+import {
+  resolveActiveTutorialContext,
+  SCREEN_TUTORIAL_LABELS,
+} from './components/tutorial/tutorialStore';
 
 interface DailyBudgetInfoTooltipProps {
   claudeDaily: DailyBudget;
@@ -2850,6 +2854,7 @@ export const App: React.FC = () => {
   const isEffectiveDark = themeMode === 'system' ? systemIsDark : themeMode === 'dark';
 
   // Semantic theme tokens for complete Light/Dark adaptation (Border-free UI)
+  const fieldTokens = getFieldTokens(isEffectiveDark);
   const themeTokens = {
     bgApp: isEffectiveDark ? '#000000' : '#eaedf1',
     bgCard: isEffectiveDark ? '#101010' : '#ffffff',
@@ -2861,6 +2866,13 @@ export const App: React.FC = () => {
     border: 'transparent',
     borderSubtle: 'transparent',
     hoverBg: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+    fieldBg: fieldTokens.fieldBg,
+    fieldBgHover: fieldTokens.fieldBgHover,
+    fieldBorderColor: fieldTokens.fieldBorderColor,
+    fieldBorder: fieldTokens.fieldBorder,
+    fieldBorderFocus: fieldTokens.fieldBorderFocus,
+    dropdownBg: fieldTokens.dropdownMenuBg,
+    dropdownBorder: fieldTokens.dropdownBorder,
   };
 
   // GitHub login gate (Device Flow) — required before the workspace UI is shown
@@ -9069,7 +9081,8 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 <>
                   <div style={{ position: 'fixed', inset: 0, zIndex: 99998 }} onClick={() => setDevMenuOpen(false)} />
                   <div
-                    style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 232, maxHeight: 420, overflowY: 'auto', background: isEffectiveDark ? '#1a1a1c' : '#ffffff', borderRadius: 12, boxShadow: '0 16px 40px rgba(0,0,0,0.6)', padding: '6px 6px 8px', zIndex: 99999, display: 'flex', flexDirection: 'column', gap: 2, fontFamily: 'Poppins, sans-serif' }}
+                    className="df-dropdown-menu"
+                    style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 232, maxHeight: 420, overflowY: 'auto', background: fieldTokens.dropdownMenuBg, border: fieldTokens.dropdownBorder, borderRadius: 10, boxShadow: 'none', padding: '6px 6px 8px', zIndex: 99999, display: 'flex', flexDirection: 'column', gap: 2, fontFamily: 'Poppins, sans-serif' }}
                   >
                     {devOptions.scripts.length > 0 && (
                       <>
@@ -9730,15 +9743,16 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   }}
                 />
                 <div
+                  className="df-dropdown-menu"
                   ref={clampPopupToViewport}
                 style={{
                   position: 'absolute',
                   top: 32,
                   right: 0,
-                  background: isEffectiveDark ? '#1a1a1c' : themeTokens.bgCardSecondary,
+                  background: fieldTokens.dropdownMenuBg,
                   borderRadius: 10,
-                  border: `1px solid ${themeTokens.border}`,
-                  boxShadow: '0 12px 32px rgba(0, 0, 0, 0.65)',
+                  border: fieldTokens.dropdownBorder,
+                  boxShadow: 'none',
                   padding: '6px',
                   display: 'flex',
                   flexDirection: 'column',
@@ -10030,14 +10044,15 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         {/* 3º Popup: Mostra APENAS as versões (High, Medium, Low) do modelo selecionado pela seta */}
                         {activeVersionGroup && activeVersionGroup.versions.length > 0 && (
                           <div
+                            className="df-dropdown-menu"
                             style={{
                               position: 'absolute',
                               right: 'calc(100% + 4px)',
                               top: Math.min(headerAiVersionMenuTop, 220),
-                              background: isEffectiveDark ? '#1a1a1c' : themeTokens.bgCardSecondary,
+                              background: fieldTokens.dropdownMenuBg,
                               borderRadius: 10,
-                              border: `1px solid ${themeTokens.border}`,
-                              boxShadow: '0 12px 32px rgba(0, 0, 0, 0.65)',
+                              border: fieldTokens.dropdownBorder,
+                              boxShadow: 'none',
                               padding: 6,
                               display: 'flex',
                               flexDirection: 'column',
@@ -10120,10 +10135,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         {/* 2º Popup: Lista de Modelos Antigravity com Seta e Versão */}
                         <div
                           style={{
-                            background: isEffectiveDark ? '#1a1a1c' : themeTokens.bgCardSecondary,
+                            background: fieldTokens.dropdownMenuBg,
                             borderRadius: 10,
-                            border: `1px solid ${themeTokens.border}`,
-                            boxShadow: '0 12px 32px rgba(0, 0, 0, 0.65)',
+                            border: fieldTokens.dropdownBorder,
+                            boxShadow: 'none',
                             padding: 6,
                             display: 'flex',
                             flexDirection: 'column',
@@ -10295,10 +10310,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         position: 'absolute',
                         right: 'calc(100% + 4px)',
                         top: 0,
-                        background: isEffectiveDark ? '#1a1a1c' : themeTokens.bgCardSecondary,
+                        background: fieldTokens.dropdownMenuBg,
                         borderRadius: 10,
-                        border: `1px solid ${themeTokens.border}`,
-                        boxShadow: '0 12px 32px rgba(0, 0, 0, 0.65)',
+                        border: fieldTokens.dropdownBorder,
+                        boxShadow: 'none',
                         padding: 6,
                         display: 'flex',
                         flexDirection: 'column',
@@ -10424,15 +10439,16 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     }}
                   />
                   <div
+                    className="df-dropdown-menu"
                     ref={clampPopupToViewport}
                   style={{
                     position: 'absolute',
                     top: 32,
                     right: 0,
-                    background: '#1f1f1f',
-                    border: 'none',
-                    borderRadius: 6,
-                    boxShadow: '0 12px 32px rgba(0, 0, 0, 0.85)',
+                    background: fieldTokens.dropdownMenuBg,
+                    border: fieldTokens.dropdownBorder,
+                    borderRadius: 8,
+                    boxShadow: 'none',
                     zIndex: 999999,
                     minWidth: 280,
                     padding: '4px 0',
@@ -10823,7 +10839,11 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     type="button"
                     data-tour="header-settings-tutorial-btn"
                     onClick={() => {
-                      logSystemActivity('menu_configuracoes', 'abrir_tutorial', activeHeaderProject?.name || 'Sistema', { tela: activeTab });
+                      const targetFlow = resolveActiveTutorialContext(activeTab, { preferSubflow: true });
+                      logSystemActivity('menu_configuracoes', 'abrir_tutorial', activeHeaderProject?.name || 'Sistema', {
+                        tela: activeTab,
+                        fluxo: targetFlow,
+                      });
                       setIsSettingsMenuOpen(false);
                       setTutorialTriggerCount((c) => c + 1);
                     }}
@@ -10852,11 +10872,11 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       e.currentTarget.style.background = 'transparent';
                       e.currentTarget.style.color = '#cccccc';
                     }}
-                    title={`Exibir tutorial da tela ${SCREEN_TUTORIAL_LABELS[activeTab]}`}
+                    title={`Exibir tutorial · ${SCREEN_TUTORIAL_LABELS[resolveActiveTutorialContext(activeTab, { preferSubflow: true })]}`}
                   >
                     <span>Tutorial</span>
                     <span style={{ fontSize: 10, fontWeight: 400, color: '#888888' }}>
-                      {SCREEN_TUTORIAL_LABELS[activeTab]}
+                      {SCREEN_TUTORIAL_LABELS[resolveActiveTutorialContext(activeTab, { preferSubflow: true })]}
                     </span>
                   </button>
                 </div>
@@ -10936,7 +10956,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           {isProfileMenuOpen && (
             <>
               <div onClick={() => setIsProfileMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 99998 }} />
-              <div style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, minWidth: 170, padding: 6, borderRadius: 10, background: isEffectiveDark ? '#1a1a1c' : '#ffffff', boxShadow: '0 16px 40px rgba(0,0,0,0.6)', zIndex: 99999, fontFamily: 'Poppins, sans-serif' }}>
+              <div className="df-dropdown-menu" style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, minWidth: 170, padding: 6, borderRadius: 10, background: fieldTokens.dropdownMenuBg, border: fieldTokens.dropdownBorder, boxShadow: 'none', zIndex: 99999, fontFamily: 'Poppins, sans-serif' }}>
                 <button
                   type="button"
                   onClick={() => {
@@ -11533,6 +11553,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       {/* 3 Dots Popup Menu */}
                       {explorerMenuOpen && (
                         <div
+                          className="df-dropdown-menu"
                           ref={(el) => {
                             explorerMenuRef.current = el;
                             clampPopupToViewport(el);
@@ -11542,11 +11563,11 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             top: 'calc(100% + 4px)',
                             right: 0,
                         width: 195,
-                        background: themeTokens.bgCardSecondary,
-                        border: '1px solid ' + themeTokens.border,
+                        background: fieldTokens.dropdownMenuBg,
+                        border: fieldTokens.dropdownBorder,
                         borderRadius: 8,
                         padding: '5px 0',
-                        boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                        boxShadow: 'none',
                         zIndex: 99999,
                         display: 'flex',
                         flexDirection: 'column',
@@ -11791,14 +11812,18 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       {/* Search Filter Input */}
                       {documentSymbols.length > 3 && (
                         <div
+                          className="df-search-box"
                           style={{
                             display: 'flex',
                             alignItems: 'center',
                             width: '100%',
-                            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
+                            background: fieldTokens.fieldBg,
+                            border: fieldTokens.fieldBorder,
+                            boxShadow: 'none',
                             borderRadius: 6,
                             padding: '4px 8px',
                             gap: 6,
+                            boxSizing: 'border-box',
                           }}
                         >
                           <Search size={11} color={themeTokens.textSecondary} />
@@ -12420,15 +12445,17 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                   {editorMoreMenuOpen && (
                     <div
+                      className="df-dropdown-menu"
                       ref={clampPopupToViewport}
                       style={{
                         position: 'absolute',
                         top: 32,
                         right: 0,
                         width: 240,
-                        background: themeTokens.bgCardElevated,
+                        background: fieldTokens.dropdownMenuBg,
+                        border: fieldTokens.dropdownBorder,
                         borderRadius: 8,
-                        boxShadow: '0 12px 32px rgba(0, 0, 0, 0.6)',
+                        boxShadow: 'none',
                         zIndex: 99999,
                         padding: '5px 0',
                         fontSize: 12,
@@ -13383,13 +13410,16 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     >
                       {/* Shell selector dropdown button */}
                       <div
+                        className="df-dropdown-trigger"
                         onClick={() => setShellDropdownOpen(!shellDropdownOpen)}
                         style={{
                           height: 28,
                           paddingLeft: 8,
                           paddingRight: 8,
                           borderRadius: 5,
-                          background: shellDropdownOpen ? (isEffectiveDark ? '#2E2E2E' : '#e5e7eb') : 'transparent',
+                          background: shellDropdownOpen ? fieldTokens.fieldBgHover : fieldTokens.fieldBg,
+                          border: fieldTokens.fieldBorder,
+                          boxShadow: 'none',
                           justifyContent: 'flex-start',
                           alignItems: 'center',
                           gap: 6,
@@ -13397,7 +13427,8 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           cursor: 'pointer',
                           whiteSpace: 'nowrap',
                           flexShrink: 0,
-                          transition: 'background 0.15s ease',
+                          transition: 'background 0.15s ease, border-color 0.15s ease',
+                          boxSizing: 'border-box',
                         }}
                         title="Selecionar Shell"
                       >
@@ -13411,20 +13442,21 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       {/* Shell Dropdown Menu */}
                       {shellDropdownOpen && (
                         <div
+                          className="df-dropdown-menu"
                           ref={clampPopupToViewport}
                           style={{
                             position: 'absolute',
                             bottom: 44,
                             right: 120,
-                            background: themeTokens.bgCardSecondary,
+                            background: fieldTokens.dropdownMenuBg,
                             borderRadius: 8,
-                            border: '1px solid ' + themeTokens.border,
+                            border: fieldTokens.dropdownBorder,
                             padding: 6,
                             display: 'flex',
                             flexDirection: 'column',
                             gap: 4,
                             zIndex: 99999,
-                            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+                            boxShadow: 'none',
                           }}
                         >
                           {[
@@ -13608,20 +13640,21 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       {/* More Options Dropdown Menu */}
                       {moreOptionsOpen && (
                         <div
+                          className="df-dropdown-menu"
                           ref={clampPopupToViewport}
                           style={{
                             position: 'absolute',
                             bottom: 44,
                             right: 35,
-                            background: themeTokens.bgCardSecondary,
+                            background: fieldTokens.dropdownMenuBg,
                             borderRadius: 8,
-                            border: '1px solid ' + themeTokens.border,
+                            border: fieldTokens.dropdownBorder,
                             padding: 6,
                             display: 'flex',
                             flexDirection: 'column',
                             gap: 4,
                             zIndex: 99999,
-                            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+                            boxShadow: 'none',
                           }}
                         >
                           {[
@@ -14439,18 +14472,19 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                     {chatActionsMenuOpen && (
                       <div
+                        className="df-dropdown-menu"
                         ref={clampPopupToViewport}
                         style={{
                           position: 'absolute',
                           top: 'calc(100% + 4px)',
                           right: 0,
-                          background: themeTokens.bgCardSecondary,
-                          border: `1px solid ${themeTokens.border}`,
+                          background: fieldTokens.dropdownMenuBg,
+                          border: fieldTokens.dropdownBorder,
                           borderRadius: 8,
                           padding: 4,
                           minWidth: 160,
                           zIndex: 100000,
-                          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
+                          boxShadow: 'none',
                           display: 'flex',
                           flexDirection: 'column',
                           gap: 2,
@@ -14636,6 +14670,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   {/* Chat History & Sessions Popup */}
                   {chatHistoryPopupOpen && (
                     <div
+                      className="df-dropdown-menu"
                       ref={(el) => {
                         chatHistoryPopupRef.current = el;
                         clampPopupToViewport(el);
@@ -14645,10 +14680,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         top: 34,
                         left: 0,
                         width: 270,
-                        background: themeTokens.bgCardSecondary,
+                        background: fieldTokens.dropdownMenuBg,
                         borderRadius: 10,
-                        border: '1px solid ' + themeTokens.border,
-                        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
+                        border: fieldTokens.dropdownBorder,
+                        boxShadow: 'none',
                         padding: '10px 12px',
                         display: 'flex',
                         flexDirection: 'column',
@@ -14745,6 +14780,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                       style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 4 }}
                                     >
                                       <input
+                                        className="df-field"
                                         autoFocus
                                         value={editingChatTitle}
                                         onChange={(e) => setEditingChatTitle(e.target.value)}
@@ -14758,12 +14794,14 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                         style={{
                                           flex: 1,
                                           minWidth: 0,
-                                          background: isEffectiveDark ? 'rgba(0, 0, 0, 0.45)' : '#ffffff',
+                                          background: fieldTokens.fieldBg,
                                           color: themeTokens.textPrimary,
-                                          border: `1px solid ${accentColor}`,
+                                          border: fieldTokens.fieldBorderFocus,
+                                          boxShadow: 'none',
                                           borderRadius: 4,
                                           padding: '1px 5px',
                                           fontSize: 11.5,
+                                          fontWeight: 400,
                                           fontFamily: 'Poppins, sans-serif',
                                           outline: 'none',
                                         }}
@@ -16492,15 +16530,15 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         }}
                         style={{
                           alignSelf: 'stretch',
-                          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(255, 255, 255, 0.45)',
+                          background: fieldTokens.fieldBg,
                           backdropFilter: 'blur(12px)',
                           WebkitBackdropFilter: 'blur(12px)',
                           borderRadius: 10,
                           border: isPromptDragOver
                             ? '1px solid #3b82f6'
-                            : (isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)'),
+                            : fieldTokens.fieldBorder,
                           outline: 'none',
-                          boxShadow: isPromptDragOver ? '0 0 12px rgba(59, 130, 246, 0.3)' : 'none',
+                          boxShadow: 'none',
                           flexDirection: 'column',
                           justifyContent: 'flex-start',
                           alignItems: 'flex-start',
@@ -16626,15 +16664,16 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       {/* Floating Slash Commands Autocomplete Menu */}
                       {isSlashActive && (
                         <div
+                          className="df-dropdown-menu"
                           style={{
                             position: 'absolute',
                             bottom: 'calc(100% + 8px)',
                             left: 0,
                             right: 0,
-                            background: isEffectiveDark ? '#181818' : '#ffffff',
+                            background: fieldTokens.dropdownMenuBg,
                             borderRadius: 10,
-                            border: 'none',
-                            boxShadow: isEffectiveDark ? '0 8px 24px rgba(0, 0, 0, 0.7)' : '0 8px 24px rgba(0, 0, 0, 0.12)',
+                            border: fieldTokens.dropdownBorder,
+                            boxShadow: 'none',
                             padding: 6,
                             display: 'flex',
                             flexDirection: 'column',
@@ -17050,18 +17089,21 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             paddingRight: 7,
                             borderRadius: 5,
                             background: providerDropdown
-                              ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)')
-                              : (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)'),
+                              ? fieldTokens.fieldBgHover
+                              : fieldTokens.fieldBg,
+                            border: fieldTokens.fieldBorder,
+                            boxShadow: 'none',
                             justifyContent: 'flex-start',
                             alignItems: 'center',
                             gap: 5,
                             display: 'flex',
                             cursor: 'pointer',
                             whiteSpace: 'nowrap',
-                            transition: 'background 0.15s ease',
+                            transition: 'background 0.15s ease, border-color 0.15s ease',
                             maxWidth: 190,
                             minWidth: 0,
                             overflow: 'hidden',
+                            boxSizing: 'border-box',
                           }}
                         >
                           <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
@@ -17106,15 +17148,16 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         {/* AI Providers Dropdown Menu */}
                         {providerDropdown && (
                           <div
+                            className="df-dropdown-menu"
                             ref={clampPopupToViewport}
                             style={{
                               position: 'absolute',
                               bottom: 34,
                               left: 0,
-                              background: themeTokens.bgCardSecondary,
+                              background: fieldTokens.dropdownMenuBg,
                               borderRadius: 10,
-                              border: `1px solid ${themeTokens.border}`,
-                              boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
+                              border: fieldTokens.dropdownBorder,
+                              boxShadow: 'none',
                               padding: 6,
                               display: 'flex',
                               flexDirection: 'column',
@@ -17385,10 +17428,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                     left: submenuOpenOnLeft ? 'auto' : 'calc(100% + 4px)',
                                     right: submenuOpenOnLeft ? 'calc(100% + 4px)' : 'auto',
                                     bottom: 0,
-                                    background: themeTokens.bgCardSecondary,
+                                    background: fieldTokens.dropdownMenuBg,
                                     borderRadius: 10,
-                                    border: `1px solid ${themeTokens.border}`,
-                                    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
+                                    border: fieldTokens.dropdownBorder,
+                                    boxShadow: 'none',
                                     padding: 6,
                                     display: 'flex',
                                     flexDirection: 'column',
@@ -17459,6 +17502,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       {/* Select AI Mode (Auto, Plan, Agent, Ask) Pill & Dropdown */}
                       <div style={{ position: 'relative', flexShrink: 0 }} ref={aiModeDropdownRef}>
                         <div
+                          className="df-dropdown-trigger"
                           onClick={() => setAiModeDropdown(!aiModeDropdown)}
                           title="Alternar Modo da IA (Auto Mode, Planejamento, Agente, Perguntar)"
                           style={{
@@ -17467,11 +17511,12 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             paddingRight: 7,
                             borderRadius: 5,
                             background: aiMode === 'auto'
-                              ? (isEffectiveDark ? 'rgba(59, 130, 246, 0.18)' : 'rgba(59, 130, 246, 0.12)')
+                              ? (isEffectiveDark ? 'rgba(59, 130, 246, 0.14)' : 'rgba(59, 130, 246, 0.1)')
                               : aiMode === 'plan'
-                              ? (isEffectiveDark ? 'rgba(234, 179, 8, 0.18)' : 'rgba(234, 179, 8, 0.12)')
-                              : (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : '#e2e8f0'),
-                            border: 'none',
+                              ? (isEffectiveDark ? 'rgba(234, 179, 8, 0.14)' : 'rgba(234, 179, 8, 0.1)')
+                              : fieldTokens.fieldBg,
+                            border: fieldTokens.fieldBorder,
+                            boxShadow: 'none',
                             color: aiMode === 'auto' ? '#60a5fa' : aiMode === 'plan' ? '#facc15' : themeTokens.textPrimary,
                             justifyContent: 'flex-start',
                             alignItems: 'center',
@@ -17480,6 +17525,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             cursor: 'pointer',
                             whiteSpace: 'nowrap',
                             transition: 'all 0.15s ease',
+                            boxSizing: 'border-box',
                           }}
                         >
                           <span
@@ -17504,18 +17550,19 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         {/* AI Mode Dropdown Menu */}
                         {aiModeDropdown && (
                           <div
+                            className="df-dropdown-menu"
                             ref={clampPopupToViewport}
                             style={{
                               position: 'absolute',
                               bottom: 'calc(100% + 8px)',
                               left: 0,
-                              background: themeTokens.bgCardSecondary,
-                              border: `1px solid ${themeTokens.border}`,
+                              background: fieldTokens.dropdownMenuBg,
+                              border: fieldTokens.dropdownBorder,
                               borderRadius: 8,
                               padding: 6,
                               minWidth: 260,
                               zIndex: 100000,
-                              boxShadow: '0 8px 24px rgba(0, 0, 0, 0.6)',
+                              boxShadow: 'none',
                               display: 'flex',
                               flexDirection: 'column',
                               gap: 4,

@@ -1,5 +1,6 @@
 import React from 'react';
 import type { LoadLevel, RepoRole } from './teamTypes';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface TeamUiCtx {
   theme: any;
@@ -244,20 +245,25 @@ export const SmallButton: React.FC<{
   );
 };
 
-export const selectStyle = (ctx: TeamUiCtx): React.CSSProperties => ({
-  background: ctx.theme.modalInputBg || (ctx.isEffectiveDark ? '#1c1c1c' : ctx.theme.controlBg),
-  color: ctx.theme.textPrimary,
-  border: 'none',
-  borderRadius: 6,
-  height: 28,
-  padding: '0 8px',
-  fontSize: 12,
-  fontWeight: 400,
-  fontFamily: 'inherit',
-  outline: 'none',
-  minWidth: 0,
-  boxShadow: 'none',
-});
+export const selectStyle = (ctx: TeamUiCtx): React.CSSProperties => {
+  const ft = getFieldTokens(ctx.isEffectiveDark);
+  return {
+    background: ft.fieldBg,
+    color: ctx.theme.textPrimary,
+    border: ft.fieldBorder,
+    borderRadius: 6,
+    height: 28,
+    padding: '0 8px',
+    fontSize: 12,
+    fontWeight: 400,
+    fontFamily: 'inherit',
+    outline: 'none',
+    minWidth: 0,
+    boxShadow: 'none',
+    transition: 'background 0.15s ease, border-color 0.15s ease',
+    boxSizing: 'border-box',
+  };
+};
 
 export const inputStyle = (ctx: TeamUiCtx): React.CSSProperties => ({
   ...selectStyle(ctx),

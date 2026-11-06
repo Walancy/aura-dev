@@ -10,6 +10,7 @@ import {
   type GithubRepoSummary,
 } from './ProjectsSchedulerView';
 import { logSystemActivity } from '../utils/brainService';
+import { getFieldTokens } from '../utils/fieldTokens';
 
 export interface HeaderProjectItem {
   id: string | number;
@@ -848,6 +849,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
   };
 
   const selectedOrgObj = organizations.find((o) => o.name === selectedOrg);
+  const ft = getFieldTokens(isEffectiveDark);
 
   return (
     <div
@@ -858,7 +860,8 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
         padding: 5,
         background: themeTokens.bgCard,
         borderRadius: 10,
-        border: '1px solid ' + themeTokens.border,
+        border: 'none',
+        boxShadow: 'none',
         justifyContent: 'flex-start',
         alignItems: 'center',
         gap: 5,
@@ -879,13 +882,13 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
           className="skin-tab"
           data-on={isOrgOpen ? '1' : undefined}
           style={{
-            paddingLeft: isCollapsed ? 7 : 12,
-            paddingRight: isCollapsed ? 7 : 12,
-            paddingTop: 5,
-            paddingBottom: 5,
-            background: isOrgOpen ? (isEffectiveDark ? '#2E2E2E' : '#e4e7eb') : 'transparent',
-            borderRadius: 5,
-            border: 'none',
+            height: 28,
+            paddingLeft: isCollapsed ? 7 : 10,
+            paddingRight: isCollapsed ? 7 : 10,
+            background: isOrgOpen ? ft.fieldBgHover : ft.fieldBg,
+            borderRadius: 6,
+            border: isOrgOpen ? ft.fieldBorderFocus : ft.fieldBorder,
+            boxShadow: 'none',
             justifyContent: 'center',
             alignItems: 'center',
             display: 'flex',
@@ -893,14 +896,19 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
             whiteSpace: 'nowrap',
             flexShrink: 0,
             gap: 6,
-            transition: 'all 0.15s ease',
+            transition: 'background 0.15s ease, border-color 0.15s ease',
             userSelect: 'none',
+            boxSizing: 'border-box',
           }}
           onMouseEnter={(e) => {
-            if (!isOrgOpen) e.currentTarget.style.background = themeTokens.hoverBg;
+            e.currentTarget.style.background = ft.fieldBgHover;
+            e.currentTarget.style.borderColor = ft.fieldBorderFocusColor;
           }}
           onMouseLeave={(e) => {
-            if (!isOrgOpen) e.currentTarget.style.background = 'transparent';
+            if (!isOrgOpen) {
+              e.currentTarget.style.background = ft.fieldBg;
+              e.currentTarget.style.borderColor = ft.fieldBorderColor;
+            }
           }}
           title={isCollapsed ? `Organização: ${selectedOrg}` : 'Filtrar projetos por organização'}
         >
@@ -920,7 +928,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
                   color: isOrgOpen ? themeTokens.textPrimary : themeTokens.textSecondary,
                   fontSize: 12,
                   fontFamily: 'Poppins, sans-serif',
-                  fontWeight: isOrgOpen ? '500' : '400',
+                  fontWeight: 400,
                   whiteSpace: 'nowrap',
                   maxWidth: 130,
                   overflow: 'hidden',
@@ -951,16 +959,16 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
               top: 'calc(100% + 8px)',
               left: 0,
               minWidth: 210,
-              background: isEffectiveDark ? '#141414' : themeTokens.bgCard,
+              background: ft.dropdownMenuBg,
               borderRadius: 10,
-              border: `1px solid ${themeTokens.border}`,
-              boxShadow: isEffectiveDark ? '0 16px 38px rgba(0,0,0,0.85)' : '0 14px 32px rgba(0,0,0,0.15)',
+              border: ft.dropdownBorder,
+              boxShadow: 'none',
               zIndex: 10000,
               overflow: 'hidden',
               display: 'flex',
               flexDirection: 'column',
               padding: 4,
-              gap: 2,
+              gap: 4,
             }}
           >
             <div
@@ -1088,13 +1096,13 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
           className="skin-tab"
           data-on={isProjectOpen ? '1' : undefined}
           style={{
-            paddingLeft: isCollapsed ? 7 : 12,
-            paddingRight: isCollapsed ? 7 : 12,
-            paddingTop: 5,
-            paddingBottom: 5,
-            background: isProjectOpen ? (isEffectiveDark ? '#2E2E2E' : '#e4e7eb') : 'transparent',
-            borderRadius: 5,
-            border: 'none',
+            height: 28,
+            paddingLeft: isCollapsed ? 7 : 10,
+            paddingRight: isCollapsed ? 7 : 10,
+            background: isProjectOpen ? ft.fieldBgHover : ft.fieldBg,
+            borderRadius: 6,
+            border: isProjectOpen ? ft.fieldBorderFocus : ft.fieldBorder,
+            boxShadow: 'none',
             justifyContent: 'center',
             alignItems: 'center',
             display: 'flex',
@@ -1102,14 +1110,19 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
             whiteSpace: 'nowrap',
             flexShrink: 0,
             gap: 6,
-            transition: 'all 0.15s ease',
+            transition: 'background 0.15s ease, border-color 0.15s ease',
             userSelect: 'none',
+            boxSizing: 'border-box',
           }}
           onMouseEnter={(e) => {
-            if (!isProjectOpen) e.currentTarget.style.background = themeTokens.hoverBg;
+            e.currentTarget.style.background = ft.fieldBgHover;
+            e.currentTarget.style.borderColor = ft.fieldBorderFocusColor;
           }}
           onMouseLeave={(e) => {
-            if (!isProjectOpen) e.currentTarget.style.background = 'transparent';
+            if (!isProjectOpen) {
+              e.currentTarget.style.background = ft.fieldBg;
+              e.currentTarget.style.borderColor = ft.fieldBorderColor;
+            }
           }}
           title={isCollapsed ? `Projeto: ${currentProjectName}` : 'Alternar projeto ativo'}
         >
@@ -1125,10 +1138,10 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
             <>
               <span
                 style={{
-                  color: isProjectOpen ? themeTokens.textPrimary : themeTokens.textPrimary,
+                  color: themeTokens.textPrimary,
                   fontSize: 12,
                   fontFamily: 'Poppins, sans-serif',
-                  fontWeight: '500',
+                  fontWeight: 400,
                   maxWidth: 150,
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -1172,10 +1185,10 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
               top: 'calc(100% + 8px)',
               left: 0,
               width: 320,
-              background: isEffectiveDark ? '#141414' : themeTokens.bgCard,
+              background: ft.dropdownMenuBg,
               borderRadius: 10,
-              border: `1px solid ${themeTokens.border}`,
-              boxShadow: isEffectiveDark ? '0 16px 38px rgba(0,0,0,0.85)' : '0 14px 32px rgba(0,0,0,0.15)',
+              border: ft.dropdownBorder,
+              boxShadow: 'none',
               zIndex: 10000,
               overflow: 'hidden',
               display: 'flex',
@@ -1185,69 +1198,81 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
             {/* Header de Busca */}
             <div
               style={{
-                padding: '8px 10px',
-                borderBottom: `1px solid ${themeTokens.border}`,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                background: isEffectiveDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
+                padding: 8,
+                borderBottom: `1px solid ${ft.fieldBorderColor}`,
               }}
             >
-              <Search size={13} color={themeTokens.textSecondary} style={{ flexShrink: 0 }} />
-              <input
-                ref={searchInputRef}
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={selectedOrg === 'Todas' ? 'Buscar projeto...' : `Buscar em ${selectedOrg}...`}
+              <div
+                className="df-search-box"
                 style={{
-                  flex: 1,
-                  background: 'transparent',
-                  border: 'none',
-                  outline: 'none',
-                  fontSize: 12,
-                  color: themeTokens.textPrimary,
-                  fontFamily: 'Poppins, sans-serif',
-                  padding: 0,
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  const next = !onlyLocal;
-                  setOnlyLocal(next);
-                  try { localStorage.setItem('header_projects_only_local', next ? '1' : '0'); } catch {}
-                }}
-                title={onlyLocal ? 'Mostrando somente repositórios locais (clique para ver todos)' : 'Mostrar somente repositórios locais'}
-                style={{
-                  background: onlyLocal ? `${accentColor}22` : 'transparent',
-                  border: 'none',
-                  borderRadius: 5,
-                  color: onlyLocal ? accentColor : themeTokens.textSecondary,
-                  cursor: 'pointer',
-                  padding: 4,
+                  height: 30,
+                  padding: '0 8px',
+                  borderRadius: 6,
+                  background: ft.fieldBg,
+                  border: ft.fieldBorder,
+                  boxShadow: 'none',
                   display: 'flex',
-                  flexShrink: 0,
+                  alignItems: 'center',
+                  gap: 8,
                 }}
               >
-                <HardDrive size={13} />
-              </button>
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
+                <Search size={13} color={themeTokens.textSecondary} style={{ flexShrink: 0 }} />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={selectedOrg === 'Todas' ? 'Buscar projeto...' : `Buscar em ${selectedOrg}...`}
                   style={{
+                    flex: 1,
                     background: 'transparent',
                     border: 'none',
-                    color: themeTokens.textSecondary,
+                    outline: 'none',
+                    fontSize: 12,
+                    fontWeight: 400,
+                    color: themeTokens.textPrimary,
+                    fontFamily: 'Poppins, sans-serif',
+                    padding: 0,
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !onlyLocal;
+                    setOnlyLocal(next);
+                    try { localStorage.setItem('header_projects_only_local', next ? '1' : '0'); } catch {}
+                  }}
+                  title={onlyLocal ? 'Mostrando somente repositórios locais (clique para ver todos)' : 'Mostrar somente repositórios locais'}
+                  style={{
+                    background: onlyLocal ? `${accentColor}22` : 'transparent',
+                    border: 'none',
+                    borderRadius: 5,
+                    color: onlyLocal ? accentColor : themeTokens.textSecondary,
                     cursor: 'pointer',
-                    padding: 2,
+                    padding: 4,
                     display: 'flex',
+                    flexShrink: 0,
                   }}
                 >
-                  <X size={12} />
+                  <HardDrive size={13} />
                 </button>
-              )}
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: themeTokens.textSecondary,
+                      cursor: 'pointer',
+                      padding: 2,
+                      display: 'flex',
+                    }}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Chip/Aviso de Filtro por Organização Ativo */}
@@ -1612,9 +1637,9 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          width: 18,
-          height: 24,
-          borderRadius: 4,
+          width: 20,
+          height: 28,
+          borderRadius: 6,
           cursor: 'pointer',
           color: themeTokens.textSecondary,
           background: 'transparent',

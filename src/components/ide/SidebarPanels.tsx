@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { getFieldTokens } from '../../utils/fieldTokens';
 import {
   Search,
   GitBranch,
@@ -622,15 +623,18 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                 <ChevronRight size={14} />
               </div>
               <div
+                className="df-search-box"
                 style={{
                   flex: 1,
                   display: 'flex',
                   alignItems: 'center',
-                  background: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+                  background: getFieldTokens(isEffectiveDark).fieldBg,
                   borderRadius: 6,
-                  border: 'none',
+                  border: getFieldTokens(isEffectiveDark).fieldBorder,
+                  boxShadow: 'none',
                   padding: '5px 8px',
                   gap: 6,
+                  boxSizing: 'border-box',
                 }}
               >
                 <input
@@ -706,14 +710,17 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
             {isSearchReplaceOpen && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%', paddingLeft: 18 }}>
                 <div
+                  className="df-search-box"
                   style={{
                     flex: 1,
                     display: 'flex',
                     alignItems: 'center',
-                    background: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+                    background: getFieldTokens(isEffectiveDark).fieldBg,
                     borderRadius: 6,
-                    border: 'none',
+                    border: getFieldTokens(isEffectiveDark).fieldBorder,
+                    boxShadow: 'none',
                     padding: '5px 8px',
+                    boxSizing: 'border-box',
                   }}
                 >
                   <input
@@ -1012,6 +1019,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6, paddingLeft: 19, boxSizing: 'border-box' }}>
                             <div style={{ position: 'relative', width: '100%' }}>
                               <textarea
+                                className="df-field"
                                 value={repo.commitMsg}
                                 onChange={(e) => updateRepo(repo.dir, { commitMsg: e.target.value })}
                                 onKeyDown={(e) => {
@@ -1019,16 +1027,18 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                                     handleGitCommit(repo.dir);
                                   }
                                 }}
-                                placeholder="Message (⌘Enter to commit)"
+                                placeholder="Message (Cmd+Enter to commit)"
                                 rows={3}
                                 style={{
                                   width: '100%',
-                                  background: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-                                  border: 'none',
+                                  background: getFieldTokens(isEffectiveDark).fieldBg,
+                                  border: getFieldTokens(isEffectiveDark).fieldBorder,
+                                  boxShadow: 'none',
                                   borderRadius: 6,
                                   padding: '7px 9px',
                                   color: themeTokens.textPrimary,
                                   fontSize: 11,
+                                  fontWeight: 400,
                                   resize: 'none',
                                   outline: 'none',
                                   fontFamily: 'inherit',
@@ -1787,15 +1797,19 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
           {/* Search + Refresh Bar */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
             <div
+              className="df-search-box"
               style={{
                 flex: 1,
                 height: 28,
                 borderRadius: 6,
-                background: isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
+                background: getFieldTokens(isEffectiveDark).fieldBg,
+                border: getFieldTokens(isEffectiveDark).fieldBorder,
+                boxShadow: 'none',
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
                 padding: '0 8px',
+                boxSizing: 'border-box',
               }}
             >
               <Search size={12} color={themeTokens.textMuted} />

@@ -1,5 +1,6 @@
 import React from 'react';
 import { hexToRgba } from '../../utils/color';
+import { getFieldTokens } from '../../utils/fieldTokens';
 import { KbdBadge } from '../icons/MiscIcons';
 import type { ThemeTokens, QuickOpenItemDef } from '../../types/ide';
 
@@ -61,9 +62,9 @@ export const QuickOpenModal: React.FC<QuickOpenModalProps> = ({
           width: 620,
           maxWidth: 'calc(100vw - 32px)',
           background: themeTokens.bgCard,
-          border: `1px solid ${themeTokens.border}`,
+          border: 'none',
           borderRadius: 10,
-          boxShadow: '0 24px 64px rgba(0, 0, 0, 0.85)',
+          boxShadow: 'none',
           zIndex: 999999,
           display: 'flex',
           flexDirection: 'column',
@@ -76,6 +77,7 @@ export const QuickOpenModal: React.FC<QuickOpenModalProps> = ({
         {/* Top Input Bar */}
         <div style={{ padding: '12px 14px 8px 14px', background: themeTokens.bgCard }}>
           <input
+            className="df-field"
             ref={inputRef}
             type="text"
             value={quickOpenQuery}
@@ -87,16 +89,18 @@ export const QuickOpenModal: React.FC<QuickOpenModalProps> = ({
             placeholder="Search files by name (append : to go to line or @ to go to symbol)"
             style={{
               width: '100%',
+              height: 36,
               boxSizing: 'border-box',
-              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
-              border: `1.5px solid ${accentColor}`,
+              background: getFieldTokens(isEffectiveDark).fieldBg,
+              border: getFieldTokens(isEffectiveDark).fieldBorder,
               borderRadius: 8,
-              padding: '8px 12px',
+              padding: '0 12px',
               color: themeTokens.textPrimary,
               fontSize: 13,
+              fontWeight: 400,
               fontFamily: 'Poppins, sans-serif',
               outline: 'none',
-              boxShadow: `0 0 0 1px ${hexToRgba(accentColor, 0.25)}`,
+              boxShadow: 'none',
             }}
           />
         </div>

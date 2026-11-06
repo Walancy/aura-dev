@@ -1,6 +1,9 @@
 import React from 'react';
-import { GitBranch, RefreshCw, X, Plus, Check } from 'lucide-react';
+import { GitBranch, RefreshCw, X, Plus, Check, Search } from 'lucide-react';
 import type { ThemeTokens, GitBranchItem } from '../../types/ide';
+import { getContrastTextColor } from '../../utils/color';
+import { getFieldTokens } from '../../utils/fieldTokens';
+import { TutorialTriggerButton, useRegisterTutorialOverlay } from '../tutorial/TutorialTriggerButton';
 
 export interface BranchModalProps {
   isEffectiveDark: boolean;
@@ -40,6 +43,10 @@ export const BranchModal: React.FC<BranchModalProps> = ({
   branchesList,
   onCheckoutBranch,
 }) => {
+  useRegisterTutorialOverlay('modal_branches', true);
+  const ft = getFieldTokens(isEffectiveDark);
+  const accentTextColor = getContrastTextColor(accentColor);
+
   return (
     <div
       style={{
@@ -65,9 +72,9 @@ export const BranchModal: React.FC<BranchModalProps> = ({
           maxWidth: '92vw',
           maxHeight: '80vh',
           background: isEffectiveDark ? '#141416' : '#ffffff',
-          border: `1px solid ${themeTokens.border}`,
+          border: 'none',
           borderRadius: 10,
-          boxShadow: '0 24px 64px rgba(0, 0, 0, 0.85)',
+          boxShadow: 'none',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -78,13 +85,14 @@ export const BranchModal: React.FC<BranchModalProps> = ({
       >
         {/* Header */}
         <div
+          data-tour="branch-header"
           style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             padding: '14px 18px',
-            borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
-            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
+            borderBottom: `1px solid ${ft.fieldBorderColor}`,
+            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.015)' : 'rgba(0, 0, 0, 0.015)',
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -93,7 +101,7 @@ export const BranchModal: React.FC<BranchModalProps> = ({
                 width: 32,
                 height: 32,
                 borderRadius: 8,
-                background: 'rgba(255, 139, 103, 0.12)',
+                background: `${accentColor}1c`,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -102,30 +110,51 @@ export const BranchModal: React.FC<BranchModalProps> = ({
               <GitBranch size={17} color={accentColor} />
             </div>
             <div>
-              <div style={{ fontWeight: 600, fontSize: 14, color: themeTokens.textPrimary }}>
+              <div style={{ fontWeight: 400, fontSize: 14, color: themeTokens.textPrimary }}>
                 Gerenciador de Branches
               </div>
-              <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>
-                {gitRepoName || 'aura-dev'} • Ativa: <span style={{ color: accentColor, fontWeight: 500 }}>{currentBranch}</span>
+              <div style={{ fontSize: 11, fontWeight: 400, color: themeTokens.textSecondary }}>
+                {gitRepoName || 'aura-dev'} • Ativa:{' '}
+                <span style={{ color: accentColor, fontWeight: 400 }}>{currentBranch}</span>
               </div>
             </div>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <TutorialTriggerButton
+              contextId="modal_branches"
+              isDark={isEffectiveDark}
+              accentColor={accentColor}
+              textColor={themeTokens.textPrimary}
+              mutedColor={themeTokens.textSecondary}
+              height={28}
+              contextName="Gerenciador de Branches"
+            />
             <button
+              type="button"
               onClick={onSyncGit}
               disabled={isSyncingGit}
               style={{
+                height: 28,
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 6,
-                background: 'rgba(255, 255, 255, 0.06)',
-                border: 'none',
+                background: ft.fieldBg,
+                border: ft.fieldBorder,
+                boxShadow: 'none',
                 borderRadius: 6,
-                padding: '5px 10px',
+                padding: '0 10px',
                 fontSize: 11.5,
+                fontWeight: 400,
                 color: themeTokens.textPrimary,
                 cursor: isSyncingGit ? 'not-allowed' : 'pointer',
+                transition: 'background 0.15s ease, border-color 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                if (!isSyncingGit) e.currentTarget.style.background = ft.fieldBgHover;
+              }}
+              onMouseLeave={(e) => {
+                if (!isSyncingGit) e.currentTarget.style.background = ft.fieldBg;
               }}
               title="Git Pull & Push"
             >
@@ -137,14 +166,20 @@ export const BranchModal: React.FC<BranchModalProps> = ({
               {isSyncingGit ? 'Sincronizando...' : 'Sync'}
             </button>
             <button
+              type="button"
               onClick={onClose}
               style={{
+                width: 28,
+                height: 28,
                 background: 'none',
                 border: 'none',
                 cursor: 'pointer',
                 color: themeTokens.textSecondary,
-                padding: 4,
+                padding: 0,
                 display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 6,
               }}
             >
               <X size={16} />
@@ -152,89 +187,115 @@ export const BranchModal: React.FC<BranchModalProps> = ({
           </div>
         </div>
 
-        {/* Create new branch section */}
+        {/* Create new branch + Search section */}
         <div
+          data-tour="branch-create-bar"
           style={{
             padding: '12px 18px',
-            borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'}`,
-            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.015)' : 'rgba(0, 0, 0, 0.015)',
+            borderBottom: `1px solid ${ft.fieldBorderColor}`,
             display: 'flex',
+            flexDirection: 'column',
             gap: 8,
           }}
         >
-          <input
-            type="text"
-            placeholder="Nome da nova branch (ex: feat/minha-feature)..."
-            value={newBranchInput}
-            onChange={(e) => setNewBranchInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && newBranchInput.trim()) {
-                onCreateBranch(newBranchInput);
-              }
-            }}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="text"
+              className="df-field"
+              placeholder="Nome da nova branch (ex: feat/minha-feature)..."
+              value={newBranchInput}
+              onChange={(e) => setNewBranchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && newBranchInput.trim()) {
+                  onCreateBranch(newBranchInput);
+                }
+              }}
+              style={{
+                flex: 1,
+                height: 30,
+                background: ft.fieldBg,
+                border: ft.fieldBorder,
+                boxShadow: 'none',
+                borderRadius: 6,
+                padding: '0 10px',
+                fontSize: 12,
+                fontWeight: 400,
+                color: themeTokens.textPrimary,
+                outline: 'none',
+                transition: 'background 0.15s ease, border-color 0.15s ease',
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => onCreateBranch(newBranchInput)}
+              disabled={!newBranchInput.trim() || isCreatingBranch}
+              style={{
+                height: 30,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                background: accentColor,
+                color: accentTextColor,
+                border: 'none',
+                boxShadow: 'none',
+                borderRadius: 6,
+                padding: '0 12px',
+                fontSize: 12,
+                fontWeight: 400,
+                cursor: newBranchInput.trim() ? 'pointer' : 'not-allowed',
+                opacity: newBranchInput.trim() ? 1 : 0.5,
+                transition: 'filter 0.15s ease, opacity 0.15s ease',
+              }}
+            >
+              <Plus size={14} />
+              Criar Branch
+            </button>
+          </div>
+
+          <div
+            className="df-search-box"
             style={{
-              flex: 1,
-              background: isEffectiveDark ? '#1a1a1e' : '#f4f4f5',
-              border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
-              borderRadius: 7,
-              padding: '6px 12px',
-              fontSize: 12,
-              color: themeTokens.textPrimary,
-              outline: 'none',
-            }}
-          />
-          <button
-            onClick={() => onCreateBranch(newBranchInput)}
-            disabled={!newBranchInput.trim() || isCreatingBranch}
-            style={{
-              display: 'inline-flex',
+              height: 30,
+              background: ft.fieldBg,
+              border: ft.fieldBorder,
+              boxShadow: 'none',
+              borderRadius: 6,
+              padding: '0 10px',
+              display: 'flex',
               alignItems: 'center',
-              gap: 6,
-              background: accentColor,
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: 7,
-              padding: '6px 12px',
-              fontSize: 12,
-              fontWeight: 500,
-              cursor: newBranchInput.trim() ? 'pointer' : 'not-allowed',
-              opacity: newBranchInput.trim() ? 1 : 0.5,
+              gap: 8,
             }}
           >
-            <Plus size={14} />
-            Criar Branch
-          </button>
-        </div>
-
-        {/* Search branches */}
-        <div style={{ padding: '10px 18px 6px' }}>
-          <input
-            type="text"
-            placeholder="Filtrar branches..."
-            value={branchSearchQuery}
-            onChange={(e) => setBranchSearchQuery(e.target.value)}
-            style={{
-              width: '100%',
-              background: isEffectiveDark ? '#18181b' : '#f9fafb',
-              border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.07)'}`,
-              borderRadius: 6,
-              padding: '6px 10px',
-              fontSize: 11.5,
-              color: themeTokens.textPrimary,
-              outline: 'none',
-            }}
-          />
+            <Search size={13} color={themeTokens.textSecondary} style={{ flexShrink: 0 }} />
+            <input
+              type="text"
+              placeholder="Filtrar branches..."
+              value={branchSearchQuery}
+              onChange={(e) => setBranchSearchQuery(e.target.value)}
+              style={{
+                flex: 1,
+                background: 'transparent',
+                border: 'none',
+                fontSize: 12,
+                fontWeight: 400,
+                color: themeTokens.textPrimary,
+                outline: 'none',
+                padding: 0,
+              }}
+            />
+          </div>
         </div>
 
         {/* Branches list */}
         <div
+          data-tour="branch-list-area"
           style={{
             flex: 1,
             overflowY: 'auto',
-            padding: '6px 12px 14px',
+            padding: '8px 12px 14px',
             display: 'flex',
             flexDirection: 'column',
-            gap: 3,
+            gap: 4,
           }}
         >
           {branchesList
@@ -250,14 +311,15 @@ export const BranchModal: React.FC<BranchModalProps> = ({
                     justifyContent: 'space-between',
                     padding: '7px 10px',
                     borderRadius: 8,
-                    background: isCur
-                      ? 'rgba(255, 139, 103, 0.1)'
-                      : 'transparent',
+                    background: isCur ? `${accentColor}16` : 'transparent',
                     transition: 'background 0.15s ease',
                     fontSize: 12.5,
                   }}
                   onMouseEnter={(e) => {
-                    if (!isCur) e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)';
+                    if (!isCur)
+                      e.currentTarget.style.background = isEffectiveDark
+                        ? 'rgba(255, 255, 255, 0.04)'
+                        : 'rgba(0, 0, 0, 0.04)';
                   }}
                   onMouseLeave={(e) => {
                     if (!isCur) e.currentTarget.style.background = 'transparent';
@@ -265,11 +327,24 @@ export const BranchModal: React.FC<BranchModalProps> = ({
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
                     <GitBranch size={14} color={isCur ? accentColor : themeTokens.textSecondary} />
-                    <span style={{ fontWeight: isCur ? 600 : 400, color: isCur ? accentColor : themeTokens.textPrimary }}>
+                    <span
+                      style={{
+                        fontWeight: 400,
+                        color: isCur ? accentColor : themeTokens.textPrimary,
+                      }}
+                    >
                       {branch.name}
                     </span>
                     {branch.isRemote && (
-                      <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 4, background: 'rgba(255, 255, 255, 0.06)', color: themeTokens.textSecondary }}>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          padding: '1px 6px',
+                          borderRadius: 4,
+                          background: ft.fieldBg,
+                          color: themeTokens.textSecondary,
+                        }}
+                      >
                         remote
                       </span>
                     )}
@@ -283,7 +358,7 @@ export const BranchModal: React.FC<BranchModalProps> = ({
                         gap: 4,
                         color: '#22c55e',
                         fontSize: 11,
-                        fontWeight: 600,
+                        fontWeight: 400,
                       }}
                     >
                       <Check size={13} />
@@ -291,20 +366,31 @@ export const BranchModal: React.FC<BranchModalProps> = ({
                     </div>
                   ) : (
                     <button
+                      type="button"
                       onClick={() => onCheckoutBranch(branch.name)}
                       style={{
-                        background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
-                        border: 'none',
-                        borderRadius: 5,
-                        padding: '4px 10px',
+                        height: 26,
+                        background: ft.fieldBg,
+                        border: ft.fieldBorder,
+                        boxShadow: 'none',
+                        borderRadius: 6,
+                        padding: '0 10px',
                         fontSize: 11,
-                        fontWeight: 500,
+                        fontWeight: 400,
                         color: themeTokens.textPrimary,
                         cursor: 'pointer',
-                        transition: 'background 0.15s ease',
+                        transition: 'background 0.15s ease, color 0.15s ease, border-color 0.15s ease',
                       }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = accentColor)}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)')}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = accentColor;
+                        e.currentTarget.style.color = accentTextColor;
+                        e.currentTarget.style.borderColor = 'transparent';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = ft.fieldBg;
+                        e.currentTarget.style.color = themeTokens.textPrimary;
+                        e.currentTarget.style.borderColor = ft.fieldBorderColor;
+                      }}
                     >
                       Checkout
                     </button>

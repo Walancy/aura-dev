@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Send, Sparkles, Loader2 } from 'lucide-react';
 import type { WorkflowNode } from './OrchestrationCanvas';
+import { getFieldTokens } from '../utils/fieldTokens';
 
 export interface OrchestrationOmbroPanelProps {
   isOpen: boolean;
@@ -116,9 +117,9 @@ export const OrchestrationOmbroPanel: React.FC<OrchestrationOmbroPanelProps> = (
         bottom: 20,
         width: 320,
         background: bgCard,
-        border: `1px solid ${border}`,
+        border: getFieldTokens(isEffectiveDark).dropdownBorder,
         borderRadius: 12,
-        boxShadow: isEffectiveDark ? '0 16px 36px rgba(0, 0, 0, 0.7)' : '0 16px 36px rgba(0, 0, 0, 0.15)',
+        boxShadow: 'none',
         zIndex: 970,
         display: 'flex',
         flexDirection: 'column',
@@ -204,6 +205,7 @@ export const OrchestrationOmbroPanel: React.FC<OrchestrationOmbroPanelProps> = (
 
       <div style={{ padding: '8px 12px', borderTop: `1px solid ${border}`, display: 'flex', gap: 6 }}>
         <input
+          className="df-field"
           ref={inputRef}
           type="text"
           value={question}
@@ -217,10 +219,12 @@ export const OrchestrationOmbroPanel: React.FC<OrchestrationOmbroPanelProps> = (
             flex: 1,
             padding: '6px 8px',
             borderRadius: 6,
-            border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.14)' : '1px solid rgba(0, 0, 0, 0.14)',
-            background: isEffectiveDark ? '#0f0f0f' : '#ffffff',
+            border: getFieldTokens(isEffectiveDark).fieldBorder,
+            background: getFieldTokens(isEffectiveDark).fieldBg,
+            boxShadow: 'none',
             color: textPrimary,
             fontSize: 11,
+            fontWeight: 400,
             outline: 'none',
             opacity: isBusy ? 0.6 : 1,
           }}

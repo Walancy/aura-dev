@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import { renderAiIcon } from '../icons/AiProviderIcons';
 import { logSystemActivity } from '../../utils/brainService';
+import { getFieldTokens } from '../../utils/fieldTokens';
+import { TutorialTriggerButton, useRegisterTutorialOverlay } from '../tutorial/TutorialTriggerButton';
 
 export interface AiGlobalRuleProvider {
   id: string;
@@ -185,6 +187,7 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
   onToast,
   onFileSaved,
 }) => {
+  useRegisterTutorialOverlay('modal_ai_rules', isOpen);
   const [activeProviderId, setActiveProviderId] = useState<string>(selectedAiProvider || 'antigravity');
   const [homeDir, setHomeDir] = useState<string>('');
   const [fileContent, setFileContent] = useState<string>('');
@@ -334,6 +337,7 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
   const isDirty = fileContent !== originalContent;
 
   const isMouseDownOnBackdrop = useRef(false);
+  const ft = getFieldTokens(isEffectiveDark);
 
   if (!isOpen) return null;
 
@@ -390,7 +394,7 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
           }}
         >
           {/* AI Selector Dropdown on the Left */}
-          <div style={{ position: 'relative' }}>
+          <div data-tour="ai-rules-provider-selector" style={{ position: 'relative' }}>
             <button
               type="button"
               onClick={() => setIsAiDropdownOpen((v) => !v)}
@@ -401,14 +405,24 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
                 height: 28,
                 padding: '0 10px',
                 borderRadius: 6,
-                border: 'none',
+                border: isAiDropdownOpen ? ft.fieldBorderFocus : ft.fieldBorder,
                 boxShadow: 'none',
-                background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
+                background: isAiDropdownOpen ? ft.fieldBgHover : ft.fieldBg,
                 color: isEffectiveDark ? '#ffffff' : '#18181b',
                 cursor: 'pointer',
                 fontSize: 12,
-                fontWeight: 500,
-                transition: 'all 0.15s ease',
+                fontWeight: 400,
+                transition: 'background 0.15s ease, border-color 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = ft.fieldBgHover;
+                e.currentTarget.style.borderColor = ft.fieldBorderFocusColor;
+              }}
+              onMouseLeave={(e) => {
+                if (!isAiDropdownOpen) {
+                  e.currentTarget.style.background = ft.fieldBg;
+                  e.currentTarget.style.borderColor = ft.fieldBorderColor;
+                }
               }}
               title="Selecionar Inteligência Artificial"
             >
@@ -437,14 +451,14 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
                     left: 0,
                     zIndex: 100001,
                     minWidth: 220,
-                    background: isEffectiveDark ? '#1f1f22' : '#ffffff',
+                    background: ft.dropdownMenuBg,
                     borderRadius: 8,
-                    border: 'none',
+                    border: ft.dropdownBorder,
                     boxShadow: 'none',
                     padding: 4,
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 2,
+                    gap: 4,
                   }}
                 >
                   {GLOBAL_PROVIDERS.map((provider) => {
@@ -500,7 +514,16 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
           </div>
 
           {/* Action Buttons on the Right */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          <div data-tour="ai-rules-actions" style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            <TutorialTriggerButton
+              contextId="modal_ai_rules"
+              isDark={isEffectiveDark}
+              accentColor={accentColor}
+              textColor={isEffectiveDark ? '#f4f4f5' : '#0f172a'}
+              mutedColor={isEffectiveDark ? '#a1a1aa' : '#71717a'}
+              height={28}
+              contextName="Regras Globais de IA"
+            />
             {/* Diretrizes Button (Icon only, no color, with tooltip) */}
             <div style={{ position: 'relative' }}>
               <button
@@ -544,14 +567,14 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
                       right: 0,
                       zIndex: 100001,
                       minWidth: 260,
-                      background: isEffectiveDark ? '#1f1f22' : '#ffffff',
+                      background: ft.dropdownMenuBg,
                       borderRadius: 8,
-                      border: 'none',
+                      border: ft.dropdownBorder,
                       boxShadow: 'none',
                       padding: 6,
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: 2,
+                      gap: 4,
                     }}
                   >
                     <div
@@ -705,6 +728,7 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
 
         {/* Sub-bar with path & status */}
         <div
+          data-tour="ai-rules-path-bar"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -752,6 +776,7 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
 
         {/* Editor Area */}
         <div
+          data-tour="ai-rules-editor"
           style={{
             flex: 1,
             display: 'flex',

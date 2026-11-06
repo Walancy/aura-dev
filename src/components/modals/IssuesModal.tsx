@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { CircleDot, CheckCircle2, Plus, RefreshCw, X, ChevronDown, Check, ExternalLink, Search, Loader2 } from 'lucide-react';
 import type { ThemeTokens, GitHubIssueItem } from '../../types/ide';
 import { hexToRgba } from '../../utils/color';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface IssuesModalProps {
   isEffectiveDark: boolean;
@@ -80,12 +81,13 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
   const [aiMenuFor, setAiMenuFor] = useState<number | null>(null);
   const [stateFilter, setStateFilter] = useState<'all' | 'open' | 'closed'>('all');
 
+  const ft = getFieldTokens(isEffectiveDark);
   // superfícies do padrão DevFlow (mesmas do painel de detalhes da issue)
   const sheetBg = isEffectiveDark ? '#101010' : '#ffffff';
   const cardBg = isEffectiveDark ? '#181818' : '#f8fafc';
   const cardHoverBg = isEffectiveDark ? '#1f1f1f' : '#f1f5f9';
-  const controlBg = isEffectiveDark ? '#1e1e1e' : '#f1f5f9';
-  const controlHoverBg = isEffectiveDark ? '#262626' : '#e2e8f0';
+  const controlBg = ft.fieldBg;
+  const controlHoverBg = ft.fieldBgHover;
   const divider = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
 
   const isClosedIssue = (i: GitHubIssueItem) => (i.state || 'open').toLowerCase() === 'closed';
@@ -149,7 +151,8 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
           height: '100%',
           background: sheetBg,
           borderRadius: '16px 0 0 16px',
-          boxShadow: isEffectiveDark ? '-16px 0 48px rgba(0, 0, 0, 0.8)' : '-12px 0 36px rgba(0, 0, 0, 0.14)',
+          border: 'none',
+          boxShadow: 'none',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -222,6 +225,7 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
             <span style={{ fontSize: 12, fontWeight: 500, color: themeTokens.textSecondary }}>Nova issue no GitHub</span>
             <div style={{ display: 'flex', gap: 8 }}>
               <input
+                className="df-field"
                 type="text"
                 autoFocus
                 placeholder="Título da issue (ex.: Corrigir erro no fluxo de login)"
@@ -230,13 +234,13 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && newIssueTitle.trim()) onCreateIssue(newIssueTitle);
                 }}
-                style={{ flex: 1, height: 36, background: controlBg, border: 'none', borderRadius: 8, padding: '0 12px', fontSize: 13, color: themeTokens.textPrimary, outline: 'none', fontFamily: 'inherit' }}
+                style={{ flex: 1, height: 36, background: controlBg, border: ft.fieldBorder, boxShadow: 'none', borderRadius: 8, padding: '0 12px', fontSize: 13, fontWeight: 400, color: themeTokens.textPrimary, outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }}
               />
               <button
                 type="button"
                 onClick={() => onCreateIssue(newIssueTitle)}
                 disabled={!newIssueTitle.trim() || isLoadingIssues}
-                style={{ height: 36, padding: '0 16px', background: OPEN, color: '#ffffff', border: 'none', borderRadius: 8, fontSize: 12.5, fontWeight: 500, cursor: newIssueTitle.trim() ? 'pointer' : 'not-allowed', opacity: newIssueTitle.trim() ? 1 : 0.5 }}
+                style={{ height: 36, padding: '0 16px', background: OPEN, color: '#ffffff', border: 'none', borderRadius: 8, fontSize: 12.5, fontWeight: 400, cursor: newIssueTitle.trim() ? 'pointer' : 'not-allowed', opacity: newIssueTitle.trim() ? 1 : 0.5 }}
               >
                 {isLoadingIssues ? 'Criando…' : 'Publicar'}
               </button>
@@ -249,11 +253,12 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
           <div style={{ position: 'relative' }}>
             <Search size={14} color={themeTokens.textMuted} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
             <input
+              className="df-field"
               type="text"
               placeholder="Pesquisar por título, número ou autor"
               value={issuesSearchQuery}
               onChange={(e) => setIssuesSearchQuery(e.target.value)}
-              style={{ width: '100%', boxSizing: 'border-box', height: 36, background: controlBg, border: 'none', borderRadius: 8, padding: '0 12px 0 34px', fontSize: 13, color: themeTokens.textPrimary, outline: 'none', fontFamily: 'inherit' }}
+              style={{ width: '100%', boxSizing: 'border-box', height: 36, background: controlBg, border: ft.fieldBorder, boxShadow: 'none', borderRadius: 8, padding: '0 12px 0 34px', fontSize: 13, fontWeight: 400, color: themeTokens.textPrimary, outline: 'none', fontFamily: 'inherit' }}
             />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -411,7 +416,7 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
                       {aiMenuFor === issue.number && (
                         <>
                           <div style={{ position: 'fixed', inset: 0, zIndex: 5 }} onClick={() => setAiMenuFor(null)} />
-                          <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', minWidth: 170, background: isEffectiveDark ? '#1e1e1e' : '#ffffff', borderRadius: 10, boxShadow: '0 12px 32px rgba(0,0,0,0.55)', padding: 4, zIndex: 10, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                          <div className="df-dropdown-menu" style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', minWidth: 170, background: ft.dropdownMenuBg, border: ft.dropdownBorder, borderRadius: 10, boxShadow: 'none', padding: 4, zIndex: 10, display: 'flex', flexDirection: 'column', gap: 1 }}>
                             {aiProviders.map((p) => (
                               <div
                                 key={p.id}

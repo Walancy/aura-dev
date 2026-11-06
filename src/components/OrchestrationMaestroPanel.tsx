@@ -31,6 +31,7 @@ import type { NodeType, WorkflowNode, WorkflowEdge } from './OrchestrationCanvas
 import { renderAiIcon, AuraDevIcon } from './icons/AiProviderIcons';
 import { AI_PROVIDERS, DEFAULT_AI_QUOTAS, formatModelDisplayName } from '../constants/ai';
 import { hexToRgba, getContrastTextColor } from '../utils/color';
+import { getFieldTokens } from '../utils/fieldTokens';
 import {
   parseMaestroActions,
   resolveNodeId,
@@ -1097,17 +1098,18 @@ DIRETRIZES:
               {/* Model Dropdown Menu */}
               {modelDropdown && (
                 <div
+                  className="df-dropdown-menu"
                   style={{
                     position: 'absolute',
                     top: 'calc(100% + 4px)',
                     left: 0,
-                    background: bgCardSecondary,
-                    border: `1px solid ${border}`,
+                    background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                    border: getFieldTokens(isEffectiveDark).dropdownBorder,
                     borderRadius: 8,
                     padding: 4,
                     minWidth: 150,
                     zIndex: 9999,
-                    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
+                    boxShadow: 'none',
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 2,
@@ -1214,17 +1216,18 @@ DIRETRIZES:
 
             {chatActionsMenuOpen && (
               <div
+                className="df-dropdown-menu"
                 style={{
                   position: 'absolute',
                   top: 'calc(100% + 4px)',
                   right: 0,
-                  background: bgCardSecondary,
-                  border: `1px solid ${border}`,
+                  background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                  border: getFieldTokens(isEffectiveDark).dropdownBorder,
                   borderRadius: 8,
                   padding: 4,
                   minWidth: 140,
                   zIndex: 10000,
-                  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
+                  boxShadow: 'none',
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 2,
@@ -1333,15 +1336,16 @@ DIRETRIZES:
         {/* Sessions Popup */}
         {chatHistoryPopupOpen && (
           <div
+            className="df-dropdown-menu"
             style={{
               position: 'absolute',
               top: 34,
               left: 0,
               width: 270,
-              background: bgCardSecondary,
+              background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
               borderRadius: 10,
-              border: `1px solid ${border}`,
-              boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
+              border: getFieldTokens(isEffectiveDark).dropdownBorder,
+              boxShadow: 'none',
               padding: '10px 12px',
               display: 'flex',
               flexDirection: 'column',
@@ -1803,17 +1807,19 @@ DIRETRIZES:
 
       {/* 3. Floating Bottom Card: Input & Model Selection (Exact IDE Style) */}
       <form
+        className="df-search-box"
         onSubmit={(e) => {
           e.preventDefault();
           handleSendPrompt();
         }}
         style={{
           alignSelf: 'stretch',
-          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(255, 255, 255, 0.45)',
+          background: getFieldTokens(isEffectiveDark).fieldBg,
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
           borderRadius: 10,
-          border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)',
+          border: getFieldTokens(isEffectiveDark).fieldBorder,
+          boxShadow: 'none',
           outline: 'none',
           flexDirection: 'column',
           justifyContent: 'flex-start',
@@ -1900,13 +1906,16 @@ DIRETRIZES:
             {/* AI Provider Dropdown */}
             <div ref={providerDropdownRef} style={{ position: 'relative' }}>
               <div
+                className="df-dropdown-trigger"
                 onClick={() => setProviderDropdown((prev) => !prev)}
                 title="Trocar provedor de IA"
                 style={{
                   height: 24,
                   padding: '0 6px',
                   borderRadius: 5,
-                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
+                  background: providerDropdown ? getFieldTokens(isEffectiveDark).fieldBgHover : getFieldTokens(isEffectiveDark).fieldBg,
+                  border: providerDropdown ? getFieldTokens(isEffectiveDark).fieldBorderFocus : getFieldTokens(isEffectiveDark).fieldBorder,
+                  boxShadow: 'none',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 5,
@@ -1914,7 +1923,7 @@ DIRETRIZES:
                 }}
               >
                 {renderAiIcon(activeProvider, 13)}
-                <span style={{ fontSize: 11, color: textPrimary, fontWeight: 500 }}>
+                <span style={{ fontSize: 11, color: textPrimary, fontWeight: 400 }}>
                   {AI_PROVIDERS.find((p) => p.id === activeProvider)?.name || activeProvider}
                 </span>
                 <ChevronDown size={10} color={textSecondary} />
@@ -1922,17 +1931,18 @@ DIRETRIZES:
 
               {providerDropdown && (
                 <div
+                  className="df-dropdown-menu"
                   style={{
                     position: 'absolute',
                     bottom: 'calc(100% + 6px)',
                     left: 0,
-                    background: bgCardSecondary,
-                    border: `1px solid ${border}`,
+                    background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                    border: getFieldTokens(isEffectiveDark).dropdownBorder,
                     borderRadius: 8,
                     padding: 4,
                     minWidth: 150,
                     zIndex: 99999,
-                    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
+                    boxShadow: 'none',
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 2,

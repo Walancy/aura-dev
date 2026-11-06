@@ -10,6 +10,7 @@ import {
   Filter,
 } from 'lucide-react';
 import { logSystemActivity } from '../../utils/brainService';
+import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface OutputLogItem {
   id: string;
@@ -232,6 +233,7 @@ export const OutputDockTab: React.FC<OutputDockTabProps> = ({
         {/* Left: Channel Selector Dropdown */}
         <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <div
+            className="df-dropdown-trigger"
             onClick={() => setChannelDropdownOpen(!channelDropdownOpen)}
             style={{
               display: 'flex',
@@ -239,15 +241,17 @@ export const OutputDockTab: React.FC<OutputDockTabProps> = ({
               gap: '6px',
               padding: '4px 10px',
               height: 26,
-              borderRadius: 4,
-              border: 'none',
-              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
+              borderRadius: 5,
+              border: getFieldTokens(isEffectiveDark).fieldBorder,
+              background: getFieldTokens(isEffectiveDark).fieldBg,
+              boxShadow: 'none',
               color: themeTokens.textPrimary,
               fontSize: 11,
               fontFamily: 'Poppins, -apple-system, sans-serif',
               fontWeight: 400,
               cursor: 'pointer',
-              transition: 'background 0.15s ease',
+              transition: 'background 0.15s ease, border-color 0.15s ease',
+              boxSizing: 'border-box',
             }}
           >
             <Terminal size={12} color={accentColor} />
@@ -257,13 +261,14 @@ export const OutputDockTab: React.FC<OutputDockTabProps> = ({
 
           {channelDropdownOpen && (
             <div
+              className="df-dropdown-menu"
               style={{
                 position: 'absolute',
                 top: 32,
                 left: 0,
-                background: themeTokens.bgCardSecondary || themeTokens.bgCard,
-                borderRadius: 4,
-                border: 'none',
+                background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                borderRadius: 6,
+                border: getFieldTokens(isEffectiveDark).dropdownBorder,
                 padding: '4px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -318,14 +323,16 @@ export const OutputDockTab: React.FC<OutputDockTabProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           {/* Search Box */}
           <div
+            className="df-search-box"
             style={{
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
               padding: '4px 8px',
-              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
-              borderRadius: 4,
-              border: 'none',
+              background: getFieldTokens(isEffectiveDark).fieldBg,
+              borderRadius: 5,
+              border: getFieldTokens(isEffectiveDark).fieldBorder,
+              boxShadow: 'none',
               height: 26,
               boxSizing: 'border-box',
             }}

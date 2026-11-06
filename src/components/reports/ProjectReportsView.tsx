@@ -734,6 +734,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
       {/* 1. SIDEBAR ESQUERDA: NAVEGAÇÃO ANALÍTICA ESTILO DEVFLOW                   */}
       {/* ========================================================================= */}
       <div
+        data-tour="relatorio-left-sidebar"
         style={{
           width: leftSidebarWidth,
           minWidth: 180,
@@ -1046,6 +1047,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
       >
         {/* LINHA SUPERIOR: Card de Informações da Seção + 4 Cards de Métricas Modulares (Estilo Marcos) */}
         <div
+          data-tour="relatorio-top-kpis"
           style={{
             display: 'flex',
             gap: 5,
@@ -1334,6 +1336,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
         {/* 3. CONTEÚDO PRINCIPAL DINÂMICO CONFORME A ABA ATIVA NA SIDEBAR            */}
         {/* ========================================================================= */}
         <div
+          data-tour="relatorio-content-area"
           style={{
             flex: 1,
             minHeight: 0,
