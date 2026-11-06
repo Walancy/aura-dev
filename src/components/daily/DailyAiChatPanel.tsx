@@ -1119,6 +1119,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
 
   return (
     <div
+      data-tour="daily-ai-panel"
       style={{
         flex: 1,
         minHeight: 0,

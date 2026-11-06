@@ -881,8 +881,29 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
 
     let cleanupDataListener: (() => void) | null = null;
 
+    let cleanupAgyWheel: (() => void) | null = null;
     if (window.electronAPI?.pty) {
       const pty = window.electronAPI.pty;
+
+      // agy não liga mouse tracking: na alt screen o xterm vira cada tick da roda em uma seta, e um flick de
+      // trackpad manda centenas delas (o chat dispara até o começo). Aqui vira no máximo 3 linhas por evento.
+      if (sessionType === 'agy' || sessionType === 'antigravity') {
+        let acc = 0;
+        const onWheel = (e: WheelEvent) => {
+          if (e.ctrlKey || e.metaKey || term.buffer.active.type !== 'alternate' || term.modes.mouseTrackingMode !== 'none') return;
+          e.preventDefault();
+          e.stopPropagation();
+          acc += e.deltaMode === 1 ? e.deltaY * 20 : e.deltaY;
+          const lines = Math.min(3, Math.floor(Math.abs(acc) / 40));
+          if (!lines) return;
+          acc = 0;
+          const seq = term.modes.applicationCursorKeysMode ? (e.deltaY < 0 ? '\x1bOA' : '\x1bOB') : e.deltaY < 0 ? '\x1b[A' : '\x1b[B';
+          pty.write(sessionId, seq.repeat(lines));
+        };
+        const el = containerRef.current;
+        el?.addEventListener('wheel', onWheel, { passive: false, capture: true });
+        cleanupAgyWheel = () => el?.removeEventListener('wheel', onWheel, { capture: true } as any);
+      }
 
       // Spawn native PTY session with current accentColor for prompt highlighting
       pty.create(sessionId, sessionType, cwd, term.cols || 80, term.rows || 24, accentColor).then((res) => {
@@ -1157,6 +1178,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         onSelectionDisp.dispose();
         webLinksAddon.dispose();
         if (cleanupDataListener) cleanupDataListener();
+        cleanupAgyWheel?.();
         liveTerms.delete(sessionId);
         term.dispose();
       };

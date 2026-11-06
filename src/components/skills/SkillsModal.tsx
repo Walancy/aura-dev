@@ -198,7 +198,7 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
 
   useEffect(() => {
     if (isOpen && tab === 'explore' && sourceId !== REGISTRY) loadCatalog(false);
-  }, [isOpen, tab, sourceId, loadCatalog]);
+  }, [isOpen, tab, sourceId, loadCatalog, installed]);
 
   // Busca no skills.sh com debounce
   useEffect(() => {
@@ -245,6 +245,8 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
       if (ok) onToast(ok);
       await refreshLocal();
       if (tab === 'explore' && sourceId !== REGISTRY) await loadCatalog(false);
+      const rq = registryQuery.trim();
+      if (sourceId === REGISTRY && rq.length >= 2) setRegistryResults(await call<RegistryResult[]>('searchRegistry', { query: rq }));
     } catch (e: any) {
       onToast(`Falhou: ${e.message}`);
     } finally {
@@ -447,10 +449,17 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
                 onClick={() => {
                   logSystemActivity('skills', 'update_all_skills', `${availableUpdatesCount} disponíveis`);
                   run('update-all', async () => {
-                    const res = await call<any>('updateAll');
+                    const res = await call<{ updated: number; failed: number; errors?: string[] }>('updateAll');
                     await checkUpdates(true);
+                    onToast(
+                      res.failed
+                        ? `${res.updated} atualizada(s), ${res.failed} falharam. ${res.errors?.[0] || ''}`.trim()
+                        : res.updated
+                          ? `${res.updated} skill(s) atualizada(s).`
+                          : 'Nenhuma skill precisava de atualização.',
+                    );
                     return res;
-                  }, `${availableUpdatesCount} skill(s) atualizada(s).`);
+                  });
                 }}
                 title={`Atualizar ${availableUpdatesCount} skill(s) com nova versão disponível`}
               >

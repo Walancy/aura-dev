@@ -852,6 +852,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
   return (
     <div
       ref={containerRef}
+      data-tour="header-project-selector"
       className="skin-flat"
       style={{
         padding: 5,

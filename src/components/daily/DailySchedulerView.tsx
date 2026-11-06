@@ -41,6 +41,8 @@ import {
 } from 'lucide-react';
 import { ConfirmDeleteModal } from '../modals/ConfirmDeleteModal';
 import { DailyAiChatPanel } from './DailyAiChatPanel';
+import { logSystemActivity } from '../../utils/brainService';
+import { hexToRgba } from '../../utils/color';
 import { getProjectSettings } from '../settings/projectSettingsStore';
 import { GLOBAL_PROJECTS_CACHE } from '../ProjectsSchedulerView';
 import type { HeaderActiveProjectInfo, HeaderProjectItem } from '../HeaderProjectSelector';
@@ -525,6 +527,7 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
   });
   // Cards gerados pela IA aguardando aceite/recusa, por coluna (só os do momento; anteriores não são afetados)
   const [pendingAiIds, setPendingAiIds] = useState<Record<string, string[]>>({});
+  const [generatingCardAi, setGeneratingCardAi] = useState(false);
   const [generatingAiColumn, setGeneratingAiColumn] = useState<'yesterday' | 'blocker' | 'today' | null>(null);
 
   // Estados para criação e edição inline diretamente nas colunas da daily
@@ -870,7 +873,7 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
       return;
     }
 
-    const matchedProject = availableProjects.find((p) => p.name.toLowerCase() === draftProject.toLowerCase());
+    const matchedProject = findProjectByName(draftProject);
 
     if (editingItemId) {
       setItems((prev) =>
@@ -958,6 +961,92 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
       setColumnToClear(null);
     } finally {
       setIsClearingColumn(false);
+    }
+  };
+
+  // Acha o projeto por nome, nome completo, id ou nome da pasta local (commits vêm com o nome da pasta)
+  const findProjectByName = (name?: string) => {
+    const n = (name || '').trim().toLowerCase();
+    if (!n) return undefined;
+    const base = (d?: string) => (d || '').split('/').filter(Boolean).pop()?.toLowerCase();
+    return (availableProjects as any[] | undefined)?.find(
+      (p: any) =>
+        p.name?.toLowerCase() === n || p.fullName?.toLowerCase() === n || p.id?.toLowerCase() === n || base(p.localDir) === n || base(p.path) === n
+    );
+  };
+
+  // Descrição nunca repete o título: cai para o corpo do commit ou para a área alterada
+  const ensureDistinctDescription = (
+    title: string,
+    description: string,
+    hashes: any,
+    commits: Array<{ hash: string; message: string; body?: string }>,
+    filePaths: Map<string, string[]>
+  ) => {
+    const norm = (x: string) => x.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    const t = norm(title);
+    const d = norm(description);
+    if (d && d !== t && !(t.length > 12 && d.startsWith(t) && d.length < t.length + 8)) return description;
+    const related = commits.filter((c) => Array.isArray(hashes) && hashes.some((h: string) => h && c.hash.startsWith(String(h).slice(0, 7))));
+    const body = related.map((c) => (c.body || '').split(/\r?\n/).find((l) => l.trim().length > 15)).find(Boolean);
+    if (body && norm(body) !== t) return body.trim().replace(/^[-*•]\s*/, '');
+    const files = related.flatMap((c) => filePaths.get(c.hash) || []);
+    if (files.length) {
+      const areas = Array.from(new Set(files.map((f) => f.split('/').slice(0, -1).slice(-1)[0] || f))).slice(0, 3).join(', ');
+      return `Ajustes em ${files.length} ${files.length === 1 ? 'arquivo' : 'arquivos'} (${areas}).`;
+    }
+    return description;
+  };
+
+  // Gera (ou recria) título e descrição do card em edição com base no projeto selecionado, com contexto pequeno para ser rápido
+  const handleGenerateCardTextWithAi = async () => {
+    if (generatingCardAi) return;
+    setGeneratingCardAi(true);
+    try {
+      const proj: any = findProjectByName(draftProject);
+      const dir: string | undefined = proj?.localDir || proj?.path || (activeProject as any)?.localDir || (activeProject as any)?.path || workspacePath || undefined;
+      let material = '';
+      if (dir && window.electronAPI?.shell?.exec) {
+        const log = await window.electronAPI.shell.exec(`git -C "${dir}" log -n 12 --format="- %s" 2>/dev/null`);
+        const st = draftCategory === 'today' ? await window.electronAPI.shell.exec('git status --short | head -15', dir) : null;
+        material = [`COMMITS RECENTES:\n${(log?.stdout || '').trim() || '(nenhum)'}`, st?.stdout?.trim() ? `EM ANDAMENTO:\n${st.stdout.trim()}` : ''].filter(Boolean).join('\n\n');
+      }
+      const guide =
+        draftCategory === 'yesterday' ? 'algo que foi ENTREGUE (passado, foco no resultado)' : draftCategory === 'blocker' ? 'um IMPEDIMENTO e o que falta para destravar' : 'o PRÓXIMO PASSO concreto de hoje (futuro, objetivo)';
+      const current = draftTitle.trim() || draftDescription.trim() ? `\nCARD ATUAL (reescreva melhor, mantendo o assunto):\nTítulo: ${draftTitle}\nDescrição: ${draftDescription}\n` : '';
+      const prompt = `Escreva UM card da Daily Scrum, em primeira pessoa, sobre ${guide}, no projeto "${proj?.name || draftProject}".
+${current}
+${material}
+
+Regras: título curto (até 60 caracteres, português natural); descrição de 1 ou 2 frases dizendo o que mudou e para quê, DIFERENTE do título (nunca repita o título). Sem hash de commit, número de issue/PR, prefixos feat/fix/chore nem nomes de arquivo.
+RETORNE SOMENTE JSON: {"title":"...","description":"..."}`;
+      const p = (selectedAiProvider || '').toLowerCase();
+      const cliCmd = p.includes('codex') ? 'codex' : p.includes('antigravity') || p.includes('agy') ? 'agy' : p.includes('gemini') ? 'gemini' : 'claude';
+      let raw = '';
+      if (window.electronAPI?.ai?.runCli) {
+        const r = await Promise.race([
+          window.electronAPI.ai.runCli({ cliCmd, prompt, model: selectedModel, cwd: dir }),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 60000)),
+        ]);
+        if (!r) window.electronAPI.ai.cancel?.();
+        else if (r.stdout && r.exitCode === 0) raw = r.stdout.trim();
+      }
+      const m = raw.match(/\{[\s\S]*\}/);
+      const out = m ? JSON.parse(m[0]) : null;
+      if (!out?.title) {
+        onToast?.('A IA não retornou um card válido. Tente novamente.');
+        return;
+      }
+      const clean = (t: string) => String(t || '').replace(/\b[0-9a-f]{7,40}\b/g, '').replace(/\(?#\d+\)?/g, '').replace(/\s{2,}/g, ' ').trim();
+      const nt = clean(out.title);
+      const nd = ensureDistinctDescription(nt, clean(out.description), [], [], new Map());
+      setDraftTitle(nt);
+      setDraftDescription(nd);
+      logSystemActivity('daily', editingItemId ? 'recriar_card_ia' : 'gerar_card_ia', proj?.name || draftProject, { category: draftCategory });
+    } catch (err: any) {
+      onToast?.(`Erro ao gerar com IA: ${err?.message || 'falha inesperada'}`);
+    } finally {
+      setGeneratingCardAi(false);
     }
   };
 
@@ -1359,7 +1448,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
           const subjects = g.map((c) => cleanSubject(c.message));
           return {
             title: subjects[0],
-            description: subjects.slice(1, 3).length ? `${subjects[0]}; ${subjects.slice(1, 3).join('; ').toLowerCase()}.` : `${subjects[0]}.`,
+            description: subjects.slice(1, 3).length ? `${subjects.slice(1, 3).join('; ')}.` : '',
             tag: g.some((c) => /^fix/i.test(c.message)) ? 'Fix' : defaultTag,
             priority: 'Alta',
             projectName: g[0].projectName,
@@ -1438,17 +1527,16 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
         const hashProj = Array.isArray(t.commitHashes)
           ? finalCommitsToAnalyze.find((c) => t.commitHashes.some((h: string) => h && c.hash.startsWith(String(h).slice(0, 7))))?.projectName
           : undefined;
-        const projName = hashProj || t.projectName || primaryProject;
-        const matchedProj = availableProjects?.find(
-          (p) => p.name?.toLowerCase() === projName.toLowerCase() || p.fullName?.toLowerCase() === projName.toLowerCase() || p.id === projName
-        );
+        // Com um projeto filtrado, o card é dele (senão o filtro esconde o card recém-criado)
+        const projName = targetFilteredProj?.name || hashProj || t.projectName || primaryProject;
+        const matchedProj = findProjectByName(projName);
 
         return {
           id: `daily-ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           dateIso: selectedDateIso, // SEMPRE a data ativa da Daily para renderizar imediatamente na coluna!
           category: colCategory,
           title: sanitize(t.title),
-          description: sanitize(t.description),
+          description: ensureDistinctDescription(sanitize(t.title), sanitize(t.description), t.commitHashes, finalCommitsToAnalyze, filePathsByHash),
           projectName: matchedProj?.name || projName,
           projectId: matchedProj?.id || projName,
           projectColor: matchedProj?.color,
@@ -1471,6 +1559,43 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
     } finally {
       setGeneratingAiColumn(null);
     }
+  };
+
+  // Barra visível dentro da coluna com Aceitar/Descartar dos cards gerados pela IA
+  const renderAiBanner = (col: 'yesterday' | 'blocker' | 'today') => {
+    const ids = pendingAiIds[col] || [];
+    if (ids.length === 0) return null;
+    const act = (color: string): React.CSSProperties => ({
+      height: 24, padding: '0 10px', borderRadius: 6, border: 'none', background: hexToRgba(color, 0.15), color,
+      fontSize: 11, fontWeight: 400, cursor: 'pointer', transition: 'background 0.15s ease',
+    });
+    return (
+      <div
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8, flexShrink: 0,
+          background: hexToRgba(accentColor, 0.1), animation: 'fadeIn 0.2s ease',
+        }}
+      >
+        <Sparkles size={13} color={accentColor} />
+        <span style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: theme.textPrimary }}>
+          {ids.length} {ids.length === 1 ? 'card gerado' : 'cards gerados'} pela IA
+        </span>
+        <button type="button" style={act('#22c55e')} onClick={() => { setPendingAiIds((prev) => ({ ...prev, [col]: [] })); onToast?.('Cards da IA mantidos'); }}>
+          Aceitar
+        </button>
+        <button
+          type="button"
+          style={act('#ef4444')}
+          onClick={() => {
+            setItems((prev) => prev.filter((i) => !ids.includes(i.id)));
+            setPendingAiIds((prev) => ({ ...prev, [col]: [] }));
+            onToast?.('Cards da IA descartados');
+          }}
+        >
+          Descartar
+        </button>
+      </div>
+    );
   };
 
   const renderAiReview = (col: 'yesterday' | 'blocker' | 'today') => {
@@ -1690,6 +1815,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
           {/* DIV EM CIMA DO CALENDÁRIO: TABS (DAILY | WEEKLY) + BOTÃO COPIAR DAILY */}
           {/* ------------------------------------------------------------------- */}
           <div
+            data-tour="daily-mode-header"
             style={{
               width: '100%',
               background: accentColor,
@@ -1802,6 +1928,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
           {/* CALENDÁRIO PADRÃO 1:1 (CARD INDEPENDENTE)                           */}
           {/* ------------------------------------------------------------------- */}
             <div
+              data-tour="daily-calendar-card"
               style={{
                 width: '100%',
                 background: isEffectiveDark ? '#141414' : '#ffffff',
@@ -2047,7 +2174,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
               onToast={onToast}
             />
             ) : (
-              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 24, fontSize: 12, color: theme?.textSecondary || '#888', borderRadius: 10, background: isEffectiveDark ? '#141414' : '#f8fafc' }}>
+              <div data-tour="daily-ai-panel" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 24, fontSize: 12, color: theme?.textSecondary || '#888', borderRadius: 10, background: isEffectiveDark ? '#141414' : '#f8fafc' }}>
                 Sugestões de IA desativadas para este projeto em Projetos → Configurações → Geral.
               </div>
             )}
@@ -2058,6 +2185,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
           {/* ===================================================================== */}
           {activeTab === 'daily' ? (
             <div
+              data-tour="daily-board-content"
               style={{
               flex: 1,
               display: 'flex',
@@ -2264,6 +2392,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                     scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
                   }}
                 >
+                  {renderAiBanner('yesterday')}
                   {/* Card sendo criado inline */}
                   {creatingInColumn === 'yesterday' && (
                     <EditableDailyCard
@@ -2287,6 +2416,8 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                       onChangeCustomColor={setDraftCustomColor}
                       onConfirm={handleConfirmInline}
                       onCancel={handleCancelInline}
+                      onGenerateAi={handleGenerateCardTextWithAi}
+                      generatingAi={generatingCardAi}
                     />
                   )}
 
@@ -2350,6 +2481,8 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                           onChangeCustomColor={setDraftCustomColor}
                           onConfirm={handleConfirmInline}
                           onCancel={handleCancelInline}
+                          onGenerateAi={handleGenerateCardTextWithAi}
+                          generatingAi={generatingCardAi}
                         />
                       ) : (
                         <DailyCardItem
@@ -2537,6 +2670,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                     scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
                   }}
                 >
+                  {renderAiBanner('blocker')}
                   {/* Card sendo criado inline */}
                   {creatingInColumn === 'blocker' && (
                     <EditableDailyCard
@@ -2562,6 +2696,8 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                       onChangeCustomColor={setDraftCustomColor}
                       onConfirm={handleConfirmInline}
                       onCancel={handleCancelInline}
+                      onGenerateAi={handleGenerateCardTextWithAi}
+                      generatingAi={generatingCardAi}
                     />
                   )}
 
@@ -2625,6 +2761,8 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                           onChangeCustomColor={setDraftCustomColor}
                           onConfirm={handleConfirmInline}
                           onCancel={handleCancelInline}
+                          onGenerateAi={handleGenerateCardTextWithAi}
+                          generatingAi={generatingCardAi}
                         />
                       ) : (
                         <DailyCardItem
@@ -2812,6 +2950,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                     scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
                   }}
                 >
+                  {renderAiBanner('today')}
                   {/* Card sendo criado inline */}
                   {creatingInColumn === 'today' && (
                     <EditableDailyCard
@@ -2835,6 +2974,8 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                       onChangeCustomColor={setDraftCustomColor}
                       onConfirm={handleConfirmInline}
                       onCancel={handleCancelInline}
+                      onGenerateAi={handleGenerateCardTextWithAi}
+                      generatingAi={generatingCardAi}
                     />
                   )}
 
@@ -2898,6 +3039,8 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                           onChangeCustomColor={setDraftCustomColor}
                           onConfirm={handleConfirmInline}
                           onCancel={handleCancelInline}
+                          onGenerateAi={handleGenerateCardTextWithAi}
+                          generatingAi={generatingCardAi}
                         />
                       ) : (
                         <DailyCardItem
@@ -3029,6 +3172,8 @@ interface EditableDailyCardProps {
   onChangeCustomColor?: (val: string) => void;
   onConfirm: () => void;
   onCancel: () => void;
+  onGenerateAi?: () => void;
+  generatingAi?: boolean;
 }
 
 const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
@@ -3054,6 +3199,8 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
   onChangeCustomColor,
   onConfirm,
   onCancel,
+  onGenerateAi,
+  generatingAi,
 }) => {
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
   const colorPickerRef = useRef<HTMLDivElement>(null);
@@ -3200,6 +3347,30 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
 
         {/* Botões Cancelar e Confirmar no canto superior direito */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+          {onGenerateAi && (
+            <button
+              type="button"
+              onClick={onGenerateAi}
+              disabled={generatingAi}
+              style={{
+                width: 24,
+                height: 24,
+                borderRadius: 6,
+                border: 'none',
+                background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+                color: accentColor,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: generatingAi ? 'wait' : 'pointer',
+                padding: 0,
+                transition: 'background 0.15s ease',
+              }}
+              title={title.trim() || description.trim() ? 'Recriar título e descrição com IA' : 'Gerar título e descrição com IA a partir do projeto'}
+            >
+              {generatingAi ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Sparkles size={13} />}
+            </button>
+          )}
           <button
             type="button"
             onClick={onCancel}
@@ -4160,6 +4331,7 @@ const WeeklyViewContainer: React.FC<WeeklyViewContainerProps> = ({
 
   return (
     <div
+      data-tour="daily-board-content"
       style={{
         flex: 1,
         display: 'grid',

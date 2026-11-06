@@ -2330,6 +2330,10 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
   const [projectV2Columns, setProjectV2Columns] = useState<KanbanColumnDef[] | null>(null);
   const [projectV2StatusFieldId, setProjectV2StatusFieldId] = useState<string | null>(null);
   const [projectV2Id, setProjectV2Id] = useState<string | null>(null);
+  // Board do Project inteiro (issues de todos os repositórios do GitHub Project selecionado)
+  const [projectItemsRaw, setProjectItemsRaw] = useState<any[]>([]);
+  const [projectStatusOverrides, setProjectStatusOverrides] = useState<Record<string, { name: string; optionId: string }>>({});
+  const [kanbanScope, setKanbanScope] = useState<'repo' | 'project'>('repo');
   const [projectV2Iterations, setProjectV2Iterations] = useState<SprintOption[]>([]);
   const projectV2ItemsMapRef = useRef<Map<string, ProjectV2ItemData>>(new Map());
 
@@ -2337,6 +2341,94 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
     if (selectedGithubProjectNumber == null) return null;
     return githubOrgProjects.find((p) => p.number === selectedGithubProjectNumber) || null;
   }, [selectedGithubProjectNumber, githubOrgProjects]);
+
+  // Issues e PRs de TODOS os repositórios do Project selecionado, no formato que o board já entende
+  const projectWideIssues = useMemo<ProjectIssue[]>(() => {
+    const out: ProjectIssue[] = [];
+    for (const node of projectItemsRaw) {
+      const c = node?.content;
+      if (!c || c.number == null) continue;
+      const repoFull: string = c.repository?.nameWithOwner || '';
+      const data = projectV2ItemsMapRef.current.get(`${repoFull.toLowerCase()}#${c.number}`);
+      const ov = projectStatusOverrides[node.id];
+      const closed = String(c.state || '').toLowerCase() !== 'open';
+      out.push({
+        id: `${repoFull}#${c.number}`,
+        projectId: repoFull,
+        title: c.title || `#${c.number}`,
+        description: c.body || '',
+        dateStr: '',
+        createdAtIso: '',
+        durationDays: 1,
+        tag: repoFull.split('/')[1] || repoFull,
+        tagColor: { bg: 'rgba(148,163,184,0.15)', text: '#94a3b8' },
+        priority: 'Média',
+        priorityColor: '#f59e0b',
+        status: closed ? 'Concluído' : 'A Fazer',
+        assignees: [],
+        progress: closed ? 100 : 0,
+        githubNumber: c.number,
+        htmlUrl: c.url,
+        rawState: closed ? 'closed' : 'open',
+        projectV2ItemId: node.id,
+        projectV2Status: ov?.name ?? data?.statusName,
+        projectV2StatusOptionId: ov?.optionId ?? data?.statusOptionId,
+        projectV2Estimate: data?.estimate,
+        iterationId: data?.iterationId,
+        iterationTitle: data?.iterationTitle,
+      });
+    }
+    return out;
+  }, [projectItemsRaw, projectStatusOverrides]);
+
+  const handleMoveProjectWideIssue = async (issueId: string, targetColumnId: string) => {
+    const col = (projectV2Columns || []).find((x) => x.id === targetColumnId || x.optionId === targetColumnId);
+    const item = projectWideIssues.find((i) => i.id === issueId);
+    if (!col?.optionId || !item?.projectV2ItemId || !projectV2Id || !projectV2StatusFieldId) {
+      showToast?.('Não foi possível mover: o Project não tem campo de status.');
+      return;
+    }
+    const prev = projectStatusOverrides[item.projectV2ItemId];
+    setProjectStatusOverrides((o) => ({ ...o, [item.projectV2ItemId!]: { name: col.title, optionId: col.optionId! } }));
+    try {
+      const res: any = await window.electronAPI?.github?.updateProjectItemStatus?.(projectV2Id, item.projectV2ItemId, projectV2StatusFieldId, col.optionId);
+      if (res && res.success === false) throw new Error(res.error || 'falha ao atualizar o status');
+      logSystemActivity('projects', 'mover_issue_board_project', selectedGithubProject?.title || 'Project', { issue: issueId, status: col.title });
+    } catch (err: any) {
+      setProjectStatusOverrides((o) => {
+        const next = { ...o };
+        if (prev) next[item.projectV2ItemId!] = prev;
+        else delete next[item.projectV2ItemId!];
+        return next;
+      });
+      showToast?.(`Erro ao mover: ${err?.message || 'falha inesperada'}`);
+    }
+  };
+
+  // Alterna o board entre o repositório aberto e o Project inteiro
+  const renderKanbanScopeToggle = () => {
+    if (!selectedGithubProject) return null;
+    const pill = (active: boolean): React.CSSProperties => ({
+      height: 28, padding: '0 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11.5, fontWeight: 400,
+      background: active ? hexToRgba(accentColor, isEffectiveDark ? 0.18 : 0.1) : theme.controlBg,
+      color: active ? accentColor : theme.textSecondary, transition: 'background 0.15s ease',
+    });
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 0 8px' }}>
+        <button type="button" style={pill(kanbanScope === 'repo')} onClick={() => setKanbanScope('repo')}>
+          Repositório
+        </button>
+        <button type="button" style={pill(kanbanScope === 'project')} onClick={() => setKanbanScope('project')}>
+          Project: {selectedGithubProject.title}
+        </button>
+        {kanbanScope === 'project' && (
+          <span style={{ fontSize: 11, color: theme.textMuted }}>
+            {isLoadingProjectItems ? 'Carregando…' : `${projectWideIssues.length} itens em ${new Set(projectWideIssues.map((i) => i.projectId)).size} repositório(s)`}
+          </span>
+        )}
+      </div>
+    );
+  };
 
   const filteredGithubOrgProjects = useMemo(() => {
     if (!githubProjectSearch.trim()) return githubOrgProjects;
@@ -2417,6 +2509,9 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
       setProjectV2StatusFieldId(null);
       setProjectV2Id(null);
       setProjectV2Iterations([]);
+      setProjectItemsRaw([]);
+      setProjectStatusOverrides({});
+      setKanbanScope('repo');
       projectV2ItemsMapRef.current.clear();
       return;
     }
@@ -2440,6 +2535,8 @@ const ProjectsSchedulerViewInner: React.FC<ProjectsSchedulerViewProps> = ({
             setProjectV2StatusFieldId(statusFieldId);
             setProjectV2Id(projectId);
             projectV2ItemsMapRef.current = itemsMap;
+            setProjectItemsRaw(res.project.items?.nodes || []);
+            setProjectStatusOverrides({});
 
             // Extrai as iterações (Sprints) reais do Project V2 do GitHub
             const projectIts = extractProjectIterations([res.project]);
@@ -6269,6 +6366,7 @@ Formate com seções bem organizadas:
       >
         {/* Cabeçalho de Controles e Filtros */}
         <div
+          data-tour="projects-controls-bar"
           style={{
             position: 'relative',
             zIndex: 100,
@@ -6379,7 +6477,7 @@ Formate com seções bem organizadas:
           {/* Linha 2: [Dropdown de Sprint + Campo de Busca + Filtro por Assignees] à esquerda e [Versão + Status] à direita no canto direito */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 16, border: 'none', flexWrap: 'wrap' }}>
             {/* Lado Esquerdo: Dropdown de Sprint + Campo de Busca + Filtro de Assignees */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16, border: 'none', flexWrap: 'wrap' }}>
+            <div data-tour="projects-search-filters" style={{ display: 'flex', alignItems: 'center', gap: 16, border: 'none', flexWrap: 'wrap' }}>
               {/* Dropdown de Sprint */}
               <div style={{ position: 'relative' }}>
                 <div
@@ -6502,6 +6600,7 @@ Formate com seções bem organizadas:
 
             {/* Grupo da Direita: Organização + Project + Status (no canto direito) */}
             <div
+              data-tour="projects-right-filters"
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -7329,6 +7428,7 @@ Formate com seções bem organizadas:
       {/* Div dos cards / lista posicionada logo abaixo dos controles */}
       <div
         ref={shelfCardsRef}
+        data-tour="projects-shelf-list"
         onWheel={(e) => {
           if (!isGridMode && effectiveProjectLayoutMode === 'grid' && e.currentTarget.scrollWidth > e.currentTarget.clientWidth) {
             if (e.deltaY !== 0 && e.deltaX === 0) {
@@ -8519,6 +8619,7 @@ Formate com seções bem organizadas:
             }}
           >
           <div
+            data-tour="project-sections-nav"
             style={{
               width: 'calc(100% - 2 * clamp(11px, calc(2vw - 5px), 23px))',
               alignSelf: 'center',
@@ -9490,17 +9591,18 @@ Formate com seções bem organizadas:
                 {/* Lista de Linhas de Issues OU Quadro Kanban OU Roadmap */}
                 {issuesViewMode === 'kanban' ? (
                   <div style={{ flex: 1, minHeight: 460, display: 'flex', flexDirection: 'column', padding: '4px 0' }}>
+                    {renderKanbanScopeToggle()}
                     <GithubProjectsKanbanBoard
-                      issues={filteredGithubIssues}
+                      issues={kanbanScope === 'project' && selectedGithubProject ? projectWideIssues : filteredGithubIssues}
                       columns={projectV2Columns || undefined}
-                      repoName={selectedRepoRaw?.full_name || selectedProject?.repoName || selectedProject?.title || 'repositório'}
+                      repoName={kanbanScope === 'project' && selectedGithubProject ? selectedGithubProject.title : selectedRepoRaw?.full_name || selectedProject?.repoName || selectedProject?.title || 'repositório'}
                       theme={theme}
                       isEffectiveDark={isEffectiveDark}
                       accentColor={accentColor}
                       accentContrastText={accentContrastText}
-                      onOpenIssueDetail={handleOpenIssueCardDetail}
-                      onMoveIssue={handleMoveIssueToColumn}
-                      onAddNewIssue={() => openAddTaskModal()}
+                      onOpenIssueDetail={kanbanScope === 'project' && selectedGithubProject ? (i) => i.htmlUrl && window.electronAPI?.shell?.openExternal?.(i.htmlUrl) : handleOpenIssueCardDetail}
+                      onMoveIssue={kanbanScope === 'project' && selectedGithubProject ? handleMoveProjectWideIssue : handleMoveIssueToColumn}
+                      onAddNewIssue={kanbanScope === 'project' && selectedGithubProject ? undefined : () => openAddTaskModal()}
                       showToast={showToast}
                     />
                   </div>
@@ -11889,17 +11991,18 @@ Formate com seções bem organizadas:
           {/* ========================================================= */}
           {viewMode === 'kanban' && (
             <div style={{ flex: 1, minHeight: 460, display: 'flex', flexDirection: 'column' }}>
+              {renderKanbanScopeToggle()}
               <GithubProjectsKanbanBoard
-                issues={projectIssues}
+                issues={kanbanScope === 'project' && selectedGithubProject ? projectWideIssues : projectIssues}
                 columns={projectV2Columns || undefined}
-                repoName={selectedRepoRaw?.full_name || selectedProject?.repoName || selectedProject?.title || 'repositório'}
+                repoName={kanbanScope === 'project' && selectedGithubProject ? selectedGithubProject.title : selectedRepoRaw?.full_name || selectedProject?.repoName || selectedProject?.title || 'repositório'}
                 theme={theme}
                 isEffectiveDark={isEffectiveDark}
                 accentColor={accentColor}
                 accentContrastText={accentContrastText}
-                onOpenIssueDetail={handleOpenIssueCardDetail}
-                onMoveIssue={handleMoveIssueToColumn}
-                onAddNewIssue={() => openAddTaskModal()}
+                onOpenIssueDetail={kanbanScope === 'project' && selectedGithubProject ? (i) => i.htmlUrl && window.electronAPI?.shell?.openExternal?.(i.htmlUrl) : handleOpenIssueCardDetail}
+                onMoveIssue={kanbanScope === 'project' && selectedGithubProject ? handleMoveProjectWideIssue : handleMoveIssueToColumn}
+                onAddNewIssue={kanbanScope === 'project' && selectedGithubProject ? undefined : () => openAddTaskModal()}
                 showToast={showToast}
               />
             </div>

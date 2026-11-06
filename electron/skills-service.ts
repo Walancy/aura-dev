@@ -219,6 +219,18 @@ export class SkillsService {
     return out.sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
   }
 
+  /** Id livre para uma skill: reaproveita o nome só se a pasta não existe ou é a mesma origem (reinstalação); senão sufixa -2, -3... */
+  private uniqueId(base: string, sameSource: (source: any) => boolean): string {
+    for (let n = 1; ; n++) {
+      const id = n === 1 ? base : `${base.slice(0, 60)}-${n}`;
+      const metaFile = path.join(this.dirOf(id), '.devflow-meta.json');
+      if (!fs.existsSync(this.dirOf(id))) return id;
+      try {
+        if (sameSource(JSON.parse(fs.readFileSync(metaFile, 'utf8')).source || {})) return id;
+      } catch {}
+    }
+  }
+
   /** Pasta de uma skill: só ids simples ("..", "/" e afins não passam), sempre direto dentro de `root`. */
   dirOf(id: string): string {
     if (typeof id !== 'string' || !/^[a-z0-9][a-z0-9._-]*$/.test(id) || id.includes('..')) throw new Error('Nome de skill inválido.');
@@ -288,7 +300,7 @@ export class SkillsService {
     const skillMd = path.join(srcDir, 'SKILL.md');
     if (!fs.existsSync(skillMd)) throw new Error('A pasta escolhida não tem um SKILL.md.');
     const fm = parseFrontmatter(fs.readFileSync(skillMd, 'utf8'));
-    const id = safeId(fm.name || path.basename(srcDir));
+    const id = this.uniqueId(safeId(fm.name || path.basename(srcDir)), (src) => src.type === 'local' && src.path === srcDir);
     const dest = this.dirOf(id);
     fs.rmSync(dest, { recursive: true, force: true });
     fs.cpSync(srcDir, dest, { recursive: true, filter: (p) => !/\/(\.git|node_modules)(\/|$)/.test(p) });
@@ -389,9 +401,11 @@ export class SkillsService {
   }
 
   private decorate(items: CatalogSkill[]): CatalogSkill[] {
-    const installed = new Map(this.listInstalled().map((s) => [s.id, s]));
+    const installed = this.listInstalled();
     return items.map((it) => {
-      const local = installed.get(it.id);
+      const src = this.getSources().find((x) => x.id === it.sourceId);
+      const repo = src ? `${src.owner}/${src.repo}` : '';
+      const local = installed.find((s) => s.source.type === 'github' && s.source.repo === repo && s.source.path === it.path);
       return { ...it, installed: Boolean(local), updateAvailable: Boolean(local && local.source.type === 'github' && local.source.treeSha && local.source.treeSha !== it.treeSha) };
     });
   }
@@ -403,10 +417,10 @@ export class SkillsService {
     const res = await fetch(`https://skills.sh/api/search?q=${encodeURIComponent(q)}&limit=40`, { headers: { 'User-Agent': 'devflow-desktop' } });
     if (!res.ok) throw new Error(`skills.sh respondeu ${res.status}`);
     const data: any = await res.json();
-    const installed = new Set(this.listInstalled().map((s) => s.id));
+    const installed = this.listInstalled();
     return (data.skills || [])
       .filter((s: any) => typeof s.source === 'string' && /^[^/]+\/[^/]+$/.test(s.source)) // só repositórios do GitHub
-      .map((s: any) => ({ id: s.id, repo: s.source, skillId: s.skillId, name: s.name || s.skillId, installs: s.installs || 0, installed: installed.has(safeId(s.name || s.skillId)) }));
+      .map((s: any) => ({ id: s.id, repo: s.source, skillId: s.skillId, name: s.name || s.skillId, installs: s.installs || 0, installed: installed.some((i) => i.source.repo === s.source && (i.id === safeId(s.name || s.skillId) || path.posix.basename(i.source.path || '') === s.skillId)) }));
   }
 
   // Instala uma skill do skills.sh: localiza a pasta dela dentro do repositório pelo nome
@@ -453,7 +467,11 @@ export class SkillsService {
     if (!files.some((f) => f.path === `${prefix}SKILL.md`)) throw new Error('SKILL.md não encontrado nessa pasta.');
     if (files.length > 400) throw new Error('Skill grande demais (mais de 400 arquivos).');
     const skillMdRaw = await fetch(`https://raw.githubusercontent.com/${src.owner}/${src.repo}/${branch}/${prefix}SKILL.md`).then((r) => r.text());
-    const id = safeId(parseFrontmatter(skillMdRaw).name || path.posix.basename(skillPath));
+    const repoFull = `${src.owner}/${src.repo}`;
+    const id = this.uniqueId(
+      safeId(parseFrontmatter(skillMdRaw).name || path.posix.basename(skillPath)),
+      (m) => m.type === 'github' && m.repo === repoFull && m.path === skillPath,
+    );
     const tmp = path.join(this.root, `.tmp-${id}-${Date.now()}`);
     fs.mkdirSync(tmp, { recursive: true });
     try {
@@ -480,6 +498,7 @@ export class SkillsService {
       const dest = this.dirOf(id);
       fs.rmSync(dest, { recursive: true, force: true });
       fs.renameSync(tmp, dest);
+      if (this.updatesCache) this.updatesCache.results[id] = false; // acabou de baixar a versão atual
       if (src.alwaysOn?.includes(id)) {
         const st = this.readState();
         if (!st.alwaysOn.includes(id)) st.alwaysOn.push(id);
@@ -536,24 +555,26 @@ export class SkillsService {
     });
   }
 
-  async updateAll(token?: string): Promise<{ updated: number; failed: number; skills: string[] }> {
-    const updates = await this.checkUpdates(false, token);
+  async updateAll(token?: string): Promise<{ updated: number; failed: number; skills: string[]; errors: string[] }> {
+    const updates = await this.checkUpdates(true, token);
     const list = this.listInstalled().filter((s) => s.source.type === 'github' && updates[s.id]);
     let updated = 0;
     let failed = 0;
     const names: string[] = [];
+    const errors: string[] = [];
 
     for (const s of list) {
       try {
         await this.update(s.id, token);
         updated++;
         names.push(s.name);
-      } catch (err) {
+      } catch (err: any) {
         failed++;
+        errors.push(`${s.name}: ${err?.message || 'falhou'}`);
       }
     }
 
-    return { updated, failed, skills: names };
+    return { updated, failed, skills: names, errors };
   }
 
   private updatesCache: { at: number; results: Record<string, boolean> } | null = null;

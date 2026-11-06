@@ -8114,6 +8114,7 @@ Pergunta do usuário: ${question}`;
     >
       {/* 1. Top Options Bar (Div separada das opções com border radius) */}
       <div
+        data-tour="orchestration-topbar"
         style={{
           height: 46,
           background: bgCard,
@@ -8129,6 +8130,7 @@ Pergunta do usuário: ${question}`;
         }}
       >
         <div
+          data-tour="orchestration-mode-tabs"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -8190,7 +8192,7 @@ Pergunta do usuário: ${question}`;
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div ref={floorsMenuRef} style={{ position: 'relative' }}>
+          <div ref={floorsMenuRef} data-tour="orchestration-floors-btn" style={{ position: 'relative' }}>
             <button
               onClick={() => setIsFloorsMenuOpen((prev) => !prev)}
               title="Andares (workspaces isolados por branch)"
@@ -8381,6 +8383,7 @@ Pergunta do usuário: ${question}`;
           </div>
 
           <button
+            data-tour="orchestration-maestro-btn"
             onClick={() => setIsMaestroOpen((prev) => !prev)}
             title="Maestro — orquestrador inteligente de fluxos e agentes (Ctrl/Cmd+Shift+M)"
             style={{
@@ -8522,6 +8525,7 @@ Pergunta do usuário: ${question}`;
       {/* 2. Div de Fluxo (Canvas Separado com border radius e iluminação dinâmica dos pontos de fundo) */}
       <div
         ref={canvasRef}
+        data-tour="orchestration-canvas-area"
         onMouseDown={handleCanvasMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}

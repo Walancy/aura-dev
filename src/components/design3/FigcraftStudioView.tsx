@@ -1051,6 +1051,7 @@ export default function FigcraftStudioView({
 
   return (
     <div
+      data-tour="design-studio-canvas"
       style={{
         position: 'relative',
         display: isActive ? 'flex' : 'none',

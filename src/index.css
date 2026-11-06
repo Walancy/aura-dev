@@ -545,3 +545,53 @@ body.resizing-row {
 .cli-skin[data-skin="recon"] .skin-bar button, .cli-skin[data-skin="recon"] .skin-tab { background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0.05) 0 3px, transparent 3px 6px); }
 .cli-skin[data-skin="ember"] { --sk: #ff6a1a; --sk-bg: #0b0402; --sk-on-bg: #ff6a1a; --sk-on-fg: #0a0302; }
 .cli-skin[data-skin="ember"] .skin-tab[data-on], .cli-skin[data-skin="ember"] .skin-tab.active { filter: drop-shadow(0 0 5px rgba(255,106,26,0.7)); }
+
+/* Tutorial Minimalista (React Joyride) — Sem sombras, sem bordas, micro-animações suaves */
+@keyframes tutorialCardEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes tutorialContentStep {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.react-joyride__floater {
+  filter: none !important;
+  box-shadow: none !important;
+}
+
+.auradev-tutorial-card {
+  animation: tutorialCardEnter 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.auradev-tutorial-step-body {
+  animation: tutorialContentStep 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.auradev-tutorial-card button:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auradev-tutorial-card,
+  .auradev-tutorial-step-body {
+    animation: none !important;
+  }
+  .auradev-tutorial-card button {
+    transition: none !important;
+  }
+}

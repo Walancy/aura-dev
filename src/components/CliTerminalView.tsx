@@ -50,6 +50,7 @@ import {
   Layers,
   Save,
   Scissors,
+  Eye,
   ClipboardPaste,
   Pencil,
 } from 'lucide-react';
@@ -67,7 +68,8 @@ import { FileIcon, FolderIcon } from './FileIcon';
 import { NativeXTerm, scrollTerminalToText, TERMINAL_THEMES } from './NativeXTerm';
 import { TerminalSkinOverlay, skinDividerVars } from './TerminalSkin';
 import Editor from '@monaco-editor/react';
-import { getFileLanguage } from '../utils/editor';
+import { getFileLanguage, isMarkdownFile } from '../utils/editor';
+import { renderMarkdownPreview } from '../utils/markdown';
 import { ConfirmDeleteModal } from './modals/ConfirmDeleteModal';
 import { SidebarPanels } from './ide/SidebarPanels';
 import type { ExplorerNode, TerminalSessionItem, ThemeTokens, GitHubIssueItem } from '../types/ide';
@@ -1155,6 +1157,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
     return current.slice(0, needed);
   }, [activeWorkspace, terminalSessions, activeSessionId]);
 
+  const ensuringSlotsRef = useRef<string | null>(null);
   // Ensure enough distinct sessions exist for current multi-terminal grid mode
   useEffect(() => {
     if (!activeWorkspace || activeWorkspace.gridMode === '1x1') return;
@@ -1162,18 +1165,26 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
     const currentSlots = activeWorkspace.slotSessionIds.filter((id) =>
       terminalSessions.some((s) => s.id === id)
     );
-    if (currentSlots.length < needed) {
-      const missing = needed - currentSlots.length;
-      const newSlots = [...currentSlots];
-      for (let i = 0; i < missing; i++) {
-        const pName = `Terminal ${terminalSessions.length + i + 1}`;
-        const newId = onNewSession('zsh', pName);
-        if (typeof newId === 'string' && !newSlots.includes(newId)) {
-          newSlots.push(newId);
-        }
-      }
-      updateActiveWorkspace((w) => ({ ...w, slotSessionIds: newSlots }));
+    if (currentSlots.length >= needed) {
+      ensuringSlotsRef.current = null;
+      return;
     }
+    // Já criando para este workspace/layout (efeito disparou de novo antes do estado assentar)
+    const key = `${activeWorkspace.id}:${activeWorkspace.gridMode}`;
+    if (ensuringSlotsRef.current === key) return;
+    ensuringSlotsRef.current = key;
+    const newSlots = [...currentSlots];
+    // Reaproveita terminais que já existem antes de abrir novos
+    for (const s of terminalSessions) {
+      if (newSlots.length >= needed) break;
+      if (!newSlots.includes(s.id)) newSlots.push(s.id);
+    }
+    const missing = needed - newSlots.length;
+    for (let i = 0; i < missing; i++) {
+      const newId = onNewSession('zsh', `Terminal ${terminalSessions.length + i + 1}`);
+      if (typeof newId === 'string' && !newSlots.includes(newId)) newSlots.push(newId);
+    }
+    updateActiveWorkspace((w) => ({ ...w, slotSessionIds: newSlots }));
   }, [activeWorkspace?.gridMode, activeWorkspace?.slotSessionIds, terminalSessions, onNewSession, updateActiveWorkspace]);
 
   // Sincronizar foco e seleção
@@ -1441,6 +1452,13 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
       }
       onCloseSession(closingSessionId);
     }
+
+    // O terminal que sobrou vira o ativo (senão o 1x1 renderiza a sessão fechada e abre em branco)
+    const remaining = effectiveSlots.filter((_, idx) => idx !== slotIndex)[0];
+    if (remaining && closingSessionId) {
+      setActiveSessionId(remaining);
+      setTimeout(() => window.dispatchEvent(new CustomEvent('devflow:focus-terminal', { detail: { sessionId: remaining } })), 120);
+    }
   };
 
   // Close context menus & dropdowns on outside click/mousedown
@@ -1563,6 +1581,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
     [workspacePath, onToast]
   );
 
+  const [mdPreview, setMdPreview] = useState(false);
   const openViewer = useCallback(
     async (path: string, name: string) => {
       const prev = viewerRef.current;
@@ -1576,6 +1595,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
         await handleSaveViewerFile(prev.content, true);
       }
       setPreviewDesignScreen(null);
+      setMdPreview(isMarkdownFile(name));
       setViewer({ path, name });
       const fsApi = window.electronAPI?.fs;
       try {
@@ -2051,6 +2071,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             writeToSession(session.id, `"${filePath}" `);
             if (onToast) onToast(`Caminho colado: ${filePath.split('/').pop()}`);
           }
+          // O drag tira o foco do xterm: devolve para poder digitar direto
+          const sid = session.id;
+          [0, 120].forEach((ms) => setTimeout(() => window.dispatchEvent(new CustomEvent('devflow:focus-terminal', { detail: { sessionId: sid } })), ms));
         }}
       >
         {/* Quadrant Mini Header (height: 27px) - shown in multi-terminal layouts */}
@@ -2167,6 +2190,35 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       flexDirection: 'column',
                     }}
                   >
+                    {(() => {
+                      // Ativos = terminais abertos nas abas do CLI (todas as áreas) + o ativo agora
+                      const inUse = new Set<string>(workspaces.flatMap((w) => w.slotSessionIds));
+                      if (activeSessionId) inUse.add(activeSessionId);
+                      const idle = terminalSessions.filter((t) => !inUse.has(t.id));
+                      if (idle.length === 0) return null;
+                      return (
+                        <>
+                          <div
+                            onClick={() => {
+                              idle.forEach((t) => {
+                                window.electronAPI?.pty?.kill?.(t.id);
+                                onCloseSession(t.id);
+                              });
+                              logSystemActivity('terminal', 'fechar_terminais_inativos', `${idle.length} terminais`, { names: idle.map((t) => cleanSessionName(t)) });
+                              onToast?.(`${idle.length} ${idle.length === 1 ? 'terminal fechado' : 'terminais fechados'}`);
+                              setActiveSlotMenuIndex(null);
+                            }}
+                            style={{ padding: '5px 8px', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, cursor: 'pointer', color: '#ef4444', transition: 'background 0.15s ease' }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(239,68,68,0.12)')}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                          >
+                            <X size={12} />
+                            <span>Fechar terminais inativos ({idle.length})</span>
+                          </div>
+                          <div style={{ height: 1, background: skinTk.border, margin: '4px 0' }} />
+                        </>
+                      );
+                    })()}
                     <div style={{ padding: '3px 8px', fontSize: 10, fontWeight: 600, color: skinTk.textMuted, textTransform: 'uppercase' }}>
                       Selecionar Terminal
                     </div>
@@ -2496,6 +2548,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
       {/* 0. ACTIVITY BAR (VERTICAL LEFT STRIP COM ÍCONES IGUAL À IDE)        */}
       {/* =================================================================== */}
       <div
+        data-tour="cli-activity-bar"
         style={{
           alignSelf: 'stretch',
           width: 48,
@@ -2807,6 +2860,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
       {/* =================================================================== */}
       {!isExplorerCollapsed && (
         <div
+          data-tour="cli-sidebar-pane"
           style={{
             width: explorerWidth,
             height: '100%',
@@ -4207,6 +4261,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
       {/* 3. RIGHT PANE: TERMINAL COM ABAS (COBRINDO O RESTO DA TELA)         */}
       {/* =================================================================== */}
       <div
+        data-tour="cli-terminal-pane"
         style={{
           flex: '1 1 0',
           height: '100%',
@@ -4222,6 +4277,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
       >
         {/* Terminal Header Tabs Bar */}
         <div
+          data-tour="cli-terminal-topbar"
           className="skin-bar"
           style={{
             height: 38,
@@ -5463,6 +5519,33 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', flexShrink: 0 }}>
+                {isMarkdownFile(viewer.name) && viewer.content !== undefined && (
+                  <button
+                    type="button"
+                    onClick={() => setMdPreview((v) => !v)}
+                    title={mdPreview ? 'Fechar visualização' : 'Visualizar Markdown'}
+                    style={{
+                      height: 28,
+                      padding: '0 10px',
+                      borderRadius: 6,
+                      border: 'none',
+                      boxShadow: 'none',
+                      background: mdPreview ? hexToRgba(accentColor, 0.2) : isEffectiveDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                      color: mdPreview ? accentColor : themeTokens.textPrimary,
+                      fontSize: 11.5,
+                      fontWeight: 400,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      transition: 'background 0.15s ease',
+                    }}
+                  >
+                    <Eye size={13} />
+                    <span>Visualizar</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => {
@@ -5568,7 +5651,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               ) : viewer.content === undefined ? (
                 <span>Carregando…</span>
               ) : (
-                <div style={{ width: '100%', height: '100%' }}>
+                <div style={{ width: '100%', height: '100%', display: 'flex' }}>
+                  <div style={{ flex: '1 1 0', minWidth: 0, height: '100%' }}>
                   <Editor
                     height="100%"
                     path={viewer.path}
@@ -5623,6 +5707,30 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       bracketPairColorization: { enabled: true },
                     }}
                   />
+                  </div>
+                  {mdPreview && isMarkdownFile(viewer.name) && (
+                    <div
+                      style={{
+                        flex: '1 1 0',
+                        minWidth: 0,
+                        height: '100%',
+                        overflowY: 'auto',
+                        padding: '16px 20px',
+                        textAlign: 'left',
+                        borderLeft: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+                        background: themeTokens.bgCard,
+                      }}
+                    >
+                      {renderMarkdownPreview(viewer.content ?? '', {
+                        textPrimary: themeTokens.textPrimary,
+                        textSecondary: themeTokens.textSecondary,
+                        textMuted: themeTokens.textMuted,
+                        border: themeTokens.border,
+                        accentColor,
+                        isEffectiveDark,
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

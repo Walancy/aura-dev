@@ -185,6 +185,8 @@ import NotificationCenterPanel from './components/notifications/NotificationCent
 import { useNotificationCenter } from './components/notifications/useNotificationCenter';
 import { useProjectNotifier } from './components/notifications/useProjectNotifier';
 import { SkillsModal } from './components/skills/SkillsModal';
+import { ScreenTutorialTour } from './components/tutorial/ScreenTutorialTour';
+import { SCREEN_TUTORIAL_LABELS } from './components/tutorial/tutorialStore';
 
 interface DailyBudgetInfoTooltipProps {
   claudeDaily: DailyBudget;
@@ -2616,6 +2618,7 @@ export const App: React.FC = () => {
   // Minimalist Draggable Theme Popup State
   const [isThemePopupOpen, setIsThemePopupOpen] = useState(false);
   const [isCliCustomizeOpen, setIsCliCustomizeOpen] = useState(false);
+  const [tutorialTriggerCount, setTutorialTriggerCount] = useState(0);
   const [themePopupPos, setThemePopupPos] = useState({ x: 0, y: 0 });
   const [isDraggingThemePopup, setIsDraggingThemePopup] = useState(false);
   const themePopupDragRef = useRef<{ mouseX: number; mouseY: number; startX: number; startY: number } | null>(null);
@@ -8923,6 +8926,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           />
 
           <div
+            data-tour="header-nav-tabs"
             className="skin-flat"
             style={{
               padding: 5,
@@ -9232,7 +9236,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           {activeTab === 'ide' && (
             <>
               {/* Layout Controls: Customize Layout + 3 Panel Toggles */}
-              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }} ref={customizeLayoutRef}>
+              <div data-tour="ide-layout-controls" style={{ position: 'relative', display: 'flex', alignItems: 'center' }} ref={customizeLayoutRef}>
                 <div style={{ justifyContent: 'flex-start', alignItems: 'center', gap: 6, display: 'flex', WebkitAppRegion: 'no-drag' as any }}>
                   {/* 1. Customize Layout Button */}
                   <div
@@ -9661,7 +9665,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             })}
 
             {/* Header AI Selector Button & Dropdown */}
-            <div style={{ position: 'relative' }} ref={headerAiMenuRef}>
+            <div data-tour="header-ai-selector" style={{ position: 'relative' }} ref={headerAiMenuRef}>
             <div
               onClick={() => {
                 setIsHeaderAiMenuOpen((prev) => {
@@ -10378,7 +10382,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
         </div>
 
         {/* Settings Gear Button & Dropdown Menu */}
-          <div style={{ position: 'relative' }} ref={settingsMenuRef}>
+          <div data-tour="header-settings-btn" style={{ position: 'relative' }} ref={settingsMenuRef}>
               <div
                 onClick={() => setIsSettingsMenuOpen((prev) => !prev)}
                 style={{
@@ -10810,6 +10814,51 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   >
                     <span>Personalizar CLI</span>
                   </div>
+
+                  {/* Divider */}
+                  <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)', margin: '4px 0' }} />
+
+                  {/* Tutorial da Tela Atual */}
+                  <button
+                    type="button"
+                    data-tour="header-settings-tutorial-btn"
+                    onClick={() => {
+                      logSystemActivity('menu_configuracoes', 'abrir_tutorial', activeHeaderProject?.name || 'Sistema', { tela: activeTab });
+                      setIsSettingsMenuOpen(false);
+                      setTutorialTriggerCount((c) => c + 1);
+                    }}
+                    style={{
+                      width: '100%',
+                      border: 'none',
+                      boxShadow: 'none',
+                      background: 'transparent',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '5px 12px',
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      fontWeight: 400,
+                      fontFamily: 'inherit',
+                      color: '#cccccc',
+                      textAlign: 'left',
+                      transition: 'background 0.08s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = '#04395e';
+                      e.currentTarget.style.color = '#ffffff';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = '#cccccc';
+                    }}
+                    title={`Exibir tutorial da tela ${SCREEN_TUTORIAL_LABELS[activeTab]}`}
+                  >
+                    <span>Tutorial</span>
+                    <span style={{ fontSize: 10, fontWeight: 400, color: '#888888' }}>
+                      {SCREEN_TUTORIAL_LABELS[activeTab]}
+                    </span>
+                  </button>
                 </div>
                 </>
               )}
@@ -10934,6 +10983,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           {showActivityBar && !isZenMode && (
             <>
               <div
+                data-tour="ide-activity-bar"
                 style={{
                   alignSelf: 'stretch',
                   width: 48,
@@ -11353,6 +11403,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           {showExplorer && !isZenMode && (
             <>
               <div
+                data-tour="ide-explorer-panel"
                 style={{
                   alignSelf: 'stretch',
                   width: explorerWidth,
@@ -12030,6 +12081,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           {/* Center Area (Editor Tabs, Code Canvas, Terminal)     */}
           {/* ---------------------------------------------------- */}
           <div
+            data-tour="ide-editor-area"
             style={{
               flex: '1 1 0',
               alignSelf: 'stretch',
@@ -12042,7 +12094,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             }}
           >
             {/* Editor Tabs Row */}
-            <div style={{ alignSelf: 'stretch', justifyContent: 'space-between', alignItems: 'center', display: 'inline-flex', flexShrink: 0 }}>
+            <div data-tour="ide-editor-tabs" style={{ alignSelf: 'stretch', justifyContent: 'space-between', alignItems: 'center', display: 'inline-flex', flexShrink: 0 }}>
               {/* Left: Tabs pill container */}
               <div
                 style={{
@@ -13177,6 +13229,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                 {/* Terminal Alignment Wrapper based on panelAlignment */}
                 <div
+                  data-tour="ide-terminal-dock"
                   style={{
                     width: panelAlignment === 'justify' ? '100%' : panelAlignment === 'center' ? 'min(980px, 100%)' : 'min(84%, 100%)',
                     alignSelf: panelAlignment === 'center' ? 'center' : panelAlignment === 'left' ? 'flex-start' : panelAlignment === 'right' ? 'flex-end' : 'stretch',
@@ -14160,6 +14213,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               />
 
               <div
+                data-tour="ide-ai-panel"
                 style={{
                   width: aiPanelWidth,
                   alignSelf: 'stretch',
@@ -19243,6 +19297,19 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           accentColor={accentColor}
           onConfirm={handleConfirmRejectAllDiffs}
           onClose={() => setRejectAllConfirmOpen(false)}
+        />
+
+        {/* ========================================================================= */}
+        {/* INTERACTIVE SCREEN TUTORIAL (REACT JOYRIDE — AUTO FIRST VISIT + MANUAL)   */}
+        {/* ========================================================================= */}
+        <ScreenTutorialTour
+          activeScreen={activeTab}
+          isAuthenticated={githubAuthStatus === 'authenticated'}
+          manualStartCounter={tutorialTriggerCount}
+          themeTokens={themeTokens}
+          isEffectiveDark={isEffectiveDark}
+          accentColor={accentColor}
+          contextName={activeHeaderProject?.name || gitRepoName || 'Sistema'}
         />
       </div>
   );
