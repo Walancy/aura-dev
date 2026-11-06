@@ -12,18 +12,41 @@ asarUnpack:
 extraResources:
   - from: dist-electron/bin
     to: bin
+# nomes dos arquivos de download: Aura-Dev-<versão>-<sistema>[-<arquitetura>].<ext>
 mac:
   category: public.app-category.developer-tools
+  icon: build/icon.icns
   target: [dmg, zip]
-  artifactName: ${productName}-${version}-${arch}.${ext}
+  artifactName: Aura-Dev-${version}-mac-${arch}.${ext}
+dmg:
+  title: Aura Dev ${version}
+  icon: build/icon.icns
+  background: build/dmg-background.png
+  iconSize: 104
+  window:
+    width: 660
+    height: 400
+  contents:
+    - { x: 180, y: 210, type: file }
+    - { x: 480, y: 210, type: link, path: /Applications }
 win:
+  icon: build/icon.ico
   target: nsis
+  artifactName: Aura-Dev-${version}-windows-setup.${ext}
 linux:
+  icon: build/icon.png
   target: [AppImage, deb]
   category: Development
+  artifactName: Aura-Dev-${version}-linux-${arch}.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  installerSidebar: build/installerSidebar.bmp
+  uninstallerSidebar: build/installerSidebar.bmp
+  shortcutName: Aura Dev
 publish:
   provider: github
   owner: Walancy
