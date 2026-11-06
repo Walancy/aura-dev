@@ -1,4 +1,5 @@
 import { extractAgentOpenUrl, withScheme } from '../utils/agentUrl';
+import { getFieldTokens } from '../utils/fieldTokens';
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   Play,
@@ -7082,6 +7083,7 @@ Pergunta do usuário: ${question}`;
                   <div style={{ display: 'flex', gap: 6 }}>
                     <input
                       type="text"
+                      className="df-field"
                       placeholder='Ex: monte um Dev, um Revisor e um Testador, conecte à nota "Spec"'
                       value={maestroDrafts[node.id] || ''}
                       onChange={(e) => setMaestroDrafts((prev) => ({ ...prev, [node.id]: e.target.value }))}
@@ -7092,10 +7094,12 @@ Pergunta do usuário: ${question}`;
                         flex: 1,
                         padding: '6px 8px',
                         borderRadius: 6,
-                        border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.14)' : '1px solid rgba(0, 0, 0, 0.14)',
-                        background: isEffectiveDark ? '#0f0f0f' : '#ffffff',
+                        border: getFieldTokens(isEffectiveDark).fieldBorder,
+                        background: getFieldTokens(isEffectiveDark).fieldBg,
+                        boxShadow: 'none',
                         color: textPrimary,
                         fontSize: 11,
+                        fontWeight: 400,
                         outline: 'none',
                       }}
                     />
@@ -7209,8 +7213,9 @@ Pergunta do usuário: ${question}`;
                   position: 'absolute',
                   top: 10,
                   left: 12,
-                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)',
-                  border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.14)' : '1px solid rgba(0, 0, 0, 0.1)',
+                  background: getFieldTokens(isEffectiveDark).fieldBg,
+                  border: getFieldTokens(isEffectiveDark).fieldBorder,
+                  boxShadow: 'none',
                   borderRadius: 6,
                   color: textSecondary,
                   padding: '3px',
@@ -7223,11 +7228,11 @@ Pergunta do usuário: ${question}`;
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.color = textPrimary;
-                  e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(0, 0, 0, 0.09)';
+                  e.currentTarget.style.background = getFieldTokens(isEffectiveDark).fieldBgHover;
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.color = textSecondary;
-                  e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)';
+                  e.currentTarget.style.background = getFieldTokens(isEffectiveDark).fieldBg;
                 }}
               >
                 <MoreHorizontal size={13} strokeWidth={1.5} />
@@ -8194,6 +8199,7 @@ Pergunta do usuário: ${question}`;
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <div ref={floorsMenuRef} data-tour="orchestration-floors-btn" style={{ position: 'relative' }}>
             <button
+              className="df-dropdown-trigger"
               onClick={() => setIsFloorsMenuOpen((prev) => !prev)}
               title="Andares (workspaces isolados por branch)"
               style={{
@@ -8202,11 +8208,14 @@ Pergunta do usuário: ${question}`;
                 gap: 6,
                 padding: '5px 10px',
                 borderRadius: 6,
-                border: `1px solid ${border}`,
-                background: isFloorsMenuOpen ? `${accentColor}18` : bgCardSecondary,
+                border: isFloorsMenuOpen
+                  ? getFieldTokens(isEffectiveDark).fieldBorderFocus
+                  : getFieldTokens(isEffectiveDark).fieldBorder,
+                background: isFloorsMenuOpen ? `${accentColor}18` : getFieldTokens(isEffectiveDark).fieldBg,
+                boxShadow: 'none',
                 color: isFloorsMenuOpen ? accentColor : textPrimary,
                 fontSize: 11,
-                fontWeight: 500,
+                fontWeight: 400,
                 cursor: 'pointer',
               }}
             >
@@ -8217,6 +8226,7 @@ Pergunta do usuário: ${question}`;
 
             {isFloorsMenuOpen && (
               <div
+                className="df-dropdown-menu"
                 onClick={(e) => e.stopPropagation()}
                 onMouseDown={(e) => e.stopPropagation()}
                 style={{
@@ -8224,10 +8234,10 @@ Pergunta do usuário: ${question}`;
                   top: 'calc(100% + 6px)',
                   left: 0,
                   width: 260,
-                  background: isEffectiveDark ? '#141414' : '#ffffff',
-                  border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.12)' : '1px solid rgba(0, 0, 0, 0.12)',
+                  background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                  border: getFieldTokens(isEffectiveDark).dropdownBorder,
                   borderRadius: 12,
-                  boxShadow: isEffectiveDark ? '0 16px 36px rgba(0, 0, 0, 0.75)' : '0 16px 36px rgba(0, 0, 0, 0.12)',
+                  boxShadow: 'none',
                   zIndex: 960,
                   overflow: 'hidden',
                 }}
@@ -8323,31 +8333,37 @@ Pergunta do usuário: ${question}`;
                   <div style={{ fontSize: 10.5, fontWeight: 600, color: textSecondary }}>Novo andar</div>
                   <input
                     type="text"
+                    className="df-field"
                     placeholder="Nome (ex: Fix urgente)"
                     value={floorDraft.name}
                     onChange={(e) => setFloorDraft((prev) => ({ ...prev, name: e.target.value }))}
                     style={{
                       padding: '6px 8px',
                       borderRadius: 6,
-                      border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.14)' : '1px solid rgba(0, 0, 0, 0.14)',
-                      background: isEffectiveDark ? '#0f0f0f' : '#ffffff',
+                      border: getFieldTokens(isEffectiveDark).fieldBorder,
+                      background: getFieldTokens(isEffectiveDark).fieldBg,
+                      boxShadow: 'none',
                       color: textPrimary,
                       fontSize: 11,
+                      fontWeight: 400,
                       outline: 'none',
                     }}
                   />
                   <input
                     type="text"
+                    className="df-field"
                     placeholder="Branch (ex: fix/urgente)"
                     value={floorDraft.branch}
                     onChange={(e) => setFloorDraft((prev) => ({ ...prev, branch: e.target.value }))}
                     style={{
                       padding: '6px 8px',
                       borderRadius: 6,
-                      border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.14)' : '1px solid rgba(0, 0, 0, 0.14)',
-                      background: isEffectiveDark ? '#0f0f0f' : '#ffffff',
+                      border: getFieldTokens(isEffectiveDark).fieldBorder,
+                      background: getFieldTokens(isEffectiveDark).fieldBg,
+                      boxShadow: 'none',
                       color: textPrimary,
                       fontSize: 11,
+                      fontWeight: 400,
                       outline: 'none',
                     }}
                   />
@@ -8931,18 +8947,17 @@ Pergunta do usuário: ${question}`;
               extraContent: isAiPickerOpen && (
                 <div
                   ref={aiPickerRef}
+                  className="df-dropdown-menu"
                   onClick={(e) => e.stopPropagation()}
                   style={{
                     position: 'absolute',
                     left: 'calc(100% + 10px)',
                     top: -6,
                     width: 220,
-                    background: isEffectiveDark ? '#18181b' : '#ffffff',
-                    border: `1px solid ${border}`,
+                    background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                    border: getFieldTokens(isEffectiveDark).dropdownBorder,
                     borderRadius: 12,
-                    boxShadow: isEffectiveDark
-                      ? '0 16px 36px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.05)'
-                      : '0 16px 36px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+                    boxShadow: 'none',
                     padding: 6,
                     zIndex: 100,
                     display: 'flex',
@@ -9086,13 +9101,9 @@ Pergunta do usuário: ${question}`;
                 height: instructionPanelHeight,
                 minHeight: activeInstructionNode.type === 'model' || activeInstructionNode.type === 'project' ? 180 : 110,
                 background: isEffectiveDark ? '#141414' : '#ffffff',
-                border: isEffectiveDark ? 'none' : `1px solid ${border}`,
+                border: getFieldTokens(isEffectiveDark).dropdownBorder,
                 borderRadius: 16,
-                boxShadow: isPanelOpen
-                  ? (isEffectiveDark
-                      ? '0 14px 40px rgba(0, 0, 0, 0.8)'
-                      : '0 14px 40px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(0, 0, 0, 0.05)')
-                  : 'none',
+                boxShadow: 'none',
                 padding: '12px 14px',
                 zIndex: 65,
                 display: 'flex',

@@ -3802,11 +3802,14 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <div
+                    className="df-search-box"
                     style={{
                       flex: 1,
                       height: 26,
                       borderRadius: 6,
-                      background: isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
+                      background: getFieldTokens(isEffectiveDark).fieldBg,
+                      border: getFieldTokens(isEffectiveDark).fieldBorder,
+                      boxShadow: 'none',
                       display: 'flex',
                       alignItems: 'center',
                       gap: 6,
