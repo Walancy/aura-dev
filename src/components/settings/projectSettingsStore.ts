@@ -26,6 +26,8 @@ export interface ProjectSettings {
     providerId?: string;
     model?: string;
     contextNotes: string;
+    gate: string; // comandos (um por linha) que a IA roda antes de dizer que terminou
+    useMemory: boolean; // pede à IA que consulte .aura/memory.md
     automations: {
       issueDescription: boolean;
       weeklySummary: boolean;
@@ -75,6 +77,8 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   estimates: { unit: 'points', capacityPerPerson: 20 },
   ai: {
     contextNotes: '',
+    gate: '',
+    useMemory: false,
     automations: { issueDescription: true, weeklySummary: false, weeklySummaryWeekday: 5, assigneeSuggestions: true },
     permission: 'act',
   },

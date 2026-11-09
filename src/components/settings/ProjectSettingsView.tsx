@@ -68,7 +68,7 @@ const SECTIONS: Array<{ group: string; items: Array<{ id: SectionId; label: stri
     group: 'Aura Dev',
     items: [
       { id: 'fluxo', label: 'Fluxo de trabalho', icon: Workflow },
-      { id: 'ia', label: 'IA', icon: Bot },
+      { id: 'ia', label: 'IA do projeto', icon: Bot },
       { id: 'alertas', label: 'Alertas e notificações', icon: Bell },
       { id: 'local', label: 'Ambiente local', icon: TerminalSquare },
       { id: 'integracoes', label: 'Integrações', icon: Plug },

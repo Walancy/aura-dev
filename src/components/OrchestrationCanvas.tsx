@@ -814,6 +814,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
   const textPrimary = themeTokens?.textPrimary || (isEffectiveDark ? '#f8fafc' : '#0f172a');
   const textSecondary = themeTokens?.textSecondary || (isEffectiveDark ? '#94a3b8' : '#64748b');
   const hoverBg = themeTokens?.hoverBg || (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)');
+  const ft = getFieldTokens(isEffectiveDark);
 
   const aiMenuRef = useRef<HTMLDivElement>(null);
   const aiButtonRef = useRef<HTMLButtonElement>(null);
@@ -1102,7 +1103,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
           // terminal que já existia (servidor rodando ou subindo): digitar o comando de novo iria para o stdin dele
           if (!res?.success || res.reused) return;
           window.electronAPI.pty.write(sessionId, 'bun run dev 2>/dev/null || pnpm dev 2>/dev/null || npm run dev\n');
-          onToast?.(`🚀 Iniciando servidor de "${pName}" em segundo plano...`, 'info');
+          onToast?.(`Iniciando servidor de "${pName}" em segundo plano...`, 'info');
         }).catch(() => {});
       }
     }).catch(() => {});
@@ -1148,7 +1149,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
               fromNodeTitle: title,
             },
           }));
-          onToast?.(`🌐 Aberto no Navegador (${specificBrowser.title}): ${url}`);
+          onToast?.(`Aberto no Navegador (${specificBrowser.title}): ${url}`);
           return;
         }
       }
@@ -1170,7 +1171,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
           },
         }));
 
-        onToast?.(`🌐 Aberto no Navegador conectado (${targetBrowser.title}): ${url}`);
+        onToast?.(`Aberto no Navegador conectado (${targetBrowser.title}): ${url}`);
         return;
       }
 
@@ -1188,7 +1189,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
             fromNodeTitle: title,
           },
         }));
-        onToast?.(`🌐 Aberto no Navegador da tela (${targetBrowser.title}): ${url}`);
+        onToast?.(`Aberto no Navegador da tela (${targetBrowser.title}): ${url}`);
         return;
       }
 
@@ -1810,7 +1811,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
             )
           );
 
-          if (onToast) onToast(`🎉 Repositório "${projItem.name}" clonado com sucesso!`);
+          if (onToast) onToast(`Repositório "${projItem.name}" clonado com sucesso!`);
           await loadCanvasProjects();
         } else if (res.error && res.error !== 'Operação cancelada pelo usuário') {
           if (onToast) onToast(`Erro ao clonar: ${res.error}`);
@@ -1882,7 +1883,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
           setFloorNodes((prev) => prev.map((n) => (n.id === targetNodeId ? { ...n, status } : n)));
 
         setStatus('running');
-        onToast?.(`🤖 Enviando para ${targetNode.title}...`, 'info');
+        onToast?.(`Enviando para ${targetNode.title}...`, 'info');
 
         try {
           if (!window.electronAPI?.ai?.prompt) {
@@ -1908,7 +1909,7 @@ export const OrchestrationCanvas: React.FC<OrchestrationCanvasProps> = ({
                   : n
               )
             );
-            onToast?.(`✨ Resposta de ${targetNode.title} recebida!`, 'success');
+            onToast?.(`Resposta de ${targetNode.title} recebida!`, 'success');
 
             // só uma URL escrita na resposta abre o navegador (o resolvedor por nome de serviço abria claude.ai/x.com para "o Claude sugeriu x")
             const explicit = reply.match(/https?:\/\/[^\s)<>"']+/i)?.[0];
@@ -4526,7 +4527,7 @@ Pergunta do usuário: ${question}`;
                 nodeOutput = `Página aberta com sucesso no componente de navegador: ${targetUrl}`;
                 outputs.set(node.id, nodeOutput);
                 lastSummary = nodeOutput;
-                onToast?.(`🌐 Navegador (${node.title || 'Navegador'}): ${targetUrl}`);
+                onToast?.(`Navegador (${node.title || 'Navegador'}): ${targetUrl}`);
               } else {
                 nodeOutput = 'Navegador em espera (nenhuma URL informada no fluxo).';
                 outputs.set(node.id, nodeOutput);
@@ -4818,19 +4819,19 @@ Pergunta do usuário: ${question}`;
                   ...prev,
                   [node.id]: { text: `Agente analisando e delegando tarefas (${cliType})...`, timestamp: Date.now() },
                 }));
-                onToast?.(`🤖 Agente "${node.title}" elaborando e delegando tarefas para as IAs trabalhadoras...`, 'info');
+                onToast?.(`Agente "${node.title}" elaborando e delegando tarefas para as IAs trabalhadoras...`, 'info');
               } else if (isWorkerExecutor) {
                 setNodeLiveActivity((prev) => ({
                   ...prev,
                   [node.id]: { text: `IA executando tarefas designadas (${cliType})...`, timestamp: Date.now() },
                 }));
-                onToast?.(`💻 IA Trabalhadora "${node.title}" executando tarefas no projeto (${modelName})...`, 'info');
+                onToast?.(`IA Trabalhadora "${node.title}" executando tarefas no projeto (${modelName})...`, 'info');
               } else {
                 setNodeLiveActivity((prev) => ({
                   ...prev,
                   [node.id]: { text: `Escrevendo prompt no CLI (${cliType})...`, timestamp: Date.now() },
                 }));
-                onToast?.(`💻 Executando "${node.title}" no terminal integrado (${modelName})...`, 'info');
+                onToast?.(`Executando "${node.title}" no terminal integrado (${modelName})...`, 'info');
               }
 
               try {
@@ -4952,7 +4953,7 @@ Pergunta do usuário: ${question}`;
                             }));
                           }, idx * 120);
 
-                          onToast?.(`🌐 Navegador carregando URL identificada pela IA: ${item.url}`);
+                          onToast?.(`Navegador carregando URL identificada pela IA: ${item.url}`);
                         });
                       } else {
                         nodeError =
@@ -5360,7 +5361,7 @@ Pergunta do usuário: ${question}`;
       ...prev,
       [browserId]: { url, timestamp: Date.now(), openInNewTab: false, fromNodeTitle: 'Maestro' },
     }));
-    onToast?.(`🌐 Maestro abriu no Navegador: ${url}`);
+    onToast?.(`Maestro abriu no Navegador: ${url}`);
     return browserId;
   };
 
@@ -6754,7 +6755,7 @@ Pergunta do usuário: ${question}`;
                 await window.electronAPI.pty.create(sessionId, 'zsh', projectPath, 100, 24, accentColor);
                 const runCmd = 'bun run dev 2>/dev/null || pnpm dev 2>/dev/null || npm run dev\n';
                 window.electronAPI.pty.write(sessionId, runCmd);
-                onToast?.(`🚀 Servidor de "${projectName}" iniciado no terminal integrado!`, 'success');
+                onToast?.(`Servidor de "${projectName}" iniciado no terminal integrado!`, 'success');
               }}
               onDeleteNode={() => {
                 setNodeToDelete(node);
@@ -7035,7 +7036,7 @@ Pergunta do usuário: ${question}`;
                     title="Fechar CLI e recolher card"
                     style={{
                       background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
-                      border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.1)'}`,
+                      border: 'none',
                       color: textSecondary,
                       padding: '3px 7px',
                       borderRadius: 5,
@@ -7253,7 +7254,7 @@ Pergunta do usuário: ${question}`;
                     top: 10,
                     left: 38,
                     background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)',
-                    border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.14)' : '1px solid rgba(0, 0, 0, 0.1)',
+                    border: 'none',
                     borderRadius: 6,
                     color: accentColor,
                     padding: '3px 6px',
@@ -7995,9 +7996,7 @@ Pergunta do usuário: ${question}`;
             background: isActive
               ? (activeColor ? `${activeColor}22` : (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)'))
               : 'transparent',
-            border: isActive
-              ? (activeColor ? `1px solid ${activeColor}44` : (isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.25)' : '1px solid rgba(0, 0, 0, 0.15)'))
-              : '1px solid transparent',
+            border: 'none',
             padding: 7,
             borderRadius: 6,
             color: isActive ? (activeColor || (isEffectiveDark ? '#ffffff' : accentColor)) : textSecondary,
@@ -9198,7 +9197,7 @@ Pergunta do usuário: ${question}`;
                     title="Ocultar instrução"
                     style={{
                       background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
-                      border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
+                      border: 'none',
                       borderRadius: 6,
                       color: isEffectiveDark ? 'rgba(255, 255, 255, 0.75)' : textSecondary,
                       padding: '3px 8px',
@@ -9250,6 +9249,7 @@ Pergunta do usuário: ${question}`;
                           {currentProvMeta.renderIcon(15)}
                         </div>
                         <select
+                          className="df-field"
                           value={currentProv}
                           onChange={(e) => {
                             const newProv = e.target.value as AiProviderId;
@@ -9265,13 +9265,16 @@ Pergunta do usuário: ${question}`;
                           }}
                           style={{
                             width: '100%',
-                            background: isEffectiveDark ? '#19191b' : bgCardSecondary,
-                            border: `1px solid ${border}`,
+                            height: 28,
+                            boxSizing: 'border-box',
+                            background: ft.fieldBg,
+                            border: ft.fieldBorder,
+                            boxShadow: 'none',
                             borderRadius: 6,
                             color: textPrimary,
                             fontSize: 11,
-                            fontWeight: 500,
-                            padding: '5px 24px 5px 28px',
+                            fontWeight: 400,
+                            padding: '0 24px 0 28px',
                             outline: 'none',
                             cursor: 'pointer',
                             appearance: 'none',
@@ -9306,6 +9309,7 @@ Pergunta do usuário: ${question}`;
                       </span>
                       <div style={{ position: 'relative', display: 'flex', alignItems: 'center', flex: 1 }}>
                         <select
+                          className="df-field"
                           value={activeInstructionNode.config?.model || currentModelList[0]?.label}
                           onChange={(e) => {
                             const meta = AI_PROVIDER_INFOS[currentProv] || AI_PROVIDER_INFOS.claude;
@@ -9316,13 +9320,16 @@ Pergunta do usuário: ${question}`;
                           }}
                           style={{
                             width: '100%',
-                            background: isEffectiveDark ? '#19191b' : bgCardSecondary,
-                            border: `1px solid ${border}`,
+                            height: 28,
+                            boxSizing: 'border-box',
+                            background: ft.fieldBg,
+                            border: ft.fieldBorder,
+                            boxShadow: 'none',
                             borderRadius: 6,
                             color: textPrimary,
                             fontSize: 11,
-                            fontWeight: 500,
-                            padding: '5px 24px 5px 8px',
+                            fontWeight: 400,
+                            padding: '0 24px 0 8px',
                             outline: 'none',
                             cursor: 'pointer',
                             appearance: 'none',
@@ -9447,13 +9454,16 @@ Pergunta do usuário: ${question}`;
                               }}
                               style={{
                                 width: '100%',
-                                background: isEffectiveDark ? '#19191b' : bgCardSecondary,
-                                border: `1px solid ${border}`,
+                                height: 28,
+                                boxSizing: 'border-box',
+                                background: ft.fieldBg,
+                                border: ft.fieldBorder,
+                                boxShadow: 'none',
                                 borderRadius: 6,
                                 color: textPrimary,
                                 fontSize: 11,
-                                fontWeight: 500,
-                                padding: '5px 22px 5px 8px',
+                                fontWeight: 400,
+                                padding: '0 22px 0 8px',
                                 outline: 'none',
                                 cursor: 'pointer',
                                 appearance: 'none',
@@ -9464,7 +9474,7 @@ Pergunta do usuário: ${question}`;
                                 <optgroup label="Projetos Locais (Clonados)">
                                   {clonedProjects.map((p) => (
                                     <option key={p.id} value={p.localDir || p.name} style={{ background: isEffectiveDark ? '#1c1c1e' : '#ffffff', color: textPrimary }}>
-                                      📁 {p.name} ({p.branch || 'main'})
+                                      {p.name} ({p.branch || 'main'})
                                     </option>
                                   ))}
                                 </optgroup>
@@ -9473,7 +9483,7 @@ Pergunta do usuário: ${question}`;
                                 <optgroup label="Repositórios GitHub (Não Clonados)">
                                   {remoteProjects.map((p) => (
                                     <option key={p.id} value={`remote::${p.fullName}`} style={{ background: isEffectiveDark ? '#1c1c1e' : '#ffffff', color: textPrimary }}>
-                                      ☁️ {p.fullName} (Clonar)
+                                      {p.fullName} (Clonar)
                                     </option>
                                   ))}
                                 </optgroup>
@@ -9485,6 +9495,7 @@ Pergunta do usuário: ${question}`;
                           </div>
                         ) : (
                           <input
+                            className="df-field"
                             type="text"
                             value={pName}
                             onChange={(e) => {
@@ -9497,13 +9508,16 @@ Pergunta do usuário: ${question}`;
                             placeholder="Nome do projeto..."
                             style={{
                               flex: 1,
-                              background: isEffectiveDark ? '#19191b' : bgCardSecondary,
-                              border: `1px solid ${border}`,
+                              height: 28,
+                              boxSizing: 'border-box',
+                              background: ft.fieldBg,
+                              border: ft.fieldBorder,
+                              boxShadow: 'none',
                               borderRadius: 6,
                               color: textPrimary,
                               fontSize: 11,
-                              fontWeight: 500,
-                              padding: '5px 8px',
+                              fontWeight: 400,
+                              padding: '0 8px',
                               outline: 'none',
                             }}
                           />
@@ -9542,6 +9556,7 @@ Pergunta do usuário: ${question}`;
                           Branch:
                         </span>
                         <input
+                          className="df-field"
                           type="text"
                           value={pBranch}
                           onChange={(e) => {
@@ -9554,13 +9569,16 @@ Pergunta do usuário: ${question}`;
                           placeholder="main"
                           style={{
                             flex: 1,
-                            background: isEffectiveDark ? '#19191b' : bgCardSecondary,
-                            border: `1px solid ${border}`,
+                            height: 28,
+                            boxSizing: 'border-box',
+                            background: ft.fieldBg,
+                            border: ft.fieldBorder,
+                            boxShadow: 'none',
                             borderRadius: 6,
                             color: textPrimary,
                             fontSize: 11,
-                            fontWeight: 500,
-                            padding: '5px 8px',
+                            fontWeight: 400,
+                            padding: '0 8px',
                             outline: 'none',
                           }}
                         />
@@ -9569,10 +9587,11 @@ Pergunta do usuário: ${question}`;
 
                     {/* Row 2: Root Directory Path */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
-                      <span style={{ fontSize: 11, color: textSecondary, fontWeight: 500, whiteSpace: 'nowrap' }}>
+                      <span style={{ fontSize: 11, color: textSecondary, fontWeight: 400, whiteSpace: 'nowrap' }}>
                         Diretório:
                       </span>
                       <input
+                        className="df-field"
                         type="text"
                         value={pPath}
                         onChange={(e) => {
@@ -9584,18 +9603,22 @@ Pergunta do usuário: ${question}`;
                         placeholder={!isCloned ? 'Repositório remoto no GitHub — clique em Clonar para baixar' : '/caminho/do/projeto'}
                         style={{
                           flex: 1,
-                          background: isEffectiveDark ? '#19191b' : bgCardSecondary,
-                          border: `1px solid ${border}`,
+                          height: 28,
+                          boxSizing: 'border-box',
+                          background: ft.fieldBg,
+                          border: ft.fieldBorder,
+                          boxShadow: 'none',
                           borderRadius: 6,
                           color: !isCloned ? '#0284c7' : textPrimary,
                           fontSize: 11,
                           fontFamily: 'monospace',
-                          padding: '4px 8px',
+                          padding: '0 8px',
                           outline: 'none',
                         }}
                       />
                       <button
                         type="button"
+                        className="df-dropdown-trigger"
                         onClick={async () => {
                           if (window.electronAPI?.dialog?.openFolder) {
                             const res = await window.electronAPI.dialog.openFolder();
@@ -9610,12 +9633,16 @@ Pergunta do usuário: ${question}`;
                           }
                         }}
                         style={{
-                          padding: '4px 8px',
-                          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
-                          border: `1px solid ${border}`,
+                          height: 28,
+                          boxSizing: 'border-box',
+                          padding: '0 8px',
+                          background: ft.fieldBg,
+                          border: ft.fieldBorder,
+                          boxShadow: 'none',
                           borderRadius: 6,
                           color: textSecondary,
                           fontSize: 11,
+                          fontWeight: 400,
                           cursor: 'pointer',
                           display: 'flex',
                           alignItems: 'center',
@@ -9634,10 +9661,12 @@ Pergunta do usuário: ${question}`;
 
               {/* Input container with multi-line wrapping textarea matching Image 2 */}
               <div
+                className="df-search-box"
                 style={{
                   width: '100%',
-                  background: isEffectiveDark ? '#19191b' : '#f8fafc',
-                  border: isEffectiveDark ? 'none' : `1px solid ${border}`,
+                  background: ft.fieldBg,
+                  border: ft.fieldBorder,
+                  boxShadow: 'none',
                   borderRadius: 8,
                   padding: '8px 12px',
                   boxSizing: 'border-box',
@@ -10011,6 +10040,7 @@ Pergunta do usuário: ${question}`;
 
         return (
           <div
+            className="df-dropdown-menu"
             data-node-popup="true"
             ref={nodeOptionsPopupRef}
             onClick={(e) => e.stopPropagation()}
@@ -10023,12 +10053,10 @@ Pergunta do usuário: ${question}`;
               // cabe sempre abaixo do topo escolhido e rola por dentro (o `overflow: hidden` mais abaixo anulava o `overflowY` e cortava os últimos itens)
               maxHeight: `calc(100vh - ${clampedY + 12}px)`,
               overflowY: 'auto',
-              background: isEffectiveDark ? '#141414' : '#ffffff',
-              border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.12)' : '1px solid rgba(0, 0, 0, 0.12)',
+              background: ft.dropdownMenuBg,
+              border: ft.dropdownBorder,
               borderRadius: 12,
-              boxShadow: isEffectiveDark
-                ? '0 16px 36px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.05)'
-                : '0 16px 36px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.06)',
+              boxShadow: 'none',
               zIndex: 950,
               overflowX: 'hidden',
               animation: 'popupScale 0.12s cubic-bezier(0.16, 1, 0.3, 1)',
@@ -10098,17 +10126,22 @@ Pergunta do usuário: ${question}`;
                 {nodeOptionsPopup.view === 'roles_create' ? (
                   <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <input
+                      className="df-field"
                       type="text"
                       placeholder="Nome do papel (ex: Revisor)"
                       value={newRoleDraft.name}
                       onChange={(e) => setNewRoleDraft((prev) => ({ ...prev, name: e.target.value }))}
                       style={{
-                        padding: '7px 8px',
+                        height: 28,
+                        boxSizing: 'border-box',
+                        padding: '0 8px',
                         borderRadius: 6,
-                        border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.14)' : '1px solid rgba(0, 0, 0, 0.14)',
-                        background: isEffectiveDark ? '#0f0f0f' : '#ffffff',
+                        border: ft.fieldBorder,
+                        background: ft.fieldBg,
+                        boxShadow: 'none',
                         color: textPrimary,
                         fontSize: 11.5,
+                        fontWeight: 400,
                         outline: 'none',
                       }}
                     />
@@ -10122,6 +10155,7 @@ Pergunta do usuário: ${question}`;
                       />
                     </div>
                     <textarea
+                      className="df-field"
                       placeholder="Instruções (ex: você é o Revisor de código, foque em bugs e legibilidade)"
                       value={newRoleDraft.instructions}
                       onChange={(e) => setNewRoleDraft((prev) => ({ ...prev, instructions: e.target.value }))}
@@ -10129,10 +10163,12 @@ Pergunta do usuário: ${question}`;
                       style={{
                         padding: '7px 8px',
                         borderRadius: 6,
-                        border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.14)' : '1px solid rgba(0, 0, 0, 0.14)',
-                        background: isEffectiveDark ? '#0f0f0f' : '#ffffff',
+                        border: ft.fieldBorder,
+                        background: ft.fieldBg,
+                        boxShadow: 'none',
                         color: textPrimary,
                         fontSize: 11,
+                        fontWeight: 400,
                         outline: 'none',
                         resize: 'vertical',
                       }}
@@ -10274,6 +10310,7 @@ Pergunta do usuário: ${question}`;
 
                 <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <textarea
+                    className="df-field"
                     placeholder="Mensagem para o(s) agente(s) conectado(s)"
                     value={relayDraft}
                     onChange={(e) => setRelayDraft(e.target.value)}
@@ -10281,10 +10318,12 @@ Pergunta do usuário: ${question}`;
                     style={{
                       padding: '7px 8px',
                       borderRadius: 6,
-                      border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.14)' : '1px solid rgba(0, 0, 0, 0.14)',
-                      background: isEffectiveDark ? '#0f0f0f' : '#ffffff',
+                      border: ft.fieldBorder,
+                      background: ft.fieldBg,
+                      boxShadow: 'none',
                       color: textPrimary,
                       fontSize: 11,
+                      fontWeight: 400,
                       outline: 'none',
                       resize: 'vertical',
                     }}
@@ -11141,9 +11180,9 @@ Pergunta do usuário: ${question}`;
               maxWidth: 440,
               maxHeight: '88vh',
               background: isEffectiveDark ? '#141414' : '#ffffff',
-              border: `1px solid ${border}`,
+              border: ft.dropdownBorder,
               borderRadius: 16,
-              boxShadow: isEffectiveDark ? '0 20px 60px rgba(0, 0, 0, 0.75)' : '0 20px 60px rgba(0, 0, 0, 0.16)',
+              boxShadow: 'none',
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',
@@ -11200,17 +11239,22 @@ Pergunta do usuário: ${question}`;
                   Título do Nó
                 </label>
                 <input
+                  className="df-field"
                   type="text"
                   value={configuringNode.title}
                   onChange={(e) => handleUpdateNode(configuringNode.id, { title: e.target.value })}
                   style={{
                     width: '100%',
-                    padding: '8px 12px',
+                    height: 36,
+                    boxSizing: 'border-box',
+                    padding: '0 12px',
                     borderRadius: 6,
-                    background: bgCardSecondary,
-                    border: `1px solid ${border}`,
+                    background: ft.fieldBg,
+                    border: ft.fieldBorder,
+                    boxShadow: 'none',
                     color: textPrimary,
                     fontSize: 12,
+                    fontWeight: 400,
                     outline: 'none',
                   }}
                 />
@@ -11232,6 +11276,7 @@ Pergunta do usuário: ${question}`;
                       </label>
                       <div style={{ position: 'relative' }}>
                         <select
+                          className="df-field"
                           value={modalProv}
                           onChange={(e) => {
                             const newProv = e.target.value as AiProviderId;
@@ -11253,12 +11298,17 @@ Pergunta do usuário: ${question}`;
                           }}
                           style={{
                             width: '100%',
-                            padding: '8px 28px 8px 12px',
+                            height: 36,
+                            boxSizing: 'border-box',
+                            padding: '0 28px 0 12px',
                             borderRadius: 6,
-                            background: bgCardSecondary,
-                            border: `1px solid ${border}`,
+                            background: ft.fieldBg,
+                            border: ft.fieldBorder,
+                            boxShadow: 'none',
                             color: textPrimary,
                             fontSize: 12,
+                            fontWeight: 400,
+                            outline: 'none',
                             appearance: 'none',
                             cursor: 'pointer',
                           }}
@@ -11289,6 +11339,7 @@ Pergunta do usuário: ${question}`;
                       </label>
                       <div style={{ position: 'relative' }}>
                         <select
+                          className="df-field"
                           value={modalMatch?.id || modalMatch?.label}
                           onChange={(e) => {
                             const chosen = modalModelList.find((m) => m.id === e.target.value || m.label === e.target.value);
@@ -11304,12 +11355,17 @@ Pergunta do usuário: ${question}`;
                           }}
                           style={{
                             width: '100%',
-                            padding: '8px 28px 8px 12px',
+                            height: 36,
+                            boxSizing: 'border-box',
+                            padding: '0 28px 0 12px',
                             borderRadius: 6,
-                            background: bgCardSecondary,
-                            border: `1px solid ${border}`,
+                            background: ft.fieldBg,
+                            border: ft.fieldBorder,
+                            boxShadow: 'none',
                             color: textPrimary,
                             fontSize: 12,
+                            fontWeight: 400,
+                            outline: 'none',
                             appearance: 'none',
                             cursor: 'pointer',
                           }}
@@ -11368,6 +11424,7 @@ Pergunta do usuário: ${question}`;
                     Texto do Prompt
                   </label>
                   <textarea
+                    className="df-field"
                     rows={4}
                     value={configuringNode.config.prompt || ''}
                     onChange={(e) =>
@@ -11378,12 +11435,15 @@ Pergunta do usuário: ${question}`;
                     placeholder="Descreva a demanda de execução..."
                     style={{
                       width: '100%',
+                      boxSizing: 'border-box',
                       padding: '8px 12px',
                       borderRadius: 6,
-                      background: bgCardSecondary,
-                      border: `1px solid ${border}`,
+                      background: ft.fieldBg,
+                      border: ft.fieldBorder,
+                      boxShadow: 'none',
                       color: textPrimary,
                       fontSize: 12,
+                      fontWeight: 400,
                       resize: 'vertical',
                       lineHeight: 1.4,
                       outline: 'none',
@@ -11399,6 +11459,7 @@ Pergunta do usuário: ${question}`;
                     Instrução do Sistema
                   </label>
                   <textarea
+                    className="df-field"
                     rows={4}
                     value={configuringNode.config.systemInstruction || ''}
                     onChange={(e) =>
@@ -11409,12 +11470,15 @@ Pergunta do usuário: ${question}`;
                     placeholder="Instruções para o agente coordenador..."
                     style={{
                       width: '100%',
+                      boxSizing: 'border-box',
                       padding: '8px 12px',
                       borderRadius: 6,
-                      background: bgCardSecondary,
-                      border: `1px solid ${border}`,
+                      background: ft.fieldBg,
+                      border: ft.fieldBorder,
+                      boxShadow: 'none',
                       color: textPrimary,
                       fontSize: 12,
+                      fontWeight: 400,
                       resize: 'vertical',
                       lineHeight: 1.4,
                       outline: 'none',
@@ -11430,6 +11494,7 @@ Pergunta do usuário: ${question}`;
                     Comando CLI
                   </label>
                   <input
+                    className="df-field"
                     type="text"
                     value={configuringNode.config.command || ''}
                     onChange={(e) =>
@@ -11440,13 +11505,17 @@ Pergunta do usuário: ${question}`;
                     placeholder="git status -s"
                     style={{
                       width: '100%',
-                      padding: '8px 12px',
+                      height: 36,
+                      boxSizing: 'border-box',
+                      padding: '0 12px',
                       borderRadius: 6,
-                      background: bgCardSecondary,
-                      border: `1px solid ${border}`,
+                      background: ft.fieldBg,
+                      border: ft.fieldBorder,
+                      boxShadow: 'none',
                       color: isEffectiveDark ? '#38bdf8' : '#0284c7',
                       fontFamily: 'monospace',
                       fontSize: 12,
+                      fontWeight: 400,
                       outline: 'none',
                     }}
                   />
@@ -11460,6 +11529,7 @@ Pergunta do usuário: ${question}`;
                     Identificador de Sessão
                   </label>
                   <input
+                    className="df-field"
                     type="text"
                     value={configuringNode.config.account || ''}
                     onChange={(e) =>
@@ -11469,12 +11539,16 @@ Pergunta do usuário: ${question}`;
                     }
                     style={{
                       width: '100%',
-                      padding: '8px 12px',
+                      height: 36,
+                      boxSizing: 'border-box',
+                      padding: '0 12px',
                       borderRadius: 6,
-                      background: bgCardSecondary,
-                      border: `1px solid ${border}`,
+                      background: ft.fieldBg,
+                      border: ft.fieldBorder,
+                      boxShadow: 'none',
                       color: textPrimary,
                       fontSize: 12,
+                      fontWeight: 400,
                       outline: 'none',
                     }}
                   />
@@ -11532,7 +11606,7 @@ Pergunta do usuário: ${question}`;
                 style={{
                   background: 'rgba(239, 68, 68, 0.12)',
                   color: '#ef4444',
-                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  border: 'none',
                   borderRadius: 6,
                   padding: '7px 12px',
                   fontSize: 11,

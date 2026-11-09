@@ -143,9 +143,21 @@ export class SkillsService {
     return [...DEFAULT_SOURCES, ...custom.filter((c) => !DEFAULT_SOURCES.some((d) => d.id === c.id))];
   }
 
-  addSource(input: string): SkillSource {
-    // Aceita "owner/repo", "owner/repo/pasta" ou URL do GitHub (…/tree/branch/pasta)
-    const cleaned = input.trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '');
+  async addSource(input: string, token?: string): Promise<SkillSource> {
+    // Aceita "owner", "owner/repo", "owner/repo/pasta" ou URL do GitHub (…/tree/branch/pasta)
+    const cleaned = input.trim().replace(/^https?:\/\/github\.com\//, '').replace(/\/$/, '').replace(/\.git$/, '');
+    if (cleaned && !cleaned.includes('/')) {
+      // Só o dono: adiciona os repositórios dele que parecem coleções de skills
+      const res = await this.gh(`https://api.github.com/search/repositories?q=${encodeURIComponent(`user:${cleaned} skill in:name,description,topics`)}&sort=stars&per_page=5`, token);
+      const repos: any[] = res.items || [];
+      if (!repos.length) throw new Error(`Nenhum repositório de skills encontrado para "${cleaned}".`);
+      let first: SkillSource | undefined;
+      for (const r of repos) {
+        const src = await this.addSource(r.full_name, token);
+        first = first || src;
+      }
+      return first!;
+    }
     const treeMatch = cleaned.match(/^([^/]+)\/([^/]+)\/tree\/([^/]+)\/?(.*)$/);
     const [owner, repo, ...rest] = cleaned.split('/');
     if (!owner || !repo) throw new Error('Informe owner/repo ou a URL do repositório.');
@@ -259,11 +271,13 @@ export class SkillsService {
     this.sync();
   }
 
-  setAlwaysOn(id: string, on: boolean) {
+  setAlwaysOn(id: string | string[], on: boolean) {
     const state = this.readState();
     const set = new Set(state.alwaysOn);
-    if (on) set.add(id);
-    else set.delete(id);
+    for (const i of Array.isArray(id) ? id : [id]) {
+      if (on) set.add(i);
+      else set.delete(i);
+    }
     state.alwaysOn = Array.from(set);
     this.writeState(state);
     this.sync();
@@ -463,8 +477,10 @@ export class SkillsService {
     const branch = await this.resolveBranch(src, token);
     const tree = await this.gh(`https://api.github.com/repos/${src.owner}/${src.repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`, token);
     const prefix = `${skillPath.replace(/\/$/, '')}/`;
-    const files: any[] = (tree.tree || []).filter((n: any) => n.type === 'blob' && n.path.startsWith(prefix));
+    let files: any[] = (tree.tree || []).filter((n: any) => n.type === 'blob' && n.path.startsWith(prefix));
     if (!files.some((f) => f.path === `${prefix}SKILL.md`)) throw new Error('SKILL.md não encontrado nessa pasta.');
+    // Skills com centenas de arquivos quase sempre trazem imagens/amostras em assets/: baixa o resto (SKILL.md, references, scripts)
+    if (files.length > 400) files = files.filter((f) => !/^assets\//i.test(f.path.slice(prefix.length)));
     if (files.length > 400) throw new Error('Skill grande demais (mais de 400 arquivos).');
     const skillMdRaw = await fetch(`https://raw.githubusercontent.com/${src.owner}/${src.repo}/${branch}/${prefix}SKILL.md`).then((r) => r.text());
     const repoFull = `${src.owner}/${src.repo}`;

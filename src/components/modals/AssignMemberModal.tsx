@@ -307,7 +307,7 @@ export const AssignMemberModal: React.FC<AssignMemberModalProps> = ({
                 justifyContent: 'space-between',
                 padding: '7px 10px',
                 background: hexToRgba(accentColor, 0.08),
-                border: `1px solid ${hexToRgba(accentColor, 0.22)}`,
+                border: 'none',
                 borderRadius: 7,
                 cursor: 'pointer',
                 transition: 'all 0.15s ease',
@@ -623,8 +623,8 @@ export const AssignMemberModal: React.FC<AssignMemberModalProps> = ({
               type="button"
               onClick={onClose}
               style={{
-                background: 'transparent',
-                border: `1px solid ${hexToRgba(theme.textSecondary, 0.2)}`,
+                background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
+                border: 'none',
                 borderRadius: 6,
                 padding: '5px 12px',
                 fontSize: 11.5,

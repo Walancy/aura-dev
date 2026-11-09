@@ -20,7 +20,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // PTY Methods
+  dailyStore: {
+    read: () => ipcRenderer.invoke('dailyStore:read'),
+    write: (json: string) => ipcRenderer.invoke('dailyStore:write', json),
+  },
+  aiSessions: {
+    list: (provider: string, cwd: string) => ipcRenderer.invoke('aiSessions:list', { provider, cwd }),
+  },
   pty: {
+    setResume: (id: string, resume: string) => ipcRenderer.invoke('pty:set-resume', { id, resume }),
     create: (id: string, type: string, cwd: string, cols: number, rows: number, accentColor?: string, extraOptions?: any) =>
       ipcRenderer.invoke('pty:create', { id, type, cwd, cols, rows, accentColor, extraOptions }),
     writePrompt: (id: string, prompt: string) =>
@@ -62,6 +70,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const handler = (_event: any, payload: any) => callback(payload);
       ipcRenderer.on('pty:ai-completed', handler);
       return () => ipcRenderer.removeListener('pty:ai-completed', handler);
+    },
+    onSessionBound: (callback: (payload: { id: string; resumeId: string }) => void) => {
+      const handler = (_event: any, payload: any) => callback(payload);
+      ipcRenderer.on('pty:session-bound', handler);
+      return () => ipcRenderer.removeListener('pty:session-bound', handler);
+    },
+    onContextAlert: (callback: (payload: { id: string; type: string; cwd: string; projectName: string; left: number }) => void) => {
+      const handler = (_event: any, payload: any) => callback(payload);
+      ipcRenderer.on('pty:context-alert', handler);
+      return () => ipcRenderer.removeListener('pty:context-alert', handler);
     },
     onSessionStatus: (callback: (payload: { id: string; type: string; cwd: string; isAi: boolean; isRunning: boolean; exited?: boolean }) => void) => {
       const handler = (_event: any, payload: any) => callback(payload);

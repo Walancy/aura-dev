@@ -1,9 +1,9 @@
-import React from 'react';
-import { GitBranch, RefreshCw, X, Plus, Check, Search } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, GitBranch, Plus, RefreshCw, Tag, Unplug } from 'lucide-react';
 import type { ThemeTokens, GitBranchItem } from '../../types/ide';
-import { getContrastTextColor } from '../../utils/color';
+import { hexToRgba } from '../../utils/color';
 import { getFieldTokens } from '../../utils/fieldTokens';
-import { TutorialTriggerButton, useRegisterTutorialOverlay } from '../tutorial/TutorialTriggerButton';
+import { useRegisterTutorialOverlay } from '../tutorial/TutorialTriggerButton';
 
 export interface BranchModalProps {
   isEffectiveDark: boolean;
@@ -14,391 +14,184 @@ export interface BranchModalProps {
   currentBranch: string;
   onSyncGit: () => void;
   isSyncingGit: boolean;
-  newBranchInput: string;
-  setNewBranchInput: (value: string) => void;
-  onCreateBranch: (name: string) => void;
-  isCreatingBranch: boolean;
-  branchSearchQuery: string;
-  setBranchSearchQuery: (value: string) => void;
   branchesList: GitBranchItem[];
   onCheckoutBranch: (name: string) => void;
+  /** base opcional: cria a branch a partir de outra referência */
+  onCreateBranch: (name: string, base?: string) => void;
+  onCheckoutDetached: (ref: string) => void;
 }
 
-// Branch manager modal (list, search, create, checkout, sync).
-export const BranchModal: React.FC<BranchModalProps> = ({
-  isEffectiveDark,
-  themeTokens,
-  accentColor,
-  onClose,
-  gitRepoName,
-  currentBranch,
-  onSyncGit,
-  isSyncingGit,
-  newBranchInput,
-  setNewBranchInput,
-  onCreateBranch,
-  isCreatingBranch,
-  branchSearchQuery,
-  setBranchSearchQuery,
-  branchesList,
-  onCheckoutBranch,
-}) => {
+// o git devolve a data relativa em inglês ("4 days ago")
+const UNITS: Record<string, [string, string]> = { second: ['segundo', 'segundos'], minute: ['minuto', 'minutos'], hour: ['hora', 'horas'], day: ['dia', 'dias'], week: ['semana', 'semanas'], month: ['mês', 'meses'], year: ['ano', 'anos'] };
+const relPt = (rel: string) => {
+  const m = /^(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago$/.exec(rel.trim());
+  if (!m) return rel;
+  const n = Number(m[1]);
+  return `há ${n} ${UNITS[m[2]][n === 1 ? 0 : 1]}`;
+};
+
+type Mode = 'checkout' | 'pickBase' | 'pickDetached' | 'name';
+type Row = { key: string; kind: 'action' | 'ref'; label: string; run: () => void; icon?: React.ReactNode; ref?: GitBranchItem; group?: string };
+
+// Seletor rápido de branch no estilo VS Code / Cursor / Antigravity: busca no topo, ações de criar e a lista com data, autor e último commit
+export const BranchModal: React.FC<BranchModalProps> = ({ isEffectiveDark, themeTokens, accentColor, onClose, gitRepoName, currentBranch, onSyncGit, isSyncingGit, branchesList, onCheckoutBranch, onCreateBranch, onCheckoutDetached }) => {
   useRegisterTutorialOverlay('modal_branches', true);
   const ft = getFieldTokens(isEffectiveDark);
-  const accentTextColor = getContrastTextColor(accentColor);
+  const [mode, setMode] = useState<Mode>('checkout');
+  const [base, setBase] = useState<string | undefined>();
+  const [query, setQuery] = useState('');
+  const [index, setIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, [mode]);
+
+  const goMode = (m: Mode, b?: string) => {
+    setMode(m);
+    setBase(b);
+    setQuery('');
+    setIndex(0);
+  };
+
+  const rows = useMemo<Row[]>(() => {
+    const q = query.trim().toLowerCase();
+    const match = (r: GitBranchItem) => !q || r.name.toLowerCase().includes(q) || (r.subject || '').toLowerCase().includes(q) || (r.author || '').toLowerCase().includes(q);
+    const refRows = (pick: (r: GitBranchItem) => void): Row[] =>
+      branchesList.filter(match).map((r) => ({ key: `${r.isTag ? 't' : r.isRemote ? 'r' : 'b'}:${r.name}`, kind: 'ref' as const, label: r.name, ref: r, run: () => pick(r), group: r.isTag ? 'tags' : r.isRemote ? 'remotas' : 'branches' }));
+    if (mode === 'pickBase') return refRows((r) => goMode('name', r.name));
+    if (mode === 'pickDetached') return refRows((r) => onCheckoutDetached(r.name));
+    if (mode === 'name') return [];
+    const allActions: Row[] = [
+      { key: 'a:new', kind: 'action', label: 'Criar nova branch...', icon: <Plus size={15} />, run: () => goMode('name') },
+      { key: 'a:from', kind: 'action', label: 'Criar nova branch a partir de...', icon: <Plus size={15} />, run: () => goMode('pickBase') },
+      { key: 'a:detached', kind: 'action', label: 'Fazer checkout (detached)...', icon: <Unplug size={15} />, run: () => goMode('pickDetached') },
+      { key: 'a:sync', kind: 'action', label: isSyncingGit ? 'Sincronizando...' : 'Sincronizar com o GitHub', icon: <RefreshCw size={14} className={isSyncingGit ? 'spin-animate' : ''} />, run: () => !isSyncingGit && onSyncGit() },
+    ];
+    const actions = allActions.filter((a) => !q || a.label.toLowerCase().includes(q));
+    return [...actions, ...refRows((r) => (r.isCurrent ? onClose() : onCheckoutBranch(r.name)))];
+  }, [mode, query, branchesList, isSyncingGit]);
+
+  useEffect(() => setIndex(0), [query, mode]);
+  useEffect(() => {
+    (listRef.current?.querySelector(`[data-row="${index}"]`) as HTMLElement | null)?.scrollIntoView({ block: 'nearest' });
+  }, [index]);
+
+  const nameValid = /^[^\s~^:?*\[\\]+$/.test(query.trim()) && !query.trim().startsWith('-');
+  const placeholder =
+    mode === 'name' ? (base ? `Nome da nova branch (a partir de ${base})` : 'Nome da nova branch (ex: feat/minha-feature)') : mode === 'pickBase' ? 'Selecione a referência base da nova branch' : mode === 'pickDetached' ? 'Selecione uma referência para checkout detached' : 'Selecione uma branch ou tag para fazer checkout';
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (mode !== 'checkout') goMode('checkout');
+      else onClose();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setIndex((i) => (rows.length ? (i + 1) % rows.length : 0));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setIndex((i) => (rows.length ? (i - 1 + rows.length) % rows.length : 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (mode === 'name') {
+        if (nameValid) onCreateBranch(query.trim(), base);
+      } else rows[index]?.run();
+    }
+  };
+
+  const hl = hexToRgba(accentColor, 0.2);
+  const muted = themeTokens.textSecondary;
+  let lastGroup = '';
 
   return (
     <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0, 0, 0, 0.55)',
-        backdropFilter: 'blur(3px)',
-        animation: 'fadeIn 0.12s ease-out',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 9999,
-        padding: 20,
-      }}
+      data-tour="branch-header"
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.45)', animation: 'fadeIn 0.12s ease-out', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 9999, padding: '12vh 20px 20px' }}
       onClick={onClose}
     >
       <div
-        style={{
-          width: 540,
-          maxWidth: '92vw',
-          maxHeight: '80vh',
-          background: isEffectiveDark ? '#141416' : '#ffffff',
-          border: 'none',
-          borderRadius: 10,
-          boxShadow: 'none',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          animation: 'fadeIn 0.12s ease-out',
-          fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-        }}
+        style={{ width: 640, maxWidth: '94vw', maxHeight: '70vh', background: isEffectiveDark ? '#1a1a1c' : '#ffffff', borderRadius: 10, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 6, gap: 6, animation: 'fadeIn 0.12s ease-out', fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div
-          data-tour="branch-header"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '14px 18px',
-            borderBottom: `1px solid ${ft.fieldBorderColor}`,
-            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.015)' : 'rgba(0, 0, 0, 0.015)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 8,
-                background: `${accentColor}1c`,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <GitBranch size={17} color={accentColor} />
-            </div>
-            <div>
-              <div style={{ fontWeight: 400, fontSize: 14, color: themeTokens.textPrimary }}>
-                Gerenciador de Branches
-              </div>
-              <div style={{ fontSize: 11, fontWeight: 400, color: themeTokens.textSecondary }}>
-                {gitRepoName || 'aura-dev'} • Ativa:{' '}
-                <span style={{ color: accentColor, fontWeight: 400 }}>{currentBranch}</span>
-              </div>
-            </div>
-          </div>
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder={placeholder}
+          spellCheck={false}
+          style={{ height: 36, padding: '0 12px', borderRadius: 6, border: 'none', outline: `1px solid ${hexToRgba(accentColor, 0.6)}`, background: ft.fieldBg, color: themeTokens.textPrimary, fontSize: 13, fontFamily: 'inherit', fontWeight: 400, flexShrink: 0 }}
+        />
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <TutorialTriggerButton
-              contextId="modal_branches"
-              isDark={isEffectiveDark}
-              accentColor={accentColor}
-              textColor={themeTokens.textPrimary}
-              mutedColor={themeTokens.textSecondary}
-              height={28}
-              contextName="Gerenciador de Branches"
-            />
-            <button
-              type="button"
-              onClick={onSyncGit}
-              disabled={isSyncingGit}
-              style={{
-                height: 28,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                background: ft.fieldBg,
-                border: ft.fieldBorder,
-                boxShadow: 'none',
-                borderRadius: 6,
-                padding: '0 10px',
-                fontSize: 11.5,
-                fontWeight: 400,
-                color: themeTokens.textPrimary,
-                cursor: isSyncingGit ? 'not-allowed' : 'pointer',
-                transition: 'background 0.15s ease, border-color 0.15s ease',
-              }}
-              onMouseEnter={(e) => {
-                if (!isSyncingGit) e.currentTarget.style.background = ft.fieldBgHover;
-              }}
-              onMouseLeave={(e) => {
-                if (!isSyncingGit) e.currentTarget.style.background = ft.fieldBg;
-              }}
-              title="Git Pull & Push"
-            >
-              <RefreshCw
-                size={12}
-                color={accentColor}
-                style={{ animation: isSyncingGit ? 'spin 1s linear infinite' : 'none' }}
-              />
-              {isSyncingGit ? 'Sincronizando...' : 'Sync'}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              style={{
-                width: 28,
-                height: 28,
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                color: themeTokens.textSecondary,
-                padding: 0,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: 6,
-              }}
-            >
-              <X size={16} />
-            </button>
-          </div>
-        </div>
+        <div style={{ height: 1, margin: '0 -6px', background: isEffectiveDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', flexShrink: 0 }} />
 
-        {/* Create new branch + Search section */}
-        <div
-          data-tour="branch-create-bar"
-          style={{
-            padding: '12px 18px',
-            borderBottom: `1px solid ${ft.fieldBorderColor}`,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-          }}
-        >
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              type="text"
-              className="df-field"
-              placeholder="Nome da nova branch (ex: feat/minha-feature)..."
-              value={newBranchInput}
-              onChange={(e) => setNewBranchInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && newBranchInput.trim()) {
-                  onCreateBranch(newBranchInput);
-                }
-              }}
-              style={{
-                flex: 1,
-                height: 30,
-                background: ft.fieldBg,
-                border: ft.fieldBorder,
-                boxShadow: 'none',
-                borderRadius: 6,
-                padding: '0 10px',
-                fontSize: 12,
-                fontWeight: 400,
-                color: themeTokens.textPrimary,
-                outline: 'none',
-                transition: 'background 0.15s ease, border-color 0.15s ease',
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => onCreateBranch(newBranchInput)}
-              disabled={!newBranchInput.trim() || isCreatingBranch}
-              style={{
-                height: 30,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                background: accentColor,
-                color: accentTextColor,
-                border: 'none',
-                boxShadow: 'none',
-                borderRadius: 6,
-                padding: '0 12px',
-                fontSize: 12,
-                fontWeight: 400,
-                cursor: newBranchInput.trim() ? 'pointer' : 'not-allowed',
-                opacity: newBranchInput.trim() ? 1 : 0.5,
-                transition: 'filter 0.15s ease, opacity 0.15s ease',
-              }}
-            >
-              <Plus size={14} />
-              Criar Branch
-            </button>
+        {mode === 'name' && (
+          <div style={{ padding: '4px 10px 8px', fontSize: 11.5, color: query.trim() && !nameValid ? '#ef4444' : muted }}>
+            {query.trim() && !nameValid ? 'Nome inválido: sem espaços nem caracteres especiais do git.' : 'Pressione Enter para criar e ativar a branch, ou Esc para voltar.'}
           </div>
+        )}
 
-          <div
-            className="df-search-box"
-            style={{
-              height: 30,
-              background: ft.fieldBg,
-              border: ft.fieldBorder,
-              boxShadow: 'none',
-              borderRadius: 6,
-              padding: '0 10px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-            }}
-          >
-            <Search size={13} color={themeTokens.textSecondary} style={{ flexShrink: 0 }} />
-            <input
-              type="text"
-              placeholder="Filtrar branches..."
-              value={branchSearchQuery}
-              onChange={(e) => setBranchSearchQuery(e.target.value)}
-              style={{
-                flex: 1,
-                background: 'transparent',
-                border: 'none',
-                fontSize: 12,
-                fontWeight: 400,
-                color: themeTokens.textPrimary,
-                outline: 'none',
-                padding: 0,
-              }}
-            />
-          </div>
-        </div>
-
-        {/* Branches list */}
-        <div
-          data-tour="branch-list-area"
-          style={{
-            flex: 1,
-            overflowY: 'auto',
-            padding: '8px 12px 14px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 4,
-          }}
-        >
-          {branchesList
-            .filter((b) => b.name.toLowerCase().includes(branchSearchQuery.toLowerCase()))
-            .map((branch, idx) => {
-              const isCur = branch.isCurrent || branch.name === currentBranch;
-              return (
+        <div ref={listRef} data-tour="branch-create-bar" className="scroll-auto-hide" style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1, minHeight: 0 }}>
+          {mode !== 'name' && rows.length === 0 && <div style={{ padding: '18px 12px', textAlign: 'center', fontSize: 12, color: muted }}>Nenhuma branch ou tag encontrada.</div>}
+          {rows.map((r, i) => {
+            const active = i === index;
+            const showGroup = r.kind === 'ref' && r.group !== lastGroup;
+            if (r.kind === 'ref') lastGroup = r.group || '';
+            const ref = r.ref;
+            const separator = r.kind === 'ref' && i > 0 && rows[i - 1].kind === 'action';
+            return (
+              <React.Fragment key={r.key}>
+                {separator && <div style={{ height: 1, margin: '4px 0', flexShrink: 0, background: isEffectiveDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)' }} />}
                 <div
-                  key={idx}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '7px 10px',
-                    borderRadius: 8,
-                    background: isCur ? `${accentColor}16` : 'transparent',
-                    transition: 'background 0.15s ease',
-                    fontSize: 12.5,
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isCur)
-                      e.currentTarget.style.background = isEffectiveDark
-                        ? 'rgba(255, 255, 255, 0.04)'
-                        : 'rgba(0, 0, 0, 0.04)';
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isCur) e.currentTarget.style.background = 'transparent';
-                  }}
+                  data-row={i}
+                  onClick={r.run}
+                  onMouseEnter={() => setIndex(i)}
+                  style={{ display: 'flex', alignItems: ref ? 'flex-start' : 'center', gap: 10, padding: ref ? '7px 12px' : '0 12px', minHeight: ref ? undefined : 30, borderRadius: 6, cursor: 'pointer', background: active ? hl : 'transparent', transition: 'background 0.08s ease' }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
-                    <GitBranch size={14} color={isCur ? accentColor : themeTokens.textSecondary} />
-                    <span
-                      style={{
-                        fontWeight: 400,
-                        color: isCur ? accentColor : themeTokens.textPrimary,
-                      }}
-                    >
-                      {branch.name}
-                    </span>
-                    {branch.isRemote && (
-                      <span
-                        style={{
-                          fontSize: 10,
-                          padding: '1px 6px',
-                          borderRadius: 4,
-                          background: ft.fieldBg,
-                          color: themeTokens.textSecondary,
-                        }}
-                      >
-                        remote
-                      </span>
-                    )}
-                  </div>
-
-                  {isCur ? (
-                    <div
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 4,
-                        color: '#22c55e',
-                        fontSize: 11,
-                        fontWeight: 400,
-                      }}
-                    >
-                      <Check size={13} />
-                      Atual
+                  {r.icon && <span style={{ display: 'flex', color: themeTokens.textPrimary, paddingTop: 0 }}>{r.icon}</span>}
+                  {ref ? (
+                    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                        <span style={{ display: 'flex', color: ref.isCurrent ? accentColor : muted, flexShrink: 0 }}>{ref.isTag ? <Tag size={13} /> : <GitBranch size={13} />}</span>
+                        <span style={{ fontSize: 13, color: ref.isCurrent ? accentColor : themeTokens.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ref.name}</span>
+                        {ref.relDate && <span style={{ fontSize: 11.5, color: muted, flexShrink: 0 }}>{relPt(ref.relDate)}</span>}
+                        {Boolean(ref.ahead || ref.behind) && (
+                          <span style={{ fontSize: 11.5, color: muted, flexShrink: 0 }}>
+                            {ref.behind || 0}↓ {ref.ahead || 0}↑
+                          </span>
+                        )}
+                        <span style={{ flex: 1 }} />
+                        {ref.isCurrent ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11.5, color: '#22c55e', flexShrink: 0 }}>
+                            <Check size={12} /> atual
+                          </span>
+                        ) : (
+                          showGroup && <span style={{ fontSize: 11.5, color: accentColor, flexShrink: 0 }}>{r.group}</span>
+                        )}
+                      </div>
+                      {(ref.author || ref.hash || ref.subject) && (
+                        <div style={{ fontSize: 11.5, color: muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: 21 }}>
+                          {[ref.author, ref.hash, ref.subject].filter(Boolean).join('  •  ')}
+                        </div>
+                      )}
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => onCheckoutBranch(branch.name)}
-                      style={{
-                        height: 26,
-                        background: ft.fieldBg,
-                        border: ft.fieldBorder,
-                        boxShadow: 'none',
-                        borderRadius: 6,
-                        padding: '0 10px',
-                        fontSize: 11,
-                        fontWeight: 400,
-                        color: themeTokens.textPrimary,
-                        cursor: 'pointer',
-                        transition: 'background 0.15s ease, color 0.15s ease, border-color 0.15s ease',
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = accentColor;
-                        e.currentTarget.style.color = accentTextColor;
-                        e.currentTarget.style.borderColor = 'transparent';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = ft.fieldBg;
-                        e.currentTarget.style.color = themeTokens.textPrimary;
-                        e.currentTarget.style.borderColor = ft.fieldBorderColor;
-                      }}
-                    >
-                      Checkout
-                    </button>
+                    <span style={{ fontSize: 13, color: themeTokens.textPrimary }}>{r.label}</span>
                   )}
                 </div>
-              );
-            })}
+              </React.Fragment>
+            );
+          })}
         </div>
+
+        {mode === 'checkout' && <div style={{ height: 1, margin: '0 -6px', background: isEffectiveDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', flexShrink: 0 }} />}
+        {mode === 'checkout' && (
+          <div style={{ padding: '2px 10px 4px', fontSize: 11, color: muted, flexShrink: 0 }}>
+            {gitRepoName || 'projeto'} • ativa: <span style={{ color: accentColor }}>{currentBranch}</span> • ↑↓ navegar • Enter escolher • Esc fechar
+          </div>
+        )}
       </div>
     </div>
   );

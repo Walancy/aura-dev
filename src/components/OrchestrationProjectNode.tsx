@@ -385,7 +385,7 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
       const isAlreadyRunning = sysPorts === null || (targetPort ? sysPorts.includes(targetPort) : false);
 
       if (!isAlreadyRunning) {
-        onToast?.(`🚀 Iniciando servidor local para "${currentName}" em segundo plano...`, 'info');
+        onToast?.(`Iniciando servidor local para "${currentName}" em segundo plano...`, 'info');
         const cleanName = currentName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
         const sessionId = `dev-server-${cleanName}`;
         try {
@@ -405,10 +405,10 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
           onToast?.(`Falha ao iniciar o servidor: ${err?.message || err}`, 'error');
         }
       } else {
-        onToast?.(`🌐 Servidor ativo! Conectando ${currentDevUrl} no navegador`, 'info');
+        onToast?.(`Servidor ativo! Conectando ${currentDevUrl} no navegador`, 'info');
       }
     } else {
-      onToast?.(`🌐 Abrindo ${currentDevUrl} no navegador`, 'info');
+      onToast?.(`Abrindo ${currentDevUrl} no navegador`, 'info');
     }
   };
 
@@ -651,7 +651,7 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
               title={`Executar Servidor e Abrir no Navegador (${currentDevUrl})`}
               style={{
                 background: 'rgba(16, 185, 129, 0.12)',
-                border: '1px solid rgba(16, 185, 129, 0.35)',
+                border: 'none',
                 color: '#10b981',
                 padding: '5px 8px',
                 borderRadius: 6,
@@ -684,7 +684,7 @@ export const OrchestrationProjectNode: React.FC<OrchestrationProjectNodeProps> =
               title="Expandir Visualizador de Código e Arquivos"
               style={{
                 background: `${accentColor}18`,
-                border: `1px solid ${accentColor}35`,
+                border: 'none',
                 color: accentColor,
                 padding: '5px 8px',
                 borderRadius: 6,

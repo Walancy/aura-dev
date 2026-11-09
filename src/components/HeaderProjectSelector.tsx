@@ -216,6 +216,8 @@ const RunningDot: React.FC<{ tip: string; isDark: boolean }> = ({ tip, isDark })
 export interface HeaderProjectSelectorProps {
   workspacePath: string;
   onSelectWorkspace: (dirPath: string, repoName?: string) => Promise<void> | void;
+  // projeto recém-clonado ou aberto de uma pasta fora da lista (dispara o assistente de IA)
+  onProjectAdded?: (dirPath: string, repoName?: string) => void | Promise<void>;
   themeTokens: {
     bgCard: string;
     bgCardSecondary?: string;
@@ -240,6 +242,7 @@ export interface HeaderProjectSelectorProps {
 export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
   workspacePath,
   onSelectWorkspace,
+  onProjectAdded,
   themeTokens,
   isEffectiveDark,
   accentColor,
@@ -823,6 +826,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
           const finalPath = res.repoPath || `${targetDir}/${project.name}`;
           setIsProjectOpen(false);
           await onSelectWorkspace(finalPath, project.fullName || project.name);
+          onProjectAdded?.(finalPath, project.fullName || project.name);
         } else {
           onToast?.(`Erro ao clonar: ${res?.error || 'falha no git clone'}`);
         }
@@ -839,11 +843,13 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
       const res = await window.electronAPI.dialog.openFolder();
       if (res && res.folderPath) {
         await onSelectWorkspace(res.folderPath, res.name);
+        onProjectAdded?.(res.folderPath, res.name);
       }
     } else {
       const folder = prompt('Digite o caminho absoluto da pasta:', workspacePath);
       if (folder && folder.trim()) {
         await onSelectWorkspace(folder.trim());
+        onProjectAdded?.(folder.trim());
       }
     }
   };
@@ -887,7 +893,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
             paddingRight: isCollapsed ? 7 : 10,
             background: isOrgOpen ? ft.fieldBgHover : ft.fieldBg,
             borderRadius: 6,
-            border: isOrgOpen ? ft.fieldBorderFocus : ft.fieldBorder,
+            border: 'none',
             boxShadow: 'none',
             justifyContent: 'center',
             alignItems: 'center',
@@ -902,12 +908,10 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.background = ft.fieldBgHover;
-            e.currentTarget.style.borderColor = ft.fieldBorderFocusColor;
           }}
           onMouseLeave={(e) => {
             if (!isOrgOpen) {
               e.currentTarget.style.background = ft.fieldBg;
-              e.currentTarget.style.borderColor = ft.fieldBorderColor;
             }
           }}
           title={isCollapsed ? `Organização: ${selectedOrg}` : 'Filtrar projetos por organização'}
@@ -961,7 +965,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
               minWidth: 210,
               background: ft.dropdownMenuBg,
               borderRadius: 10,
-              border: ft.dropdownBorder,
+              border: 'none',
               boxShadow: 'none',
               zIndex: 10000,
               overflow: 'hidden',
@@ -1101,7 +1105,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
             paddingRight: isCollapsed ? 7 : 10,
             background: isProjectOpen ? ft.fieldBgHover : ft.fieldBg,
             borderRadius: 6,
-            border: isProjectOpen ? ft.fieldBorderFocus : ft.fieldBorder,
+            border: 'none',
             boxShadow: 'none',
             justifyContent: 'center',
             alignItems: 'center',
@@ -1116,12 +1120,10 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.background = ft.fieldBgHover;
-            e.currentTarget.style.borderColor = ft.fieldBorderFocusColor;
           }}
           onMouseLeave={(e) => {
             if (!isProjectOpen) {
               e.currentTarget.style.background = ft.fieldBg;
-              e.currentTarget.style.borderColor = ft.fieldBorderColor;
             }
           }}
           title={isCollapsed ? `Projeto: ${currentProjectName}` : 'Alternar projeto ativo'}
@@ -1187,7 +1189,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
               width: 320,
               background: ft.dropdownMenuBg,
               borderRadius: 10,
-              border: ft.dropdownBorder,
+              border: 'none',
               boxShadow: 'none',
               zIndex: 10000,
               overflow: 'hidden',
@@ -1199,7 +1201,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
             <div
               style={{
                 padding: 8,
-                borderBottom: `1px solid ${ft.fieldBorderColor}`,
+                borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'}`,
               }}
             >
               <div
@@ -1209,7 +1211,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
                   padding: '0 8px',
                   borderRadius: 6,
                   background: ft.fieldBg,
-                  border: ft.fieldBorder,
+                  border: 'none',
                   boxShadow: 'none',
                   display: 'flex',
                   alignItems: 'center',
@@ -1572,7 +1574,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
                   gap: 6,
                   padding: '6px 10px',
                   background: 'transparent',
-                  border: `1px dashed ${themeTokens.border}`,
+                  border: 'none',
                   borderRadius: 6,
                   color: themeTokens.textSecondary,
                   fontSize: 11,
@@ -1581,12 +1583,10 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.color = themeTokens.textPrimary;
-                  e.currentTarget.style.borderColor = accentColor;
                   e.currentTarget.style.background = themeTokens.hoverBg;
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.color = themeTokens.textSecondary;
-                  e.currentTarget.style.borderColor = themeTokens.border;
                   e.currentTarget.style.background = 'transparent';
                 }}
               >

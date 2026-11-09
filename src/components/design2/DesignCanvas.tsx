@@ -2560,7 +2560,6 @@ export default function DesignCanvas({
           const bgMenu = ft.dropdownMenuBg;
           const textPrimary = isEffectiveDark ? '#f1f1f1' : '#1e293b';
           const hoverBg = ft.dropdownItemHoverBg;
-          const borderCol = ft.fieldBorderColor;
           const dividerBg = isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.07)';
           const danger = isEffectiveDark ? '#f87171' : '#dc2626';
           const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px', height: 27, boxSizing: 'border-box', borderRadius: 5, fontSize: 12, fontWeight: 400, fontFamily: "'Poppins', -apple-system, BlinkMacSystemFont, sans-serif", color: textPrimary, cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', transition: 'background 0.1s ease' };
@@ -2572,14 +2571,14 @@ export default function DesignCanvas({
                   title="Mais opções do frame"
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => { e.stopPropagation(); setFrameMenuFor(open ? null : f.id); }}
-                  style={{ position: 'absolute', right: 0, top: 0, width: BW, height: BH, borderRadius: 6, border: `1px solid ${open ? accentColor : borderCol}`, background: open ? accentColor : ft.fieldBgSolid, color: open ? '#fff' : textPrimary, boxShadow: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'auto', padding: 0, transition: 'all 0.12s ease' }}
+                  style={{ position: 'absolute', right: 0, top: 0, width: BW, height: BH, borderRadius: 6, border: 'none', background: open ? accentColor : ft.fieldBgSolid, color: open ? '#fff' : textPrimary, boxShadow: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'auto', padding: 0, transition: 'all 0.12s ease' }}
                 >
                   <MoreHorizontal size={14} />
                 </button>
                 {open && (
                   <div
                     onMouseDown={(e) => e.stopPropagation()}
-                    style={{ position: 'absolute', right: 0, top: BH + 4, minWidth: 190, background: bgMenu, border: `1px solid ${borderCol}`, borderRadius: 8, boxShadow: 'none', padding: 4, pointerEvents: 'auto' }}
+                    style={{ position: 'absolute', right: 0, top: BH + 4, minWidth: 190, background: bgMenu, border: 'none', borderRadius: 8, boxShadow: 'none', padding: 4, pointerEvents: 'auto' }}
                   >
                     <div
                       style={row}

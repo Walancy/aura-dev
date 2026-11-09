@@ -243,12 +243,8 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
                     borderRadius: '50%',
                     backgroundColor: c.color,
                     cursor: 'pointer',
-                    border: isSelected
-                      ? '2px solid #ffffff'
-                      : (isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(0, 0, 0, 0.12)'),
-                    boxShadow: isSelected
-                      ? `0 0 0 2px ${c.color}, 0 0 10px ${hexToRgba(c.color, 0.6)}`
-                      : '0 2px 4px rgba(0, 0, 0, 0.15)',
+                    border: 'none',
+                    boxShadow: 'none',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -303,14 +299,14 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
                   type="button"
                   onClick={() => setSelStop(i)}
                   title={`Ponto ${i + 1}`}
-                  style={{ width: 22, height: 22, borderRadius: '50%', background: c, cursor: 'pointer', padding: 0, border: i === stopIdx ? '2px solid #ffffff' : '1px solid rgba(255,255,255,0.2)', boxShadow: i === stopIdx ? `0 0 0 2px ${c}` : 'none' }}
+                  style={{ width: 22, height: 22, borderRadius: '50%', background: c, cursor: 'pointer', padding: 0, border: 'none', boxShadow: 'none', transform: i === stopIdx ? 'scale(1.16)' : 'scale(1)', transition: 'transform 0.15s ease' }}
                 />
               ))}
               <button
                 type="button"
                 onClick={() => { setRainbow({ ...rainbow, stops: [...rainbow.stops, rainbow.stops[stopIdx]] }); setSelStop(rainbow.stops.length); }}
                 title="Adicionar ponto de cor"
-                style={{ width: 22, height: 22, borderRadius: '50%', border: `1px dashed ${themeTokens.textSecondary}`, background: 'transparent', color: themeTokens.textSecondary, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}
+                style={{ width: 22, height: 22, borderRadius: '50%', border: 'none', background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)', color: themeTokens.textSecondary, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}
               >+</button>
               {rainbow.stops.length > 2 && (
                 <button

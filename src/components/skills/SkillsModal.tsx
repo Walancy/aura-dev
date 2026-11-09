@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Download, ExternalLink, FolderOpen, FolderInput, Globe, Loader2, Pencil, Pin, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
+import { Check, Download, ExternalLink, FolderOpen, FolderInput, Globe, Loader2, MoreHorizontal, Pencil, Pin, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { logSystemActivity } from '../../utils/brainService';
 import { getFieldTokens } from '../../utils/fieldTokens';
 import { TutorialTriggerButton, useRegisterTutorialOverlay } from '../tutorial/TutorialTriggerButton';
@@ -120,6 +120,13 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
   const [registryLoading, setRegistryLoading] = useState(false);
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [updatesAvailable, setUpdatesAvailable] = useState<Record<string, boolean>>({});
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [installedCat, setInstalledCat] = useState('all');
+
+  useEffect(() => {
+    setSelected(new Set());
+  }, [tab, sourceId]);
 
   const availableUpdatesCount = useMemo(() => {
     return installed.filter((s) => updatesAvailable[s.id]).length;
@@ -134,9 +141,12 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
     leftScrollTimer.current = setTimeout(() => setIsLeftScrolling(false), 700);
   }, []);
 
+  const rightRef = useRef<HTMLDivElement | null>(null);
+  const rightTop = useRef(0);
   const [isRightScrolling, setIsRightScrolling] = useState(false);
   const rightScrollTimer = useRef<any>(null);
-  const handleRightScroll = useCallback(() => {
+  const handleRightScroll = useCallback((e?: React.UIEvent<HTMLDivElement>) => {
+    if (e) rightTop.current = e.currentTarget.scrollTop;
     setIsRightScrolling(true);
     if (rightScrollTimer.current) clearTimeout(rightScrollTimer.current);
     rightScrollTimer.current = setTimeout(() => setIsRightScrolling(false), 700);
@@ -196,6 +206,16 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
   );
 
   useEffect(() => {
+    rightTop.current = 0;
+  }, [tab, sourceId, installedCat]);
+
+  // Atualizar a lista (ativar/desativar) não pode jogar o scroll para o topo
+  React.useLayoutEffect(() => {
+    const el = rightRef.current;
+    if (el && el.scrollTop !== rightTop.current) el.scrollTop = rightTop.current;
+  }, [installed, catalog]);
+
+  useEffect(() => {
     if (!isOpen) return;
     refreshLocal();
     const off = window.electronAPI?.skills?.onChanged?.(refreshLocal);
@@ -233,14 +253,15 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (editor) setEditor(null);
+      if (menuFor) setMenuFor(null);
+      else if (editor) setEditor(null);
       else if (creating) setCreating(false);
       else if (confirmDelete) setConfirmDelete(null);
       else onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isOpen, editor, creating, confirmDelete, onClose]);
+  }, [isOpen, menuFor, editor, creating, confirmDelete, onClose]);
 
   if (!isOpen) return null;
 
@@ -260,8 +281,138 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
     }
   };
 
+  type PendingItem = { key: string; name: string; fn: () => Promise<void> };
+  const toggleSelected = (key: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+
+  const installSelected = (items: PendingItem[]) => {
+    const chosen = items.filter((i) => selected.has(i.key));
+    if (!chosen.length) return;
+    logSystemActivity('skills', 'install_selected', `${chosen.length} skills`);
+    run(
+      'batch',
+      async () => {
+        const failed: string[] = [];
+        for (const i of chosen) {
+          try {
+            await i.fn();
+          } catch {
+            failed.push(i.name);
+          }
+        }
+        setSelected(new Set());
+        if (failed.length) throw new Error(`${failed.length} de ${chosen.length} falharam (${failed.join(', ')})`);
+      },
+      `${chosen.length} skills baixadas e ativadas.`,
+    );
+  };
+
+  const renderSelectionBar = (items: PendingItem[]) => {
+    if (!items.length) return null;
+    const allSelected = items.every((i) => selected.has(i.key));
+    const count = items.filter((i) => selected.has(i.key)).length;
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <button type="button" style={btn()} onClick={() => setSelected(allSelected ? new Set() : new Set(items.map((i) => i.key)))}>
+          {allSelected ? 'Limpar seleção' : 'Selecionar todas'}
+        </button>
+        <span style={{ flex: 1, fontSize: 11.5, color: c.sub }}>{count ? `${count} selecionada${count > 1 ? 's' : ''}` : `${items.length} disponíveis`}</span>
+        <button type="button" style={{ ...btn('primary'), opacity: count ? 1 : 0.5 }} disabled={!count || busy === 'batch'} onClick={() => installSelected(items)}>
+          {busy === 'batch' ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> : <Download size={11} />}
+          Instalar selecionadas
+        </button>
+      </div>
+    );
+  };
+
+  const renderCheck = (key: string) => (
+    <button
+      type="button"
+      onClick={() => toggleSelected(key)}
+      title="Selecionar"
+      style={{
+        width: 16,
+        height: 16,
+        marginTop: 2,
+        flexShrink: 0,
+        padding: 0,
+        border: 'none',
+        borderRadius: 4,
+        cursor: 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: selected.has(key) ? accentColor : isEffectiveDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.14)',
+        color: '#fff',
+        transition: 'background 0.15s ease',
+      }}
+    >
+      {selected.has(key) && <Check size={11} />}
+    </button>
+  );
+
   const q = query.trim().toLowerCase();
   const match = (s: { name: string; description: string }) => !q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q);
+
+  const catPredicates: Record<string, (s: InstalledSkill) => boolean> = {
+    all: () => true,
+    active: (s) => s.active,
+    inactive: (s) => !s.active,
+    alwaysOn: (s) => s.alwaysOn,
+    created: (s) => s.source.type === 'created',
+    local: (s) => s.source.type === 'local',
+  };
+  const renderCategory = (id: string, label: string, count: number) => {
+    const selectedCat = installedCat === id;
+    return (
+      <div
+        key={id}
+        onClick={() => setInstalledCat(id)}
+        style={{ padding: '6px 10px', borderRadius: 7, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, background: selectedCat ? (isEffectiveDark ? 'rgba(255,255,255,0.08)' : '#e2e8f0') : 'transparent', transition: 'background 0.12s ease' }}
+      >
+        <span style={{ fontSize: 12, fontWeight: selectedCat ? 600 : 400, color: c.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+        <span style={{ fontSize: 10.5, color: c.muted }}>{count}</span>
+      </div>
+    );
+  };
+  const catLabels: Array<[string, string]> = [
+    ['all', 'Todas'],
+    ['active', 'Ativas'],
+    ['inactive', 'Desativadas'],
+    ['alwaysOn', 'Sempre ligadas'],
+    ['created', 'Criadas por mim'],
+    ['local', 'Importadas'],
+  ];
+  const installedRepos = [...new Set(installed.filter((s) => s.source.type === 'github' && s.source.repo).map((s) => s.source.repo as string))].sort();
+  const catFilter = (s: InstalledSkill) => (installedCat.startsWith('repo:') ? s.source.repo === installedCat.slice(5) : (catPredicates[installedCat] || catPredicates.all)(s));
+  const visibleInstalled = installed.filter((s) => catFilter(s) && match(s));
+
+  const registryPending: PendingItem[] = registryResults
+    .filter((r) => !r.installed)
+    .map((r) => ({
+      key: `reg-${r.id}`,
+      name: r.name,
+      fn: async () => {
+        const inst = await call<InstalledSkill>('installFromRegistry', { repo: r.repo, skillId: r.skillId });
+        await call('setActive', { id: inst.id, active: true });
+      },
+    }));
+
+  const catalogPending: PendingItem[] = (catalog || [])
+    .filter(match)
+    .filter((s) => !s.installed || s.updateAvailable)
+    .map((s) => ({
+      key: `dl-${s.sourceId}-${s.path}`,
+      name: s.name,
+      fn: async () => {
+        const inst = await call<InstalledSkill>('install', { sourceId: s.sourceId, path: s.path });
+        if (!s.installed) await call('setActive', { id: inst.id, active: true });
+      },
+    }));
   const activeCount = installed.filter((s) => s.active).length;
 
   const pillBtn = (active: boolean): React.CSSProperties => ({
@@ -533,36 +684,73 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
         {/* Corpo Principal */}
         <div
           data-tour="skills-body"
-          onScroll={tab === 'installed' || tab === 'system' ? handleBodyScroll : undefined}
-          className={tab === 'installed' || tab === 'system' ? `scroll-auto-hide ${isBodyScrolling ? 'is-scrolling' : ''}` : ''}
+          onScroll={tab === 'system' ? handleBodyScroll : undefined}
+          className={tab === 'system' ? `scroll-auto-hide ${isBodyScrolling ? 'is-scrolling' : ''}` : ''}
           style={{
             flex: 1,
             minHeight: 0,
-            overflowY: tab === 'explore' ? 'hidden' : 'auto',
-            padding: tab === 'explore' ? 0 : '12px 18px',
-            display: tab === 'explore' ? 'flex' : 'block',
-            flexDirection: tab === 'explore' ? 'column' : undefined,
+            overflowY: tab === 'explore' || tab === 'installed' ? 'hidden' : 'auto',
+            padding: tab === 'explore' || tab === 'installed' ? 0 : '12px 18px',
+            display: tab === 'explore' || tab === 'installed' ? 'flex' : 'block',
+            flexDirection: tab === 'explore' || tab === 'installed' ? 'column' : undefined,
           }}
         >
           {tab === 'installed' && (
-            <>
+            <div style={{ display: 'flex', alignItems: 'stretch', flex: 1, minHeight: 0, height: '100%', overflow: 'hidden' }}>
+              {/* Categorias (Div Esquerda) */}
               <div
-                className="df-search-box"
-                style={{
-                  ...searchWrapperStyle,
-                  marginBottom: 12,
-                }}
+                onScroll={handleLeftScroll}
+                className={`scroll-auto-hide ${isLeftScrolling ? 'is-scrolling' : ''}`}
+                style={{ width: 250, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4, padding: '14px 16px 14px 18px', borderRight: `1px solid ${c.border}`, overflowY: 'auto' }}
               >
-                <Search size={13} color={c.sub} />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Buscar skill instalada…"
-                  style={{ ...inputStyle, padding: 0, background: 'transparent', border: 'none', height: 26, fontSize: 12 }}
-                />
+                <div style={{ fontSize: 10, fontWeight: 500, color: c.muted, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '0 4px 2px' }}>Categorias</div>
+                {catLabels
+                  .filter(([id]) => id === 'all' || installed.some(catPredicates[id]))
+                  .map(([id, label]) => renderCategory(id, label, installed.filter(catPredicates[id]).length))}
+                {installedRepos.length > 0 && (
+                  <div style={{ fontSize: 10, fontWeight: 500, color: c.muted, textTransform: 'uppercase', letterSpacing: '0.05em', padding: '10px 4px 2px' }}>Repositórios</div>
+                )}
+                {installedRepos.map((repo) => renderCategory(`repo:${repo}`, repo, installed.filter((s) => s.source.repo === repo).length))}
               </div>
 
-              {installed.filter(match).length === 0 ? (
+              {/* Lista (Div Direita) */}
+              <div
+                ref={rightRef}
+                onScroll={handleRightScroll}
+                className={`scroll-auto-hide ${isRightScrolling ? 'is-scrolling' : ''}`}
+                style={{ flex: 1, minWidth: 0, padding: '14px 18px 14px 16px', overflowY: 'auto' }}
+              >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                <div className="df-search-box" style={{ ...searchWrapperStyle, flex: 1, minWidth: 0 }}>
+                  <Search size={13} color={c.sub} />
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Buscar skill instalada…"
+                    style={{ ...inputStyle, padding: 0, background: 'transparent', border: 'none', height: 26, fontSize: 12 }}
+                  />
+                </div>
+                {([true, false] as const).map((on) => {
+                  const targets = visibleInstalled.filter((s) => s.alwaysOn !== on);
+                  return (
+                    <button
+                      key={String(on)}
+                      type="button"
+                      disabled={targets.length === 0 || busy === 'batch-mode'}
+                      title={on ? `Deixar as ${visibleInstalled.length} skills da lista sempre ligadas` : `Deixar as ${visibleInstalled.length} skills da lista sob demanda`}
+                      onClick={() => {
+                        logSystemActivity('skills', on ? 'lote_sempre_ligada' : 'lote_sob_demanda', 'lote', { total: targets.length });
+                        run('batch-mode', () => call('setAlwaysOn', { ids: targets.map((t) => t.id), on }), on ? `${targets.length} skills sempre ligadas.` : `${targets.length} skills sob demanda.`);
+                      }}
+                      style={{ ...btn(), opacity: targets.length === 0 ? 0.5 : 1, flexShrink: 0 }}
+                    >
+                      <Pin size={11} /> {on ? 'Todas sempre ligadas' : 'Todas sob demanda'}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {visibleInstalled.length === 0 ? (
                 <div style={{ padding: '40px 12px', textAlign: 'center', color: c.sub, fontSize: 12.5, lineHeight: 1.5 }}>
                   {installed.length === 0 ? (
                     <>
@@ -575,7 +763,7 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
                   )}
                 </div>
               ) : (
-                installed.filter(match).map((s) => {
+                visibleInstalled.map((s) => {
                   const remote = catalogById.get(s.id);
                   return (
                     <div key={s.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 4px', borderTop: `1px solid ${c.border}` }}>
@@ -654,7 +842,8 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
                   );
                 })
               )}
-            </>
+              </div>
+            </div>
           )}
 
           {tab === 'explore' && (
@@ -744,7 +933,7 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
                   <input
                     value={newSource}
                     onChange={(e) => setNewSource(e.target.value)}
-                    placeholder="owner/repo ou URL"
+                    placeholder="owner, owner/repo ou URL"
                     style={{ ...inputStyle, padding: '0 8px', height: 28, fontSize: 11 }}
                   />
                   <button
@@ -767,6 +956,7 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
 
               {/* Lista (Div Direita) */}
               <div
+                ref={rightRef}
                 onScroll={handleRightScroll}
                 className={`scroll-auto-hide ${isRightScrolling ? 'is-scrolling' : ''}`}
                 style={{ flex: 1, minWidth: 0, padding: '14px 18px 14px 16px', overflowY: 'auto' }}
@@ -816,8 +1006,10 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
                         Digite um termo no campo de busca acima ou escolha uma sugestão para explorar skills do catálogo aberto skills.sh.
                       </div>
                     )}
+                    {renderSelectionBar(registryPending)}
                     {registryResults.map((r) => (
                       <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 4px', borderTop: `1px solid ${c.border}` }}>
+                        {!r.installed && renderCheck(`reg-${r.id}`)}
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <span style={{ fontSize: 13, fontWeight: 600, color: c.text }}>{r.name}</span>
@@ -831,9 +1023,53 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
                             {r.repo} • {fmtInstalls(r.installs)} instalações
                           </div>
                         </div>
-                        <button type="button" style={btn()} title="Ver no skills.sh" onClick={() => window.electronAPI?.shell?.openExternal?.(`https://skills.sh/${r.id}`)}>
-                          <ExternalLink size={11} />
-                        </button>
+                        <div style={{ position: 'relative' }}>
+                          <button type="button" style={btn()} title="Mais opções" onClick={() => setMenuFor(menuFor === r.id ? null : r.id)}>
+                            <MoreHorizontal size={11} />
+                          </button>
+                          {menuFor === r.id && (
+                            <>
+                              <div style={{ position: 'fixed', inset: 0, zIndex: 10 }} onClick={() => setMenuFor(null)} />
+                              <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 11, minWidth: 210, padding: 4, borderRadius: 8, background: c.panel, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                {[
+                                  {
+                                    label: 'Ir para o repositório',
+                                    icon: <ExternalLink size={12} />,
+                                    action: () => {
+                                      logSystemActivity('skills', 'open_repo', r.repo);
+                                      window.electronAPI?.shell?.openExternal?.(`https://github.com/${r.repo}`);
+                                    },
+                                  },
+                                  {
+                                    label: sources.some((x) => `${x.owner}/${x.repo}`.toLowerCase() === r.repo.toLowerCase()) ? 'Já está nos destaques' : 'Adicionar aos destaques',
+                                    icon: <Plus size={12} />,
+                                    disabled: sources.some((x) => `${x.owner}/${x.repo}`.toLowerCase() === r.repo.toLowerCase()),
+                                    action: () => {
+                                      logSystemActivity('skills', 'add_source', r.repo);
+                                      run('addsrc', () => call('addSource', { input: r.repo }), `${r.repo} adicionado aos destaques.`);
+                                    },
+                                  },
+                                ].map((o) => (
+                                  <button
+                                    key={o.label}
+                                    type="button"
+                                    disabled={o.disabled}
+                                    onClick={() => {
+                                      setMenuFor(null);
+                                      o.action();
+                                    }}
+                                    onMouseEnter={(e) => !o.disabled && (e.currentTarget.style.background = c.input)}
+                                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', border: 'none', borderRadius: 6, background: 'transparent', color: o.disabled ? c.muted : c.text, fontSize: 12, cursor: o.disabled ? 'default' : 'pointer', textAlign: 'left', transition: 'background 0.12s ease' }}
+                                  >
+                                    {o.icon}
+                                    {o.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
                         {r.installed ? (
                           <span style={{ ...btn(), cursor: 'default', color: c.muted }}>Baixada</span>
                         ) : (
@@ -896,6 +1132,7 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
                         style={{ ...inputStyle, padding: 0, background: 'transparent', border: 'none', height: 26, fontSize: 12 }}
                       />
                     </div>
+                    {renderSelectionBar(catalogPending)}
                     {catalogError && <div style={{ fontSize: 11.5, color: '#f59e0b', padding: '6px 0' }}>{catalogError}</div>}
                     {catalogLoading && !catalog?.length ? (
                       <div style={{ padding: 40, textAlign: 'center', color: c.sub, fontSize: 12 }}>
@@ -907,6 +1144,7 @@ export const SkillsModal: React.FC<Props> = ({ isOpen, onClose, isEffectiveDark,
                         const suggestsAlwaysOn = currentSource?.alwaysOn?.includes(s.id);
                         return (
                           <div key={`${s.sourceId}-${s.path}`} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 4px', borderTop: `1px solid ${c.border}` }}>
+                            {(!s.installed || s.updateAvailable) && renderCheck(`dl-${s.sourceId}-${s.path}`)}
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                 <span style={{ fontSize: 13, fontWeight: 600, color: c.text }}>{s.name}</span>

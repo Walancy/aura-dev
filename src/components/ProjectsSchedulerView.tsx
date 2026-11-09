@@ -5602,7 +5602,7 @@ Não inclua saudações nem blocos explicativos adicionais fora da estrutura Mar
       showToast(`Clonando ${card.title} em ${targetDir}...`);
       const res = await window.electronAPI?.git?.clone?.(cloneUrl, targetDir);
       if (res?.success) {
-        showToast(`🎉 Repositório clonado com sucesso em ${res.repoPath || targetDir}!`);
+        showToast(`Repositório clonado com sucesso em ${res.repoPath || targetDir}!`);
       } else {
         showToast(`Erro ao clonar: ${res?.error || 'Falha no comando git clone'}`);
       }
@@ -6890,25 +6890,23 @@ Formate com seções bem organizadas:
                     gap: 8,
                     height: 32,
                     boxSizing: 'border-box',
-                    background: theme.controlBg,
+                    background: selectedGithubProjectNumber != null ? hexToRgba(accentColor, isEffectiveDark ? 0.14 : 0.1) : theme.controlBg,
                     borderRadius: 8,
                     padding: '0 12px',
                     cursor: 'pointer',
-                    border: selectedGithubProjectNumber != null ? `1px solid ${accentColor}` : theme.controlBorder,
-                    transition: 'background 0.15s ease, border-color 0.15s ease',
+                    border: 'none',
+                    transition: 'background 0.15s ease',
                     userSelect: 'none',
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = theme.controlHoverBg;
-                    if (selectedGithubProjectNumber == null) {
-                      e.currentTarget.style.borderColor = ft.fieldBorderFocusColor;
-                    }
+                    e.currentTarget.style.background = selectedGithubProjectNumber != null
+                      ? hexToRgba(accentColor, isEffectiveDark ? 0.2 : 0.15)
+                      : theme.controlHoverBg;
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = theme.controlBg;
-                    if (selectedGithubProjectNumber == null) {
-                      e.currentTarget.style.borderColor = ft.fieldBorderColor;
-                    }
+                    e.currentTarget.style.background = selectedGithubProjectNumber != null
+                      ? hexToRgba(accentColor, isEffectiveDark ? 0.14 : 0.1)
+                      : theme.controlBg;
                   }}
                 >
                   <FolderKanban size={13.5} color={selectedGithubProjectNumber != null ? accentColor : theme.textSecondary} />
@@ -9576,7 +9574,7 @@ Formate com seções bem organizadas:
                         borderRadius: 6,
                         padding: 2,
                         gap: 2,
-                        border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
+                        border: 'none',
                       }}
                     >
                       <button
@@ -12250,8 +12248,8 @@ Formate com seções bem organizadas:
                                 gap: 4,
                                 padding: '2px 7px',
                                 borderRadius: 4,
-                                border: `1px dashed ${hexToRgba(theme.textSecondary, 0.3)}`,
-                                background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
+                                border: 'none',
+                                background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
                                 color: theme.textSecondary,
                                 fontSize: 10.5,
                                 cursor: 'pointer',
@@ -14102,7 +14100,7 @@ Formate com seções bem organizadas:
                   <div
                     style={{
                       background: isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
-                      border: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+                      border: 'none',
                       borderRadius: 8,
                       padding: 16,
                       fontSize: 13,
@@ -14126,8 +14124,8 @@ Formate com seções bem organizadas:
                       showToast('Resumo copiado para a área de transferência!');
                     }}
                     style={{
-                      background: 'transparent',
-                      border: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)'}`,
+                      background: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
+                      border: 'none',
                       borderRadius: 6,
                       padding: '8px 16px',
                       color: theme.textPrimary,
@@ -16397,7 +16395,7 @@ function SprintDetailPanel(props: {
                       <span
                         style={{
                           background: statusBadge.bg,
-                          border: statusBadge.border,
+                          border: 'none',
                           color: statusBadge.color,
                           borderRadius: 12,
                           padding: '2px 10px',
@@ -18617,8 +18615,8 @@ function SprintDetailPanel(props: {
                                         gap: 5,
                                         padding: '2.5px 8px',
                                         borderRadius: 5,
-                                        background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f8fafc',
-                                        border: `1px dashed ${isEffectiveDark ? 'rgba(255, 255, 255, 0.18)' : '#cbd5e1'}`,
+                                        background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : '#f8fafc',
+                                        border: 'none',
                                         color: theme.textSecondary,
                                         fontSize: 11,
                                         fontWeight: 400,

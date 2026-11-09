@@ -70,7 +70,6 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
   const textSecondary = themeTokens?.textSecondary || (isEffectiveDark ? '#a1a1aa' : '#71717a');
   const modalOverlay = themeTokens?.modalOverlay || 'rgba(0, 0, 0, 0.65)';
   const inputBg = ft.fieldBg;
-  const inputBorder = ft.fieldBorderColor;
 
   const langSvg = getLanguageSvgUrl(project.language);
 
@@ -254,7 +253,7 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
               padding: '14px 16px',
               borderRadius: 10,
               background: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
-              border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.06)' : '1px solid rgba(0, 0, 0, 0.06)',
+              border: 'none',
             }}
           >
             <div
@@ -320,7 +319,7 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
                 borderRadius: 6,
                 fontSize: 12,
                 background: `${accentColor}18`,
-                border: `1px solid ${accentColor}33`,
+                border: 'none',
                 color: textPrimary,
                 display: 'flex',
                 alignItems: 'center',
@@ -355,10 +354,10 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
                 padding: '9px 14px',
                 borderRadius: 8,
                 background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
-                border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(0, 0, 0, 0.1)',
+                border: 'none',
                 color: textPrimary,
                 fontSize: 12.5,
-                fontWeight: 500,
+                fontWeight: 400,
                 cursor: 'pointer',
                 transition: 'all 0.15s ease',
               }}
@@ -390,7 +389,7 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
                   padding: '8px 12px',
                   borderRadius: 8,
                   background: inputBg,
-                  border: `1px solid ${inputBorder}`,
+                  border: 'none',
                   boxShadow: 'none',
                   color: textPrimary,
                   fontSize: 12,
@@ -407,7 +406,7 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
                   border: 'none',
                   color: '#ffffff',
                   fontSize: 12,
-                  fontWeight: 500,
+                  fontWeight: 400,
                   cursor: 'pointer',
                   flexShrink: 0,
                 }}
@@ -433,7 +432,7 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
                     padding: '8px 12px',
                     borderRadius: 8,
                     background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
-                    border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)',
+                    border: 'none',
                     color: textPrimary,
                     fontSize: 12,
                     cursor: 'pointer',
@@ -462,7 +461,7 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
                     padding: '8px 12px',
                     borderRadius: 8,
                     background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
-                    border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid rgba(0, 0, 0, 0.08)',
+                    border: 'none',
                     color: textPrimary,
                     fontSize: 12,
                     cursor: isSearchingGithub ? 'not-allowed' : 'pointer',
@@ -486,7 +485,7 @@ export const ProjectIconModal: React.FC<ProjectIconModalProps> = ({
                     padding: '8px 12px',
                     borderRadius: 8,
                     background: isEffectiveDark ? 'rgba(239, 68, 68, 0.08)' : 'rgba(239, 68, 68, 0.06)',
-                    border: '1px solid rgba(239, 68, 68, 0.2)',
+                    border: 'none',
                     color: '#ef4444',
                     fontSize: 12,
                     cursor: 'pointer',

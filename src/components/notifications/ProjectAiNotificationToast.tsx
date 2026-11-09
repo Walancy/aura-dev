@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { X, ExternalLink, CheckCircle2, Bell } from 'lucide-react';
+import { X, ExternalLink, CheckCircle2, Bell, RotateCcw, GitPullRequest } from 'lucide-react';
 import { ClaudeIcon, AntigravityIcon, GeminiIcon, CodexIcon, OllamaIcon } from '../icons/AiProviderIcons';
 
 export interface ProjectAiNotificationItem {
@@ -10,7 +10,13 @@ export interface ProjectAiNotificationItem {
   summary: string;
   timestamp: number;
   /** 'question' = a IA parou esperando resposta do usuário; padrão: terminou de gerar */
-  kind?: 'done' | 'question';
+  kind?: 'done' | 'question' | 'context' | 'review';
+  /** kind 'context': terminal da IA e o % de contexto que sobrou */
+  sessionId?: string;
+  contextLeft?: number;
+  /** kind 'review': PR em que o usuário foi pedido como revisor */
+  reviewRepo?: string;
+  reviewNumber?: number;
   /** Onde a IA estava trabalhando: chat da IDE ou terminal da tela CLI */
   source?: 'ide' | 'cli' | 'design';
 }
@@ -19,9 +25,18 @@ interface ProjectAiNotificationToastProps {
   notifications: ProjectAiNotificationItem[];
   onDismiss: (id: string) => void;
   onNavigateToProject: (projectPath: string, repoName?: string, source?: 'ide' | 'cli' | 'design') => void;
+  onNewContext?: (item: ProjectAiNotificationItem) => void;
+  onReview?: (item: ProjectAiNotificationItem) => void;
   accentColor?: string;
   isEffectiveDark?: boolean;
 }
+
+// Avisos de review e de contexto ficam até o usuário fechar; os demais mantêm só os 5 mais recentes
+const isPersistent = (n: ProjectAiNotificationItem) => n.kind === 'review' || n.kind === 'context';
+export const appendNotification = (prev: ProjectAiNotificationItem[], item: ProjectAiNotificationItem): ProjectAiNotificationItem[] => {
+  const rest = prev.filter((n) => n.id !== item.id);
+  return [...rest.filter(isPersistent), ...rest.filter((n) => !isPersistent(n)).slice(-4), item];
+};
 
 // Pleasant soft audio chime using Web Audio API (no external asset needed)
 function playNotificationChime() {
@@ -64,6 +79,8 @@ export const ProjectAiNotificationToast: React.FC<ProjectAiNotificationToastProp
   notifications,
   onDismiss,
   onNavigateToProject,
+  onNewContext,
+  onReview,
   accentColor = '#FF6A00',
   isEffectiveDark = true,
 }) => {
@@ -151,7 +168,7 @@ export const ProjectAiNotificationToast: React.FC<ProjectAiNotificationToastProp
                   flexShrink: 0,
                 }}
               >
-                {renderAiIcon(item.provider, 16)}
+                {item.kind === 'review' ? <GitPullRequest size={16} color={accentColor} /> : renderAiIcon(item.provider, 16)}
               </div>
               <div style={{ minWidth: 0 }}>
                 <div
@@ -178,7 +195,7 @@ export const ProjectAiNotificationToast: React.FC<ProjectAiNotificationToastProp
                       color: accentColor,
                     }}
                   >
-                    {formatProviderName(item.provider)}
+                    {item.kind === 'review' ? 'Review' : formatProviderName(item.provider)}
                   </span>
                 </div>
               </div>
@@ -223,7 +240,7 @@ export const ProjectAiNotificationToast: React.FC<ProjectAiNotificationToastProp
               WebkitBoxOrient: 'vertical',
             }}
           >
-            {item.summary || (item.kind === 'question' ? 'A IA está esperando uma resposta sua.' : 'A tarefa foi concluída com sucesso em segundo plano.')}
+            {item.summary || (item.kind === 'context' ? `Resta ${item.contextLeft ?? '?'}% do contexto. Conversas longas pioram as respostas: feche ou comece um novo contexto.` : item.kind === 'question' ? 'A IA está esperando uma resposta sua.' : 'A tarefa foi concluída com sucesso em segundo plano.')}
           </div>
 
           {/* Action Footer */}
@@ -237,9 +254,46 @@ export const ProjectAiNotificationToast: React.FC<ProjectAiNotificationToastProp
             }}
           >
             <span style={{ fontSize: 10, color: isEffectiveDark ? '#6b7280' : '#9ca3af' }}>
-              {item.kind === 'question' ? 'Aguardando sua resposta' : 'Concluído em background'}
+              {item.kind === 'review' ? 'Review solicitado' : item.kind === 'context' ? 'Contexto quase cheio' : item.kind === 'question' ? 'Aguardando sua resposta' : 'Concluído em background'}
             </span>
 
+            {item.kind === 'review' ? (
+              <button
+                type="button"
+                onClick={() => onReview?.(item)}
+                style={{ height: 26, background: accentColor, border: 'none', color: '#ffffff', borderRadius: 4, padding: '0 10px', fontSize: 11, fontFamily: 'Poppins, sans-serif', display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', whiteSpace: 'nowrap', transition: 'opacity 0.15s ease' }}
+                onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+                onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+              >
+                <GitPullRequest size={11} />
+                <span>Revisar</span>
+              </button>
+            ) : item.kind === 'context' ? (
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => onDismiss(item.id)}
+                  style={{ height: 26, background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', border: 'none', color: isEffectiveDark ? '#d1d5db' : '#374151', borderRadius: 4, padding: '0 10px', fontSize: 11, fontFamily: 'Poppins, sans-serif', cursor: 'pointer', transition: 'opacity 0.15s ease' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.8')}
+                  onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                >
+                  Fechar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onNewContext?.(item);
+                    onDismiss(item.id);
+                  }}
+                  style={{ height: 26, background: accentColor, border: 'none', color: '#ffffff', borderRadius: 4, padding: '0 10px', fontSize: 11, fontFamily: 'Poppins, sans-serif', display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', whiteSpace: 'nowrap', transition: 'opacity 0.15s ease' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
+                  onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+                >
+                  <RotateCcw size={11} />
+                  <span>Novo contexto</span>
+                </button>
+              </div>
+            ) : (
             <button
               type="button"
               onClick={() => {
@@ -270,6 +324,7 @@ export const ProjectAiNotificationToast: React.FC<ProjectAiNotificationToastProp
               <span>Ir para o projeto</span>
               <ExternalLink size={11} />
             </button>
+            )}
           </div>
         </div>
       ))}

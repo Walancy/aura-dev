@@ -69,6 +69,7 @@ import { FileIcon, FolderIcon } from './FileIcon';
 import { NativeXTerm, scrollTerminalToText, TERMINAL_THEMES } from './NativeXTerm';
 import { TerminalSkinOverlay, skinDividerVars } from './TerminalSkin';
 import Editor from '@monaco-editor/react';
+import { OutlineTimelineCards } from './ide/OutlineTimelineCards';
 import { getFileLanguage, isMarkdownFile } from '../utils/editor';
 import { renderMarkdownPreview } from '../utils/markdown';
 import { ConfirmDeleteModal } from './modals/ConfirmDeleteModal';
@@ -94,6 +95,7 @@ const issueStatusColor = (issue: { state?: string; closed_at?: unknown; projectV
 /** Nome curto das IAs nos cabeçalhos: só "Claude", "Antigravity"... (terminais comuns mantêm o nome que têm) */
 const AI_SHORT_NAMES: Record<string, string> = { claude: 'Claude', antigravity: 'Antigravity', agy: 'Antigravity', gemini: 'Gemini', codex: 'Codex', ollama: 'Ollama' };
 const cleanSessionName = (s: { type?: string; name: string }): string => AI_SHORT_NAMES[(s.type || '').toLowerCase()] || s.name;
+const AI_SESSION_TYPE = /^(claude|agy|antigravity|gemini|codex|ollama)$/;
 
 interface TerminalWorkspace {
   id: string;
@@ -119,6 +121,8 @@ export interface CliTerminalViewProps {
   onCreateNewFile?: () => void;
   onCreateNewFolder?: () => void;
   onRefreshTree?: () => void;
+  /** dados do arquivo aberto no visualizador do CLI (alimentam a barra de status do app) */
+  onViewerStatus?: (s: { path: string; name: string; language: string; blame: string; line: number; col: number; tabSize: number; eol: 'LF' | 'CRLF' } | null) => void;
   themeTokens: ThemeTokens;
   isEffectiveDark: boolean;
   accentColor: string;
@@ -240,6 +244,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   onCreateNewFile,
   onCreateNewFolder,
   onRefreshTree,
+  onViewerStatus,
   themeTokens,
   isEffectiveDark,
   accentColor,
@@ -647,12 +652,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
 
   // Explorer sizing and visibility
   const [explorerWidth, setExplorerWidth] = useState<number>(() => {
-    try { return Math.max(180, Math.min(800, Number(localStorage.getItem('cli_explorer_width')) || 270)); } catch { return 270; }
+    try { const saved = Number(localStorage.getItem('ide_explorer_width')); return Math.max(180, Math.min(800, saved && saved !== 280 ? saved : 340)); } catch { return 340; }
   });
   const [isExplorerCollapsed, setIsExplorerCollapsed] = useState<boolean>(false);
   const [isDraggingExplorer, setIsDraggingExplorer] = useState<boolean>(false);
   const dragStartXRef = useRef<number>(0);
-  const dragStartWidthRef = useRef<number>(270);
+  const dragStartWidthRef = useRef<number>(340);
 
   // Explorer search filter
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -834,6 +839,14 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   };
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false);
   const [explorerMenuOpen, setExplorerMenuOpen] = useState<boolean>(false);
+  const [explorerOptionsOpen, setExplorerOptionsOpen] = useState(false);
+  const explorerOptionsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!explorerOptionsOpen) return;
+    const onDown = (e: MouseEvent) => !explorerOptionsRef.current?.contains(e.target as Node) && setExplorerOptionsOpen(false);
+    window.addEventListener('mousedown', onDown);
+    return () => window.removeEventListener('mousedown', onDown);
+  }, [explorerOptionsOpen]);
 
   // File context menu
   const [fileContextMenu, setFileContextMenu] = useState<{
@@ -1065,7 +1078,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
 
   useEffect(() => {
     if (isDraggingExplorer) return;
-    try { localStorage.setItem('cli_explorer_width', String(explorerWidth)); } catch {}
+    try { localStorage.setItem('ide_explorer_width', String(explorerWidth)); } catch {}
   }, [isDraggingExplorer, explorerWidth]);
 
   // Handle Grid X/Y Resizing
@@ -1414,6 +1427,17 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   };
 
   // Fechar divisão (split slot) de dentro de um quadrante
+  const [dragOverSlot, setDragOverSlot] = useState<number | null>(null);
+  const handleSwapSlots = (from: number, to: number) => {
+    if (!activeWorkspace || from === to) return;
+    const next = [...effectiveSlots];
+    if (!next[from] || !next[to]) return;
+    [next[from], next[to]] = [next[to], next[from]];
+    updateActiveWorkspace((w) => ({ ...w, slotSessionIds: next, focusedSlotIndex: to, maximizedSlotIndex: null }));
+    setActiveSessionId(next[to]);
+    logSystemActivity('terminal', 'reposicionar_terminal', gitRepoName || 'default', { from, to });
+  };
+
   const handleCloseSplitSlot = (slotIndex: number) => {
     if (!activeWorkspace) return;
     const mode = activeWorkspace.gridMode;
@@ -1542,6 +1566,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   const viewerRef = useRef(viewer);
   viewerRef.current = viewer;
   const cliEditorInstanceRef = useRef<any>(null);
+  const [viewerCursor, setViewerCursor] = useState({ line: 1, col: 1, tabSize: 2, eol: 'LF' as 'LF' | 'CRLF' });
+  const [viewerBlame, setViewerBlame] = useState('');
 
   const handleSaveViewerFile = useCallback(
     async (overrideContent?: string, silent?: boolean): Promise<boolean> => {
@@ -1583,6 +1609,28 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   );
 
   const [mdPreview, setMdPreview] = useState(false);
+  // último autor do arquivo aberto (git blame resumido)
+  useEffect(() => {
+    setViewerBlame('');
+    if (!viewer?.path || !window.electronAPI?.shell?.exec) return;
+    let stop = false;
+    const dir = viewer.path.split('/').slice(0, -1).join('/') || workspacePath;
+    window.electronAPI.shell
+      .exec(`git log -1 --format='%an (%ar)' -- '${viewer.path.replace(/'/g, "'\\''")}'`, dir)
+      .then((r) => !stop && r.exitCode === 0 && setViewerBlame(r.stdout.trim()))
+      .catch(() => {});
+    return () => {
+      stop = true;
+    };
+  }, [viewer?.path]);
+
+  // a barra de status do app mostra a posição, indentação e linguagem do arquivo do CLI
+  useEffect(() => {
+    if (!onViewerStatus) return;
+    onViewerStatus(viewer && !viewer.dataUrl && !viewer.error ? { path: viewer.path, name: viewer.name, language: getFileLanguage(viewer.name), blame: viewerBlame, line: viewerCursor.line, col: viewerCursor.col, tabSize: viewerCursor.tabSize, eol: viewerCursor.eol } : null);
+  }, [viewer?.path, viewer?.name, viewer?.dataUrl, viewer?.error, viewerBlame, viewerCursor]);
+  useEffect(() => () => onViewerStatus?.(null), []);
+
   const openViewer = useCallback(
     async (path: string, name: string) => {
       const prev = viewerRef.current;
@@ -1744,6 +1792,58 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
     }, 1500);
     return () => clearInterval(timer);
   }, [setTerminalSessions]);
+
+  // IA aberta fora de um quadrante (ex.: botão do header) substitui o terminal do quadrante em foco
+  useEffect(() => {
+    if (!activeSessionId || !activeWorkspace) return;
+    const sess = terminalSessions.find((x) => x.id === activeSessionId);
+    if (!sess || !AI_SESSION_TYPE.test(sess.type)) return;
+    if (workspaces.some((w) => w.slotSessionIds.includes(activeSessionId))) return;
+    updateActiveWorkspace((w) => {
+      const slots = [...w.slotSessionIds];
+      slots[Math.min(w.focusedSlotIndex, slots.length)] = activeSessionId;
+      return { ...w, slotSessionIds: slots };
+    });
+  }, [activeSessionId, terminalSessions, workspaces, activeWorkspace, updateActiveWorkspace]);
+
+  // "Novo contexto" do aviso de contexto cheio: troca a sessão de IA por uma nova do mesmo tipo, no mesmo quadrante
+  const newContextRef = useRef<(sessionId: string) => void>(() => {});
+  newContextRef.current = (sessionId: string) => {
+    const old = terminalSessions.find((s) => s.id === sessionId);
+    if (!old) return;
+    const cmd = { claude: 'claude', agy: 'agy', antigravity: 'agy', gemini: 'gemini', codex: 'codex', ollama: 'ollama' }[old.type] as string | undefined;
+    const newId = onNewSession(old.type, old.name, cmd);
+    if (typeof newId !== 'string') return;
+    setWorkspaces((prev) => prev.map((w) => ({ ...w, slotSessionIds: w.slotSessionIds.map((id) => (id === sessionId ? newId : id)) })));
+    setActiveSessionId(newId);
+    window.electronAPI?.pty?.kill?.(sessionId);
+    onCloseSession(sessionId);
+    logSystemActivity('terminal', 'novo_contexto_ia', cleanSessionName(old), { type: old.type });
+  };
+  useEffect(() => {
+    const onNewContext = (e: Event) => {
+      const id = (e as CustomEvent).detail?.sessionId;
+      if (id) newContextRef.current(id);
+    };
+    window.addEventListener('devflow:new-context', onNewContext);
+    return () => window.removeEventListener('devflow:new-context', onNewContext);
+  }, []);
+
+  // Terminais que não são de IA e não estão abertos em nenhum quadrante são fechados sozinhos (com uma folga p/ sessões recém-criadas)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const inUse = new Set<string>(workspaces.flatMap((w) => w.slotSessionIds));
+      if (activeSessionId) inUse.add(activeSessionId);
+      const stale = terminalSessions.filter((t) => !inUse.has(t.id) && !AI_SESSION_TYPE.test(t.type));
+      if (!stale.length) return;
+      stale.forEach((t) => {
+        window.electronAPI?.pty?.kill?.(t.id);
+        onCloseSession(t.id);
+      });
+      logSystemActivity('terminal', 'fechar_terminais_vazios_auto', `${stale.length} terminais`, { names: stale.map((t) => cleanSessionName(t)) });
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [terminalSessions, workspaces, activeSessionId, onCloseSession]);
 
   // Helper para obter o tipo de IA ou CLI para o slot da área de trabalho
   const getSlotAiType = (ws: TerminalWorkspace, slotIndex: number, session?: TerminalSessionItem): string => {
@@ -2053,19 +2153,27 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           flexDirection: 'column',
           overflow: 'hidden',
           background: skinActive ? 'transparent' : themeTokens.bgCard,
-          borderRadius: activeWorkspace?.gridMode === '1x1' ? 0 : 6,
+          borderRadius: 6,
           border: activeWorkspace?.gridMode === '1x1' || skinActive ? 'none' : `1px solid ${themeTokens.border}`,
           borderTop: 'none',
           boxShadow: 'none',
           position: 'relative',
+          opacity: dragOverSlot === slotIndex ? 0.6 : 1,
+          transition: 'opacity 0.12s ease',
         }}
         onDragOver={(e) => {
           e.preventDefault();
-          e.dataTransfer.dropEffect = 'copy';
+          const moving = e.dataTransfer.types.includes('application/x-aura-slot');
+          e.dataTransfer.dropEffect = moving ? 'move' : 'copy';
+          if (moving && dragOverSlot !== slotIndex) setDragOverSlot(slotIndex);
         }}
+        onDragLeave={() => dragOverSlot === slotIndex && setDragOverSlot(null)}
         onDrop={(e) => {
           e.preventDefault();
           e.stopPropagation();
+          setDragOverSlot(null);
+          const from = e.dataTransfer.getData('application/x-aura-slot');
+          if (from !== '') { handleSwapSlots(Number(from), slotIndex); return; }
           handleFocusSlot(slotIndex, session.id);
           const filePath = e.dataTransfer.getData('text/plain');
           if (filePath) {
@@ -2077,9 +2185,15 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           [0, 120].forEach((ms) => setTimeout(() => window.dispatchEvent(new CustomEvent('devflow:focus-terminal', { detail: { sessionId: sid } })), ms));
         }}
       >
-        {/* Quadrant Mini Header (height: 27px) - shown in multi-terminal layouts */}
-        {activeWorkspace?.gridMode !== '1x1' && (
+        {/* Quadrant Mini Header (height: 27px) */}
+        {(
           <div
+            draggable={activeWorkspace?.gridMode !== '1x1'}
+            onDragStart={(e) => {
+              e.dataTransfer.setData('application/x-aura-slot', String(slotIndex));
+              e.dataTransfer.effectAllowed = 'move';
+            }}
+            onDragEnd={() => setDragOverSlot(null)}
             onClick={() => handleFocusSlot(slotIndex, session.id)}
             onMouseDown={() => handleFocusSlot(slotIndex, session.id)}
             style={{
@@ -2353,8 +2467,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 <Trash2 size={11} />
               </button>
 
-              {/* Maximize / Restore this slot */}
-              <button
+              {/* Maximize / Restore this slot (só faz sentido com mais de um terminal) */}
+              {activeWorkspace?.gridMode !== '1x1' && <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -2379,10 +2493,10 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 onMouseLeave={(e) => (e.currentTarget.style.color = hdrAiColor ? 'rgba(255,255,255,0.8)' : skinTk.textMuted)}
               >
                 {activeWorkspace?.maximizedSlotIndex === slotIndex ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
-              </button>
+              </button>}
 
               {/* Close this split slot */}
-              <button
+              {activeWorkspace?.gridMode !== '1x1' && <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -2403,7 +2517,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 onMouseLeave={(e) => (e.currentTarget.style.color = hdrAiColor ? 'rgba(255,255,255,0.8)' : skinTk.textMuted)}
               >
                 <X size={11} />
-              </button>
+              </button>}
             </div>
           </div>
         )}
@@ -2867,12 +2981,14 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             width: explorerWidth,
             height: '100%',
             minHeight: 0,
-            background: skinActive ? 'transparent' : skinTk.bgCard,
+            // na aba de arquivos o painel vira três cards separados (Explorer, Outline, Timeline), como na IDE
+            background: skinActive || sidebarTab === 'files' ? 'transparent' : skinTk.bgCard,
             borderRadius: 10,
             border: 'none',
             boxShadow: 'none',
             display: 'flex',
             flexDirection: 'column',
+            gap: sidebarTab === 'files' ? 5 : 0,
             overflow: 'hidden',
             flexShrink: 0,
             transition: isDraggingExplorer ? 'none' : 'width 0.1s ease',
@@ -2884,20 +3000,21 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           {/* ========================================================= */}
           {sidebarTab === 'files' && (
             <>
+              <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column', background: skinActive ? 'transparent' : skinTk.bgCard, borderRadius: skinActive ? 'var(--sk-r, 0px)' : 10, overflow: 'hidden' }}>
               {/* Header do Explorador */}
           <div
             style={{
-              padding: '10px 12px',
-              borderBottom: `1px solid ${skinTk.border}`,
+              padding: '11px 14px 0 11px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
               gap: 8,
               flexShrink: 0,
+              whiteSpace: 'nowrap',
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: skinTk.textPrimary, whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: 12, fontWeight: 500, color: skinTk.textPrimary, whiteSpace: 'nowrap' }}>
                 Explorer
               </span>
               <span
@@ -2913,83 +3030,68 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               </span>
             </div>
 
-            {/* Quick Actions */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              {/* Search Toggle */}
+            {/* Ações do explorador reunidas em um popup */}
+            <div ref={explorerOptionsRef} style={{ position: 'relative', display: 'flex' }}>
               <button
                 type="button"
-                onClick={() => setIsSearchOpen((prev) => !prev)}
-                title="Filtrar arquivos"
+                onClick={() => setExplorerOptionsOpen((v) => !v)}
+                title="Opções do explorador"
                 style={{
-                  background: isSearchOpen ? `${accentColor}22` : 'transparent',
+                  background: explorerOptionsOpen || isSearchOpen ? `${accentColor}22` : 'transparent',
                   border: 'none',
-                  color: isSearchOpen ? accentColor : skinTk.textSecondary,
-                  padding: 4,
-                  borderRadius: 4,
+                  color: explorerOptionsOpen || isSearchOpen ? accentColor : skinTk.textSecondary,
+                  padding: 2,
+                  borderRadius: 3,
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
+                  transition: 'background 0.15s ease, color 0.15s ease',
                 }}
               >
-                <Search size={14} />
+                <MoreHorizontal size={16} />
               </button>
-
-              {/* Novo Arquivo */}
-              <button
-                type="button"
-                onClick={() => startCreating(false)}
-                title="Novo Arquivo"
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: skinTk.textSecondary,
-                  padding: 4,
-                  borderRadius: 4,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                }}
-              >
-                <FilePlus size={14} />
-              </button>
-
-              {/* Nova Pasta */}
-              <button
-                type="button"
-                onClick={() => startCreating(true)}
-                title="Nova Pasta"
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: skinTk.textSecondary,
-                  padding: 4,
-                  borderRadius: 4,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                }}
-              >
-                <FolderPlus size={14} />
-              </button>
-
-              {/* Atualizar */}
-              <button
-                type="button"
-                onClick={onRefreshTree}
-                title="Atualizar Explorador"
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: skinTk.textSecondary,
-                  padding: 4,
-                  borderRadius: 4,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                }}
-              >
-                <RefreshCw size={13} />
-              </button>
+              {explorerOptionsOpen && (
+                <div
+                  className="df-dropdown-menu"
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 4px)',
+                    right: 0,
+                    minWidth: 180,
+                    background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+                    border: getFieldTokens(isEffectiveDark).dropdownBorder,
+                    borderRadius: 8,
+                    boxShadow: 'none',
+                    padding: 4,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 2,
+                    zIndex: 9999,
+                  }}
+                >
+                  {[
+                    { icon: <Search size={13} />, label: isSearchOpen ? 'Ocultar filtro' : 'Filtrar arquivos', run: () => setIsSearchOpen((prev) => !prev) },
+                    { icon: <FilePlus size={13} />, label: 'Novo Arquivo', run: () => startCreating(false) },
+                    { icon: <FolderPlus size={13} />, label: 'Nova Pasta', run: () => startCreating(true) },
+                    { icon: <RefreshCw size={13} />, label: 'Atualizar', run: () => onRefreshTree?.() },
+                  ].map((o) => (
+                    <button
+                      key={o.label}
+                      type="button"
+                      onClick={() => {
+                        setExplorerOptionsOpen(false);
+                        o.run();
+                      }}
+                      style={{ height: 28, padding: '0 10px', border: 'none', borderRadius: 6, background: 'transparent', color: skinTk.textPrimary, fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', cursor: 'pointer', transition: 'background 0.12s ease' }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      <span style={{ display: 'flex', color: skinTk.textSecondary }}>{o.icon}</span>
+                      <span>{o.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -2998,7 +3100,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             <div
               className="df-search-box"
               style={{
-                margin: '6px 8px 4px',
+                margin: '10px 14px 0 11px',
                 padding: '5px 8px',
                 borderRadius: 6,
                 border: getFieldTokens(isEffectiveDark).fieldBorder,
@@ -3055,7 +3157,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               flex: 1,
               overflowY: 'auto',
               overflowX: 'hidden',
-              padding: '6px 4px',
+              padding: '10px 15px 10px 11px',
               display: 'flex',
               flexDirection: 'column',
               gap: 1,
@@ -3122,7 +3224,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                         }}
                         style={{
                           width: '100%',
-                          paddingLeft: depth * 12 + 4,
+                          paddingLeft: depth * 12 + 2,
                           paddingRight: 6,
                           height: 24,
                           borderRadius: 4,
@@ -3215,6 +3317,23 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               })
             )}
           </div>
+          </div>
+
+          <OutlineTimelineCards
+            file={viewer && !viewer.dataUrl ? { path: viewer.path, name: viewer.name, content: viewer.content, language: undefined, isDirty: viewer.content !== undefined && viewer.content !== viewer.savedContent } : null}
+            themeTokens={skinTk}
+            isEffectiveDark={isEffectiveDark}
+            accentColor={accentColor}
+            skinned={skinActive}
+            onJumpToLine={(line) => {
+              const ed = cliEditorInstanceRef.current;
+              if (!ed) return;
+              ed.revealLineInCenter(line);
+              ed.setPosition({ lineNumber: line, column: 1 });
+              ed.focus();
+            }}
+            onToast={onToast}
+          />
         </>
       )}
 
@@ -3245,6 +3364,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 activeFile={viewer ? { path: viewer.path, name: viewer.name } : activeFileId ? { path: activeFileId, name: activeFileId.split('/').pop() || '' } : null}
                 onOpenFile={(filePath, fileName) => openViewer(filePath, fileName || filePath.split('/').pop() || 'file')}
                 onJumpToLine={() => {}}
+                graphSkinned={skinActive}
                 onStartReview={onStartReview}
                 onRunTerminalCommand={(name, cmd) => {
                   if (activeSessionId && window.electronAPI?.pty?.write) {
@@ -4126,131 +4246,6 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             </div>
           )}
 
-          {/* Bottom Bar: Branch, GitHub Sync & Issues Quick Actions */}
-          <div
-            style={{
-              padding: '6px 10px',
-              borderTop: `1px solid ${skinTk.border}`,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              fontSize: 11,
-              color: skinTk.textMuted,
-              background: skinActive ? 'transparent' : isEffectiveDark ? '#121214' : '#f8f8f8',
-              flexShrink: 0,
-              gap: 6,
-            }}
-          >
-            {/* Branch Pill (Click to open BranchModal) */}
-            <div
-              onClick={() => onOpenBranchModal?.()}
-              title="Gerenciar Branches (Clique para abrir)"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 5,
-                padding: '3px 6px',
-                borderRadius: 4,
-                cursor: onOpenBranchModal ? 'pointer' : 'default',
-                transition: 'background 0.15s ease',
-                minWidth: 0,
-                flexShrink: 1,
-              }}
-              onMouseEnter={(e) => {
-                if (onOpenBranchModal) e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent';
-              }}
-            >
-              <GitBranch size={12} color={accentColor} style={{ flexShrink: 0 }} />
-              <span
-                style={{
-                  fontWeight: 600,
-                  color: skinTk.textPrimary,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  maxWidth: 110,
-                  fontSize: 11,
-                }}
-              >
-                {currentBranch || 'main'}
-              </span>
-            </div>
-
-            {/* Quick Actions Right: Sync & Issues */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-              {/* Sync with GitHub */}
-              <button
-                type="button"
-                onClick={() => onSyncGit?.()}
-                title="Sincronizar com GitHub (Pull & Push)"
-                disabled={isSyncingGit}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: isSyncingGit ? accentColor : skinTk.textSecondary,
-                  cursor: isSyncingGit ? 'not-allowed' : 'pointer',
-                  padding: '3px 5px',
-                  borderRadius: 4,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  fontSize: 10.5,
-                  transition: 'all 0.15s ease',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'transparent';
-                }}
-              >
-                <RefreshCw
-                  size={11}
-                  className={isSyncingGit ? 'spin-animate' : ''}
-                />
-                <span>Sync</span>
-              </button>
-
-              {/* Issues badge */}
-              <button
-                type="button"
-                onClick={() => {
-                  if (sidebarTab === 'issues') {
-                    onOpenIssuesModal?.();
-                  } else {
-                    setSidebarTab('issues');
-                  }
-                }}
-                title="Ver Issues do GitHub"
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: openIssuesCount > 0 ? '#22c55e' : skinTk.textSecondary,
-                  cursor: 'pointer',
-                  padding: '3px 5px',
-                  borderRadius: 4,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 3.5,
-                  fontSize: 10.5,
-                  fontWeight: 500,
-                  transition: 'all 0.15s ease',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'transparent';
-                }}
-              >
-                <CircleDot size={11} color={openIssuesCount > 0 ? '#22c55e' : skinTk.textSecondary} />
-                <span>{openIssuesCount}</span>
-              </button>
-            </div>
-          </div>
           <div aria-hidden style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none' }}><TerminalSkinOverlay skin={skinId} region="sidebar" /></div>
         </div>
       )}
@@ -4262,7 +4257,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
         <div
           className={`resizer-col ${isDraggingExplorer ? 'dragging' : ''}`}
           onMouseDown={handleStartExplorerResize}
-          onDoubleClick={() => setExplorerWidth(270)}
+          onDoubleClick={() => setExplorerWidth(340)}
           title="Arraste para redimensionar (duplo clique restaura)"
           // área de captura maior (sem alterar o layout) para ser fácil de agarrar
           style={{ width: 11, marginLeft: -3, marginRight: -3 }}
@@ -5701,6 +5696,13 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     }}
                     onMount={(editor, monaco) => {
                       cliEditorInstanceRef.current = editor;
+                      const sync = () => {
+                        const pos = editor.getPosition();
+                        const model = editor.getModel();
+                        setViewerCursor({ line: pos?.lineNumber || 1, col: pos?.column || 1, tabSize: model?.getOptions().tabSize || 2, eol: model?.getEOL() === '\r\n' ? 'CRLF' : 'LF' });
+                      };
+                      sync();
+                      editor.onDidChangeCursorPosition(sync);
                       editor.updateOptions({ readOnly: false, domReadOnly: false });
                       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
                         handleSaveViewerFile();

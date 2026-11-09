@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { GitGraphSection } from './GitGraphSection';
 import { getFieldTokens } from '../../utils/fieldTokens';
 import {
   Search,
@@ -63,6 +64,8 @@ export interface SidebarPanelsProps {
   onStartReview?: (files: any[], index?: number) => void;
   onRunTerminalCommand: (name: string, command: string) => void;
   onToast: (msg: string) => void;
+  /** CLI com estilo visual: o Graph usa a cor e a tipografia do estilo */
+  graphSkinned?: boolean;
   onOpenBranchModal?: () => void;
   currentBranch?: string;
   onGenerateCommitMessage?: (repoDir: string) => Promise<string>;
@@ -90,6 +93,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
   onStartReview,
   onRunTerminalCommand,
   onToast,
+  graphSkinned,
   onOpenBranchModal,
   currentBranch = 'main',
   onGenerateCommitMessage,
@@ -885,10 +889,12 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
       {/* 2. Git / Source Control Panel (Border-free)        */}
       {/* -------------------------------------------------- */}
       {activeTab === 'git' && (
+        <div style={{ width: '100%', flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
         <div
           style={{
             width: '100%',
             flex: '1 1 0',
+            minHeight: 0,
             padding: '8px 10px',
             background: themeTokens.bgCard,
             borderRadius: 10,
@@ -1310,6 +1316,12 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
               )
             )}
           </div>
+        </div>
+
+        {/* Graph: card separado, como Outline e Timeline */}
+        <div style={{ width: '100%', flex: '1 1 0', minHeight: 0, padding: '8px 10px', background: themeTokens.bgCard, borderRadius: 10, display: 'flex', flexDirection: 'column', overflowY: 'auto', overflowX: 'hidden', boxSizing: 'border-box' }}>
+          <GitGraphSection dir={gitRepos[0]?.dir || workspacePath} themeTokens={themeTokens} isEffectiveDark={isEffectiveDark} accentColor={accentColor} refreshSignal={isGitLoading} onToast={onToast} skinned={graphSkinned} />
+        </div>
         </div>
       )}
 

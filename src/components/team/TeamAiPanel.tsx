@@ -14,7 +14,7 @@ export interface TeamAiProvider {
 }
 
 // Mesmo fluxo das outras telas: CLI configurado → retry sem modelo → ai.prompt direto
-async function callAi(provider: TeamAiProvider, rawPrompt: string): Promise<string> {
+export async function callAi(provider: TeamAiProvider, rawPrompt: string): Promise<string> {
   const api = window.electronAPI?.ai;
   const prompt = provider.contextNotes?.trim() ? `Contexto do projeto:\n${provider.contextNotes.trim()}\n\n${rawPrompt}` : rawPrompt;
   const isBad = (res: any) => {

@@ -525,7 +525,7 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
             onClick={handleJumpToToday}
             style={{
               background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
-              border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'}`,
+              border: 'none',
               borderRadius: 5,
               padding: '3px 9px',
               color: textPrimary,
@@ -584,7 +584,7 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
           display: 'flex',
           flexDirection: 'row',
           flex: 1,
-          border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'}`,
+          border: 'none',
           borderRadius: 8,
           overflow: 'hidden',
           background: viewCanvasBg,

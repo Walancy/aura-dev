@@ -18,6 +18,7 @@ import {
   ArrowRight,
   Check,
   X,
+  FolderGit2,
   ExternalLink,
   Folder,
   Tag,
@@ -87,6 +88,8 @@ export interface WeeklyGoal {
 }
 
 interface DailySchedulerViewProps {
+  /** a IA gerou cards (coluna) ou sugestões (chat) na Daily: o app avisa pela central de notificações */
+  onAiCards?: (info: { count: number; where: string; kind: 'cards' | 'suggestions'; project?: string }) => void;
   workspacePath?: string;
   repoName?: string;
   accentColor?: string;
@@ -241,6 +244,7 @@ function getMondayOfCurrentWeek(date: Date): Date {
 }
 
 export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
+  onAiCards,
   workspacePath = '/Users/walancy/Documents/codes/devflow-desktop',
   repoName = 'aura-dev',
   accentColor = '#007acc',
@@ -472,6 +476,36 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
     } catch {}
   }, [items]);
 
+  // Cópia em arquivo compartilhada entre todas as versões do app (cada perfil tem o seu localStorage):
+  // ao abrir, junta o que está no arquivo com o que já existe aqui; depois grava a cada mudança
+  const [dailyFileReady, setDailyFileReady] = useState(false);
+  useEffect(() => {
+    const store = window.electronAPI?.dailyStore;
+    if (!store) {
+      setDailyFileReady(false);
+      return;
+    }
+    store
+      .read()
+      .then((raw) => {
+        try {
+          const fromFile: DailyItem[] = raw ? JSON.parse(raw) : [];
+          if (Array.isArray(fromFile) && fromFile.length) {
+            setItems((prev) => {
+              const ids = new Set(fromFile.map((i) => i.id));
+              return [...fromFile, ...prev.filter((i) => !ids.has(i.id))];
+            });
+          }
+        } catch {}
+      })
+      .finally(() => setDailyFileReady(true));
+  }, []);
+  useEffect(() => {
+    if (!dailyFileReady) return;
+    const t = setTimeout(() => window.electronAPI?.dailyStore?.write(JSON.stringify(items)), 400);
+    return () => clearTimeout(t);
+  }, [items, dailyFileReady]);
+
   useEffect(() => {
     const handleDailyUpdate = () => {
       try {
@@ -518,14 +552,17 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
 
   // Modal de Exclusão (Regra obrigatória do AGENTS.md)
   const [itemToDelete, setItemToDelete] = useState<DailyItem | null>(null);
+  // seleção em lote dos cards (checkbox em cada card e em cada coluna)
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectionProjectMenu, setSelectionProjectMenu] = useState<string | null>(null);
+  const [projectSearch, setProjectSearch] = useState('');
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const toggleSelected = (id: string) => setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   const [isDeleting, setIsDeleting] = useState(false);
 
   // Modal de Exclusão de Coluna Inteira (Regra obrigatória do AGENTS.md)
   const [columnToClear, setColumnToClear] = useState<'yesterday' | 'blocker' | 'today' | null>(null);
   const [isClearingColumn, setIsClearingColumn] = useState<boolean>(false);
-  const [aiHint, setAiHint] = useState<string>(() => {
-    try { return localStorage.getItem('daily_ai_hint') || ''; } catch { return ''; }
-  });
   // Cards gerados pela IA aguardando aceite/recusa, por coluna (só os do momento; anteriores não são afetados)
   const [pendingAiIds, setPendingAiIds] = useState<Record<string, string[]>>({});
   const [generatingCardAi, setGeneratingCardAi] = useState(false);
@@ -925,6 +962,160 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
     }
   };
 
+  useEffect(() => {
+    setSelectedIds([]);
+    setSelectionProjectMenu(null);
+    setConfirmBulkDelete(false);
+  }, [selectedDateIso, activeTab]);
+
+  // desfaz o "Confirmar exclusão" se o usuário não confirmar logo
+  useEffect(() => {
+    if (!confirmBulkDelete) return;
+    const t = setTimeout(() => setConfirmBulkDelete(false), 3500);
+    return () => clearTimeout(t);
+  }, [confirmBulkDelete]);
+
+  const handleBulkDelete = () => {
+    const ids = new Set(selectedIds);
+    setItems((prev) => prev.filter((it) => !ids.has(it.id)));
+    logSystemActivity('daily', 'excluir_cards_em_lote', repoName || 'Daily', { total: ids.size });
+    onToast?.(`${ids.size} card(s) removido(s).`);
+    setSelectedIds([]);
+    setConfirmBulkDelete(false);
+  };
+
+  const handleBulkProject = (projectName: string) => {
+    const ids = new Set(selectedIds);
+    setItems((prev) => prev.map((it) => (ids.has(it.id) ? { ...it, projectName, projectId: undefined } : it)));
+    logSystemActivity('daily', 'definir_projeto_em_lote', projectName, { total: ids.size });
+    onToast?.(`Projeto "${projectName}" definido em ${ids.size} card(s).`);
+    setSelectedIds([]);
+    setSelectionProjectMenu(null);
+  };
+
+  // ações dos selecionados: ocupam o lugar dos botões da coluna (só ícones)
+  const renderSelectionActions = (col: string) => {
+    const ibtn = (color: string): React.CSSProperties => ({
+      width: 24, height: 24, borderRadius: 6, border: 'none', background: 'transparent', color,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.15s ease',
+    });
+    const hover = (bg: string) => ({
+      onMouseEnter: (e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.background = bg; },
+      onMouseLeave: (e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.background = 'transparent'; },
+    });
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, position: 'relative' }}>
+        <div style={{ position: 'relative' }}>
+          <button type="button" title={`Definir projeto em ${selectedIds.length} card(s)`} onClick={() => {
+            setProjectSearch('');
+            setSelectionProjectMenu(selectionProjectMenu === col ? null : col);
+          }} style={ibtn(accentColor)} {...hover(isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')}>
+            <FolderGit2 size={13} />
+          </button>
+          {selectionProjectMenu === col && (
+            <>
+              <div style={{ position: 'fixed', inset: 0, zIndex: 99998 }} onClick={() => setSelectionProjectMenu(null)} />
+              {(() => {
+                const ft = getFieldTokens(isEffectiveDark);
+                const q = projectSearch.trim().toLowerCase();
+                const matches = availableProjects.filter((p) => !q || p.name.toLowerCase().includes(q) || (p.fullName || '').toLowerCase().includes(q));
+                return (
+                  <div
+                    className="df-dropdown-menu"
+                    style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, width: 240, background: ft.dropdownMenuBg, border: ft.dropdownBorder, borderRadius: 8, boxShadow: 'none', padding: 4, display: 'flex', flexDirection: 'column', gap: 4, zIndex: 99999, animation: 'fadeIn 0.12s ease-out' }}
+                  >
+                    <div className="df-search-box" style={{ height: 28, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: ft.fieldBg, borderRadius: 6 }}>
+                      <Search size={12} color={theme?.textSecondary} />
+                      <input
+                        autoFocus
+                        value={projectSearch}
+                        onChange={(e) => setProjectSearch(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') setSelectionProjectMenu(null);
+                          if (e.key === 'Enter' && matches[0]) handleBulkProject(matches[0].name);
+                        }}
+                        placeholder="Buscar projeto..."
+                        style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: theme?.textPrimary, fontSize: 11.5, fontFamily: 'inherit' }}
+                      />
+                    </div>
+                    <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      {matches.length === 0 && <div style={{ padding: '6px 8px', fontSize: 11, color: theme?.textSecondary }}>Nenhum projeto encontrado.</div>}
+                      {matches.map((p) => (
+                        <button
+                          key={String(p.id)}
+                          type="button"
+                          onClick={() => handleBulkProject(p.name)}
+                          style={{ height: 28, flexShrink: 0, padding: '0 10px', border: 'none', borderRadius: 6, background: 'transparent', color: theme?.textPrimary, fontSize: 11.5, textAlign: 'left', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', transition: 'background 0.12s ease' }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)')}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                        >
+                          {p.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </>
+          )}
+        </div>
+        <button
+          type="button"
+          title={confirmBulkDelete ? `Clique de novo para excluir ${selectedIds.length} card(s)` : `Excluir ${selectedIds.length} card(s) selecionado(s)`}
+          onClick={() => (confirmBulkDelete ? handleBulkDelete() : setConfirmBulkDelete(true))}
+          style={{ ...ibtn(confirmBulkDelete ? '#ffffff' : '#ef4444'), background: confirmBulkDelete ? '#ef4444' : 'transparent' }}
+          {...(confirmBulkDelete ? {} : hover('rgba(239, 68, 68, 0.15)'))}
+        >
+          <Trash2 size={13} />
+        </button>
+        <button type="button" title="Limpar seleção" onClick={() => setSelectedIds([])} style={ibtn(theme?.textSecondary)} {...hover(isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')}>
+          <X size={13} />
+        </button>
+      </div>
+    );
+  };
+
+  // contador de selecionados no cabeçalho da coluna
+  const renderSelectedCount = (list: DailyItem[]) => {
+    const n = list.filter((i) => selectedIds.includes(i.id)).length;
+    if (n === 0) return null;
+    return (
+      <span style={{ fontSize: 10, fontWeight: 400, padding: '1px 6px', borderRadius: 10, background: hexToRgba(accentColor, 0.18), color: accentColor }}>
+        {n} {n === 1 ? 'selecionado' : 'selecionados'}
+      </span>
+    );
+  };
+
+  // checkbox da coluna: marca/desmarca todos os cards dela
+  const renderSelectAll = (list: DailyItem[]) => {
+    if (list.length === 0) return null;
+    const all = list.every((i) => selectedIds.includes(i.id));
+    const some = !all && list.some((i) => selectedIds.includes(i.id));
+    return (
+      <button
+        type="button"
+        title={all ? 'Desmarcar todos desta coluna' : 'Selecionar todos desta coluna'}
+        onClick={() => setSelectedIds((prev) => (all ? prev.filter((id) => !list.some((i) => i.id === id)) : [...new Set([...prev, ...list.map((i) => i.id)])]))}
+        style={{
+          width: 16,
+          height: 16,
+          borderRadius: 4,
+          border: 'none',
+          padding: 0,
+          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          background: all || some ? accentColor : isEffectiveDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.1)',
+          transition: 'background 0.15s ease',
+        }}
+      >
+        {all ? <Check size={11} color="#ffffff" strokeWidth={3} /> : some ? <span style={{ width: 8, height: 2, borderRadius: 1, background: '#ffffff' }} /> : null}
+      </button>
+    );
+  };
+
   const handleConfirmDeleteItem = () => {
     if (!itemToDelete) return;
     setIsDeleting(true);
@@ -1322,13 +1513,16 @@ RETORNE SOMENTE JSON: {"title":"...","description":"..."}`;
           ? `O que está BLOQUEANDO o andamento e o que falta para destravar. Ex.: "Aguardando retorno da API de pagamentos para finalizar a conciliação".`
           : `O PRÓXIMO PASSO concreto de hoje, em continuidade ao que já foi feito. Futuro, objetivo. Ex.: "Finalizar a tela de relatórios e validar com dados reais".`;
 
-      const hintBlock = aiHint.trim() ? `\nINSTRUÇÃO EXTRA DO USUÁRIO (siga com prioridade): ${aiHint.trim()}\n` : '';
+
+      // o que o usuário conversou no chat da Daily também vale como contexto para os cards
+      let chatCtx = '';
+      try { chatCtx = localStorage.getItem('daily_chat_context') || ''; } catch {}
+      const chatBlock = chatCtx ? `\nCONVERSA COM O DESENVOLVEDOR NO CHAT (contexto extra, use se ajudar a descrever melhor o trabalho):\n${chatCtx}\n` : '';
 
       const prompt = `Você escreve os cards da Daily Scrum de @${ghUser}, como se o próprio desenvolvedor estivesse contando ao time.
 
 COLUNA: "${colLabel}" (Daily de ${selectedDateIso})
-${colGuidelines}
-${hintBlock}
+${chatBlock}${colGuidelines}
 MATERIAL (commits reais, use só para entender o que foi feito):
 ${commitsFormatted}
 
@@ -1355,7 +1549,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
         return 'claude';
       })();
 
-      onToast?.(`⚡ Gerando cards para "${colLabel}" via IA (${selectedAiProvider || 'IA'})...`);
+      onToast?.(`Gerando cards para "${colLabel}" via IA (${selectedAiProvider || 'IA'})...`);
 
       let aiRawOutput = '';
 
@@ -1553,7 +1747,8 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
 
       setItems((prev) => [...newItems, ...prev]);
       setPendingAiIds((prev) => ({ ...prev, [colCategory]: [...(prev[colCategory] || []), ...newItems.map((i) => i.id)] }));
-      onToast?.(`✨ ${newItems.length} ${newItems.length === 1 ? 'tarefa criada' : 'tarefas criadas'} na coluna "${colLabel}"!`);
+      onToast?.(`${newItems.length} ${newItems.length === 1 ? 'tarefa criada' : 'tarefas criadas'} na coluna "${colLabel}"!`);
+      onAiCards?.({ count: newItems.length, where: colLabel, kind: 'cards', project: newItems[0]?.projectName });
     } catch (globalErr: any) {
       console.error('Erro ao gerar tarefas via IA para a coluna:', globalErr);
       onToast?.(`Erro ao gerar tarefas: ${globalErr?.message || 'Falha inesperada'}`);
@@ -1854,8 +2049,8 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                   fontWeight: 400,
                   background: activeTab === 'daily' ? accentColor : 'transparent',
                   color: '#ffffff',
-                  border: activeTab === 'daily' ? '1px solid rgba(255, 255, 255, 0.25)' : '1px solid transparent',
-                  boxShadow: activeTab === 'daily' ? '0 2px 6px rgba(0, 0, 0, 0.25)' : 'none',
+                  border: 'none',
+                  boxShadow: 'none',
                   borderRadius: 5,
                   cursor: 'pointer',
                   display: 'flex',
@@ -1877,8 +2072,8 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                   fontWeight: 400,
                   background: activeTab === 'weekly' ? accentColor : 'transparent',
                   color: '#ffffff',
-                  border: activeTab === 'weekly' ? '1px solid rgba(255, 255, 255, 0.25)' : '1px solid transparent',
-                  boxShadow: activeTab === 'weekly' ? '0 2px 6px rgba(0, 0, 0, 0.25)' : 'none',
+                  border: 'none',
+                  boxShadow: 'none',
                   borderRadius: 5,
                   cursor: 'pointer',
                   display: 'flex',
@@ -2173,6 +2368,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
               onSelectAiProvider={onSelectAiProvider}
               onSelectModel={onSelectModel}
               onToast={onToast}
+              onSuggestions={(count) => onAiCards?.({ count, where: 'chat', kind: 'suggestions' })}
             />
             ) : (
               <div data-tour="daily-ai-panel" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 24, fontSize: 12, color: theme?.textSecondary || '#888', borderRadius: 10, background: isEffectiveDark ? '#141414' : '#f8fafc' }}>
@@ -2198,30 +2394,6 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
               minHeight: 0,
             }}
           >
-            <input
-              className="df-field"
-              value={aiHint}
-              onChange={(e) => {
-                setAiHint(e.target.value);
-                try { localStorage.setItem('daily_ai_hint', e.target.value); } catch {}
-              }}
-              placeholder="Instrução opcional para a IA ao gerar cards (ex.: mais curto, tom para cliente, foco em backend)"
-              style={{
-                height: 28,
-                padding: '0 10px',
-                borderRadius: 8,
-                border: getFieldTokens(isEffectiveDark).fieldBorder,
-                background: getFieldTokens(isEffectiveDark).fieldBg,
-                boxShadow: 'none',
-                color: theme?.textPrimary,
-                fontSize: 12,
-                fontWeight: 400,
-                outline: 'none',
-                boxSizing: 'border-box',
-                flexShrink: 0,
-              }}
-            />
-
             {/* AS 3 COLUNAS COM CARDS */}
             <div
               style={{
@@ -2266,6 +2438,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {renderSelectAll(yesterdayItems)}
                     <span style={{ fontSize: 11, fontWeight: 400, textTransform: 'uppercase', letterSpacing: 0.5, color: theme.textPrimary }}>
                       {isSelectedMonday ? 'Sexta-feira' : 'Dia Anterior'}
                     </span>
@@ -2281,9 +2454,11 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                     >
                       {yesterdayItems.length}
                     </span>
+                    {renderSelectedCount(yesterdayItems)}
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  {yesterdayItems.some((i) => selectedIds.includes(i.id)) && renderSelectionActions('yesterday')}
+                  <div style={{ display: yesterdayItems.some((i) => selectedIds.includes(i.id)) ? 'none' : 'flex', alignItems: 'center', gap: 4 }}>
                     {renderAiReview('yesterday')}
                     {/* 1. Lixeira para limpar toda a coluna */}
                     <button
@@ -2506,6 +2681,8 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                           onDragLeave={handleDragLeave}
                           onDrop={(e, targetId) => handleDrop(e, targetId, 'yesterday')}
                           onDragEnd={handleDragEnd}
+                          selected={selectedIds.includes(item.id)}
+                          onToggleSelect={toggleSelected}
                         />
                       )
                     )
@@ -2544,6 +2721,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {renderSelectAll(blockerItems)}
                     <span style={{ fontSize: 11, fontWeight: 400, textTransform: 'uppercase', letterSpacing: 0.5, color: '#ef4444' }}>
                       Impedimentos
                     </span>
@@ -2559,9 +2737,11 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                     >
                       {blockerItems.length}
                     </span>
+                    {renderSelectedCount(blockerItems)}
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  {blockerItems.some((i) => selectedIds.includes(i.id)) && renderSelectionActions('blocker')}
+                  <div style={{ display: blockerItems.some((i) => selectedIds.includes(i.id)) ? 'none' : 'flex', alignItems: 'center', gap: 4 }}>
                     {renderAiReview('blocker')}
                     {/* 1. Lixeira para limpar toda a coluna */}
                     <button
@@ -2786,6 +2966,8 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                           onDragLeave={handleDragLeave}
                           onDrop={(e, targetId) => handleDrop(e, targetId, 'blocker')}
                           onDragEnd={handleDragEnd}
+                          selected={selectedIds.includes(item.id)}
+                          onToggleSelect={toggleSelected}
                         />
                       )
                     )
@@ -2824,6 +3006,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {renderSelectAll(todayItems)}
                     <span style={{ fontSize: 11, fontWeight: 400, textTransform: 'uppercase', letterSpacing: 0.5, color: '#38bdf8' }}>
                       Planejado Hoje
                     </span>
@@ -2839,9 +3022,11 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                     >
                       {todayItems.length}
                     </span>
+                    {renderSelectedCount(todayItems)}
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  {todayItems.some((i) => selectedIds.includes(i.id)) && renderSelectionActions('today')}
+                  <div style={{ display: todayItems.some((i) => selectedIds.includes(i.id)) ? 'none' : 'flex', alignItems: 'center', gap: 4 }}>
                     {renderAiReview('today')}
                     {/* 1. Lixeira para limpar toda a coluna */}
                     <button
@@ -3064,6 +3249,8 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                           onDragLeave={handleDragLeave}
                           onDrop={(e, targetId) => handleDrop(e, targetId, 'today')}
                           onDragEnd={handleDragEnd}
+                          selected={selectedIds.includes(item.id)}
+                          onToggleSelect={toggleSelected}
                         />
                       )
                     )
@@ -3760,6 +3947,8 @@ interface DailyCardItemProps {
   onDragLeave?: (e: React.DragEvent, id: string) => void;
   onDrop?: (e: React.DragEvent, targetId: string) => void;
   onDragEnd?: (e: React.DragEvent) => void;
+  selected?: boolean;
+  onToggleSelect?: (id: string) => void;
 }
 
 const DailyCardItem: React.FC<DailyCardItemProps> = ({
@@ -3778,6 +3967,8 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
   onDragLeave,
   onDrop,
   onDragEnd,
+  selected,
+  onToggleSelect,
 }) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -3857,6 +4048,8 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
           transition: 'all 0.15s ease',
           userSelect: 'none',
           flexShrink: 0,
+          flexDirection: 'column',
+          gap: 8,
         }}
         onMouseEnter={(e) => {
           (e.currentTarget as HTMLElement).style.color = isEffectiveDark ? 'rgba(255, 255, 255, 0.85)' : 'rgba(0, 0, 0, 0.85)';
@@ -3867,6 +4060,19 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
           (e.currentTarget as HTMLElement).style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)';
         }}
       >
+        {onToggleSelect && (
+          <button
+            type="button"
+            title={selected ? 'Desmarcar card' : 'Selecionar card'}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleSelect(item.id);
+            }}
+            style={{ width: 14, height: 14, borderRadius: 4, border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', background: selected ? accentColor : isEffectiveDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.14)', transition: 'background 0.15s ease' }}
+          >
+            {selected && <Check size={10} color="#ffffff" strokeWidth={3} />}
+          </button>
+        )}
         <GripVertical size={16} />
       </div>
 

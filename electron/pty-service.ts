@@ -6,6 +6,7 @@ import * as os from 'node:os';
 import * as https from 'node:https';
 import { execSync, exec } from 'node:child_process';
 import { skillsService } from './skills-service';
+import { listAiSessions } from './ai-sessions-service';
 import { ensureClaudeWorkspaceTrust, normalizeClaudeModel, resolveBinaryPath, stripTerminalControl } from './env-utils';
 
 const pty = require('node-pty');
@@ -62,6 +63,10 @@ const shq = (v: string) => `'${String(v).replace(/'/g, `'\\''`)}'`;
 
 /** duração mínima de uma tarefa (Enter → silêncio) para avisar que a IA terminou */
 const MIN_TURN_MS = 4000;
+// Rodapé dos CLIs de IA com o contexto restante: "37% context left" (Codex, Gemini) e "Context left until auto-compact: 9%" (Claude Code)
+const CONTEXT_LEFT_RES = [/(\d{1,3})%\s+context\s+left/gi, /context\s+left\s+until\s+auto-compact:\s*(\d{1,3})%/gi];
+const CONTEXT_ALERT_LEFT = 20; // avisa com 20% ou menos
+const CONTEXT_REARM_LEFT = 40; // só avisa de novo depois que o contexto voltou a ter folga (novo contexto ou compactação)
 /** linhas de moldura do TUI das CLIs (rodapé, spinner, banner) que não dizem nada no resumo */
 const TUI_CHROME = /bypass permissions|esc to interrupt|to manage|shift\+tab|ctrl\+[a-z]|Checking for updates|for shortcuts|auto-update|^\s*[·✻✽✶✳*]\s.*(…|\.\.\.|tokens)|^\s*[▸▶⏵]+\s/i;
 
@@ -83,6 +88,8 @@ export interface NativePtySession {
   /** CLI de IA rodando dentro de um shell (ex.: `claude` digitado no zsh), detectada pela árvore de processos */
   aiProvider?: string | null;
   aiCheckedAt?: number;
+  /** já avisei que o contexto está acabando; reabilita quando voltar a ter folga */
+  contextAlerted?: boolean;
   /** quando o usuário (ou a orquestração) enviou um prompt com Enter; só uma tarefa assim gera o aviso de "IA terminou" */
   turnStartedAt?: number;
   /** nº de ordem da saída: a tela que reabre lê o histórico e descarta o que já veio nele */
@@ -191,6 +198,26 @@ export class NativePtyService extends EventEmitter {
           if (session.term && this.isShellIdle(session)) session.term.write('\x1b[9999~');
         }
       } catch {}
+    }
+  }
+
+  /** Lê o % de contexto restante que o CLI mostra no rodapé e avisa a interface quando está acabando */
+  private checkContextLeft(session: NativePtySession, data: string) {
+    const text = this.stripAnsi(data);
+    let left: number | null = null;
+    for (const re of CONTEXT_LEFT_RES) for (const m of text.matchAll(re)) left = Math.min(100, Number(m[1]));
+    if (left === null) return;
+    if (left > CONTEXT_REARM_LEFT) session.contextAlerted = false;
+    if (left > CONTEXT_ALERT_LEFT || session.contextAlerted) return;
+    session.contextAlerted = true;
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send('pty:context-alert', {
+        id: session.id,
+        type: session.aiProvider || session.type,
+        cwd: session.cwd,
+        projectName: path.basename(session.cwd) || 'Projeto',
+        left,
+      });
     }
   }
 
@@ -356,6 +383,36 @@ export class NativePtyService extends EventEmitter {
     return id.startsWith('orch-cli-') || id.startsWith('orchestration-cli-');
   }
 
+  private pendingResume = new Map<string, string>();
+  private boundConversations = new Set<string>();
+
+  /**
+   * Descobre qual conversa do CLI pertence a este terminal (a que aparece no /resume depois da primeira mensagem) e avisa a interface,
+   * que guarda o id para reabrir o terminal já retomando a conversa na próxima vez que o app abrir.
+   */
+  private bindConversation(id: string, type: string, cwd: string, resume?: string) {
+    const send = (resumeId: string) => {
+      this.boundConversations.add(resumeId);
+      if (this.mainWindow && !this.mainWindow.isDestroyed()) this.mainWindow.webContents.send('pty:session-bound', { id, resumeId });
+    };
+    if (resume) return send(resume);
+    const startedAt = Date.now();
+    const before = new Set(listAiSessions(type, cwd).map((x) => x.id));
+    let tries = 0;
+    const timer = setInterval(() => {
+      if (!this.sessions.has(id) || ++tries > 150) return clearInterval(timer);
+      const fresh = listAiSessions(type, cwd).find((x) => !before.has(x.id) && !this.boundConversations.has(x.id) && x.updatedAt >= startedAt - 2000);
+      if (fresh) {
+        clearInterval(timer);
+        send(fresh.id);
+      }
+    }, 4000);
+  }
+  /** Guarda o id/índice da conversa a retomar na próxima criação desta sessão (o /resume do CLI). */
+  setResume(id: string, resume: string) {
+    this.pendingResume.set(id, resume);
+  }
+
   createSession(
     id: string,
     type: 'zsh' | 'claude' | 'agy' | 'antigravity' | 'gemini' | 'ollama' | 'ai-stream' | 'custom' | string = 'zsh',
@@ -428,6 +485,8 @@ export class NativePtyService extends EventEmitter {
     let file = '/bin/zsh';
     let args: string[] = ['-l'];
     let title = 'zsh';
+    const resume = this.pendingResume.get(id);
+    this.pendingResume.delete(id);
 
     const userHome = process.env.HOME || '';
     const customPaths = [
@@ -466,6 +525,7 @@ export class NativePtyService extends EventEmitter {
       if (isOrchCli) ensureClaudeWorkspaceTrust(cleanCwd);
       file = this.claudeBinPath;
       args = ['--dangerously-skip-permissions', ...skillsService.cliArgs('claude')];
+      if (resume) args.push('--resume', resume);
       if (extraOptions?.model) {
         const norm = normalizeClaudeModel(extraOptions.model);
         if (norm) args.push('--model', norm);
@@ -478,6 +538,7 @@ export class NativePtyService extends EventEmitter {
         if (cleanCwd && fs.existsSync(cleanCwd)) {
           args.push('--add-dir', cleanCwd);
         }
+        if (resume) args.push('--conversation', resume);
         if (extraOptions?.model) {
           args.push('--model', extraOptions.model);
         }
@@ -488,7 +549,7 @@ export class NativePtyService extends EventEmitter {
       title = 'Antigravity CLI (agy)';
     } else if (type === 'gemini') {
       file = '/bin/zsh';
-      args = ['-l', '-c', extraOptions?.model ? `gemini --model ${shq(extraOptions.model)}` : 'gemini'];
+      args = ['-l', '-c', ['gemini', extraOptions?.model ? `--model ${shq(extraOptions.model)}` : '', resume ? `--resume ${shq(resume)}` : ''].filter(Boolean).join(' ')];
       title = 'Gemini CLI';
     } else if (type === 'ollama') {
       file = '/bin/zsh';
@@ -504,7 +565,7 @@ export class NativePtyService extends EventEmitter {
       const codexPath = codexCandidates.find((candidate) => fs.existsSync(candidate));
       if (codexPath) {
         file = codexPath;
-        args = ['--dangerously-bypass-approvals-and-sandbox'];
+        args = [...(resume ? ['resume', resume] : []), '--dangerously-bypass-approvals-and-sandbox'];
         if (cleanCwd && fs.existsSync(cleanCwd)) {
           args.push('--cd', cleanCwd);
         }
@@ -566,6 +627,7 @@ export class NativePtyService extends EventEmitter {
         session.aiProvider = this.detectAiProvider(session);
       }
       if (session.isAi || session.aiProvider) {
+        this.checkContextLeft(session, data);
         if (!session.isRunning) {
           session.isRunning = true;
           if (this.mainWindow && !this.mainWindow.isDestroyed()) {
@@ -660,6 +722,7 @@ export class NativePtyService extends EventEmitter {
     });
 
     this.sessions.set(id, session);
+    if (!isOrchCli && /^(claude|agy|antigravity|codex|gemini)$/.test(type)) this.bindConversation(id, type, cleanCwd, resume);
     console.log(`[Native PTY] Created session ${id} (${title}) in ${cleanCwd}`);
     return session;
   }

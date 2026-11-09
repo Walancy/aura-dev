@@ -882,6 +882,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
     let cleanupDataListener: (() => void) | null = null;
 
     let cleanupAgyWheel: (() => void) | null = null;
+    let cleanupClickCursor: (() => void) | null = null;
     if (window.electronAPI?.pty) {
       const pty = window.electronAPI.pty;
 
@@ -903,6 +904,39 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         const el = containerRef.current;
         el?.addEventListener('wheel', onWheel, { passive: false, capture: true });
         cleanupAgyWheel = () => el?.removeEventListener('wheel', onWheel, { capture: true } as any);
+      }
+
+      // Clique na linha do prompt posiciona o cursor ali (como no VS Code com Alt+clique): manda as setas até a coluna clicada.
+      // Só vale para clique simples (sem arrastar nem seleção), na mesma linha do cursor e fora de apps que usam o mouse.
+      {
+        const host = containerRef.current;
+        let down: { x: number; y: number } | null = null;
+        const onDown = (e: MouseEvent) => {
+          down = e.button === 0 ? { x: e.clientX, y: e.clientY } : null;
+        };
+        const onUp = (e: MouseEvent) => {
+          const d = down;
+          down = null;
+          if (!d || e.button !== 0 || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 3 || term.hasSelection()) return;
+          if (term.modes.mouseTrackingMode !== 'none') return;
+          const screen = host?.querySelector('.xterm-screen') as HTMLElement | null;
+          if (!screen) return;
+          const rect = screen.getBoundingClientRect();
+          const buf = term.buffer.active;
+          if (buf.viewportY !== buf.baseY) return; // rolado para cima: o cursor não está visível
+          const col = Math.floor((e.clientX - rect.left) / (rect.width / term.cols));
+          const row = Math.floor((e.clientY - rect.top) / (rect.height / term.rows));
+          if (row !== buf.cursorY || col < 0 || col >= term.cols) return;
+          const delta = col - buf.cursorX;
+          if (delta === 0) return;
+          pty.write(sessionId, (delta > 0 ? '\x1b[C' : '\x1b[D').repeat(Math.abs(delta)));
+        };
+        host?.addEventListener('mousedown', onDown, true);
+        host?.addEventListener('mouseup', onUp, true);
+        cleanupClickCursor = () => {
+          host?.removeEventListener('mousedown', onDown, true);
+          host?.removeEventListener('mouseup', onUp, true);
+        };
       }
 
       // Spawn native PTY session with current accentColor for prompt highlighting
@@ -1179,6 +1213,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         webLinksAddon.dispose();
         if (cleanupDataListener) cleanupDataListener();
         cleanupAgyWheel?.();
+        cleanupClickCursor?.();
         liveTerms.delete(sessionId);
         term.dispose();
       };

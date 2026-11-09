@@ -261,7 +261,7 @@ export const OrchestrationBrowserNode: React.FC<OrchestrationBrowserNodeProps> =
 
     setIsStartingServer(true);
     const projectName = project.projectName || project.title || 'projeto';
-    onToast?.(`🚀 Iniciando servidor de "${projectName}" em segundo plano...`, 'info');
+    onToast?.(`Iniciando servidor de "${projectName}" em segundo plano...`, 'info');
 
     try {
       if (onStartProjectDev) {
@@ -930,8 +930,8 @@ export const OrchestrationBrowserNode: React.FC<OrchestrationBrowserNodeProps> =
               }}
               title="Nova aba"
               style={{
-                background: 'transparent',
-                border: `1px dashed ${borderColor}`,
+                background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
+                border: 'none',
                 borderRadius: 5,
                 width: 22,
                 height: 22,
@@ -944,14 +944,12 @@ export const OrchestrationBrowserNode: React.FC<OrchestrationBrowserNodeProps> =
                 transition: 'all 0.12s ease',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = accentColor;
                 e.currentTarget.style.color = accentColor;
                 e.currentTarget.style.background = `${accentColor}18`;
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = borderColor;
                 e.currentTarget.style.color = textSecondary;
-                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
               }}
             >
               <Plus size={11} />
@@ -989,7 +987,7 @@ export const OrchestrationBrowserNode: React.FC<OrchestrationBrowserNodeProps> =
                 background: barBg,
                 borderRadius: 6,
                 padding: '2px',
-                border: `1px solid ${borderColor}`,
+                border: 'none',
               }}
             >
               <button
@@ -1225,7 +1223,7 @@ export const OrchestrationBrowserNode: React.FC<OrchestrationBrowserNodeProps> =
             title="Abrir no navegador externo do sistema (Chrome / Safari)"
             style={{
               background: barBg,
-              border: `1px solid ${borderColor}`,
+              border: 'none',
               color: textSecondary,
               padding: '4px 6px',
               borderRadius: 6,
@@ -1723,7 +1721,7 @@ export const OrchestrationBrowserNode: React.FC<OrchestrationBrowserNodeProps> =
                                     ? 'rgba(255, 255, 255, 0.08)'
                                     : 'rgba(0, 0, 0, 0.06)',
                                   color: isCurrent ? '#ffffff' : textPrimary,
-                                  border: isCurrent ? 'none' : `1px solid ${borderColor}`,
+                                  border: 'none',
                                   borderRadius: 6,
                                   padding: '4px 10px',
                                   fontSize: 11.5,
@@ -1764,7 +1762,7 @@ export const OrchestrationBrowserNode: React.FC<OrchestrationBrowserNodeProps> =
                                     ? 'rgba(16, 185, 129, 0.12)'
                                     : 'rgba(16, 185, 129, 0.08)',
                                   color: isCurrent ? '#ffffff' : isEffectiveDark ? '#34d399' : '#059669',
-                                  border: '1px solid rgba(16, 185, 129, 0.25)',
+                                  border: 'none',
                                   borderRadius: 6,
                                   padding: '4px 10px',
                                   fontSize: 11,
@@ -1792,7 +1790,7 @@ export const OrchestrationBrowserNode: React.FC<OrchestrationBrowserNodeProps> =
                         style={{
                           background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
                           color: textPrimary,
-                          border: `1px solid ${borderColor}`,
+                          border: 'none',
                           borderRadius: 6,
                           padding: '6px 14px',
                           fontSize: 12,

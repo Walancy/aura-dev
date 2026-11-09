@@ -48,10 +48,6 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
   if (!isOpen) return null;
 
   const bgModal = themeTokens?.modalBg || themeTokens?.bgCard || '#161616';
-  const borderModal =
-    themeTokens?.modalBorder && themeTokens.modalBorder !== 'none'
-      ? themeTokens.modalBorder
-      : themeTokens?.borderSubtle || '1px solid rgba(255, 255, 255, 0.1)';
   const textPrimary = themeTokens?.textPrimary || '#f4f4f5';
   const textSecondary = themeTokens?.textSecondary || '#a1a1aa';
   const modalOverlay = themeTokens?.modalOverlay || 'rgba(0, 0, 0, 0.65)';
@@ -84,12 +80,12 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
           maxWidth: 430,
           background: bgModal,
           borderRadius: 12,
-          border: borderModal,
+          border: 'none',
           padding: '24px 22px 20px',
           display: 'flex',
           flexDirection: 'column',
           gap: 16,
-          boxShadow: '0 24px 50px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.04)',
+          boxShadow: 'none',
           position: 'relative',
         }}
       >
@@ -102,7 +98,7 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
                 height: 36,
                 borderRadius: 9,
                 background: 'rgba(239, 68, 68, 0.12)',
-                border: '1px solid rgba(239, 68, 68, 0.25)',
+                border: 'none',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -185,10 +181,10 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
                 fontSize: 12,
                 color: textSecondary,
                 lineHeight: 1.45,
-                background: 'rgba(255, 255, 255, 0.03)',
+                background: 'rgba(255, 255, 255, 0.04)',
                 padding: '8px 12px',
                 borderRadius: 6,
-                border: '1px solid rgba(255, 255, 255, 0.06)',
+                border: 'none',
               }}
             >
               {itemDescription}
@@ -214,23 +210,23 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
             style={{
               padding: '7px 14px',
               fontSize: 12.5,
-              fontWeight: 500,
+              fontWeight: 400,
               borderRadius: 6,
-              background: 'transparent',
-              border: '1px solid rgba(255, 255, 255, 0.12)',
+              background: 'rgba(255, 255, 255, 0.05)',
+              border: 'none',
               color: textSecondary,
               cursor: isDeleting ? 'not-allowed' : 'pointer',
               transition: 'all 0.15s ease',
             }}
             onMouseEnter={(e) => {
               if (!isDeleting) {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.09)';
                 e.currentTarget.style.color = textPrimary;
               }
             }}
             onMouseLeave={(e) => {
               if (!isDeleting) {
-                e.currentTarget.style.background = 'transparent';
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
                 e.currentTarget.style.color = textSecondary;
               }
             }}
@@ -248,15 +244,15 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
               gap: 6,
               padding: '7px 16px',
               fontSize: 12.5,
-              fontWeight: 500,
+              fontWeight: 400,
               borderRadius: 6,
               background: '#ef4444',
-              border: '1px solid rgba(239, 68, 68, 0.8)',
+              border: 'none',
               color: '#ffffff',
               cursor: isDeleting ? 'not-allowed' : 'pointer',
               opacity: isDeleting ? 0.7 : 1,
               transition: 'all 0.15s ease',
-              boxShadow: '0 2px 8px rgba(239, 68, 68, 0.3)',
+              boxShadow: 'none',
             }}
             onMouseEnter={(e) => {
               if (!isDeleting) e.currentTarget.style.background = '#dc2626';

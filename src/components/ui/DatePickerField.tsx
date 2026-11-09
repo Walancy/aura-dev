@@ -144,7 +144,6 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
 
   const ft = getFieldTokens(isEffectiveDark);
   const resolvedInputBg = ft.fieldBg;
-  const resolvedInputBorder = isOpen ? ft.fieldBorderFocus : ft.fieldBorder;
   const resolvedDropdownBg = ft.dropdownMenuBg;
   const resolvedDropdownBorder = ft.dropdownBorder;
 
@@ -160,7 +159,7 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
           width: '100%',
           height: 32,
           background: isOpen ? ft.fieldBgHover : resolvedInputBg,
-          border: resolvedInputBorder,
+          border: 'none',
           boxShadow: 'none',
           borderRadius: 6,
           padding: '0 10px',
@@ -171,16 +170,14 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
           cursor: 'pointer',
           textAlign: 'left',
           fontFamily: 'inherit',
-          transition: 'background 0.15s ease, border-color 0.15s ease',
+          transition: 'background 0.15s ease',
           boxSizing: 'border-box',
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.background = ft.fieldBgHover;
-          e.currentTarget.style.borderColor = ft.fieldBorderFocusColor;
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.background = isOpen ? ft.fieldBgHover : resolvedInputBg;
-          e.currentTarget.style.borderColor = isOpen ? ft.fieldBorderFocusColor : ft.fieldBorderColor;
         }}
       >
         <Calendar size={13} color={isOpen ? accentColor : textSecondary} style={{ flexShrink: 0 }} />

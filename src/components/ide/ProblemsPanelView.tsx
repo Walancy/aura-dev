@@ -296,14 +296,14 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
               display: 'flex',
               alignItems: 'center',
               gap: 4,
-              background: filterSeverity === 'error' ? 'rgba(239, 68, 68, 0.15)' : 'transparent',
-              border: `1px solid ${filterSeverity === 'error' ? '#ef4444' : themeTokens.border}`,
+              background: filterSeverity === 'error' ? 'rgba(239, 68, 68, 0.18)' : (isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)'),
+              border: 'none',
               borderRadius: 5,
               padding: '3px 8px',
               fontSize: 11,
               color: '#ef4444',
               cursor: 'pointer',
-              fontWeight: 500,
+              fontWeight: 400,
             }}
             title="Filtrar apenas erros"
           >
@@ -317,14 +317,14 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
               display: 'flex',
               alignItems: 'center',
               gap: 4,
-              background: filterSeverity === 'warning' ? 'rgba(245, 158, 11, 0.15)' : 'transparent',
-              border: `1px solid ${filterSeverity === 'warning' ? '#f59e0b' : themeTokens.border}`,
+              background: filterSeverity === 'warning' ? 'rgba(245, 158, 11, 0.18)' : (isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)'),
+              border: 'none',
               borderRadius: 5,
               padding: '3px 8px',
               fontSize: 11,
               color: '#f59e0b',
               cursor: 'pointer',
-              fontWeight: 500,
+              fontWeight: 400,
             }}
             title="Filtrar apenas avisos"
           >
@@ -339,14 +339,14 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 gap: 4,
-                background: filterSeverity === 'info' ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
-                border: `1px solid ${filterSeverity === 'info' ? '#3b82f6' : themeTokens.border}`,
+                background: filterSeverity === 'info' ? 'rgba(59, 130, 246, 0.18)' : (isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)'),
+                border: 'none',
                 borderRadius: 5,
                 padding: '3px 8px',
                 fontSize: 11,
                 color: '#3b82f6',
                 cursor: 'pointer',
-                fontWeight: 500,
+                fontWeight: 400,
               }}
               title="Filtrar apenas informações"
             >
@@ -365,13 +365,13 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
                 alignItems: 'center',
                 gap: 5,
                 background: isCheckingProject ? 'rgba(255,255,255,0.05)' : (isEffectiveDark ? '#1f2228' : '#e5e7eb'),
-                border: '1px solid ' + themeTokens.border,
+                border: 'none',
                 borderRadius: 5,
                 padding: '4px 10px',
                 fontSize: 11,
                 color: accentColor,
                 cursor: isCheckingProject ? 'not-allowed' : 'pointer',
-                fontWeight: 500,
+                fontWeight: 400,
                 marginLeft: 4,
               }}
               title="Executar checagem estática de tipos do TypeScript em todo o projeto"

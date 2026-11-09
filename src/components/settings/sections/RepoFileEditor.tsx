@@ -3,6 +3,17 @@ import { FileText } from 'lucide-react';
 import { Panel, Pill, SmallButton } from '../../team/teamUi';
 import { Notice, ghSettings, textareaStyle, type SettingsCtx } from '../settingsUi';
 
+// Bloco gerenciado pelo Aura Dev dentro de um arquivo: troca o conteúdo entre os marcadores ou acrescenta no fim
+export const upsertBlock = (text: string, key: string, content: string): string => {
+  const start = `<!-- aura:${key}:start -->`;
+  const end = `<!-- aura:${key}:end -->`;
+  const block = `${start}\n${content.trim()}\n${end}`;
+  const i = text.indexOf(start);
+  const j = text.indexOf(end);
+  if (i >= 0 && j > i) return text.slice(0, i) + block + text.slice(j + end.length);
+  return `${text.trimEnd()}${text.trim() ? '\n\n' : ''}${block}\n`;
+};
+
 interface Props {
   ctx: SettingsCtx;
   owner: string;
@@ -17,10 +28,12 @@ interface Props {
   onSaved?: () => void;
   minHeight?: number;
   right?: React.ReactNode;
+  block?: { key: string; content: string }; // bloco do Aura Dev que o botão "Atualizar bloco" grava no texto
+  presets?: Array<{ label: string; content: string }>; // modelos que substituem o texto
 }
 
 // Edita um arquivo do repositório via Contents API (cada salvamento vira um commit na branch padrão)
-export const RepoFileEditor: React.FC<Props> = ({ ctx, owner, repo, path, title, hint, template, canEdit, showToast, onDelete, onSaved, minHeight = 180, right }) => {
+export const RepoFileEditor: React.FC<Props> = ({ ctx, owner, repo, path, title, hint, template, canEdit, showToast, onDelete, onSaved, minHeight = 180, right, block, presets }) => {
   const { theme, accentColor } = ctx;
   const [file, setFile] = useState<{ sha: string; content: string } | null | undefined>(undefined);
   const [text, setText] = useState('');
@@ -80,6 +93,17 @@ export const RepoFileEditor: React.FC<Props> = ({ ctx, owner, repo, path, title,
       right={
         <div style={{ display: 'flex', gap: 4 }}>
           {right}
+          {canEdit &&
+            presets?.map((p) => (
+              <SmallButton key={p.label} ctx={ctx} onClick={() => setText(p.content)}>
+                {p.label}
+              </SmallButton>
+            ))}
+          {canEdit && block && (
+            <SmallButton ctx={ctx} disabled={text === upsertBlock(text, block.key, block.content)} onClick={() => setText(upsertBlock(text, block.key, block.content))}>
+              Atualizar bloco do Aura
+            </SmallButton>
+          )}
           {file === null && template && !text && canEdit && (
             <SmallButton ctx={ctx} onClick={() => setText(template)}>
               Usar modelo

@@ -36,6 +36,8 @@ export interface TerminalSessionItem {
   scope?: 'ide' | 'cli';
   /** projeto dono do terminal: todos os projetos mantêm seus terminais abertos; a tela mostra só os do projeto ativo */
   projectPath?: string;
+  /** conversa da IA que este terminal tem aberta (o que o /resume do CLI usa): permite reabrir o terminal retomando */
+  resumeId?: string;
 }
 
 export interface OpenFileItem {
@@ -90,6 +92,13 @@ export interface GitBranchItem {
   name: string;
   isCurrent: boolean;
   isRemote: boolean;
+  isTag?: boolean;
+  relDate?: string;
+  author?: string;
+  hash?: string;
+  subject?: string;
+  ahead?: number;
+  behind?: number;
 }
 
 // AI chat panel types

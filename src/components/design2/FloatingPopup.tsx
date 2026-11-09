@@ -16,7 +16,7 @@ export default function FloatingPopup({ title, tokens, onClose, width = 340, hei
   const [pos, setPos] = useState(() => initial || { x: Math.max(16, window.innerWidth - width - 60), y: 90 });
   const drag = useRef<{ dx: number; dy: number } | null>(null);
   return (
-    <div style={{ position: 'fixed', left: pos.x, top: pos.y, zIndex: 100000, width, height, background: tokens.bgCard, border: `1px solid ${tokens.border}`, borderRadius: 12, boxShadow: '0 12px 40px rgba(0,0,0,0.45)', display: 'flex', flexDirection: 'column', color: tokens.textPrimary, fontFamily: "'Poppins', sans-serif" }}>
+    <div style={{ position: 'fixed', left: pos.x, top: pos.y, zIndex: 100000, width, height, background: tokens.bgCard, border: 'none', borderRadius: 12, boxShadow: 'none', display: 'flex', flexDirection: 'column', color: tokens.textPrimary, fontFamily: "'Poppins', sans-serif" }}>
       <div
         onPointerDown={(e) => {
           if ((e.target as HTMLElement).closest('input,button')) return;

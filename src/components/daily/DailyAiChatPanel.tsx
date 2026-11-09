@@ -11,6 +11,8 @@ import {
   Clock,
   ChevronRight,
   ChevronDown,
+  ChevronUp,
+  X,
   FolderGit2,
   ListTodo,
   ExternalLink,
@@ -47,6 +49,7 @@ export interface SuggestedTask {
   priority?: 'Baixa' | 'Média' | 'Alta' | 'Urgente';
   estimatedHours?: number;
   added?: boolean;
+  rejected?: boolean;
 }
 
 export interface ChatMessage {
@@ -234,6 +237,7 @@ interface DailyAiChatPanelProps {
   onSelectAiProvider?: (providerId: string) => void;
   onSelectModel?: (modelItem: { id: string; label: string } | string, providerId?: string) => void;
   onToast?: (msg: string) => void;
+  onSuggestions?: (count: number) => void;
 }
 
 export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
@@ -254,6 +258,7 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
   onSelectAiProvider,
   onSelectModel,
   onToast,
+  onSuggestions,
 }) => {
   const [currentAiProvider, setCurrentAiProvider] = useState<string>(selectedAiProvider || 'claude');
   const [currentModel, setCurrentModel] = useState<string>(selectedModel || '');
@@ -339,20 +344,40 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
     onToast?.(`Modelo alterado para ${formatModelDisplayName(modelItem.label) || modelItem.label}`);
   };
 
-  const [messages, setMessages] = useState<ChatMessage[]>(() => {
-    return [
-      {
-        id: 'msg_welcome',
-        sender: 'assistant',
-        text: `Olá! Sou seu Copilot de Daily e Weekly. Posso analisar seus commits locais de hoje e ontem em todos os projetos para montar sua Daily automaticamente ou ajudar a planejar as entregas da Weekly.`,
-        timestamp: Date.now(),
-      },
-    ];
-  });
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   const [inputPrompt, setInputPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    try {
+      const ctx = messages
+        .slice(-8)
+        .map((m) => `${m.sender === 'user' ? 'Desenvolvedor' : 'Copilot'}: ${m.text.replace(/\s+/g, ' ').slice(0, 600)}`)
+        .join('\n');
+      if (ctx) localStorage.setItem('daily_chat_context', ctx);
+      else localStorage.removeItem('daily_chat_context');
+    } catch {}
+  }, [messages]);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const shortcutsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!shortcutsOpen) return;
+    const onDown = (e: MouseEvent) => !shortcutsRef.current?.contains(e.target as Node) && setShortcutsOpen(false);
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [shortcutsOpen]);
+  // mode 'tasks' gera sugestões de cards (aceitar/recusar); 'chat' só conversa
+  const QUICK_ACTIONS: Array<{ label: string; prompt: string; Icon: React.ComponentType<any>; mode: 'tasks' | 'chat' }> = [
+    { label: 'Sugerir Daily com commits', prompt: 'Sugerir Daily completa com base nos meus commits de hoje e ontem', Icon: Sparkles, mode: 'tasks' },
+    { label: 'Planejar Weekly', prompt: 'Planejar demandas prioritárias da semana para a Weekly', Icon: Calendar, mode: 'tasks' },
+    { label: 'Commits recentes', prompt: 'O que fiz ontem e hoje nos projetos?', Icon: GitCommit, mode: 'tasks' },
+    { label: 'Identificar impedimentos', prompt: 'Identificar possíveis impedimentos e riscos com base nos meus commits e nas tarefas da Daily', Icon: AlertTriangle, mode: 'tasks' },
+    { label: 'Planejar o dia seguinte', prompt: 'Sugerir as tarefas de amanhã com base no que ficou pendente na Daily de hoje', Icon: Clock, mode: 'tasks' },
+    { label: 'Priorizar tarefas de hoje', prompt: 'Me ajude a priorizar as tarefas de hoje da Daily e explique a ordem que você sugere', Icon: ListTodo, mode: 'chat' },
+    { label: 'Resumo para o time', prompt: 'Escreva um resumo curto da minha Daily de hoje para eu enviar ao time', Icon: Check, mode: 'chat' },
+    { label: 'Revisar os cards', prompt: 'Revise os cards da Daily de hoje e aponte o que está vago, duplicado ou sem projeto', Icon: Plus, mode: 'chat' },
+  ];
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Auto-resize textarea
@@ -424,13 +449,17 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
     );
   };
 
+  const handleRejectTask = (msgId: string, task: SuggestedTask) => {
+    logSystemActivity('daily_copilot', 'Sugestão recusada', task.projectName || repoName || 'Daily', { taskTitle: task.title, category: task.category });
+    setMessages((prev) =>
+      prev.map((msg) => (msg.id !== msgId || !msg.suggestedTasks ? msg : { ...msg, suggestedTasks: msg.suggestedTasks.map((t) => (t.id === task.id ? { ...t, rejected: true } : t)) })),
+    );
+  };
+
   const handleApplyAllTasks = (msgId: string, tasks: SuggestedTask[]) => {
-    tasks.forEach((t) => {
-      if (!t.added) {
-        handleApplyTask(msgId, t);
-      }
-    });
-    onToast?.(`${tasks.length} tarefa(s) adicionadas com sucesso!`);
+    const pending = tasks.filter((t) => !t.added && !t.rejected);
+    pending.forEach((t) => handleApplyTask(msgId, t));
+    onToast?.(`${pending.length} tarefa(s) adicionadas com sucesso!`);
   };
 
   const cliInfo = useMemo(() => {
@@ -501,14 +530,8 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
 
   // Detecta se o usuário está pedindo explicitamente pra montar/sugerir tarefas (Daily/Weekly),
   // em vez de tratar TODA mensagem como um pedido de sugestão de tarefas.
-  const TASK_INTENT_KEYWORDS = [
-    'tarefa', 'tarefas', 'sugest', 'sugir', 'monta', 'montar', 'planej',
-    'daily', 'weekly', 'demanda', 'demandas', 'backlog', 'sprint',
-    'atividade', 'atividades', 'ontem', 'hoje', 'commit', 'commits',
-    'fiz', 'feito', 'fazer', 'trabalhei', 'status', 'progresso',
-    'resumo', 'update', 'oque', 'o que', 'qual', 'quais', 'lista',
-    'estancia', 'painel', 'ajuda', 'ajude', 'verifique', 'analise',
-  ];
+  // só pedidos explícitos de criar/sugerir cards entram no modo tarefas; o resto é conversa
+  const TASK_INTENT_KEYWORDS = ['sugest', 'sugir', 'monta', 'montar', 'planej', 'crie', 'criar', 'gere', 'gerar', 'gera ', 'adicione', 'adicionar', 'liste as tarefas', 'cards'];
   const detectsTaskIntent = (text: string) => {
     const lower = text.toLowerCase();
     return TASK_INTENT_KEYWORDS.some((k) => lower.includes(k));
@@ -578,7 +601,14 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
   };
 
   // Processador com chamada real ao CLI nativo (Claude Code, Antigravity, etc.)
-  const processUserRequest = async (userText: string) => {
+  // O que já foi conversado serve de contexto para as próximas respostas e para a geração de cards
+  const chatContextText = () =>
+    messages
+      .slice(-8)
+      .map((m) => `${m.sender === 'user' ? 'Desenvolvedor' : 'Copilot'}: ${m.text.replace(/\s+/g, ' ').slice(0, 600)}`)
+      .join('\n');
+
+  const processUserRequest = async (userText: string, mode?: 'tasks' | 'chat') => {
     const userMsg: ChatMessage = {
       id: `msg_user_${Date.now()}`,
       sender: 'user',
@@ -624,7 +654,7 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
       });
     };
 
-    const wantsTaskSuggestions = detectsTaskIntent(userText);
+    const wantsTaskSuggestions = mode ? mode === 'tasks' : detectsTaskIntent(userText);
 
     // Modo conversa natural: sem forçar geração de tarefas, sem fallback inventado.
     if (!wantsTaskSuggestions) {
@@ -635,7 +665,10 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
             : 'Nenhuma tarefa cadastrada na Daily para esta data ainda.';
 
         const chatPrompt = `Você é o Copilot de Engenharia do Aura Dev. Converse de forma natural, direta e útil em português do Brasil.
-Responda exatamente o que o desenvolvedor perguntou — não force uma lista de tarefas nem inclua blocos JSON. Só sugira tarefas se ele pedir isso explicitamente.
+Responda exatamente o que o desenvolvedor perguntou — não force uma lista de tarefas nem inclua blocos JSON. Esta é só uma conversa: não crie cards nem sugira tarefas, a menos que ele peça isso explicitamente. O que for discutido aqui também ajuda a gerar os cards depois.
+
+[CONVERSA ATÉ AGORA]:
+${chatContextText() || '(início da conversa)'}
 
 Contexto (use apenas se for relevante para a pergunta):
 [TAREFAS ATUAIS DA DAILY]:
@@ -646,54 +679,11 @@ Mensagem do desenvolvedor: "${userText}"`;
 
         const { rawOutput, usedCliName, usedModelName } = await callAi(chatPrompt);
 
-        // Se a resposta conversacional tiver trazido atividades em bullets (ex: /tmp/df/50.png)
-        const convTasks = extractTasksFromMarkdown(rawOutput, repoName || 'Geral', [], []);
-        const autoCreatedConv: SuggestedTask[] = [];
-
-        if (convTasks.length > 0) {
-          convTasks.forEach((t) => {
-            if (isDuplicateOfExisting(t.title)) return;
-            existingTitles.push(normalizeTitle(t.title));
-
-            if (t.category === 'weekly') {
-              onAddWeeklyGoal({
-                title: t.title,
-                priority: (t.priority as any) || 'Alta',
-              });
-            } else {
-              onAddDailyItem({
-                category: t.category,
-                title: t.title,
-                description: t.description || 'Criado automaticamente pelo Copilot de Daily.',
-                projectName: t.projectName || repoName || 'Geral',
-                tag: t.tag || (t.category === 'yesterday' ? 'Git Sync' : t.category === 'blocker' ? 'Impedimento' : 'Hoje'),
-                priority: t.priority || 'Média',
-                estimatedHours: t.estimatedHours || 2,
-                dateIso: selectedDateIso,
-              });
-            }
-            t.added = true;
-            autoCreatedConv.push(t);
-          });
-
-          if (autoCreatedConv.length > 0) {
-            const targetProj = autoCreatedConv[0]?.projectName || repoName || 'Daily';
-            logSystemActivity('daily_copilot', 'Criação Automática de Cards Daily', targetProj, {
-              count: autoCreatedConv.length,
-              tasks: autoCreatedConv.map((task) => ({ title: task.title, category: task.category, project: task.projectName })),
-              selectedAiProvider: currentAiProvider,
-              model: usedModelName,
-            });
-            onToast?.(`${autoCreatedConv.length} card(s) de daily criados automaticamente pela IA!`);
-          }
-        }
-
         const assistantMsg: ChatMessage = {
           id: `msg_asst_${Date.now()}`,
           sender: 'assistant',
           text: rawOutput || 'Não consegui me conectar à IA agora. Verifique se o CLI configurado está instalado e tente novamente.',
           timestamp: Date.now(),
-          suggestedTasks: autoCreatedConv.length > 0 ? autoCreatedConv : undefined,
           usedCli: usedCliName,
           modelUsed: usedModelName,
         };
@@ -781,6 +771,9 @@ ${repoName || 'Geral'}
 
 [DATA SELECIONADA]: ${selectedDateIso}
 
+[CONVERSA ATÉ AGORA COM O DESENVOLVEDOR (use como contexto: o que ele contou ou perguntou)]:
+${chatContextText() || '(nenhuma)'}
+
 [COMMITS RECENTES DOS PROJETOS LOCAIS]:
 ${commitsSummary}
 
@@ -796,7 +789,7 @@ ${weeklySummary}
 DIRETRIZES OBRIGATÓRIAS:
 1. Responda em Português do Brasil com tom ágil, técnico, objetivo e colaborativo.
 2. Analise os commits reais para identificar o que já foi entregue (categoria "yesterday") e o que deve ser priorizado ou continuado para hoje (categoria "today") ou potenciais impedimentos ("blocker").
-3. CADA ATIVIDADE IDENTIFICADA SERÁ AUTOMATICAMENTE CRIADA COMO CARD NA DAILY DO USUÁRIO. Liste claramente as tarefas encontradas indicando o projeto específico. Se o pedido for sobre Weekly, sugira metas estratégicas da semana com categoria "weekly".
+3. AS ATIVIDADES IDENTIFICADAS APARECEM COMO SUGESTÕES QUE O USUÁRIO ACEITA OU RECUSA UMA A UMA (nada é criado sozinho). Liste claramente as tarefas encontradas indicando o projeto específico. Se o pedido for sobre Weekly, sugira metas estratégicas da semana com categoria "weekly".
 4. REGRA FUNDAMENTAL PARA O CAMPO "projectName":
    - Cada tarefa DEVE OBRIGATORIAMENTE ter o campo "projectName" preenchido com o NOME EXATO do repositório/projeto onde a alteração/commit realmente aconteceu (ex: "${primaryActiveRepo}").
    - NUNCA use o repositório selecionado no cabeçalho (${repoName}) se os commits vieram de outro repositório! Use sempre o nome do repositório onde o commit foi realizado (ex: ${detectedProjects.join(', ') || primaryActiveRepo}).
@@ -1020,49 +1013,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
         }
       }
 
-      // 4. CRIAÇÃO AUTOMÁTICA DOS CARDS NO QUADRO DA DAILY / WEEKLY
-      // A IA da Daily deve criar cards de daily com as atividades que ela encontrar automaticamente
-      const autoCreatedTasks: SuggestedTask[] = [];
-
-      suggestedTasks.forEach((t) => {
-        if (!t.added) {
-          if (t.category === 'weekly') {
-            onAddWeeklyGoal({
-              title: t.title,
-              priority: (t.priority as any) || 'Alta',
-            });
-          } else {
-            onAddDailyItem({
-              category: t.category,
-              title: t.title,
-              description: t.description || 'Criado automaticamente pelo Copilot de Daily.',
-              projectName: t.projectName || repoName || 'Geral',
-              tag: t.tag || (t.category === 'yesterday' ? 'Git Sync' : t.category === 'blocker' ? 'Impedimento' : 'Hoje'),
-              priority: t.priority || 'Média',
-              estimatedHours: t.estimatedHours || 2,
-              dateIso: selectedDateIso,
-            });
-          }
-          t.added = true;
-          autoCreatedTasks.push(t);
-        }
-      });
-
-      if (autoCreatedTasks.length > 0) {
-        const targetProj = autoCreatedTasks[0]?.projectName || repoName || 'Daily';
-        logSystemActivity('daily_copilot', 'Criação Automática de Cards Daily', targetProj, {
-          count: autoCreatedTasks.length,
-          tasks: autoCreatedTasks.map((task) => ({
-            title: task.title,
-            category: task.category,
-            project: task.projectName,
-          })),
-          selectedAiProvider: currentAiProvider,
-          model: usedModelName,
-        });
-
-        onToast?.(`${autoCreatedTasks.length} card(s) de daily criados automaticamente pela IA!`);
-      }
+      // 4. Os cards não são criados sozinhos: ficam como sugestões para o usuário aceitar ou recusar no chat
 
       const assistantMsg: ChatMessage = {
         id: `msg_asst_${Date.now()}`,
@@ -1076,6 +1027,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
+      if (suggestedTasks.length > 0) onSuggestions?.(suggestedTasks.length);
     } catch (err) {
       console.error('[DailyAiChat] Erro ao processar:', err);
       setMessages((prev) => [
@@ -1492,14 +1444,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
         <button
           type="button"
           onClick={() => {
-            setMessages([
-              {
-                id: `welcome_${Date.now()}`,
-                sender: 'assistant',
-                text: 'Conversa reiniciada. Como posso ajudar com a sua Daily ou Weekly hoje?',
-                timestamp: Date.now(),
-              },
-            ]);
+            setMessages([]);
             logSystemActivity('daily_copilot', 'Chat reiniciado', repoName || 'Daily', {
               provider: currentAiProvider,
               model: currentModel,
@@ -1554,7 +1499,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
         }}
       >
         {/* Marca d'água da IA no fundo quando chat tem poucas mensagens */}
-        {messages.length <= 1 && (
+        {messages.length === 0 && (
           <div
             style={{
               position: 'absolute',
@@ -1775,7 +1720,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                       gap: 8,
                     }}
                   >
-                    {/* Status informando a criação automática dos cards */}
+                    {/* Resumo das sugestões (pendentes, aceitas e recusadas) */}
                     <div
                       style={{
                         display: 'flex',
@@ -1792,15 +1737,18 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <Check size={12} color="#22c55e" />
                         <span>
-                          {msg.suggestedTasks.filter((t) => t.added).length === msg.suggestedTasks.length
-                            ? `${msg.suggestedTasks.length} card(s) criados automaticamente na Daily`
-                            : `${msg.suggestedTasks.length} atividade(s) identificadas`}
+                          {(() => {
+                            const all = msg.suggestedTasks!;
+                            const pending = all.filter((t) => !t.added && !t.rejected).length;
+                            const added = all.filter((t) => t.added).length;
+                            return pending > 0 ? `${pending} sugestão(ões) aguardando sua aprovação` : `${added} adicionada(s), ${all.length - added} recusada(s)`;
+                          })()}
                         </span>
                       </div>
                     </div>
 
                     {/* Botão de Adicionar Todas (caso alguma ainda não tenha sido aplicada) */}
-                    {msg.suggestedTasks.some((t) => !t.added) && (
+                    {msg.suggestedTasks.some((t) => !t.added && !t.rejected) && (
                       <button
                         type="button"
                         onClick={() => handleApplyAllTasks(msg.id, msg.suggestedTasks!)}
@@ -1825,7 +1773,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                         onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
                       >
                         <Plus size={12} />
-                        <span>Adicionar todas as sugestões à Daily</span>
+                        <span>Aceitar todas as sugestões</span>
                       </button>
                     )}
 
@@ -1906,7 +1854,26 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                                 <Check size={12} />
                                 <span>Card criado no quadro</span>
                               </span>
+                            ) : t.rejected ? (
+                              <span style={{ height: 28, display: 'inline-flex', alignItems: 'center', fontSize: 11, color: themeTokens.textSecondary, fontWeight: 400 }}>Recusada</span>
                             ) : (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRejectTask(msg.id, t)}
+                                  style={{ height: 28, background: 'transparent', border: 'none', color: themeTokens.textSecondary, borderRadius: 6, padding: '0 8px', fontSize: 11, fontWeight: 400, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5, transition: 'all 0.15s ease' }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)';
+                                    e.currentTarget.style.color = '#ef4444';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = 'transparent';
+                                    e.currentTarget.style.color = themeTokens.textSecondary;
+                                  }}
+                                >
+                                  <X size={11} />
+                                  <span>Recusar</span>
+                                </button>
                               <button
                                 type="button"
                                 onClick={() => handleApplyTask(msg.id, t)}
@@ -1936,8 +1903,9 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                                 }}
                               >
                                 <Plus size={11} />
-                                <span>Adicionar à {t.category === 'weekly' ? 'Weekly' : 'Daily'}</span>
+                                <span>Aceitar</span>
                               </button>
+                              </div>
                             )}
                           </div>
                         </div>
@@ -1978,141 +1946,22 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
         <div ref={messagesEndRef} />
       </div>
 
-      {/* 3. Atalhos Rápidos (Chips) */}
-      <div
-        style={{
-          padding: '8px 10px',
-          display: 'flex',
-          gap: 8,
-          overflowX: 'auto',
-          borderTop: `1px solid ${divider}`,
-          background: 'transparent',
-          flexShrink: 0,
-        }}
-      >
-        <button
-          type="button"
-          disabled={isLoading}
-          onClick={() => processUserRequest('Sugerir Daily completa com base nos meus commits de hoje e ontem')}
-          style={{
-            height: 28,
-            whiteSpace: 'nowrap',
-            padding: '0 10px',
-            borderRadius: 6,
-            border: 'none',
-            boxShadow: 'none',
-            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
-            color: themeTokens.textPrimary,
-            fontSize: 11.5,
-            fontWeight: 400,
-            cursor: 'pointer',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            transition: 'all 0.15s ease',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
-          }}
-        >
-          <Sparkles size={12} color={chatAccentColor} />
-          <span>Sugerir Daily com commits</span>
-        </button>
-
-        <button
-          type="button"
-          disabled={isLoading}
-          onClick={() => processUserRequest('Planejar demandas prioritárias da semana para a Weekly')}
-          style={{
-            height: 28,
-            whiteSpace: 'nowrap',
-            padding: '0 10px',
-            borderRadius: 6,
-            border: 'none',
-            boxShadow: 'none',
-            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
-            color: themeTokens.textPrimary,
-            fontSize: 11.5,
-            fontWeight: 400,
-            cursor: 'pointer',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            transition: 'all 0.15s ease',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
-          }}
-        >
-          <Calendar size={12} color={chatAccentColor} />
-          <span>Planejar Weekly</span>
-        </button>
-
-        <button
-          type="button"
-          disabled={isLoading}
-          onClick={() => processUserRequest('O que fiz ontem e hoje nos projetos?')}
-          style={{
-            height: 28,
-            whiteSpace: 'nowrap',
-            padding: '0 10px',
-            borderRadius: 6,
-            border: 'none',
-            boxShadow: 'none',
-            background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
-            color: themeTokens.textPrimary,
-            fontSize: 11.5,
-            fontWeight: 400,
-            cursor: 'pointer',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            transition: 'all 0.15s ease',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
-          }}
-        >
-          <GitCommit size={12} color={chatAccentColor} />
-          <span>Commits recentes</span>
-        </button>
-      </div>
-
-      {/* 4. Barra de Input em Card Unificado */}
-      <div
-        style={{
-          padding: '8px 10px 10px 10px',
-          borderTop: `1px solid ${divider}`,
-          background: 'transparent',
-          flexShrink: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 8,
-        }}
-      >
+      {/* 4. Barra de Input: texto em cima e barra de ações embaixo (atalhos, IA/modelo, uso, enviar) */}
+      <div style={{ padding: '8px 10px 10px 10px', borderTop: `1px solid ${divider}`, background: 'transparent', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
         <div
           className="df-search-box"
           style={{
             background: getFieldTokens(isEffectiveDark).fieldBg,
-            borderRadius: 8,
+            borderRadius: 12,
             border: getFieldTokens(isEffectiveDark).fieldBorder,
             boxShadow: 'none',
-            padding: 8,
             display: 'flex',
             flexDirection: 'column',
-            gap: 8,
             transition: 'background 0.15s ease, border-color 0.15s ease',
+            position: 'relative',
           }}
         >
+          <div style={{ padding: '12px 12px 8px' }}>
           <textarea
             ref={textareaRef}
             value={inputPrompt}
@@ -2131,33 +1980,91 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
               fontFamily: 'Poppins, sans-serif',
               fontWeight: 400,
               lineHeight: '18px',
-              minHeight: 28,
+              minHeight: 44,
               maxHeight: 120,
               resize: 'none',
               boxSizing: 'border-box',
               padding: 0,
             }}
           />
+          </div>
 
           <div
             style={{
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'space-between',
               gap: 8,
+              padding: 8,
+              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.03)',
+              borderRadius: '0 0 12px 12px',
             }}
           >
-            <span
-              style={{
-                fontSize: 10.5,
-                color: themeTokens.textSecondary,
-                opacity: 0.7,
-                fontWeight: 400,
-                userSelect: 'none',
-              }}
-            >
-              Enter para enviar
-            </span>
+            <span style={{ fontSize: 10.5, color: themeTokens.textSecondary, opacity: 0.7, fontWeight: 400, userSelect: 'none', marginRight: 'auto' }}>Enter para enviar</span>
+            <div ref={shortcutsRef} style={{ position: 'relative', display: 'flex' }}>
+        {shortcutsOpen && (
+          <div
+            className="df-dropdown-menu"
+            style={{
+              position: 'absolute',
+              bottom: 'calc(100% + 4px)',
+              right: 0,
+              minWidth: 250,
+              background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
+              border: getFieldTokens(isEffectiveDark).dropdownBorder,
+              borderRadius: 8,
+              boxShadow: 'none',
+              padding: 4,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 2,
+              zIndex: 50,
+            }}
+          >
+            {QUICK_ACTIONS.map((q) => (
+              <button
+                key={q.label}
+                type="button"
+                disabled={isLoading}
+                onClick={() => {
+                  setShortcutsOpen(false);
+                  processUserRequest(q.prompt, q.mode);
+                }}
+                style={{ height: 28, padding: '0 10px', border: 'none', borderRadius: 6, background: 'transparent', color: themeTokens.textPrimary, fontSize: 11.5, fontWeight: 400, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', transition: 'background 0.12s ease' }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              >
+                <q.Icon size={12} color={chatAccentColor} />
+                <span>{q.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => setShortcutsOpen((v) => !v)}
+          style={{
+            height: 28,
+            whiteSpace: 'nowrap',
+            padding: '0 10px',
+            borderRadius: 6,
+            border: 'none',
+            boxShadow: 'none',
+            background: shortcutsOpen ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)') : isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
+            color: themeTokens.textPrimary,
+            fontSize: 11.5,
+            fontWeight: 400,
+            cursor: 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            transition: 'background 0.15s ease',
+          }}
+        >
+          <Sparkles size={12} color={chatAccentColor} />
+          <span>Atalhos</span>
+          <ChevronUp size={12} style={{ transform: shortcutsOpen ? 'none' : 'rotate(180deg)', transition: 'transform 0.15s ease' }} />
+        </button>
+            </div>
 
             <button
               type="button"
@@ -2168,9 +2075,9 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                 }
               }}
               style={{
-                width: 28,
-                height: 28,
-                borderRadius: 6,
+                width: 32,
+                height: 32,
+                borderRadius: '50%',
                 background: inputPrompt.trim() && !isLoading ? chatAccentColor : (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'),
                 border: 'none',
                 outline: 'none',
@@ -2183,9 +2090,9 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                 transition: 'all 0.15s ease',
                 flexShrink: 0,
               }}
-              title="Enviar mensagem"
+              title="Enviar mensagem (Enter)"
             >
-              <ArrowRight size={13} strokeWidth={2.5} />
+              <ArrowRight size={14} strokeWidth={2.5} />
             </button>
           </div>
         </div>

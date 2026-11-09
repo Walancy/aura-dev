@@ -16,6 +16,7 @@ import { gitService } from './git-service';
 import { chatHistoryService } from './chat-history-service';
 import { githubAuthService } from './github-auth-service';
 import { skillsService } from './skills-service';
+import { listAiSessions } from './ai-sessions-service';
 import { orchestratorService } from './orchestrator-service';
 import { StringDecoder } from 'node:string_decoder';
 import { autonomousService } from './autonomous-service';
@@ -194,6 +195,8 @@ function createWindow() {
   const indexPath = path.join(__dirname, '../dist/index.html');
   const http = require('http');
   const req = http.get('http://localhost:5185', (res: any) => {
+    res.resume();
+    req.setTimeout(0);
     if (res.statusCode === 200 || res.statusCode === 304) {
       mainWindow?.loadURL('http://localhost:5185');
     } else {
@@ -222,6 +225,34 @@ ipcMain.handle('window:isFullscreen', () => {
 });
 
 // PTY
+ipcMain.handle('pty:set-resume', (_event, { id, resume }: { id: string; resume: string }) => {
+  ptyService.setResume(id, resume);
+  return true;
+});
+
+// Daily em arquivo único (~/.aura-dev/daily-items.json): o localStorage é separado por perfil do app (dev, instalado, nome antigo)
+const dailyStoreFile = () => path.join(os.homedir(), '.aura-dev', 'daily-items.json');
+ipcMain.handle('dailyStore:read', () => {
+  try {
+    return fs.readFileSync(dailyStoreFile(), 'utf8');
+  } catch {
+    return null;
+  }
+});
+ipcMain.handle('dailyStore:write', (_event, json: string) => {
+  try {
+    const file = dailyStoreFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(`${file}.tmp`, json);
+    fs.renameSync(`${file}.tmp`, file);
+    return true;
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle('aiSessions:list', (_event, { provider, cwd }: { provider: string; cwd: string }) => listAiSessions(provider, cwd));
+
 ipcMain.handle('pty:create', (_event, { id, type, cwd, cols, rows, accentColor, extraOptions }) => {
   try {
     const session = ptyService.createSession(id, type, cwd, cols, rows, accentColor, extraOptions);
@@ -2263,7 +2294,7 @@ ipcMain.handle('skills:call', async (_event, { action, payload }: { action: stri
         data = skillsService.getSources();
         break;
       case 'addSource':
-        data = skillsService.addSource(p.input);
+        data = await skillsService.addSource(p.input, token || undefined);
         break;
       case 'removeSource':
         skillsService.removeSource(p.id);
@@ -2281,7 +2312,7 @@ ipcMain.handle('skills:call', async (_event, { action, payload }: { action: stri
         skillsService.setActive(p.id, Boolean(p.active));
         break;
       case 'setAlwaysOn':
-        skillsService.setAlwaysOn(p.id, Boolean(p.on));
+        skillsService.setAlwaysOn(p.ids || p.id, Boolean(p.on));
         break;
       case 'searchRegistry':
         data = await skillsService.searchRegistry(p.query);

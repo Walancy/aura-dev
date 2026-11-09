@@ -1783,6 +1783,51 @@ class GithubAuthService {
     switch (action) {
       case 'getRepo':
         return this.ghGetOrThrow(this.repoUrl(owner, repo));
+      case 'reviewRequests': {
+        // PRs abertos de outras pessoas em que o usuário logado foi pedido como revisor (todos os repositórios)
+        const data = await this.ghGetOrThrow('https://api.github.com/search/issues?q=is:pr+is:open+review-requested:@me+archived:false&sort=updated&per_page=30');
+        return (data.items || []).map((i: any) => ({
+          number: i.number,
+          title: i.title,
+          url: i.html_url,
+          repo: String(i.repository_url || '').replace('https://api.github.com/repos/', ''),
+          author: i.user?.login,
+          authorAvatar: i.user?.avatar_url,
+          draft: Boolean(i.draft),
+          updatedAt: i.updated_at,
+        }));
+      }
+      case 'getPullReview': {
+        const base = this.repoUrl(owner, repo, `/pulls/${p.number}`);
+        const [pr, files, reviews] = await Promise.all([this.ghGetOrThrow(base), this.ghGetOrThrow(`${base}/files?per_page=100`), this.ghGetOrThrow(`${base}/reviews?per_page=100`)]);
+        return {
+          pr: {
+            number: pr.number,
+            title: pr.title,
+            body: pr.body || '',
+            state: pr.state,
+            merged: Boolean(pr.merged),
+            draft: Boolean(pr.draft),
+            url: pr.html_url,
+            author: pr.user?.login,
+            authorAvatar: pr.user?.avatar_url,
+            base: pr.base?.ref,
+            head: pr.head?.ref,
+            commits: pr.commits,
+            comments: pr.comments,
+            reviewComments: pr.review_comments,
+            additions: pr.additions,
+            deletions: pr.deletions,
+            createdAt: pr.created_at,
+          },
+          files: files.map((f: any) => ({ filename: f.filename, status: f.status, additions: f.additions, deletions: f.deletions, patch: f.patch || '' })),
+          reviews: reviews
+            .filter((r: any) => r.state !== 'PENDING')
+            .map((r: any) => ({ id: r.id, user: r.user?.login, avatar: r.user?.avatar_url, state: r.state, body: r.body || '', submittedAt: r.submitted_at })),
+        };
+      }
+      case 'submitReview':
+        return this.submitPullReview(owner, repo, p.number, p.event, p.body);
       case 'updateRepo':
         return this.ghSend('PATCH', this.repoUrl(owner, repo), p.patch);
       case 'setTopics':

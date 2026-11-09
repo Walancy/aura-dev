@@ -125,7 +125,7 @@ export const OrchestrationCommandPalette: React.FC<OrchestrationCommandPalettePr
           overflow: 'hidden',
         }}
       >
-        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${getFieldTokens(isEffectiveDark).fieldBorderColor}` }}>
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'}` }}>
           <input
             className="df-field"
             ref={inputRef}

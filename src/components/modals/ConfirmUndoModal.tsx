@@ -104,7 +104,7 @@ export const ConfirmUndoModal: React.FC<ConfirmUndoModalProps> = ({
               height: 26,
               borderRadius: 6,
               background: 'transparent',
-              border: `1.5px solid ${accentColor}`,
+              border: 'none',
               color: textSecondary,
               display: 'flex',
               alignItems: 'center',

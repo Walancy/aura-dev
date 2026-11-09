@@ -47,7 +47,15 @@ export interface ElectronAPI {
     setAlwaysOnTop?: (flag: boolean) => Promise<boolean>;
     isAlwaysOnTop?: () => Promise<boolean>;
   };
+  dailyStore?: {
+    read: () => Promise<string | null>;
+    write: (json: string) => Promise<boolean>;
+  };
+  aiSessions: {
+    list: (provider: string, cwd: string) => Promise<Array<{ id: string; title: string; updatedAt: number }>>;
+  };
   pty: {
+    setResume: (id: string, resume: string) => Promise<boolean>;
     create: (id: string, type: string, cwd: string, cols: number, rows: number, accentColor?: string, extraOptions?: any) => Promise<{ success: boolean; id?: string; title?: string; pid?: number; reused?: boolean; error?: string }>;
     writePrompt?: (id: string, prompt: string) => Promise<{ success: boolean; error?: string }>;
     runPromptInCli?: (id: string, prompt: string, timeoutMs?: number) => Promise<{ response: string; error?: string; cancelled?: boolean }>;
@@ -62,6 +70,8 @@ export interface ElectronAPI {
     getHistoryWithSeq?: (id: string) => Promise<{ history: string; seq: number }>;
     foreground?: () => Promise<Record<string, string>>;
     getRunningSessions?: () => Promise<Array<{ id: string; type: string; title: string; cwd: string; isAi: boolean; isRunning: boolean; projectName: string; lastActivity?: number }>>;
+    onSessionBound?: (callback: (payload: { id: string; resumeId: string }) => void) => () => void;
+    onContextAlert?: (callback: (payload: { id: string; type: string; cwd: string; projectName: string; left: number }) => void) => () => void;
     onAiCompleted?: (callback: (payload: { id: string; type: string; cwd: string; projectName: string; summary: string; needsInput?: boolean; timestamp: number }) => void) => () => void;
     onSessionStatus?: (callback: (payload: { id: string; type: string; cwd: string; isAi: boolean; isRunning: boolean; exited?: boolean }) => void) => () => void;
     onData: (callback: (payload: { id: string; data: string; seq?: number }) => void) => () => void;

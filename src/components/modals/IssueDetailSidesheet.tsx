@@ -328,13 +328,13 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   const sysCardHeaderBg = isEffectiveDark
     ? 'rgba(255, 255, 255, 0.02)'
     : 'rgba(0, 0, 0, 0.02)';
-  const sysBorder = ft.fieldBorderColor;
-  const sysBorderHover = ft.fieldBorderFocusColor;
+  const sysBorder = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)';
+  const sysBorderHover = 'transparent';
   const sysTextPrimary = theme?.textPrimary || (isEffectiveDark ? '#ffffff' : '#0f172a');
   const sysTextSecondary = theme?.textSecondary || (isEffectiveDark ? '#888888' : '#64748b');
   const sysTextMuted = theme?.textMuted || (isEffectiveDark ? '#555555' : '#94a3b8');
   const sysPopupBg = ft.dropdownMenuBg;
-  const sysPopupBorder = ft.fieldBorderColor;
+  const sysPopupBorder = 'transparent';
   const sysPopupShadow = 'none';
   const sysHoverBg = ft.dropdownItemHoverBg;
   const sysInputBg = ft.fieldBg;
@@ -1810,19 +1810,18 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         gap: 6,
                         padding: '6px 12px',
                         background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
-                        border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.12)'}`,
+                        border: 'none',
                         borderRadius: 8,
                         color: theme?.textPrimary || '#fff',
                         cursor: 'pointer',
                         fontSize: 13,
-                        fontWeight: 500,
+                        fontWeight: 400,
                         transition: 'all 0.15s ease',
                         flexShrink: 0,
                       }}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.background = hexToRgba(accentColor, 0.18);
                         e.currentTarget.style.color = accentColor;
-                        e.currentTarget.style.borderColor = accentColor;
                       }}
                       onMouseLeave={(e) => {
                         e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
@@ -2471,7 +2470,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           zIndex: 110,
                           minWidth: 330,
                           background: sysPopupBg,
-                          border: `1px solid ${sysPopupBorder}`,
+                          border: 'none',
                           borderRadius: 10,
                           boxShadow: sysPopupShadow,
                           padding: '12px 14px',
@@ -2664,7 +2663,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           zIndex: 100,
                           minWidth: 175,
                           background: sysPopupBg,
-                          border: `1px solid ${sysPopupBorder}`,
+                          border: 'none',
                           borderRadius: 8,
                           boxShadow: sysPopupShadow,
                           padding: '4px 0',
@@ -3004,8 +3003,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                               gap: 6,
                               padding: '5px 12px',
                               borderRadius: 6,
-                              border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#d0d7de'}`,
-                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f6f8fa',
+                              border: 'none',
+                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : '#f6f8fa',
                               color: theme?.textSecondary || '#a1a1aa',
                               fontSize: 12,
                               fontWeight: 500,
@@ -3033,21 +3032,19 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           gap: 5,
                           padding: '3px 9px',
                           borderRadius: 6,
-                          border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#d0d7de'}`,
-                          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f6f8fa',
+                          border: 'none',
+                          background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : '#f6f8fa',
                           color: theme?.textSecondary || '#a1a1aa',
                           fontSize: 11.5,
-                          fontWeight: 500,
+                          fontWeight: 400,
                           cursor: 'pointer',
                           transition: 'all 0.15s ease',
                         }}
                         onMouseEnter={(e) => {
                           e.currentTarget.style.color = theme?.textPrimary || '#fff';
-                          e.currentTarget.style.borderColor = accentColor;
                         }}
                         onMouseLeave={(e) => {
                           e.currentTarget.style.color = theme?.textSecondary || '#a1a1aa';
-                          e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#d0d7de';
                         }}
                       >
                         <ChevronDown size={13} style={{ transform: isDescriptionExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s ease' }} />
@@ -3079,9 +3076,9 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         height: 28,
                         borderRadius: '50%',
                         background: showReactionPicker
-                          ? (isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')
-                          : (isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)'),
-                        border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#d0d7de'}`,
+                          ? (isEffectiveDark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.07)')
+                          : (isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'),
+                        border: 'none',
                         display: 'inline-flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -3090,12 +3087,10 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         transition: 'all 0.15s ease',
                       }}
                       onMouseEnter={(e) => {
-                        e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255, 255, 255, 0.22)' : '#afb8c1';
                         e.currentTarget.style.color = sysTextPrimary;
                       }}
                       onMouseLeave={(e) => {
                         if (!showReactionPicker) {
-                          e.currentTarget.style.borderColor = isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : '#d0d7de';
                           e.currentTarget.style.color = sysTextSecondary;
                         }
                       }}
@@ -3123,7 +3118,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             padding: '3px 9px',
                             borderRadius: 16,
                             background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f4f4f5',
-                            border: `1px solid ${sysBorder}`,
+                            border: 'none',
                             fontSize: 12,
                             color: sysTextPrimary,
                             cursor: 'pointer',
@@ -3148,7 +3143,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           gap: 4,
                           padding: '5px 8px',
                           background: sysPopupBg,
-                          border: `1px solid ${sysPopupBorder}`,
+                          border: 'none',
                           borderRadius: 24,
                           boxShadow: sysPopupShadow,
                         }}
@@ -3326,7 +3321,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         zIndex: 60,
                         minWidth: 175,
                         background: sysPopupBg,
-                        border: `1px solid ${sysPopupBorder}`,
+                        border: 'none',
                         borderRadius: 8,
                         boxShadow: sysPopupShadow,
                         padding: '6px 0',
@@ -3627,7 +3622,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                     zIndex: 70,
                                     minWidth: 170,
                                     background: sysPopupBg,
-                                    border: `1px solid ${sysPopupBorder}`,
+                                    border: 'none',
                                     borderRadius: 8,
                                     boxShadow: sysPopupShadow,
                                     padding: '4px 0',
@@ -3755,7 +3750,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             flex: 1,
                             padding: '6px 10px',
                             borderRadius: 6,
-                            border: `1px solid ${sysBorder}`,
+                            border: 'none',
                             background: sysInputBg,
                             color: sysTextPrimary,
                             fontSize: 12.5,
@@ -3870,7 +3865,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                               left: 0,
                               width: 250,
                               background: sysPopupBg,
-                              border: `1px solid ${sysPopupBorder}`,
+                              border: 'none',
                               borderRadius: 8,
                               boxShadow: sysPopupShadow,
                               zIndex: 1050,
@@ -3912,7 +3907,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                   padding: '1px 5px',
                                   fontSize: 10.5,
                                   borderRadius: 4,
-                                  border: `1px solid ${sysBorder}`,
+                                  border: 'none',
                                   background: sysInputBg,
                                   color: sysTextSecondary,
                                   fontFamily: 'inherit',
@@ -3956,7 +3951,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                   padding: '1px 5px',
                                   fontSize: 10.5,
                                   borderRadius: 4,
-                                  border: `1px solid ${sysBorder}`,
+                                  border: 'none',
                                   background: sysInputBg,
                                   color: sysTextSecondary,
                                   fontFamily: 'inherit',
@@ -4093,7 +4088,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                               right: 0,
                               minWidth: 170,
                               background: sysPopupBg,
-                              border: `1px solid ${sysPopupBorder}`,
+                              border: 'none',
                               borderRadius: 8,
                               boxShadow: sysPopupShadow,
                               padding: 4,
@@ -4190,7 +4185,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
                             resize: 'vertical',
                             background: sysInputBg,
-                            border: `1px solid ${sysBorder}`,
+                            border: 'none',
                             borderRadius: 6,
                             padding: '8px 10px',
                             color: sysTextPrimary,
@@ -4633,7 +4628,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       <div
                         style={{
                           borderRadius: 6,
-                          border: `1px solid ${sysBorder}`,
+                          border: 'none',
                           background: sysInputBg,
                           position: 'relative',
                         }}
@@ -4685,7 +4680,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         onWheel={handleInternalScrollWheel}
                         style={{
                           borderRadius: 6,
-                          border: `1px solid ${sysBorder}`,
+                          border: 'none',
                           background: sysInputBg,
                           padding: '12px 14px',
                           minHeight: 170,
@@ -4851,7 +4846,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             right: 0,
                             width: closeSubView === 'duplicate' ? 320 : 290,
                             background: sysPopupBg,
-                            border: `1px solid ${sysPopupBorder}`,
+                            border: 'none',
                             borderRadius: 8,
                             boxShadow: sysPopupShadow,
                             zIndex: 1050,
@@ -5386,7 +5381,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     left: 0,
                     right: 0,
                     background: sysPopupBg,
-                    border: `1px solid ${sysPopupBorder}`,
+                    border: 'none',
                     borderRadius: 8,
                     boxShadow: sysPopupShadow,
                     zIndex: 1000,
@@ -5403,7 +5398,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         alignItems: 'center',
                         gap: 8,
                         background: sysInputBg,
-                        border: `1px solid ${sysBorder}`,
+                        border: 'none',
                         borderRadius: 6,
                         padding: '5px 8px',
                       }}
@@ -5522,8 +5517,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                 width: 16,
                                 height: 16,
                                 borderRadius: 3,
-                                background: isAssigned ? accentColor : 'transparent',
-                                border: isAssigned ? `1px solid ${accentColor}` : `1px solid ${sysBorder}`,
+                                background: isAssigned ? accentColor : (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.07)'),
+                                border: 'none',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
@@ -5653,7 +5648,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     left: 0,
                     right: 0,
                     background: sysPopupBg,
-                    border: `1px solid ${sysPopupBorder}`,
+                    border: 'none',
                     borderRadius: 8,
                     boxShadow: sysPopupShadow,
                     zIndex: 1000,
@@ -5670,7 +5665,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         alignItems: 'center',
                         gap: 8,
                         background: sysInputBg,
-                        border: `1px solid ${sysBorder}`,
+                        border: 'none',
                         borderRadius: 6,
                         padding: '5px 8px',
                       }}
@@ -5796,7 +5791,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                       height: 16,
                                       borderRadius: 3,
                                       background: accentColor,
-                                      border: `1px solid ${accentColor}`,
+                                      border: 'none',
                                       display: 'flex',
                                       alignItems: 'center',
                                       justifyContent: 'center',
@@ -5868,8 +5863,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                       width: 16,
                                       height: 16,
                                       borderRadius: 3,
-                                      background: 'transparent',
-                                      border: `1px solid ${sysBorder}`,
+                                      background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.07)',
+                                      border: 'none',
                                       flexShrink: 0,
                                       marginTop: 2,
                                     }}
@@ -5989,7 +5984,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     left: 0,
                     right: 0,
                     background: sysPopupBg,
-                    border: `1px solid ${sysPopupBorder}`,
+                    border: 'none',
                     borderRadius: 8,
                     boxShadow: sysPopupShadow,
                     zIndex: 1000,
@@ -6006,7 +6001,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         alignItems: 'center',
                         gap: 8,
                         background: sysInputBg,
-                        border: `1px solid ${sysBorder}`,
+                        border: 'none',
                         borderRadius: 6,
                         padding: '5px 8px',
                       }}
@@ -6228,7 +6223,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     left: 0,
                     right: 0,
                     background: sysPopupBg,
-                    border: `1px solid ${sysPopupBorder}`,
+                    border: 'none',
                     borderRadius: 8,
                     boxShadow: sysPopupShadow,
                     zIndex: 1000,
@@ -6245,7 +6240,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         alignItems: 'center',
                         gap: 8,
                         background: sysInputBg,
-                        border: `1px solid ${sysBorder}`,
+                        border: 'none',
                         borderRadius: 6,
                         padding: '5px 8px',
                       }}
@@ -6402,7 +6397,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     left: 0,
                     right: 0,
                     background: sysPopupBg,
-                    border: `1px solid ${sysPopupBorder}`,
+                    border: 'none',
                     borderRadius: 8,
                     boxShadow: sysPopupShadow,
                     zIndex: 1000,
@@ -6419,7 +6414,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         alignItems: 'center',
                         gap: 8,
                         background: sysInputBg,
-                        border: `1px solid ${sysBorder}`,
+                        border: 'none',
                         borderRadius: 6,
                         padding: '5px 8px',
                       }}
@@ -6505,8 +6500,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                 width: 16,
                                 height: 16,
                                 borderRadius: 3,
-                                background: isIn ? accentColor : 'transparent',
-                                border: `1px solid ${isIn ? accentColor : sysBorder}`,
+                                background: isIn ? accentColor : (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.07)'),
+                                border: 'none',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
@@ -6695,7 +6690,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         style={{
                           width: '100%',
                           background: sysInputBg,
-                          border: `1px solid ${sysBorder}`,
+                          border: 'none',
                           borderRadius: 6,
                           padding: '5px 8px',
                           color: sysTextPrimary,
@@ -6760,8 +6755,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                               gap: 4,
                               padding: '2px 8px',
                               borderRadius: 12,
-                              background: statusOpt ? hexToRgba(statusColor, 0.2) : 'transparent',
-                              border: `1px solid ${statusOpt ? hexToRgba(statusColor, 0.4) : sysBorder}`,
+                              background: statusOpt ? hexToRgba(statusColor, 0.2) : (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)'),
+                              border: 'none',
                               color: statusOpt ? statusColor : (theme?.textSecondary || '#8b949e'),
                               fontSize: 11.5,
                               fontWeight: 500,
@@ -6918,7 +6913,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     left: 0,
                     right: 0,
                     background: sysPopupBg,
-                    border: `1px solid ${sysPopupBorder}`,
+                    border: 'none',
                     borderRadius: 8,
                     boxShadow: sysPopupShadow,
                     zIndex: 1000,
@@ -6935,7 +6930,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         alignItems: 'center',
                         gap: 8,
                         background: sysInputBg,
-                        border: `1px solid ${sysBorder}`,
+                        border: 'none',
                         borderRadius: 6,
                         padding: '5px 8px',
                       }}
@@ -7145,7 +7140,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     left: 0,
                     right: 0,
                     background: sysPopupBg,
-                    border: `1px solid ${sysPopupBorder}`,
+                    border: 'none',
                     borderRadius: 8,
                     padding: 4,
                     boxShadow: sysPopupShadow,
@@ -7185,7 +7180,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         <kbd
                           style={{
                             background: sysInputBg,
-                            border: `1px solid ${sysBorder}`,
+                            border: 'none',
                             borderRadius: 4,
                             padding: '1px 5px',
                             fontSize: 11,
@@ -7203,7 +7198,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                               key={sIdx}
                               style={{
                                 background: sysInputBg,
-                                border: `1px solid ${sysBorder}`,
+                                border: 'none',
                                 borderRadius: 4,
                                 padding: '1px 5px',
                                 fontSize: 11,
@@ -7289,7 +7284,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     left: 0,
                     right: 0,
                     background: sysPopupBg,
-                    border: `1px solid ${sysPopupBorder}`,
+                    border: 'none',
                     borderRadius: 8,
                     boxShadow: sysPopupShadow,
                     zIndex: 1000,
@@ -7340,7 +7335,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         alignItems: 'center',
                         gap: 8,
                         background: sysInputBg,
-                        border: `1px solid ${sysBorder}`,
+                        border: 'none',
                         borderRadius: 6,
                         padding: '5px 8px',
                       }}
@@ -7430,8 +7425,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                               width: 16,
                               height: 16,
                               borderRadius: 3,
-                              background: 'transparent',
-                              border: `1px solid ${sysBorder}`,
+                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.07)',
+                              border: 'none',
                               flexShrink: 0,
                               marginTop: 2,
                             }}
@@ -7480,7 +7475,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       right: 0,
                       top: 22,
                       background: sysPopupBg,
-                      border: `1px solid ${sysPopupBorder}`,
+                      border: 'none',
                       borderRadius: 6,
                       boxShadow: sysPopupShadow,
                       padding: 4,
@@ -7557,7 +7552,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   padding: '6px 12px',
                   borderRadius: 6,
                   background: isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : '#f6f8fa',
-                  border: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.08)' : '1px solid #d0d7de',
+                  border: 'none',
                   color: theme?.textPrimary || '#fff',
                   fontSize: 12,
                   fontWeight: 500,

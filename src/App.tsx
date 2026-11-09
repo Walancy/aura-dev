@@ -162,6 +162,12 @@ import { BranchModal } from './components/modals/BranchModal';
 import { IssuesModal } from './components/modals/IssuesModal';
 import { SettingsModal, type SettingsTabId } from './components/modals/SettingsModal';
 import { AiGlobalRulesModal } from './components/modals/AiGlobalRulesModal';
+import { ProjectOnboardingModal } from './components/modals/ProjectOnboardingModal';
+import { GithubMarkIcon } from './components/auth/GithubLoginScreen';
+import { ResumeSessionModal } from './components/modals/ResumeSessionModal';
+import { ProjectAiModal } from './components/modals/ProjectAiModal';
+import { PullReviewModal, type PullReviewTarget } from './components/reviews/PullReviewModal';
+import { dismissReview, fetchReviewRequests, loadDismissedReviews, reviewRequestId, takeNewReviews } from './components/reviews/reviewRequests';
 import { GithubLoginScreen } from './components/auth/GithubLoginScreen';
 import type { GithubAuthenticatedUser } from './components/auth/GithubLoginScreen';
 import { renderMarkdownPreview } from './utils/markdown';
@@ -181,7 +187,7 @@ import type {
   ChatSessionItem,
   QuickOpenItemDef,
 } from './types/ide';
-import { ProjectAiNotificationToast, ProjectAiNotificationItem } from './components/notifications/ProjectAiNotificationToast';
+import { ProjectAiNotificationToast, ProjectAiNotificationItem, appendNotification } from './components/notifications/ProjectAiNotificationToast';
 import NotificationCenterPanel from './components/notifications/NotificationCenterPanel';
 import { useNotificationCenter } from './components/notifications/useNotificationCenter';
 import { useProjectNotifier } from './components/notifications/useProjectNotifier';
@@ -1788,7 +1794,9 @@ export const App: React.FC = () => {
       }
     });
 
-    return Array.from(map.values());
+    // só o projeto aberto (conversa sem pasta registrada cai pelo nome do projeto)
+    const projectName = workspacePath ? workspacePath.split('/').filter(Boolean).pop() : undefined;
+    return Array.from(map.values()).filter((s) => (s.workspacePath ? s.workspacePath === workspacePath : !s.projectName || s.projectName === projectName));
   }, [chatSessions, diskSavedChats, activeChatSessionId, isAiExecuting, workspacePath]);
 
   const filteredConvos = useMemo(() => {
@@ -2370,6 +2378,7 @@ export const App: React.FC = () => {
 
   const aiTerminalScrollRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [cliViewerStatus, setCliViewerStatus] = useState<{ path: string; name: string; language: string; blame: string; line: number; col: number; tabSize: number; eol: 'LF' | 'CRLF' } | null>(null);
 
   // Panel & Layout Visibility Controls (Antigravity & VS Code Customize Layout)
   const [showExplorer, setShowExplorer] = useState(true);
@@ -2430,6 +2439,9 @@ export const App: React.FC = () => {
   const [pinnedAis, setPinnedAis] = useState<string[]>(() => {
     try { const v = JSON.parse(localStorage.getItem('header_pinned_ais') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
   });
+  // Os seletores de IA seguem as IAs fixadas nas configurações (sem nenhuma fixada, listam todas); a selecionada nunca some
+  const [showAllAiProviders, setShowAllAiProviders] = useState(false);
+  const listedAiProviders = showAllAiProviders || pinnedAis.length === 0 ? AI_PROVIDERS : AI_PROVIDERS.filter((p) => p.id === selectedAiProvider || pinnedAis.includes(p.id));
   const [quotaTooltipProvider, setQuotaTooltipProvider] = useState<string | null>(null);
   const [sidesheetFromList, setSidesheetFromList] = useState(false);
   // servidores (dev server) rodando a partir da pasta do projeto: link para abrir no navegador + encerrar
@@ -2602,6 +2614,10 @@ export const App: React.FC = () => {
   // Skills do DevFlow: modal e contador de ativas no header
   const [isSkillsModalOpen, setIsSkillsModalOpen] = useState(false);
   const [isAiGlobalRulesModalOpen, setIsAiGlobalRulesModalOpen] = useState(false);
+  const [onboardingTarget, setOnboardingTarget] = useState<{ path: string; name: string } | null>(null);
+  const [isResumeModalOpen, setIsResumeModalOpen] = useState(false);
+  const [isProjectAiModalOpen, setIsProjectAiModalOpen] = useState(false);
+  const [reviewTarget, setReviewTarget] = useState<PullReviewTarget | null>(null);
   const [isBrainModalOpen, setIsBrainModalOpen] = useState(false);
   const [activeSkills, setActiveSkills] = useState<Array<{ id: string; name: string }>>([]);
   useEffect(() => {
@@ -2955,8 +2971,9 @@ export const App: React.FC = () => {
   }, []);
 
   const [explorerWidth, setExplorerWidth] = useState(() => {
+    // 280 era o padrão antigo (gravado sem o usuário ter arrastado): conta como "sem preferência"
     const saved = localStorage.getItem('ide_explorer_width');
-    return saved ? parseInt(saved, 10) : 280;
+    return saved && saved !== '280' ? parseInt(saved, 10) : 340;
   });
   const [aiPanelWidth, setAiPanelWidth] = useState(() => {
     const saved = localStorage.getItem('ide_ai_panel_width');
@@ -3140,7 +3157,7 @@ export const App: React.FC = () => {
         kind: 'done',
         source: 'design',
       };
-      setAiNotifications((prev) => [...prev.slice(-4), notif]);
+      setAiNotifications((prev) => appendNotification(prev, notif));
       setTimeout(() => setAiNotifications((prev) => prev.filter((n) => n.id !== notif.id)), 15000);
       try {
         if (background && 'Notification' in window) new Notification(r.ok ? `${name}: a IA do Design terminou` : `${name}: a IA do Design falhou`, { body: notif.summary.slice(0, 140) });
@@ -3183,7 +3200,7 @@ export const App: React.FC = () => {
         id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         timestamp: Date.now(),
       };
-      setAiNotifications((prev) => [...prev.slice(-4), notif]);
+      setAiNotifications((prev) => appendNotification(prev, notif));
       setTimeout(() => setAiNotifications((prev) => prev.filter((n) => n.id !== notif.id)), 12000);
       notifCenter.add({
         kind: 'ai',
@@ -3321,7 +3338,7 @@ export const App: React.FC = () => {
     }
 
     (window as any).__showAiCompletedNotification = (item: ProjectAiNotificationItem) => {
-      setAiNotifications((prev) => [...prev.slice(-4), item]);
+      setAiNotifications((prev) => appendNotification(prev, item));
     };
 
     return () => {
@@ -3329,6 +3346,120 @@ export const App: React.FC = () => {
       unsubAiCompleted?.();
     };
   }, [workspacePath, selectedAiProvider, isAiExecuting, terminalSessions, notifyProjectAi, ideAiStatus, aiHistory.length]);
+
+  // Contexto da IA quase cheio: aviso fixo (não some sozinho) com Fechar / Novo contexto
+  useEffect(() => {
+    return window.electronAPI?.pty?.onContextAlert?.((p) => {
+      const notif: ProjectAiNotificationItem = {
+        id: `ctx_${p.id}`,
+        projectPath: p.cwd,
+        projectName: p.projectName,
+        provider: p.type,
+        summary: '',
+        timestamp: Date.now(),
+        kind: 'context',
+        sessionId: p.id,
+        contextLeft: p.left,
+        source: 'cli',
+      };
+      setAiNotifications((prev) => appendNotification(prev, notif));
+      logSystemActivity('terminal', 'alerta_contexto', p.projectName, { provider: p.type, restante: p.left });
+      notifCenter.add({
+        kind: 'ai',
+        title: `${p.projectName}: contexto da IA quase cheio (${p.left}% restante)`,
+        projectPath: p.cwd,
+        projectName: p.projectName,
+        provider: p.type,
+        source: 'cli',
+      });
+    });
+  }, [notifCenter.add]);
+
+  // Terminais de IA do CLI ficam salvos por projeto: ao abrir o app voltam sozinhos, retomando a conversa de cada um (/resume)
+  const SAVED_CLI_KEY = 'devflow_cli_saved_v1';
+  const SAVED_CLI_AI = /^(claude|agy|antigravity|codex|gemini)$/;
+  const restoredCliPaths = useRef<Set<string>>(new Set());
+  const readSavedCli = (): Record<string, Array<{ id: string; type: string; name: string; resumeId?: string }>> => {
+    try {
+      return JSON.parse(localStorage.getItem(SAVED_CLI_KEY) || '{}') || {};
+    } catch {
+      return {};
+    }
+  };
+
+  // o main descobre qual conversa pertence a cada terminal (aparece depois da primeira mensagem)
+  useEffect(() => {
+    return window.electronAPI?.pty?.onSessionBound?.(({ id, resumeId }) => {
+      setTerminalSessions((prev) => prev.map((s) => (s.id === id && s.resumeId !== resumeId ? { ...s, resumeId } : s)));
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!workspacePath || restoredCliPaths.current.has(workspacePath)) return;
+    restoredCliPaths.current.add(workspacePath);
+    const saved = readSavedCli()[workspacePath] || [];
+    const missing = saved.filter((r) => !terminalSessions.some((s) => s.id === r.id));
+    if (!missing.length) return;
+    missing.forEach((r) => r.resumeId && window.electronAPI?.pty?.setResume?.(r.id, r.resumeId));
+    setTerminalSessions((prev) => [
+      ...prev,
+      ...missing
+        .filter((r) => !prev.some((s) => s.id === r.id))
+        .map((r) => ({ id: r.id, name: r.name, type: r.type, pid: Math.floor(60000 + Math.random() * 5000), command: r.type, shellIntegration: 'Rich', scope: 'cli' as const, projectPath: workspacePath, resumeId: r.resumeId })),
+    ]);
+    logSystemActivity('terminal', 'restaurar_terminais_cli', workspacePath.split('/').pop() || 'Projeto', { total: missing.length, retomando: missing.filter((r) => r.resumeId).length });
+  }, [workspacePath]);
+
+  useEffect(() => {
+    if (!workspacePath || !restoredCliPaths.current.has(workspacePath)) return;
+    const mine = terminalSessions
+      .filter((s) => s.scope === 'cli' && SAVED_CLI_AI.test(s.type) && (s.projectPath || workspacePath) === workspacePath)
+      .map((s) => ({ id: s.id, type: s.type, name: s.name, resumeId: s.resumeId }));
+    const all = readSavedCli();
+    if (mine.length) all[workspacePath] = mine;
+    else delete all[workspacePath];
+    try {
+      localStorage.setItem(SAVED_CLI_KEY, JSON.stringify(all));
+    } catch {}
+  }, [terminalSessions, workspacePath]);
+
+  // Review pedido a mim no GitHub: aviso fixo que só fecha no X; cada PR avisa uma única vez (o backlog antigo é ignorado na primeira leitura)
+  useEffect(() => {
+    if (githubAuthStatus !== 'authenticated') return;
+    let stopped = false;
+    const check = async () => {
+      try {
+        const requests = await fetchReviewRequests(githubUser?.login);
+        if (stopped) return;
+        const dismissed = new Set(loadDismissedReviews());
+        takeNewReviews(requests)
+          .filter((r) => !dismissed.has(reviewRequestId(r)))
+          .forEach((r) => {
+            logSystemActivity('review', 'review_solicitado', `${r.repo}#${r.number}`, { autor: r.author });
+            notifCenter.add({ kind: 'ai', title: `${r.repo}: ${r.author} pediu sua review no PR #${r.number}`, body: r.title, projectName: r.repo, source: 'cli' });
+            setAiNotifications((prev) =>
+              appendNotification(prev, {
+                id: reviewRequestId(r),
+                projectPath: '',
+                projectName: r.repo,
+                provider: 'github',
+                summary: `${r.author} pediu sua revisão em #${r.number}: ${r.title}`,
+                timestamp: Date.now(),
+                kind: 'review',
+                reviewRepo: r.repo,
+                reviewNumber: r.number,
+              }),
+            );
+          });
+      } catch {}
+    };
+    check();
+    const timer = setInterval(check, 2 * 60 * 1000);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [githubAuthStatus, githubUser?.login, notifCenter.add]);
 
   // Fullscreen Detection
   useEffect(() => {
@@ -3656,9 +3787,11 @@ export const App: React.FC = () => {
     type: string = 'zsh',
     name?: string,
     initialCommand?: string,
-    scope: 'ide' | 'cli' = 'ide'
+    scope: 'ide' | 'cli' = 'ide',
+    resume?: string
   ) => {
     const newId = `term_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    if (resume) window.electronAPI?.pty?.setResume?.(newId, resume);
     const pid = Math.floor(60000 + Math.random() * 5000);
     const cmd =
       type === 'bash'
@@ -5037,6 +5170,38 @@ export const App: React.FC = () => {
             });
           }
         }
+        // detalhes de cada branch/tag (data, autor, último commit, adiante/atrás) para o seletor de branches
+        try {
+          const fmt = '%(refname)|%(committerdate:relative)|%(authorname)|%(objectname:short)|%(upstream:track,nobracket)|%(contents:subject)';
+          const detail = await window.electronAPI.shell.exec(`git for-each-ref --sort=-committerdate --format='${fmt}' refs/heads refs/remotes refs/tags`, cwd);
+          if (detail.exitCode === 0 && detail.stdout.trim()) {
+            const rich: GitBranchItem[] = [];
+            for (const line of detail.stdout.trim().split('\n')) {
+              const [ref, relDate, author, hash, track, ...rest] = line.split('|');
+              if (!ref || ref.endsWith('/HEAD')) continue;
+              const isTag = ref.startsWith('refs/tags/');
+              const isRemote = ref.startsWith('refs/remotes/');
+              const name = isTag ? ref.slice('refs/tags/'.length) : isRemote ? ref.replace(/^refs\/remotes\/[^/]+\//, '') : ref.slice('refs/heads/'.length);
+              if (rich.some((b) => b.name === name && !!b.isTag === isTag)) continue; // local vence a remota
+              rich.push({
+                name,
+                isCurrent: !isTag && items.some((b) => b.name === name && b.isCurrent),
+                isRemote,
+                isTag,
+                relDate,
+                author,
+                hash,
+                subject: rest.join('|'),
+                ahead: Number(/ahead (\d+)/.exec(track || '')?.[1] || 0),
+                behind: Number(/behind (\d+)/.exec(track || '')?.[1] || 0),
+              });
+            }
+            if (rich.length) {
+              setBranchesList(rich);
+              return;
+            }
+          }
+        } catch {}
         setBranchesList(items);
       }
     } catch {}
@@ -5061,11 +5226,11 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleCreateBranch = async (newBranch: string) => {
+  const handleCreateBranch = async (newBranch: string, base?: string) => {
     if (!newBranch.trim() || !window.electronAPI?.shell?.exec) return;
     const cwd = workspacePath || process.cwd();
     try {
-      const res = await window.electronAPI.shell.exec(`git checkout -b ${shq(newBranch.trim())}`, cwd);
+      const res = await window.electronAPI.shell.exec(`git checkout -b ${shq(newBranch.trim())}${base ? ` ${shq(base)}` : ''}`, cwd);
       if (res.exitCode === 0) {
         setCurrentBranch(newBranch.trim());
         setNewBranchInput('');
@@ -5078,6 +5243,20 @@ export const App: React.FC = () => {
       }
     } catch (e: any) {
       setToastMessage(`Erro: ${e.message}`);
+    }
+  };
+
+  const handleCheckoutDetached = async (ref: string) => {
+    if (!window.electronAPI?.shell?.exec) return;
+    const cwd = workspacePath || process.cwd();
+    const res = await window.electronAPI.shell.exec(`git checkout --detach ${shq(ref)}`, cwd);
+    if (res.exitCode === 0) {
+      setIsBranchModalOpen(false);
+      setToastMessage(`Checkout detached em: ${ref}`);
+      await refreshGitBranches();
+      await loadWorkspaceTree(cwd);
+    } else {
+      setToastMessage(`Erro no checkout: ${res.stderr || res.error}`);
     }
   };
 
@@ -8617,6 +8796,11 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
   };
 
   const showTrafficLightSpacer = !isFullscreen;
+  // barra de status no CLI com estilo visual: cartões translúcidos e blocos de destaque na cor do estilo
+  const cliSkinned = activeTab === 'cli' && terminalSkin !== 'none';
+  const barCardBg = cliSkinned ? 'color-mix(in srgb, var(--sk) 10%, transparent)' : themeTokens.bgCard;
+  const barAccent = cliSkinned ? 'var(--sk)' : accentColor;
+  const barAccentText = cliSkinned ? 'var(--sk-ink, #0a0a0a)' : accentTextColor;
 
   if (githubAuthStatus === 'checking') {
     return (
@@ -9006,6 +9190,29 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           <HeaderProjectSelector
             workspacePath={workspacePath}
             onSelectWorkspace={handleSelectWorkspace}
+            onProjectAdded={async (dirPath, repoName) => {
+              const key = `aura_onboarded:${dirPath.toLowerCase()}`;
+              try {
+                // já visto: assistente concluído/pulado, projeto aberto antes neste app ou com IA já configurada
+                const seen =
+                  localStorage.getItem(key) ||
+                  localStorage.getItem(`ide_open_files_${dirPath}`) ||
+                  localStorage.getItem(`ide_terminal_sessions_${dirPath}`) ||
+                  localStorage.getItem(`ide_ai_state_${dirPath}`) ||
+                  (repoName && localStorage.getItem(`devflow_project_settings_v1:${repoName.toLowerCase()}`));
+                if (seen) return;
+                const fs = window.electronAPI?.fs;
+                for (const f of ['CLAUDE.md', 'AGENTS.md', 'GEMINI.md', '.aura/memory.md']) {
+                  const r = await fs?.readFile(`${dirPath}/${f}`).catch(() => null);
+                  if (r && !r.error && r.content?.trim()) {
+                    localStorage.setItem(key, '1');
+                    return;
+                  }
+                }
+                localStorage.setItem(key, '1');
+              } catch {}
+              setOnboardingTarget({ path: dirPath, name: repoName || dirPath.split('/').pop() || dirPath });
+            }}
             themeTokens={themeTokens}
             isEffectiveDark={isEffectiveDark}
             accentColor={accentColor}
@@ -9764,7 +9971,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 <div style={{ padding: '6px 8px 6px', fontSize: 10.5, fontWeight: 500, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 }}>
                   Selecionar IA & Modelo
                 </div>
-                {AI_PROVIDERS.map((p) => {
+                {listedAiProviders.map((p) => {
                   const isInstalled = installedClis[p.id] ?? true;
                   const isSelected = selectedAiProvider === p.id;
                   const isSubmenuOpen = headerAiSubmenuProvider === p.id;
@@ -9952,6 +10159,18 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     </div>
                   );
                 })}
+
+                {pinnedAis.length > 0 && (
+                  <div
+                    onClick={() => setShowAllAiProviders((v) => !v)}
+                    style={{ padding: '6px 8px', fontSize: 11, color: themeTokens.textSecondary, cursor: 'pointer', transition: 'color 0.12s ease' }}
+                    onMouseEnter={(e) => (e.currentTarget.style.color = themeTokens.textPrimary)}
+                    onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textSecondary)}
+                    title="A lista segue as IAs fixadas em Configurações → IA & Agentes"
+                  >
+                    {showAllAiProviders ? 'Mostrar só as fixadas' : 'Mostrar todas as IAs'}
+                  </div>
+                )}
 
                 {/* Submenu de Modelos ancorado à esquerda do menu de IA do header */}
                 {(() => {
@@ -10673,6 +10892,59 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     >
                       {activeSkills.length} {activeSkills.length === 1 ? 'ativa' : 'ativas'}
                     </span>
+                  </div>
+
+                  {/* Retomar conversa */}
+                  <div
+                    onClick={() => {
+                      logSystemActivity('menu_configuracoes', 'abrir_retomar_conversa', activeHeaderProject?.name || 'Sistema', { provedor: selectedAiProvider });
+                      setIsSettingsMenuOpen(false);
+                      setIsResumeModalOpen(true);
+                    }}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 12px', cursor: 'pointer', fontSize: 11, fontWeight: 400, color: '#cccccc', transition: 'background 0.08s ease' }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = '#04395e';
+                      e.currentTarget.style.color = '#ffffff';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = '#cccccc';
+                    }}
+                    title="Conversas do /resume da IA, neste projeto"
+                  >
+                    <span>Retomar conversa</span>
+                  </div>
+
+                  {/* IA do projeto */}
+                  <div
+                    onClick={() => {
+                      logSystemActivity('menu_configuracoes', 'abrir_ia_do_projeto', activeHeaderProject?.name || 'Sistema', { projeto: activeHeaderProject?.fullName });
+                      setIsSettingsMenuOpen(false);
+                      setIsProjectAiModalOpen(true);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '5px 12px',
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      fontWeight: 400,
+                      color: '#cccccc',
+                      transition: 'background 0.08s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = '#04395e';
+                      e.currentTarget.style.color = '#ffffff';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = '#cccccc';
+                    }}
+                    title="Regras, gate de entrega, permissões e memória da IA neste projeto"
+                  >
+                    <span>IA do projeto</span>
+                    {activeHeaderProject?.name && <span style={{ fontSize: 9.5, color: '#888888' }}>{activeHeaderProject.name}</span>}
                   </div>
 
                   {/* Configurações de IA */}
@@ -12095,7 +12367,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               <div
                 className={`resizer-col ${isDraggingExplorer ? 'dragging' : ''}`}
                 onMouseDown={startResizeExplorer}
-                onDoubleClick={() => setExplorerWidth(280)}
+                onDoubleClick={() => setExplorerWidth(340)}
                 title="Arraste para redimensionar o Explorer (Duplo clique para restaurar)"
                 style={{ order: sidebarPosition === 'right' ? 4 : 3 }}
               />
@@ -14283,7 +14555,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                       return (
                         <div
-                          onClick={() => setChatHistoryPopupOpen(!chatHistoryPopupOpen)}
+                          onClick={() => {
+                            if (!chatHistoryPopupOpen) refreshSavedChats();
+                            setChatHistoryPopupOpen(!chatHistoryPopupOpen);
+                          }}
                           title="Sessões & Histórico de Chats"
                           style={{
                             display: 'flex',
@@ -14723,26 +14998,29 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                       {/* Chats List */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                        {chatSessions.length === 0 ? (
+                        {allUnifiedSessions.filter((u) => u.provider === selectedAiProvider).length === 0 ? (
                           <div style={{ color: themeTokens.textSecondary, fontSize: 11, textAlign: 'center', padding: '12px 0' }}>
                             Nenhum chat anterior. Inicie uma nova conversa!
                           </div>
                         ) : (
-                          [...chatSessions]
+                          [...allUnifiedSessions]
+                            .filter((u) => u.provider === selectedAiProvider)
                             .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-                            .slice(0, 4)
-                            .map((s) => {
-                            const sessionProvider = s.provider || s.history?.find((h) => h.providerId)?.providerId || selectedAiProvider || 'claude';
+                            .slice(0, 3)
+                            .map((u) => {
+                            // conversas só salvas em disco não estão na memória: não têm renomear/exportar aqui
+                            const s = chatSessions.find((c) => c.id === u.id);
+                            const sessionProvider = u.provider || s?.history?.find((h) => h.providerId)?.providerId || selectedAiProvider || 'claude';
                             const providerObj = AI_PROVIDERS.find((p) => p.id === sessionProvider);
-                            const isActive = s.id === activeChatSessionId;
+                            const isActive = u.id === activeChatSessionId;
 
-                            const isEditing = editingChatSessionId === s.id;
+                            const isEditing = editingChatSessionId === u.id;
 
                             return (
                               <div
-                                key={s.id}
+                                key={u.id}
                                 onClick={() => {
-                                  if (!isEditing) handleSelectChatSession(s.id);
+                                  if (!isEditing) handleSelectAnySession(u.id);
                                 }}
                                 style={{
                                   display: 'flex',
@@ -14774,7 +15052,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                     <form
                                       onSubmit={(e) => {
                                         e.preventDefault();
-                                        handleSaveRenameChatSession(s.id);
+                                        handleSaveRenameChatSession(u.id);
                                       }}
                                       onClick={(e) => e.stopPropagation()}
                                       style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 4 }}
@@ -14784,7 +15062,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                         autoFocus
                                         value={editingChatTitle}
                                         onChange={(e) => setEditingChatTitle(e.target.value)}
-                                        onBlur={() => handleSaveRenameChatSession(s.id)}
+                                        onBlur={() => handleSaveRenameChatSession(u.id)}
                                         onKeyDown={(e) => {
                                           if (e.key === 'Escape') {
                                             e.preventDefault();
@@ -14825,7 +15103,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   ) : (
                                     <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, gap: 1 }}>
                                       <span
-                                        onDoubleClick={(e) => handleStartRenameChatSession(s, e)}
+                                        onDoubleClick={(e) => s && handleStartRenameChatSession(s, e)}
                                         title="Duplo clique para renomear"
                                         style={{
                                           fontSize: 11.5,
@@ -14836,7 +15114,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                           fontWeight: isActive ? '500' : '400',
                                         }}
                                       >
-                                        {s.title}
+                                        {u.title}
                                       </span>
                                       <span
                                         style={{
@@ -14848,13 +15126,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                           lineHeight: '13px',
                                         }}
                                       >
-                                        {formatTimeAgo(s.updatedAt)}
+                                        {formatTimeAgo(u.updatedAt)}
                                       </span>
                                     </div>
                                   )}
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
-                                  {!isEditing && (
+                                  {!isEditing && s && (
                                     <button
                                       onClick={(e) => handleStartRenameChatSession(s, e)}
                                       title="Renomear conversa"
@@ -14875,10 +15153,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                       <Pencil size={11} />
                                     </button>
                                   )}
-                                  <button
+                                  {s && <button
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      handleExportChat(s.id, 'markdown');
+                                      handleExportChat(u.id, 'markdown');
                                     }}
                                     title="Exportar conversa (.md)"
                                     style={{
@@ -14896,9 +15174,9 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                     onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary)}
                                   >
                                     <Download size={11} />
-                                  </button>
+                                  </button>}
                                   <button
-                                    onClick={(e) => handleDeleteChatSession(s.id, e)}
+                                    onClick={(e) => (s ? handleDeleteChatSession(u.id, e) : handleDeleteAnySession(u.id, e))}
                                     title="Excluir conversa"
                                     style={{
                                       background: 'transparent',
@@ -15043,7 +15321,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         onClick={() => handleOpenExternalLink(aiNotInstalledAlert.url)}
                         style={{
                           background: 'rgba(255, 255, 255, 0.08)',
-                          border: '1px solid rgba(255, 255, 255, 0.1)',
+                          border: 'none',
                           borderRadius: 4,
                           color: '#ccc',
                           fontSize: 11,
@@ -16870,7 +17148,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   alignItems: 'center',
                                   gap: 6,
                                   background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
-                                  border: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.12)'}`,
+                                  border: 'none',
                                   borderRadius: 6,
                                   padding: '3px 8px 3px 6px',
                                   fontSize: 12,
@@ -17167,7 +17445,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               minWidth: isOrchestratorActive ? 230 : 190,
                             }}
                           >
-                            {AI_PROVIDERS.map((p) => {
+                            {listedAiProviders.map((p) => {
                               const isInstalled = installedClis[p.id] ?? true;
                               const isSelected = selectedAiProvider === p.id;
                               const isOrchestrated = !!orchestratedProviders[p.id];
@@ -17396,6 +17674,18 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                 </div>
                               );
                             })}
+
+                            {pinnedAis.length > 0 && (
+                              <div
+                                onClick={() => setShowAllAiProviders((v) => !v)}
+                                style={{ padding: '6px 8px', fontSize: 11, color: themeTokens.textSecondary, cursor: 'pointer', transition: 'color 0.12s ease' }}
+                                onMouseEnter={(e) => (e.currentTarget.style.color = themeTokens.textPrimary)}
+                                onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textSecondary)}
+                                title="A lista segue as IAs fixadas em Configurações → IA & Agentes"
+                              >
+                                {showAllAiProviders ? 'Mostrar só as fixadas' : 'Mostrar todas as IAs'}
+                              </div>
+                            )}
 
                             {/* Submenu on Click with AI models - anchored to bottom: 0 to never cut off */}
                             {(() => {
@@ -17853,7 +18143,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                 height: 24,
                                 background: isEffectiveDark ? 'rgba(239, 68, 68, 0.22)' : 'rgba(239, 68, 68, 0.14)',
                                 borderRadius: 61,
-                                border: '1px solid rgba(239, 68, 68, 0.5)',
+                                border: 'none',
                                 outline: 'none',
                                 display: 'flex',
                                 alignItems: 'center',
@@ -17861,7 +18151,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                 cursor: 'pointer',
                                 flexShrink: 0,
                                 transition: 'all 0.15s ease',
-                                boxShadow: '0 0 10px rgba(239, 68, 68, 0.25)',
+                                boxShadow: 'none',
                               }}
                               onMouseEnter={(e) => {
                                 e.currentTarget.style.background = '#ef4444';
@@ -18001,6 +18291,20 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
         }}
       >
         <DailySchedulerView
+          onAiCards={(info) => {
+            const away = activeTabRef.current !== 'daily' || !document.hasFocus();
+            const title = info.kind === 'cards' ? `Daily: a IA gerou ${info.count} ${info.count === 1 ? 'card' : 'cards'}` : `Daily: a IA sugeriu ${info.count} ${info.count === 1 ? 'atividade' : 'atividades'}`;
+            const body = info.kind === 'cards' ? `Coluna "${info.where}" — revise e aceite ou descarte.` : 'Aceite ou recuse cada sugestão no chat da Daily.';
+            logSystemActivity('daily', 'notificar_cards_ia', info.project || 'Daily', { count: info.count, tipo: info.kind });
+            notifCenter.add({ kind: 'ai', title, body, projectName: info.project, provider: selectedAiProvider, source: 'ide', read: !away });
+            if (!away) return;
+            const notif: ProjectAiNotificationItem = { id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, projectPath: workspacePath, projectName: info.project || 'Daily', provider: selectedAiProvider, summary: `${title}. ${body}`, timestamp: Date.now(), kind: 'done', source: 'ide' };
+            setAiNotifications((prev) => appendNotification(prev, notif));
+            setTimeout(() => setAiNotifications((prev) => prev.filter((n) => n.id !== notif.id)), 15000);
+            try {
+              if (!document.hasFocus() && 'Notification' in window) new Notification(title, { body });
+            } catch {}
+          }}
           workspacePath={workspacePath}
           repoName={gitRepoName}
           activeProject={activeHeaderProject}
@@ -18080,6 +18384,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
       {/* 2.6 CLI Terminal Workspace (Navegação de arquivos + Terminal com abas) */}
       {activeTab === 'cli' && (
         <CliTerminalView
+          onViewerStatus={setCliViewerStatus}
           dockTabs={(() => {
             const problemsCount = allProblems.length > 0 ? allProblems.length : (editorErrors + editorWarnings);
             return [
@@ -18178,9 +18483,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
       {/* ============================================================ */}
       {/* 3. BOTTOM STATUS BAR (RESPONSIVE NO-WRAP LAYOUT)             */}
       {/* ============================================================ */}
-      {showStatusBar && !isZenMode && activeTab === 'ide' && (
+      {showStatusBar && !isZenMode && (activeTab === 'ide' || activeTab === 'cli') && (
         <div
+          className={cliSkinned ? 'cli-skin skin-bar skin-statusbar' : undefined}
+          data-skin={cliSkinned ? terminalSkin : undefined}
           style={{
+            letterSpacing: cliSkinned ? 'var(--sk-ls, 0)' : undefined,
+            textTransform: cliSkinned ? ('var(--sk-tt, none)' as any) : undefined,
             alignSelf: 'stretch',
             justifyContent: 'space-between',
             alignItems: 'center',
@@ -18206,7 +18515,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               style={{
                 width: 38,
                 alignSelf: 'stretch',
-                background: accentColor,
+                background: barAccent,
                 borderTopLeftRadius: 10,
                 borderBottomLeftRadius: 10,
                 border: 'none',
@@ -18220,14 +18529,14 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.opacity = '0.9')}
               onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.opacity = '1')}
             >
-              <TerminalIcon size={16} color={accentTextColor} />
+              <TerminalIcon size={16} color={barAccentText} />
             </div>
 
             {/* Status Card Left */}
             <div
               style={{
                 padding: 5,
-                background: themeTokens.bgCard,
+                background: barCardBg,
                 border: 'none',
                 borderLeft: 'none',
                 borderTopRightRadius: 10,
@@ -18339,7 +18648,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           <div
             style={{
               padding: 5,
-              background: themeTokens.bgCard,
+              background: barCardBg,
               borderRadius: 10,
               border: `1px solid ${themeTokens.border}`,
               justifyContent: 'center',
@@ -18416,7 +18725,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
         {/* Right Segment: Position Info + Accent "Aura Dev" Button */}
         <div
           style={{
-            background: themeTokens.bgCard,
+            background: barCardBg,
             overflow: 'hidden',
             borderRadius: 10,
             border: `1px solid ${themeTokens.border}`,
@@ -18427,6 +18736,31 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             flexShrink: 0,
           }}
         >
+          {/* No CLI: dados do arquivo aberto no visualizador do CLI (sem arquivo, os mesmos valores padrão da IDE) */}
+          {activeTab === 'cli' && (
+            <div style={{ paddingLeft: 12, paddingRight: 12, paddingTop: 8, paddingBottom: 8, display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}>
+              {(() => {
+                const v = cliViewerStatus;
+                const blame = v?.blame || workspaceGitInfo?.authorBlame || 'Walancy (recently)';
+                const lang = v?.language ? v.language.charAt(0).toUpperCase() + v.language.slice(1) : 'TypeScript';
+                return [
+                  { text: blame, title: 'Último autor do arquivo (clique para copiar)', onClick: () => navigator.clipboard.writeText(blame) },
+                  { text: `Ln ${v?.line ?? 1}, Col ${v?.col ?? 1}`, title: 'Posição do cursor' },
+                  { text: `Spaces: ${v?.tabSize ?? 2}`, title: 'Indentação' },
+                  { text: 'UTF-8', title: 'Codificação' },
+                  { text: v?.eol ?? 'LF', title: 'Fim de linha' },
+                  { text: lang, title: 'Linguagem do arquivo' },
+                ];
+              })().map((it) => (
+                <div key={it.title} onClick={it.onClick} title={it.title} style={{ color: isEffectiveDark ? '#888888' : '#666666', fontSize: 11.5, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap', cursor: it.onClick ? 'pointer' : 'default' }}>
+                  {it.text}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Posição, indentação, codificação e linguagem são do editor: só na IDE */}
+          {activeTab === 'ide' && (
           <div
             style={{
               paddingLeft: 12,
@@ -18566,10 +18900,23 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               {activeFile?.language ? (activeFile.language.charAt(0).toUpperCase() + activeFile.language.slice(1)) : 'TypeScript'}
             </div>
           </div>
+          )}
 
           {/* Solid Accent Block "Aura Dev" (Toggles AI Chat & Focuses Input) */}
           <div
             onClick={() => {
+              // no CLI o bloco leva direto ao repositório no GitHub
+              if (activeTab === 'cli') {
+                const repoUrl = activeHeaderProject?.htmlUrl || (gitRepoName.includes('/') ? `https://github.com/${gitRepoName}` : '');
+                if (!repoUrl) {
+                  setToastMessage('Este projeto não está vinculado a um repositório do GitHub.');
+                  return;
+                }
+                logSystemActivity('statusbar', 'abrir_repositorio', gitRepoName || 'Projeto', { url: repoUrl });
+                if (window.electronAPI?.shell?.openExternal) window.electronAPI.shell.openExternal(repoUrl);
+                else window.open(repoUrl, '_blank');
+                return;
+              }
               if (activeTab !== 'ide') {
                 setActiveTab('ide');
               }
@@ -18584,12 +18931,12 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 return next;
               });
             }}
-            title="Abrir Assistente Aura Dev"
+            title={activeTab === 'cli' ? 'Abrir o repositório no GitHub' : 'Abrir Assistente Aura Dev'}
             style={{
               alignSelf: 'stretch',
               paddingLeft: 14,
               paddingRight: 14,
-              background: accentColor,
+              background: barAccent,
               border: 'none',
               justifyContent: 'flex-start',
               alignItems: 'center',
@@ -18603,8 +18950,8 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.opacity = '0.9')}
             onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.opacity = '1')}
           >
-            <div style={{ color: accentTextColor, fontSize: 12, fontFamily: 'Poppins', fontWeight: '600', whiteSpace: 'nowrap' }}>Aura Dev</div>
-            <TerminalIcon size={14} color={accentTextColor} />
+            <div style={{ color: barAccentText, fontSize: 12, fontFamily: 'Poppins', fontWeight: '600', whiteSpace: 'nowrap' }}>{activeTab === 'cli' ? 'Repositório' : 'Aura Dev'}</div>
+            {activeTab === 'cli' ? <span style={{ display: 'flex', color: barAccentText }}><GithubMarkIcon size={14} /></span> : <TerminalIcon size={14} color={barAccentText} />}
           </div>
         </div>
       </div>
@@ -18768,6 +19115,62 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           onToast={(msg) => setToastMessage(msg)}
         />
 
+        <PullReviewModal
+          isOpen={reviewTarget !== null}
+          target={reviewTarget}
+          onClose={() => setReviewTarget(null)}
+          isEffectiveDark={isEffectiveDark}
+          accentColor={accentColor}
+          aiProvider={(() => {
+            const prov = AI_PROVIDERS.find((p) => p.id === selectedAiProvider) || AI_PROVIDERS[0];
+            return { id: prov.id, name: prov.name, cliCommand: prov.cliCommand, model: selectedModel, cwd: workspacePath };
+          })()}
+          onToast={(msg) => setToastMessage(msg)}
+        />
+
+        <ResumeSessionModal
+          isOpen={isResumeModalOpen}
+          onClose={() => setIsResumeModalOpen(false)}
+          projectPath={workspacePath}
+          projectName={activeHeaderProject?.name}
+          initialProvider={selectedAiProvider}
+          isEffectiveDark={isEffectiveDark}
+          accentColor={accentColor}
+          accentContrastText={accentTextColor}
+          onResume={(provider, session) => {
+            setIsResumeModalOpen(false);
+            const sid = handleNewTerminalSession(provider, session.title.slice(0, 28), undefined, 'cli', session.id);
+            logSystemActivity('terminal', 'retomar_conversa', activeHeaderProject?.name || 'Sistema', { provedor: provider, sessao: session.id, terminal: sid });
+            setActiveTab('cli');
+          }}
+        />
+
+        <ProjectOnboardingModal
+          isOpen={onboardingTarget !== null}
+          onClose={() => setOnboardingTarget(null)}
+          projectPath={onboardingTarget?.path || ''}
+          projectName={onboardingTarget?.name || ''}
+          repoFullName={onboardingTarget?.name.includes('/') ? onboardingTarget.name : undefined}
+          aiProvider={(() => {
+            const prov = AI_PROVIDERS.find((p) => p.id === selectedAiProvider) || AI_PROVIDERS[0];
+            return { id: prov.id, name: prov.name, cliCommand: prov.cliCommand, model: selectedModel, cwd: workspacePath };
+          })()}
+          isEffectiveDark={isEffectiveDark}
+          accentColor={accentColor}
+          accentContrastText={accentTextColor}
+          onToast={(msg) => setToastMessage(msg)}
+        />
+
+        <ProjectAiModal
+          isOpen={isProjectAiModalOpen}
+          onClose={() => setIsProjectAiModalOpen(false)}
+          repoFullName={activeHeaderProject?.fullName}
+          isEffectiveDark={isEffectiveDark}
+          accentColor={accentColor}
+          accentContrastText={accentTextColor}
+          onToast={(msg) => setToastMessage(msg)}
+        />
+
         {/* Modal de Regras Globais da IA (CLAUDE.md / GEMINI.md / AGENTS.md / rules.md) */}
         <AiGlobalRulesModal
           isOpen={isAiGlobalRulesModalOpen}
@@ -18820,7 +19223,16 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
         {/* Notificações flutuantes de conclusão de IA entre projetos */}
         <ProjectAiNotificationToast
           notifications={aiNotifications}
-          onDismiss={(id) => setAiNotifications((prev) => prev.filter((n) => n.id !== id))}
+          onDismiss={(id) => {
+            if (id.startsWith('review:')) dismissReview(id);
+            setAiNotifications((prev) => prev.filter((n) => n.id !== id));
+          }}
+          onReview={(item) => {
+            if (item.reviewRepo && item.reviewNumber) {
+              logSystemActivity('review', 'abrir_review', `${item.reviewRepo}#${item.reviewNumber}`);
+              setReviewTarget({ repo: item.reviewRepo, number: item.reviewNumber });
+            }
+          }}
           onNavigateToProject={(projectPath, repoName, source) => {
             if (source === 'design') {
               // volta ao projeto onde a IA gerou e abre o Design
@@ -18830,6 +19242,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             }
             handleSelectWorkspace(projectPath, repoName);
             setActiveTab(source === 'ide' ? 'ide' : 'cli');
+          }}
+          onNewContext={(item) => {
+            logSystemActivity('terminal', 'novo_contexto', item.projectName, { provider: item.provider });
+            const switching = item.projectPath.toLowerCase() !== (workspacePathRef.current || '').toLowerCase();
+            if (switching) handleSelectWorkspace(item.projectPath, item.projectName);
+            setActiveTab('cli');
+            setTimeout(() => window.dispatchEvent(new CustomEvent('devflow:new-context', { detail: { sessionId: item.sessionId } })), switching ? 700 : 150);
           }}
           accentColor={accentColor}
           isEffectiveDark={isEffectiveDark}
@@ -18847,14 +19266,14 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               transform: 'translateX(-50%)',
               zIndex: 999999,
               background: themeTokens.bgCardSecondary,
-              border: `1px solid ${accentColor}`,
+              border: 'none',
               borderRadius: 20,
               padding: '5px 14px',
               display: 'flex',
               alignItems: 'center',
               gap: 7,
               cursor: 'pointer',
-              boxShadow: `0 4px 16px ${hexToRgba(accentColor, 0.35)}`,
+              boxShadow: 'none',
               color: themeTokens.textPrimary,
               fontSize: 12,
               fontFamily: 'Poppins, sans-serif',
@@ -19137,14 +19556,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             currentBranch={currentBranch}
             onSyncGit={handleSyncGit}
             isSyncingGit={isSyncingGit}
-            newBranchInput={newBranchInput}
-            setNewBranchInput={setNewBranchInput}
             onCreateBranch={handleCreateBranch}
-            isCreatingBranch={isCreatingBranch}
-            branchSearchQuery={branchSearchQuery}
-            setBranchSearchQuery={setBranchSearchQuery}
             branchesList={branchesList}
             onCheckoutBranch={handleCheckoutBranch}
+            onCheckoutDetached={handleCheckoutDetached}
           />
         )}
 

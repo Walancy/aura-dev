@@ -147,7 +147,7 @@ export const DevFlowSelect = <T extends string | number>({
           padding: '0 8px',
           gap: 8,
           borderRadius: 6,
-          border: isOpen ? ft.fieldBorderFocus : ft.fieldBorder,
+          border: 'none',
           boxShadow: 'none',
           background: isOpen ? ft.fieldBgHover : ft.fieldBg,
           color: selectedOption ? textColor : secondaryColor,
@@ -159,19 +159,17 @@ export const DevFlowSelect = <T extends string | number>({
           justifyContent: 'space-between',
           outline: 'none',
           opacity: disabled ? 0.5 : 1,
-          transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease',
+          transition: 'background 0.15s ease, color 0.15s ease',
           boxSizing: 'border-box',
         }}
         onMouseEnter={(e) => {
           if (!disabled) {
             e.currentTarget.style.background = ft.fieldBgHover;
-            e.currentTarget.style.borderColor = ft.fieldBorderFocusColor;
           }
         }}
         onMouseLeave={(e) => {
           if (!disabled) {
             e.currentTarget.style.background = isOpen ? ft.fieldBgHover : ft.fieldBg;
-            e.currentTarget.style.borderColor = isOpen ? ft.fieldBorderFocusColor : ft.fieldBorderColor;
           }
         }}
       >

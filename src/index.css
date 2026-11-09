@@ -11,12 +11,12 @@
   --field-bg: rgba(255, 255, 255, 0.05);
   --field-bg-hover: rgba(255, 255, 255, 0.075);
   --field-bg-solid: #1e1e20;
-  --field-border-color: rgba(255, 255, 255, 0.06);
-  --field-border: 1px solid rgba(255, 255, 255, 0.06);
-  --field-border-focus-color: rgba(255, 255, 255, 0.12);
-  --field-border-focus: 1px solid rgba(255, 255, 255, 0.12);
+  --field-border-color: transparent;
+  --field-border: none;
+  --field-border-focus-color: transparent;
+  --field-border-focus: none;
   --dropdown-bg: #1b1b1d;
-  --dropdown-border: 1px solid rgba(255, 255, 255, 0.06);
+  --dropdown-border: none;
   --dropdown-item-hover: rgba(255, 255, 255, 0.06);
 }
 
@@ -29,12 +29,12 @@
   --field-bg: #f6f6f7;
   --field-bg-hover: #efefef;
   --field-bg-solid: #f6f6f7;
-  --field-border-color: rgba(0, 0, 0, 0.06);
-  --field-border: 1px solid rgba(0, 0, 0, 0.06);
-  --field-border-focus-color: rgba(0, 0, 0, 0.12);
-  --field-border-focus: 1px solid rgba(0, 0, 0, 0.12);
+  --field-border-color: transparent;
+  --field-border: none;
+  --field-border-focus-color: transparent;
+  --field-border-focus: none;
   --dropdown-bg: #f8f8f9;
-  --dropdown-border: 1px solid rgba(0, 0, 0, 0.06);
+  --dropdown-border: none;
   --dropdown-item-hover: rgba(0, 0, 0, 0.045);
 }
 
@@ -75,6 +75,7 @@ textarea,
 select,
 button {
   font-family: inherit;
+  border: none;
 }
 
 /* Padrao global para inputs, dropdowns e campos de busca (.df-field / .df-search-box) */
@@ -82,10 +83,10 @@ button {
 .df-search-box,
 .df-dropdown-trigger {
   background: var(--field-bg);
-  border: var(--field-border);
+  border: none;
   box-shadow: none;
   font-weight: 400;
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .df-field:hover,
@@ -97,18 +98,19 @@ button {
 .df-field:focus,
 .df-search-box:focus-within,
 .df-dropdown-trigger[data-open="true"] {
-  border-color: var(--field-border-focus-color);
+  border: none;
 }
 
 .df-dropdown-menu {
   background: var(--dropdown-bg);
-  border: var(--dropdown-border);
+  border: none;
   box-shadow: none;
 }
 
 select {
   font-weight: 400;
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  border: none;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 /* Scrollbars */
@@ -328,17 +330,17 @@ body.resizing-row {
     top: 50%;
     transform: translateY(-50%);
     background: rgba(22, 22, 26, 0.95);
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    border: none;
     border-radius: 4px;
     padding: 2px;
     z-index: 10;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+    box-shadow: none;
   }
 }
 
 :root[data-theme="light"] .workspace-tab:hover .workspace-tab-close {
   background: rgba(240, 240, 245, 0.95);
-  border: 1px solid rgba(0, 0, 0, 0.15);
+  border: none;
 }
 
 
@@ -578,6 +580,7 @@ body.resizing-row {
 .cli-skin .skin-bar button.skin-chip:not(:hover) { background: color-mix(in srgb, var(--sk) 14%, transparent) !important; color: var(--sk) !important; }
 
 /* Header do sistema na aba CLI: fundo e linha inferior do estilo */
+.cli-skin.skin-statusbar div { border-radius: var(--sk-r, 0) !important; }
 .cli-skin.skin-header { isolation: isolate; z-index: 60; background: transparent !important; border-radius: 0 !important; box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--sk) 30%, transparent); }
 
 /* Grupos da header (abas, organização, projeto): separados por divisória fina e com o acabamento de cada estilo */
