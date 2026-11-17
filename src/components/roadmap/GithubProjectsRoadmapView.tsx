@@ -45,6 +45,7 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
   const [viewMonth, setViewMonth] = useState(() => new Date().getMonth()); // 0-indexed
   const [leftColWidth, setLeftColWidth] = useState(360);
   const [isResizingLeftCol, setIsResizingLeftCol] = useState(false);
+  const [resizingBarTaskId, setResizingBarTaskId] = useState<string | null>(null);
   const [sortOrder, setSortOrder] = useState<'default' | 'asc' | 'desc'>('default');
   const [showMarkers, setShowMarkers] = useState(true);
   const [dateFieldMode, setDateFieldMode] = useState<'issue' | 'sprint'>('issue');
@@ -326,6 +327,7 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
 
   return (
     <div
+      className="df-projects-surface df-view-enter"
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -336,6 +338,7 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
         gap: 8,
         boxSizing: 'border-box',
         fontFamily: "'Poppins', -apple-system, sans-serif",
+        fontWeight: 400,
       }}
     >
 
@@ -462,7 +465,7 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
                 padding: '3px 7px',
                 height: 26,
                 background: getFieldTokens(!!isEffectiveDark).fieldBg,
-                border: getFieldTokens(!!isEffectiveDark).fieldBorder,
+                border: 'none',
                 boxShadow: 'none',
                 cursor: 'pointer',
                 borderRadius: 5,
@@ -474,17 +477,21 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
               title="Mudar mês do roadmap"
             >
               <span>{monthTitle || 'Mês'}</span>
-              <ChevronDown size={11} />
+              <ChevronDown
+                size={11}
+                className="df-chevron"
+                style={{ transform: isMonthPickerOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}
+              />
             </button>
             {isMonthPickerOpen && (
               <div
-                className="df-dropdown-menu"
+                className="df-dropdown-menu df-popover-right"
                 style={{
                   position: 'absolute',
                   top: 28,
                   right: 0,
                   background: getFieldTokens(!!isEffectiveDark).dropdownMenuBg,
-                  border: getFieldTokens(!!isEffectiveDark).dropdownBorder,
+                  border: 'none',
                   borderRadius: 6,
                   boxShadow: 'none',
                   padding: 6,
@@ -493,6 +500,7 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
                   gridTemplateColumns: 'repeat(3, 1fr)',
                   gap: 4,
                   minWidth: 190,
+                  fontWeight: 400,
                 }}
               >
                 {MONTH_NAMES_PT.map((mName, mIdx) => (
@@ -663,6 +671,7 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
               return (
                 <div
                   key={task.id || `task-${idx}`}
+                  className="df-row-interactive"
                   onClick={() => onOpenIssueDetail(task)}
                   style={{
                     height: ROW_HEIGHT,
@@ -672,9 +681,9 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
                     padding: '0 10px',
                     borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)'}`,
                     cursor: 'pointer',
-                    transition: 'background 0.12s ease',
                     gap: 8,
                     boxSizing: 'border-box',
+                    fontWeight: 400,
                   }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.background = isEffectiveDark ? '#1c1c1c' : '#f1f5f9';
@@ -901,29 +910,25 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
               const span = getTaskBarSpan(task);
               const isClosed = task.status === 'Concluído' || task.rawState === 'closed';
               const titleText = String(task.title || 'Sem título');
+              const barKey = String(task.id || `bar-${idx}`);
+              const isDraggingOrResizing = isResizingLeftCol || resizingBarTaskId !== null;
 
-              // Cores da barra no estilo GitHub
+              // Preenchimento tonal sem bordas ou sombras
               const barBg = isClosed
                 ? isEffectiveDark
-                  ? 'rgba(137, 87, 229, 0.28)'
-                  : 'rgba(137, 87, 229, 0.2)'
+                  ? 'rgba(137, 87, 229, 0.3)'
+                  : 'rgba(137, 87, 229, 0.18)'
                 : task.status === 'Em Progresso'
                 ? isEffectiveDark
-                  ? 'rgba(245, 158, 11, 0.28)'
-                  : 'rgba(245, 158, 11, 0.2)'
+                  ? 'rgba(245, 158, 11, 0.3)'
+                  : 'rgba(245, 158, 11, 0.18)'
                 : isEffectiveDark
-                ? 'rgba(34, 197, 94, 0.28)'
-                : 'rgba(34, 197, 94, 0.2)';
-
-              const barBorder = isClosed
-                ? '#8957e5'
-                : task.status === 'Em Progresso'
-                ? '#f59e0b'
-                : '#22c55e';
+                ? 'rgba(34, 197, 94, 0.3)'
+                : 'rgba(34, 197, 94, 0.18)';
 
               return (
                 <div
-                  key={task.id || `bar-${idx}`}
+                  key={barKey}
                   style={{
                     height: ROW_HEIGHT,
                     position: 'relative',
@@ -942,7 +947,8 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
                         left: span.leftPx + 3,
                         width: span.widthPx,
                         background: barBg,
-                        border: `1px solid ${barBorder}`,
+                        border: 'none',
+                        boxShadow: 'none',
                         borderRadius: 5,
                         display: 'flex',
                         alignItems: 'center',
@@ -950,26 +956,30 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
                         padding: '0 8px',
                         cursor: 'pointer',
                         zIndex: 2,
-                        transition: 'transform 0.12s ease, box-shadow 0.12s ease',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                        transition: isDraggingOrResizing
+                          ? 'none'
+                          : 'opacity 140ms ease, filter 140ms ease, background-color 140ms ease',
                         overflow: 'hidden',
+                        fontWeight: 400,
                       }}
                       onMouseEnter={(e) => {
-                        e.currentTarget.style.transform = 'translateY(-1px)';
-                        e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.2)';
+                        if (!isDraggingOrResizing) {
+                          e.currentTarget.style.filter = isEffectiveDark ? 'brightness(1.14)' : 'brightness(0.95)';
+                        }
                       }}
                       onMouseLeave={(e) => {
-                        e.currentTarget.style.transform = 'translateY(0)';
-                        e.currentTarget.style.boxShadow = '0 1px 2px rgba(0,0,0,0.1)';
+                        e.currentTarget.style.filter = 'none';
                       }}
                     >
                       {/* Handle Esquerdo de Redimensionamento */}
                       <div
                         onMouseDown={(e) => {
                           e.stopPropagation();
+                          setResizingBarTaskId(barKey);
                           const startX = e.clientX;
                           const onMouseUp = (ev: MouseEvent) => {
                             document.removeEventListener('mouseup', onMouseUp);
+                            setResizingBarTaskId(null);
                             const deltaX = ev.clientX - startX;
                             const days = Math.round(deltaX / DAY_COL_WIDTH);
                             if (days !== 0) handleShiftIssueDates(task, days, 'start');
@@ -983,7 +993,7 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
                           bottom: 0,
                           width: 8,
                           cursor: 'ew-resize',
-                          background: 'rgba(0, 0, 0, 0.2)',
+                          background: 'rgba(0, 0, 0, 0.16)',
                           zIndex: 5,
                         }}
                         title="Arrastar para alterar data de início"
@@ -993,9 +1003,11 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
                       <div
                         onMouseDown={(e) => {
                           e.stopPropagation();
+                          setResizingBarTaskId(barKey);
                           const startX = e.clientX;
                           const onMouseUp = (ev: MouseEvent) => {
                             document.removeEventListener('mouseup', onMouseUp);
+                            setResizingBarTaskId(null);
                             const deltaX = ev.clientX - startX;
                             const days = Math.round(deltaX / DAY_COL_WIDTH);
                             if (days !== 0) handleShiftIssueDates(task, days, 'due');
@@ -1009,7 +1021,7 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
                           bottom: 0,
                           width: 8,
                           cursor: 'ew-resize',
-                          background: 'rgba(0, 0, 0, 0.2)',
+                          background: 'rgba(0, 0, 0, 0.16)',
                           zIndex: 5,
                         }}
                         title="Arrastar para alterar prazo final"
@@ -1022,7 +1034,7 @@ export const GithubProjectsRoadmapViewInner: React.FC<GithubProjectsRoadmapViewP
                       <span
                         style={{
                           fontSize: 11,
-                          fontWeight: 500,
+                          fontWeight: 400,
                           color: textPrimary,
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
@@ -1067,6 +1079,7 @@ export class GithubProjectsRoadmapView extends React.Component<
       const isDark = this.props.isEffectiveDark ?? true;
       return (
         <div
+          className="df-projects-surface df-view-enter"
           style={{
             flex: 1,
             display: 'flex',
@@ -1079,6 +1092,8 @@ export class GithubProjectsRoadmapView extends React.Component<
             borderRadius: 8,
             color: isDark ? '#ffffff' : '#111111',
             border: 'none',
+            boxShadow: 'none',
+            fontWeight: 400,
           }}
         >
           <div style={{ fontSize: 14, fontWeight: 600 }}>Não foi possível carregar a visualização de Roadmap</div>

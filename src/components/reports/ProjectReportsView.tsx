@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { readSharedSidebarWidth, SHARED_SIDEBAR_WIDTH_KEY } from '../sharedSidebarWidth';
 import {
   BarChart3,
   TrendingUp,
@@ -135,16 +136,7 @@ export const ProjectReportsView: React.FC<ProjectReportsViewProps> = ({
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   // Redimensionamento horizontal da sidebar (estilo Marcos)
-  const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('aura_project_reports_sidebar_width');
-      if (saved) {
-        const val = Number(saved);
-        if (!isNaN(val) && val >= 180 && val <= 450) return val;
-      }
-    } catch {}
-    return 240;
-  });
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(readSharedSidebarWidth);
   const [isDraggingLeftSidebar, setIsDraggingLeftSidebar] = useState(false);
 
   const startResizeLeftSidebar = useCallback(
@@ -162,7 +154,7 @@ export const ProjectReportsView: React.FC<ProjectReportsViewProps> = ({
         const newWidth = Math.max(180, Math.min(450, initialWidth + deltaX));
         setLeftSidebarWidth(newWidth);
         try {
-          localStorage.setItem('aura_project_reports_sidebar_width', String(newWidth));
+          localStorage.setItem(SHARED_SIDEBAR_WIDTH_KEY, String(newWidth));
         } catch {}
       };
 
@@ -182,7 +174,7 @@ export const ProjectReportsView: React.FC<ProjectReportsViewProps> = ({
   const resetLeftSidebarWidth = useCallback(() => {
     setLeftSidebarWidth(240);
     try {
-      localStorage.setItem('aura_project_reports_sidebar_width', '240');
+      localStorage.setItem(SHARED_SIDEBAR_WIDTH_KEY, '240');
     } catch {}
   }, []);
 
@@ -714,6 +706,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
 
   return (
     <div
+      className="df-projects-surface df-view-enter"
       style={{
         width: '100%',
         height: '100%',
@@ -728,6 +721,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
         flex: 1,
         minHeight: 0,
         overflow: 'hidden',
+        fontWeight: 400,
       }}
     >
       {/* ========================================================================= */}
@@ -824,7 +818,6 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                   fontSize: 10,
                   fontWeight: 400,
                   cursor: 'pointer',
-                  transition: 'all 0.15s ease',
                   textAlign: 'center',
                 }}
               >
@@ -880,7 +873,6 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                   background: isSelected ? c.cardSelected : 'transparent',
                   color: isSelected ? c.textPrimary : c.textSecondary,
                   cursor: 'pointer',
-                  transition: 'all 0.12s ease',
                   textAlign: 'left',
                   position: 'relative',
                 }}
@@ -967,7 +959,6 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
               fontSize: 10.5,
               fontWeight: 400,
               cursor: 'pointer',
-              transition: 'all 0.15s ease',
             }}
           >
             {copiedKey === 'sidebar-copy' ? (
@@ -1001,7 +992,6 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
               fontSize: 10.5,
               fontWeight: 400,
               cursor: 'pointer',
-              transition: 'all 0.15s ease',
             }}
           >
             <Download size={12} />
@@ -1116,7 +1106,6 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                   fontSize: 11,
                   fontWeight: 400,
                   cursor: 'pointer',
-                  transition: 'all 0.15s ease',
                   boxShadow: 'none',
                 }}
               >
@@ -1154,7 +1143,6 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                   fontSize: 11,
                   fontWeight: 400,
                   cursor: 'pointer',
-                  transition: 'all 0.15s ease',
                   boxShadow: 'none',
                 }}
               >
@@ -1183,11 +1171,10 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                   fontWeight: 400,
                   cursor: isGeneratingAi ? 'default' : 'pointer',
                   opacity: isGeneratingAi ? 0.7 : 1,
-                  transition: 'all 0.15s ease',
                   boxShadow: 'none',
                 }}
               >
-                <Sparkles size={12} className={isGeneratingAi ? 'spin-animation' : ''} />
+                <Sparkles size={12} className={isGeneratingAi ? 'spin-animate' : ''} />
                 <span>{isGeneratingAi ? 'Analisando...' : 'IA Insights'}</span>
               </button>
             </div>
@@ -1195,6 +1182,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
 
           {/* Card 2: Saúde do Projeto */}
           <div
+            className="df-card-subtle df-stagger-item"
             style={{
               background: metrics.healthScore < 60
                 ? (isEffectiveDark ? 'rgba(239, 68, 68, 0.22)' : 'rgba(239, 68, 68, 0.14)')
@@ -1208,7 +1196,8 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
               minWidth: 100,
               border: 'none',
               boxShadow: 'none',
-            }}
+              '--stagger-idx': 0,
+            } as React.CSSProperties}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: metrics.healthScore < 60 ? (isEffectiveDark ? '#fca5a5' : '#b91c1c') : c.textMuted }}>
               <Activity size={11} color={metrics.healthScore >= 80 ? c.success : metrics.healthScore >= 60 ? c.warning : c.danger} />
@@ -1226,6 +1215,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
 
           {/* Card 3: Vazão de Entregas */}
           <div
+            className="df-card-subtle df-stagger-item"
             style={{
               background: c.card,
               borderRadius: 8,
@@ -1237,7 +1227,8 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
               minWidth: 120,
               border: 'none',
               boxShadow: 'none',
-            }}
+              '--stagger-idx': 1,
+            } as React.CSSProperties}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: c.textMuted }}>
               <CheckCircle2 size={11} color={c.success} />
@@ -1275,6 +1266,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
 
           {/* Card 4: Lead Time Médio */}
           <div
+            className="df-card-subtle df-stagger-item"
             style={{
               background: c.card,
               borderRadius: 8,
@@ -1286,7 +1278,8 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
               minWidth: 100,
               border: 'none',
               boxShadow: 'none',
-            }}
+              '--stagger-idx': 2,
+            } as React.CSSProperties}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: c.textMuted }}>
               <Clock size={11} color={c.info} />
@@ -1304,6 +1297,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
 
           {/* Card 5: Taxa de Retrabalho / Bugs */}
           <div
+            className="df-card-subtle df-stagger-item"
             style={{
               background: c.card,
               borderRadius: 8,
@@ -1315,7 +1309,8 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
               minWidth: 100,
               border: 'none',
               boxShadow: 'none',
-            }}
+              '--stagger-idx': 3,
+            } as React.CSSProperties}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: c.textMuted }}>
               <Bug size={11} color={metrics.bugRate <= 15 ? c.success : c.danger} />
@@ -1336,7 +1331,9 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
         {/* 3. CONTEÚDO PRINCIPAL DINÂMICO CONFORME A ABA ATIVA NA SIDEBAR            */}
         {/* ========================================================================= */}
         <div
+          key={activeSection}
           data-tour="relatorio-content-area"
+          className="df-view-enter"
           style={{
             flex: 1,
             minHeight: 0,
@@ -1442,7 +1439,10 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                         return (
                           <div
                             key={iss.id}
+                            className="df-row-interactive"
                             onClick={() => onOpenIssueDetail?.(iss)}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = c.cardHover)}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = c.cardSecondary)}
                             style={{
                               display: 'flex',
                               alignItems: 'center',
@@ -1451,7 +1451,6 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                               borderRadius: 5,
                               background: c.cardSecondary,
                               cursor: onOpenIssueDetail ? 'pointer' : 'default',
-                              transition: 'background 0.12s ease',
                             }}
                           >
                             <CheckCircle2 size={13} color={c.success} style={{ flexShrink: 0 }} />
@@ -1752,7 +1751,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                         border: 'none',
                         boxShadow: 'none',
                         flexShrink: 0,
-                        transition: 'all 0.15s ease',
+                        transition: 'background-color 150ms ease, color 150ms ease',
                       }}
                     >
                       <span
@@ -1793,6 +1792,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                     ].map((item, idx) => (
                       <div
                         key={idx}
+                        className="df-row-interactive"
                         style={{
                           display: 'flex',
                           alignItems: 'center',
@@ -1802,7 +1802,6 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                           background: c.cardSecondary,
                           border: 'none',
                           boxShadow: 'none',
-                          transition: 'background 0.15s ease',
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -1829,7 +1828,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                             flexShrink: 0,
                             border: 'none',
                             boxShadow: 'none',
-                            transition: 'all 0.15s ease',
+                            transition: 'background-color 150ms ease, color 150ms ease',
                           }}
                         >
                           {item.detail}
@@ -1894,7 +1893,6 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                       display: 'flex',
                       alignItems: 'center',
                       gap: 6,
-                      transition: 'all 0.15s ease',
                     }}
                   >
                     <span>
@@ -1934,7 +1932,6 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                       display: 'flex',
                       alignItems: 'center',
                       gap: 6,
-                      transition: 'all 0.15s ease',
                     }}
                   >
                     <span>Produtividade & Alocação</span>
@@ -1975,7 +1972,6 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                           cursor: 'pointer',
                           padding: '3px 8px',
                           borderRadius: 4,
-                          transition: 'all 0.15s ease',
                         }}
                       >
                         Limpar filtro
@@ -1988,6 +1984,8 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
               {/* CONTEÚDO DA ABA 1: LISTA DE TAREFAS DOS COLABORADORES */}
               {teamTab === 'tasks' && (
                 <div
+                  key="tasks"
+                  className="df-view-enter"
                   style={{
                     background: c.card,
                     borderRadius: 8,
@@ -2038,7 +2036,6 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                         cursor: 'pointer',
                         padding: '2px 6px',
                         borderRadius: 4,
-                        transition: 'opacity 0.15s ease',
                       }}
                     >
                       Mostrar todos
@@ -2070,6 +2067,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                       return (
                         <div
                           key={iss.id}
+                          className="df-row-interactive"
                           onClick={() => onOpenIssueDetail?.(iss)}
                           onMouseEnter={(e) => (e.currentTarget.style.background = c.cardHover)}
                           onMouseLeave={(e) => (e.currentTarget.style.background = c.cardSecondary)}
@@ -2081,7 +2079,6 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                             borderRadius: 5,
                             background: c.cardSecondary,
                             cursor: onOpenIssueDetail ? 'pointer' : 'default',
-                            transition: 'background 0.12s ease',
                             border: 'none',
                             boxShadow: 'none',
                           }}
@@ -2190,6 +2187,8 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
               {/* CONTEÚDO DA ABA 2: PRODUTIVIDADE & ALOCAÇÃO POR DESENVOLVEDOR */}
               {teamTab === 'workload' && (
                 <div
+                key="workload"
+                className="df-view-enter"
                 style={{
                   background: c.card,
                   borderRadius: 8,
@@ -2261,6 +2260,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                     return (
                       <div
                         key={m.login}
+                        className="df-row-interactive"
                         style={{
                           display: 'grid',
                           gridTemplateColumns: 'minmax(110px, 1.4fr) minmax(50px, 0.7fr) minmax(70px, 0.9fr) minmax(45px, 0.6fr) minmax(80px, 1.1fr) minmax(60px, 0.7fr)',
@@ -2269,7 +2269,6 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                           padding: '7px 8px',
                           borderRadius: 6,
                           background: isSelected ? c.cardSelected : c.cardSecondary,
-                          transition: 'background 0.12s ease',
                           border: 'none',
                           boxShadow: 'none',
                         }}
@@ -2379,7 +2378,6 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                                 background: isSelected ? accentColor : c.cardHover,
                                 color: isSelected ? accentContrastText : c.textSecondary,
                                 cursor: 'pointer',
-                                transition: 'all 0.12s ease',
                                 whiteSpace: 'nowrap',
                               }}
                             >
@@ -2457,6 +2455,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                   ].map((item, idx) => (
                     <div
                       key={idx}
+                      className="df-card-interactive df-stagger-item"
                       style={{
                         background: c.card,
                         borderRadius: 8,
@@ -2466,8 +2465,8 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                         gap: 4,
                         border: 'none',
                         boxShadow: 'none',
-                        transition: 'all 0.15s ease',
-                      }}
+                        '--stagger-idx': idx,
+                      } as React.CSSProperties}
                     >
                       <div style={{ fontSize: 9.5, fontWeight: 400, color: c.textMuted, letterSpacing: '0.04em' }}>
                         {item.title}
@@ -2543,6 +2542,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                         return (
                           <div
                             key={task.id || idx}
+                            className="df-row-interactive"
                             onClick={() => onOpenIssueDetail?.(task)}
                             onMouseEnter={(e) => (e.currentTarget.style.background = c.cardHover)}
                             onMouseLeave={(e) => (e.currentTarget.style.background = c.cardSecondary)}
@@ -2555,7 +2555,6 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                               borderRadius: 5,
                               background: c.cardSecondary,
                               cursor: onOpenIssueDetail ? 'pointer' : 'default',
-                              transition: 'background 0.12s ease',
                               border: 'none',
                               boxShadow: 'none',
                             }}
@@ -3055,6 +3054,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                       return (
                         <div
                           key={iss.id}
+                          className="df-row-interactive"
                           style={{
                             display: 'grid',
                             gridTemplateColumns: '0.8fr 3fr 1fr 1.5fr 1fr 0.8fr',
@@ -3397,7 +3397,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                           alignItems: 'center',
                           justifyContent: 'space-between',
                           gap: 12,
-                          transition: 'all 0.15s ease',
+                          transition: 'transform 160ms var(--ease-out), background-color 150ms ease',
                           cursor: 'default',
                         }}
                         onMouseEnter={(e) => {
@@ -3575,6 +3575,7 @@ ${bottleneckIssues.length > 0 ? `Recomendação: priorizar o destravamento da is
                   {recentDeliveredIssues.map((iss) => (
                     <div
                       key={iss.id}
+                      className="df-row-interactive"
                       style={{
                         display: 'flex',
                         alignItems: 'center',

@@ -18,12 +18,12 @@ export function getFieldTokens(isEffectiveDark: boolean): FieldVisualTokens {
     return {
       fieldBg: 'rgba(255, 255, 255, 0.05)',
       fieldBgHover: 'rgba(255, 255, 255, 0.075)',
-      fieldBgSolid: '#1e1e20',
+      fieldBgSolid: '#1a1a1a',
       fieldBorderColor: 'transparent',
       fieldBorder: 'none',
       fieldBorderFocusColor: 'transparent',
       fieldBorderFocus: 'none',
-      dropdownMenuBg: '#1b1b1d',
+      dropdownMenuBg: '#181818',
       dropdownBorder: 'none',
       dropdownItemHoverBg: 'rgba(255, 255, 255, 0.06)',
     };

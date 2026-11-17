@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Bot, ClipboardCheck, Brain, ShieldCheck, Sparkles } from 'lucide-react';
 import { AI_PROVIDERS } from '../../../constants/ai';
 import { Panel, SmallButton, selectStyle } from '../../team/teamUi';
@@ -31,6 +31,7 @@ export const gateBlock = (gate: string) =>
 export const memoryBlock = '## Memória do projeto (Aura Dev)\nAntes de começar, leia `.aura/memory.md` e siga o que está registrado lá.';
 
 import { logSystemActivity } from '../../../utils/brainService';
+import { loadCiCommands } from '../../../utils/ciRules';
 
 const CLAUDE_TEMPLATE = (repo: string) => `# ${repo}
 
@@ -49,7 +50,7 @@ const CLAUDE_TEMPLATE = (repo: string) => `# ${repo}
 -
 `;
 
-export const AiSection: React.FC<SectionProps> = ({ ctx, owner, repo, repoInfo, isAdmin, settings, update, showToast }) => {
+export const AiSection: React.FC<SectionProps & { workspacePath?: string }> = ({ workspacePath, ctx, owner, repo, repoInfo, isAdmin, settings, update, showToast }) => {
   const { theme, accentColor } = ctx;
   const ai = settings.ai;
   const [contextFile, setContextFile] = useState<'CLAUDE.md' | 'AGENTS.md' | 'GEMINI.md'>('CLAUDE.md');
@@ -61,6 +62,21 @@ export const AiSection: React.FC<SectionProps> = ({ ctx, owner, repo, repoInfo, 
   const setAuto = (patch: Partial<typeof ai.automations>) => setAi({ automations: { ...ai.automations, ...patch } });
   const canEdit = isAdmin || Boolean(repoInfo?.permissions?.push);
   const localCommands = settings.local.commands;
+  // Regras do CI do repositório: entram sozinhas em "Antes de entregar" quando a lista está vazia; o botão acrescenta o que faltar
+  const importCi = async (silent: boolean) => {
+    const cmds = await loadCiCommands(workspacePath || '');
+    const cur = ai.gate.split('\n').map((l) => l.trim()).filter(Boolean);
+    const add = cmds.filter((c) => !cur.includes(c));
+    if (add.length) setAi({ gate: [...cur, ...add].join('\n') });
+    if (!silent) showToast(add.length ? `${add.length} comando(s) do CI adicionados.` : cmds.length ? 'As regras do CI já estão na lista.' : 'Nenhum workflow de pull request encontrado em .github/workflows.');
+  };
+  const autoImported = useRef('');
+  useEffect(() => {
+    if (!workspacePath || ai.gate.trim() || autoImported.current === workspacePath) return;
+    autoImported.current = workspacePath;
+    importCi(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspacePath]);
   const blocks = [ai.gate.trim() ? gateBlock(ai.gate) : '', ai.useMemory ? memoryBlock : ''].filter(Boolean).join('\n\n');
 
   return (
@@ -138,6 +154,12 @@ export const AiSection: React.FC<SectionProps> = ({ ctx, owner, repo, repoInfo, 
         icon={<ClipboardCheck size={14} color={accentColor} />}
         title="Antes de entregar"
         right={
+          <div style={{ display: 'flex', gap: 5 }}>
+            {workspacePath && (
+              <SmallButton ctx={ctx} title="Lê .github/workflows e acrescenta os comandos que o CI roda em pull request" onClick={() => importCi(false)}>
+                Importar do CI
+              </SmallButton>
+            )}
           <SmallButton
             ctx={ctx}
             disabled={!localCommands.build && !localCommands.test}
@@ -146,9 +168,10 @@ export const AiSection: React.FC<SectionProps> = ({ ctx, owner, repo, repoInfo, 
           >
             Usar Ambiente local
           </SmallButton>
+          </div>
         }
       >
-        <Field ctx={ctx} label="Comandos de verificação" hint="Um por linha. Entram no bloco do Aura nas instruções abaixo (botão “Atualizar bloco do Aura”) e a IA só entrega com todos passando." wide>
+        <Field ctx={ctx} label="Comandos de verificação" hint="Um por linha. As regras do CI (.github/workflows) entram sozinhas quando a lista está vazia. Entram no bloco do Aura nas instruções abaixo (botão “Atualizar bloco do Aura”) e a IA só entrega com todos passando." wide>
           <textarea value={ai.gate} onChange={(e) => setAi({ gate: e.target.value })} placeholder={'bun run build\nbun run lint'} spellCheck={false} style={textareaStyle(ctx, 70)} />
         </Field>
       </Panel>

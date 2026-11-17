@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { readSharedSidebarWidth, SHARED_SIDEBAR_WIDTH_KEY } from '../sharedSidebarWidth';
 import {
   Milestone,
   CheckCircle2,
@@ -477,16 +478,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
   }, []);
 
   // Redimensionamento horizontal da coluna esquerda (Marcos)
-  const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('devflow_milestone_left_sidebar_width');
-      if (saved) {
-        const val = Number(saved);
-        if (!isNaN(val) && val >= 180 && val <= 550) return val;
-      }
-    } catch {}
-    return 260;
-  });
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(readSharedSidebarWidth);
   const [isDraggingLeftSidebar, setIsDraggingLeftSidebar] = useState(false);
 
   const startResizeLeftSidebar = useCallback((e: React.MouseEvent) => {
@@ -503,7 +495,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
       const newWidth = Math.max(180, Math.min(550, initialWidth + deltaX));
       setLeftSidebarWidth(newWidth);
       try {
-        localStorage.setItem('devflow_milestone_left_sidebar_width', String(newWidth));
+        localStorage.setItem(SHARED_SIDEBAR_WIDTH_KEY, String(newWidth));
       } catch {}
     };
 
@@ -519,9 +511,9 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
   }, [leftSidebarWidth]);
 
   const resetLeftSidebarWidth = useCallback(() => {
-    setLeftSidebarWidth(260);
+    setLeftSidebarWidth(240);
     try {
-      localStorage.setItem('devflow_milestone_left_sidebar_width', '260');
+      localStorage.setItem(SHARED_SIDEBAR_WIDTH_KEY, '240');
     } catch {}
   }, []);
 
@@ -922,6 +914,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
 
   return (
     <div
+      className="df-projects-surface df-view-enter"
       style={{
         width: '100%',
         height: '100%',
@@ -936,6 +929,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
         flex: 1,
         minHeight: 0,
         overflow: 'hidden',
+        fontWeight: 400,
       }}
     >
       {/* ========================================================================= */}
@@ -1012,7 +1006,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
             background: c.inputBg,
             borderRadius: 6,
             padding: '6px 9px',
-            border: c.inputBorder,
+            border: 'none',
             boxShadow: 'none',
           }}
         >
@@ -1110,7 +1104,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
               Nenhum marco encontrado.
             </div>
           ) : (
-            filteredMilestones.map((m) => {
+            filteredMilestones.map((m, idx) => {
               const mKey = getMilestoneKey(m);
               const isSelected = selectedMilestoneKey === mKey;
               const mIssues = issuesByMilestone.get(mKey) || [];
@@ -1187,6 +1181,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                 <div
                   key={mKey}
                   data-milestone-key={mKey}
+                  className="df-card-interactive df-stagger-item"
                   onClick={() => setSelectedMilestoneKey(mKey)}
                   style={{
                     display: 'flex',
@@ -1200,12 +1195,12 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                       : (isEffectiveDark ? '#1e1e1e' : '#ffffff'),
                     border: 'none',
                     boxShadow: 'none',
-                    transition: 'all 0.15s ease',
                     position: 'relative',
                     overflow: 'hidden',
                     flexShrink: 0,
                     boxSizing: 'border-box',
-                  }}
+                    '--stagger-idx': idx,
+                  } as React.CSSProperties}
                   onMouseEnter={(e) => {
                     if (!isSelected) {
                       e.currentTarget.style.background = isEffectiveDark ? '#242424' : '#f5f5f5';
@@ -1500,7 +1495,19 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
             Selecione um marco à esquerda para visualizar seus detalhes.
           </div>
         ) : (
-          <>
+          <div
+            key={selectedMilestoneKey || getMilestoneKey(currentMilestone)}
+            className="df-view-enter"
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 5,
+              flex: 1,
+              minHeight: 0,
+              overflow: 'hidden',
+              fontWeight: 400,
+            }}
+          >
             {/* ----------------------------------------------------------------- */}
             {/* LINHA SUPERIOR: CABEÇALHO DO MARCO + 3 MÉTRICAS À DIREITA        */}
             {/* ----------------------------------------------------------------- */}
@@ -1593,7 +1600,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                         onChange={(e) => setEditStartDate(e.target.value)}
                         style={{
                           background: c.inputBg,
-                          border: c.inputBorder,
+                          border: 'none',
                           boxShadow: 'none',
                           borderRadius: 4,
                           padding: '2px 6px',
@@ -1611,7 +1618,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                         onChange={(e) => setEditDueDate(e.target.value)}
                         style={{
                           background: c.inputBg,
-                          border: c.inputBorder,
+                          border: 'none',
                           boxShadow: 'none',
                           borderRadius: 4,
                           padding: '2px 6px',
@@ -1956,7 +1963,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                       background: c.inputBg,
                       borderRadius: 6,
                       padding: '5px 9px',
-                      border: c.inputBorder,
+                      border: 'none',
                       boxShadow: 'none',
                       flexShrink: 0,
                     }}
@@ -2021,6 +2028,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                         return (
                           <div
                             key={iss.id || iss.githubNumber}
+                            className="df-row-interactive"
                             onClick={() => onOpenIssueDetail?.(iss)}
                             style={{
                               display: 'flex',
@@ -2032,7 +2040,6 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                               cursor: 'pointer',
                               border: 'none',
                               boxShadow: 'none',
-                              transition: 'background 0.15s ease',
                             }}
                             onMouseEnter={(e) => (e.currentTarget.style.background = c.cardHover)}
                             onMouseLeave={(e) => (e.currentTarget.style.background = c.cardSecondary)}
@@ -2263,6 +2270,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                     {currentQualityGates.map((g) => (
                       <div
                         key={g.id}
+                        className="df-row-interactive"
                         onClick={() => handleToggleGate(g.id)}
                         style={{
                           display: 'flex',
@@ -2275,16 +2283,20 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                         }}
                       >
                         <div
+                          className={g.completed ? 'df-check-pop' : undefined}
                           style={{
-                            width: 13,
-                            height: 13,
-                            borderRadius: 3,
-                            border: `1px solid ${g.completed ? c.success : c.textSecondary}`,
-                            background: g.completed ? c.success : 'transparent',
+                            width: 14,
+                            height: 14,
+                            borderRadius: 4,
+                            border: 'none',
+                            background: g.completed
+                              ? c.success
+                              : (isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)'),
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
                             flexShrink: 0,
+                            transition: 'background-color 150ms ease, transform 150ms var(--ease-out)',
                           }}
                         >
                           {g.completed && <Check size={10} color="#ffffff" />}
@@ -2331,7 +2343,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                       alignItems: 'center',
                       gap: 4,
                       background: c.inputBg,
-                      border: c.inputBorder,
+                      border: 'none',
                       boxShadow: 'none',
                       borderRadius: 4,
                       padding: '3px 6px',
@@ -2407,7 +2419,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                     flex: `${isReleaseNotesVisible && !isReleaseNotesCollapsed ? panelRatios.team : (panelRatios.team + panelRatios.release)} 1 0px`,
                     minHeight: 70,
                     overflow: 'hidden',
-                    transition: 'all 0.15s ease',
+                    transition: activeDragSplitter ? 'none' : 'background-color 150ms ease',
                   }}
                 >
                   <div style={{ flexShrink: 0 }}>
@@ -2434,6 +2446,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                         return (
                           <div
                             key={w.member}
+                            className="df-row-interactive"
                             style={{
                               display: 'flex',
                               flexDirection: 'column',
@@ -2530,7 +2543,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                       flex: isReleaseNotesCollapsed ? '0 0 auto' : `${panelRatios.release} 1 0px`,
                       minHeight: isReleaseNotesCollapsed ? 'auto' : 80,
                       overflow: 'hidden',
-                      transition: 'all 0.15s ease',
+                      transition: activeDragSplitter ? 'none' : 'background-color 150ms ease',
                       marginTop: isReleaseNotesCollapsed ? 6 : 0,
                     }}
                   >
@@ -2602,7 +2615,6 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                               padding: '2px 5px',
                               borderRadius: 4,
                               height: 22,
-                              transition: 'all 0.15s ease',
                             }}
                           >
                             <Copy size={11} />
@@ -2612,6 +2624,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
 
                         {/* Botão de alternar expansão */}
                         <div
+                          className="df-pressable"
                           title={isReleaseNotesCollapsed ? 'Expandir Release Notes' : 'Contrair Release Notes'}
                           style={{
                             display: 'flex',
@@ -2623,7 +2636,6 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                             color: c.textSecondary,
                             background: c.cardSecondary,
                             cursor: 'pointer',
-                            transition: 'all 0.15s ease',
                           }}
                         >
                           {isReleaseNotesCollapsed ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
@@ -2631,6 +2643,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
 
                         {/* Botão de fechar/remover */}
                         <div
+                          className="df-pressable"
                           onClick={handleCloseReleaseNotes}
                           title="Remover painel de Release Notes"
                           style={{
@@ -2642,7 +2655,6 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                             borderRadius: 4,
                             color: c.textMuted,
                             cursor: 'pointer',
-                            transition: 'all 0.15s ease',
                           }}
                         >
                           <X size={12} />
@@ -2652,7 +2664,10 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
 
                     {/* Conteúdo Expansível */}
                     {!isReleaseNotesCollapsed && (
-                      <>
+                      <div
+                        className="df-subtle-enter"
+                        style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
+                      >
                         {!generatedChangelog ? (
                           <div
                             style={{
@@ -2686,7 +2701,6 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                                 fontWeight: 400,
                                 cursor: 'pointer',
                                 height: 24,
-                                transition: 'all 0.15s ease',
                               }}
                             >
                               <Sparkles size={12} />
@@ -2712,7 +2726,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                             {generatedChangelog}
                           </div>
                         )}
-                      </>
+                      </div>
                     )}
                   </div>
                 ) : (
@@ -2741,7 +2755,6 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                         cursor: 'pointer',
                         padding: '2px 6px',
                         borderRadius: 4,
-                        transition: 'all 0.15s ease',
                       }}
                     >
                       <Sparkles size={10} color={accentColor} />
@@ -2751,7 +2764,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                 )}
               </div>
             </div>
-          </>
+          </div>
         )}
       </div>
 
@@ -2760,6 +2773,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
       {/* ========================================================================= */}
       {isLinkingModalOpen && (
         <div
+          className="df-modal-backdrop"
           onClick={() => setIsLinkingModalOpen(false)}
           style={{
             position: 'fixed',
@@ -2772,6 +2786,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
           }}
         >
           <div
+            className="df-modal-content"
             onClick={(e) => e.stopPropagation()}
             style={{
               width: 440,
@@ -2784,6 +2799,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
               gap: 10,
               border: 'none',
               boxShadow: 'none',
+              fontWeight: 400,
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -2808,7 +2824,7 @@ export const ProjectMilestonesView: React.FC<ProjectMilestonesViewProps> = ({
                 background: c.inputBg,
                 borderRadius: 6,
                 padding: '6px 10px',
-                border: c.inputBorder,
+                border: 'none',
                 boxShadow: 'none',
               }}
             >

@@ -119,6 +119,7 @@ export const Segmented: React.FC<{ ctx: TeamUiCtx; value: string; options: Array
       <button
         key={o.id}
         type="button"
+        className="df-pressable"
         disabled={disabled}
         onClick={() => onChange(o.id)}
         style={{
@@ -132,7 +133,7 @@ export const Segmented: React.FC<{ ctx: TeamUiCtx; value: string; options: Array
           background: value === o.id ? (ctx.isEffectiveDark ? '#2a2a2a' : '#e5e5e5') : 'transparent',
           color: value === o.id ? ctx.theme.textPrimary : ctx.theme.textSecondary,
           fontWeight: 400,
-          transition: 'all 0.15s ease',
+          transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
         }}
       >
         {o.label}
@@ -176,7 +177,7 @@ export const NumberInput: React.FC<{ ctx: TeamUiCtx; value: number; onChange: (v
           color: ctx.theme.textPrimary,
           outline: 'none',
           boxShadow: 'none',
-          transition: 'background 0.15s ease, border-color 0.15s ease',
+          transition: 'background-color 150ms var(--ease-out)',
         }}
       />
       {suffix && <span style={{ fontSize: 11.5, color: ctx.theme.textSecondary }}>{suffix}</span>}

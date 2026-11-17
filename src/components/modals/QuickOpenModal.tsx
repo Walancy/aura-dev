@@ -40,6 +40,7 @@ export const QuickOpenModal: React.FC<QuickOpenModalProps> = ({
     <>
       {/* Click-outside transparent/dim backdrop */}
       <div
+        className="df-modal-backdrop"
         onClick={onClose}
         style={{
           position: 'fixed',
@@ -47,12 +48,12 @@ export const QuickOpenModal: React.FC<QuickOpenModalProps> = ({
           background: 'rgba(0, 0, 0, 0.55)',
           zIndex: 999998,
           backdropFilter: 'blur(3px)',
-          animation: 'fadeIn 0.12s ease-out',
         }}
       />
 
       {/* Quick Open Floating Box */}
       <div
+        className="df-ide-surface df-opacity-enter"
         ref={containerRef}
         style={{
           position: 'fixed',
@@ -70,7 +71,6 @@ export const QuickOpenModal: React.FC<QuickOpenModalProps> = ({
           flexDirection: 'column',
           overflow: 'hidden',
           boxSizing: 'border-box',
-          animation: 'fadeIn 0.12s ease-out',
           fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
         }}
       >
@@ -134,6 +134,7 @@ export const QuickOpenModal: React.FC<QuickOpenModalProps> = ({
                     />
                   )}
                   <div
+                    className="df-row-interactive"
                     onClick={() => item.onSelect()}
                     onMouseEnter={() => setQuickOpenSelectedIndex(idx)}
                     style={{
@@ -147,7 +148,7 @@ export const QuickOpenModal: React.FC<QuickOpenModalProps> = ({
                       color: isSelected ? accentColor : themeTokens.textPrimary,
                       fontSize: 13,
                       minHeight: 26,
-                      transition: 'background 0.08s ease',
+                      transition: 'background-color 120ms var(--ease-out), transform 140ms var(--ease-out)',
                     }}
                   >
                     {/* Left side: Icon + Title + Suffix + Subtitle */}
@@ -155,7 +156,7 @@ export const QuickOpenModal: React.FC<QuickOpenModalProps> = ({
                       {item.icon && <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>{item.icon}</div>}
                       <span
                         style={{
-                          fontWeight: isSelected ? 500 : 400,
+                          fontWeight: 400,
                           whiteSpace: 'nowrap',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',

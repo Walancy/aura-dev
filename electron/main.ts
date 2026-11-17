@@ -16,6 +16,8 @@ import { gitService } from './git-service';
 import { chatHistoryService } from './chat-history-service';
 import { githubAuthService } from './github-auth-service';
 import { skillsService } from './skills-service';
+import { startDailyInbox } from './daily-inbox';
+import { registerUpdaterIpc } from './updater-service';
 import { listAiSessions } from './ai-sessions-service';
 import { orchestratorService } from './orchestrator-service';
 import { StringDecoder } from 'node:string_decoder';
@@ -59,6 +61,15 @@ if (process.platform === 'darwin' && appIconImage && app.dock) {
   try {
     app.dock.setIcon(appIconImage);
   } catch {}
+}
+
+// Se o app foi aberto a partir de uma sessão do Claude Code (ex.: `open -a` ou `bun start` no terminal da IA), o processo herda os marcadores
+// dessa sessão. Os Claude dos terminais do app os herdariam, se achariam uma sessão "filha" e não gravariam a conversa ("Transcript saving is off"):
+// sem transcrição não existe o que retomar ao reabrir o app. Remove-os logo na partida, para todo processo filho (terminais e execuções headless).
+for (const key of Object.keys(process.env)) {
+  if (/^(CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT|AI_AGENT)$/.test(key) || /^CLAUDE_CODE_(ENTRYPOINT|EXECPATH|SESSION_ID|SESSION_ATTENDED|CHILD_SESSION|MESSAGING_SOCKET|MESSAGING_TOKEN)$/.test(key)) {
+    delete process.env[key];
+  }
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -344,9 +355,11 @@ ipcMain.handle('fs:getTree', (_event, { dirPath, depth }) => {
 });
 
 // Imagens para o Design: Unsplash (com chave de acesso gratuita) ou picsum.photos (sem chave); devolve data URL
-ipcMain.handle('unsplash:image', async (_e, { query, width, height, key, index, people, pexelsKey }: { query: string; width: number; height: number; key?: string; index?: number; people?: boolean; pexelsKey?: string }) => {
-  const w = Math.max(32, Math.min(1200, Math.round(width * 2)));
-  const h = Math.max(32, Math.min(1200, Math.round(height * 2)));
+ipcMain.handle('unsplash:image', async (_e, { query, width, height, key, index, people, maxSide, pexelsKey }: { query: string; width: number; height: number; key?: string; index?: number; people?: boolean; maxSide?: number; pexelsKey?: string }) => {
+  // sites pedem até 2400px (hero em tela cheia); o Design segue em 1200 para não pesar o arquivo
+  const cap = Math.max(1200, Math.min(2400, maxSide || 1200));
+  const w = Math.max(32, Math.min(cap, Math.round(width * 2)));
+  const h = Math.max(32, Math.min(cap, Math.round(height * 2)));
   const i = index || 0;
   let url = '';
   let credit = '';
@@ -384,7 +397,7 @@ ipcMain.handle('unsplash:image', async (_e, { query, width, height, key, index, 
         const j: any = await r.json();
         const p = j.results?.[i % (j.results?.length || 1)];
         if (p?.urls?.raw) {
-          url = `${p.urls.raw}&w=${w}&h=${h}&fit=crop&q=75&auto=format`;
+          url = `${p.urls.raw}&w=${w}&h=${h}&fit=crop&q=${cap > 1200 ? 88 : 75}&auto=format`;
           credit = p.user?.name || '';
           if (p.links?.download_location) fetch(p.links.download_location, { headers }).catch(() => {}); // exigido pelas diretrizes da API
         }
@@ -398,11 +411,14 @@ ipcMain.handle('unsplash:image', async (_e, { query, width, height, key, index, 
         if (r.ok) {
           const j: any = await r.json();
           const want = width / Math.max(1, height);
+          // na ordem de relevância da busca (o "index" de cada página): ordenar só pela proporção trazia fotos sem relação com o assunto
           const hits = (Object.values(j.query?.pages || {}) as any[])
+            .sort((a, b) => (a.index || 0) - (b.index || 0))
             .map((p) => p.imageinfo?.[0])
-            .filter((x) => x?.thumburl && /jpeg/.test(x.mime || '') && x.width >= w / 2)
-            .sort((a, b) => Math.abs(Math.log(a.width / a.height / want)) - Math.abs(Math.log(b.width / b.height / want)));
-          const pick = hits[i % (hits.length || 1)];
+            .filter((x) => x?.thumburl && /jpeg/.test(x.mime || '') && x.width >= w / (cap > 1200 ? 3 : 2));
+          const fits = hits.filter((x) => Math.abs(Math.log(x.width / x.height / want)) < 0.45);
+          const pool = (fits.length ? fits : hits).slice(0, 4);
+          const pick = pool[i % (pool.length || 1)];
           if (pick) { url = pick.thumburl; wiki = true; }
         }
       } catch {}
@@ -490,6 +506,252 @@ ipcMain.handle('fs:saveTempImage', (_event, { base64, ext }: { base64: string; e
   const filePath = path.join(dir, `${n}.${safeExt}`);
   fs.writeFileSync(filePath, Buffer.from(base64, 'base64'));
   return { path: filePath };
+});
+
+// Aba Sites: captura uma página como referência para a IA (capturas de tela de cima para baixo, HTML renderizado e CSS)
+// Auditoria do site gerado: renderiza o index.html em 3 larguras (desktop, tablet, celular), mede problemas reais (estouro lateral, texto cortado,
+// contraste, texto minúsculo, imagem quebrada, erro de JS) e salva capturas em _check/ para a IA ver o resultado, como o agente do Framer faz.
+const AUDIT_SCRIPT = `(async () => {
+  const out = { overflowX: false, small: [], contrast: [], clipped: [], broken: 0, h1: 0 };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const total = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+  for (let y = 0; y < total; y += Math.round(innerHeight * 0.7)) { window.scrollTo(0, y); await sleep(160); }
+  window.scrollTo(0, 0); await sleep(300);
+  out.overflowX = document.documentElement.scrollWidth > innerWidth + 2;
+  out.h1 = document.querySelectorAll('h1').length;
+  out.broken = Array.from(document.images).filter((i) => i.complete && i.naturalWidth === 0 && i.src && !i.src.startsWith('data:,')).length;
+  const rgba = (c) => { const m = String(c).match(/rgba?\\(([^)]+)\\)/); if (!m) return null; const p = m[1].split(/[ ,\\/]+/).filter(Boolean).map(Number); return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 }; };
+  const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
+  const bgOf = (el) => { for (let n = el; n; n = n.parentElement) { const cs = getComputedStyle(n); if (cs.backgroundImage && cs.backgroundImage !== 'none') return null; const c = rgba(cs.backgroundColor); if (c && c.a > 0.5) return c; } return { r: 255, g: 255, b: 255, a: 1 }; };
+  const label = (el) => (el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (el.className && typeof el.className === 'string' ? '.' + el.className.trim().split(/\\s+/)[0] : '')).slice(0, 40) + ' "' + (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 28) + '"';
+  const texts = Array.from(document.body.querySelectorAll('*')).filter((el) => { if (['SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'PATH'].includes(el.tagName.toUpperCase())) return false; return Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.textContent.trim().length > 1); });
+  for (const el of texts) {
+    const r = el.getBoundingClientRect(); const cs = getComputedStyle(el);
+    if (r.width < 4 || r.height < 4 || cs.visibility === 'hidden' || cs.display === 'none' || Number(cs.opacity) < 0.05) continue;
+    const fs = parseFloat(cs.fontSize);
+    if (fs < 11 && out.small.length < 4) out.small.push(label(el) + ' (' + fs + 'px)');
+    const fg = rgba(cs.color); const bg = bgOf(el);
+    if (fg && bg && fg.a > 0.5 && out.contrast.length < 6) {
+      const a = lum(fg), b = lum(bg); const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      const need = fs >= 24 || (fs >= 18.5 && Number(cs.fontWeight) >= 600) ? 3 : 4;
+      if (ratio < need) out.contrast.push(label(el) + ' (contraste ' + ratio.toFixed(1) + ':1)');
+    }
+  }
+  const clipBoxes = Array.from(document.body.querySelectorAll('*')).filter((el) => { const cs = getComputedStyle(el); return /hidden|clip/.test(cs.overflowX + cs.overflowY) && el.getBoundingClientRect().width > 0; });
+  for (const box of clipBoxes) {
+    if (out.clipped.length >= 4) break;
+    if (box.matches('.fx-w, [data-split], [data-marquee], [data-hscroll], .pin-stage, html, body') || box.closest('[data-marquee], [data-hscroll], .fx-w, [data-split]')) continue;
+    const br = box.getBoundingClientRect();
+    const kids = Array.from(box.querySelectorAll('*')).filter((el) => Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.textContent.trim().length > 1));
+    for (const k of kids) {
+      let moving = false; for (let n = k; n && n !== box.parentElement; n = n.parentElement) { const cs = getComputedStyle(n); if (cs.animationName !== 'none' || (cs.transform !== 'none' && cs.willChange.includes('transform'))) { moving = true; break; } }
+      if (moving) continue;
+      let hit = false;
+      for (const n of Array.from(k.childNodes)) {
+        if (n.nodeType !== 3 || n.textContent.trim().length < 2) continue;
+        const rg = document.createRange(); rg.selectNodeContents(n);
+        const kr = rg.getBoundingClientRect();
+        if (kr.width < 4 || kr.height < 4) continue;
+        const touches = kr.right > br.left && kr.left < br.right && kr.bottom > br.top && kr.top < br.bottom;
+        if (touches && (kr.left < br.left - 2 || kr.right > br.right + 2 || kr.top < br.top - 4 || kr.bottom > br.bottom + 4)) { hit = true; break; }
+      }
+      if (hit) { out.clipped.push(label(k) + ' dentro de ' + label(box).split(' "')[0]); break; }
+    }
+  }
+  return out;
+})()`;
+
+ipcMain.handle('sites:audit', async (_event, { dir }: { dir: string }) => {
+  const checkDir = path.join(dir, '_check');
+  try {
+    const file = path.join(dir, 'index.html');
+    if (!fs.existsSync(file)) return { error: 'index.html não encontrado' };
+    fs.rmSync(checkDir, { recursive: true, force: true });
+    fs.mkdirSync(checkDir, { recursive: true });
+    const issues: string[] = [];
+    const shots: string[] = [];
+    for (const width of [1440, 768, 390]) {
+      let win: BrowserWindow | null = null;
+      try {
+        win = new BrowserWindow({ show: true, x: -4000, y: 0, width, height: width === 390 ? 844 : 900, focusable: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, partition: 'sites-audit', backgroundThrottling: false } });
+        win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+        const errors: string[] = [];
+        win.webContents.on('console-message', (e: any, level: any, message: any) => {
+          const lvl = typeof e?.level === 'string' ? e.level : level;
+          const msg = String(e?.message ?? message ?? '');
+          if ((lvl === 'error' || lvl === 3) && errors.length < 3 && !/Failed to load resource|net::ERR|favicon|Content Security Policy/i.test(msg)) errors.push(msg.slice(0, 140));
+        });
+        await Promise.race([win.loadFile(file), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 20000))]);
+        await new Promise((r) => setTimeout(r, 2200));
+        const wc = win.webContents;
+        const r: any = await wc.executeJavaScript(AUDIT_SCRIPT);
+        const tag = width === 1440 ? 'desktop (1440)' : width === 768 ? 'tablet (768)' : 'celular (390)';
+        if (r.overflowX) issues.push(`${tag}: a página rola na horizontal (algum elemento passa da largura da tela)`);
+        if (r.broken) issues.push(`${tag}: ${r.broken} imagem(ns) quebrada(s)`);
+        if (width === 1440) {
+          if (r.h1 !== 1) issues.push(`hierarquia: há ${r.h1} <h1> (deve haver exatamente 1)`);
+        }
+        if (r.small.length) issues.push(`${tag}: texto minúsculo (menos de 11px): ${r.small.join('; ')}`);
+        if (r.contrast.length) issues.push(`${tag}: contraste baixo de texto: ${r.contrast.join('; ')}`);
+        if (r.clipped.length) issues.push(`${tag}: texto possivelmente cortado por overflow: ${r.clipped.join('; ')}`);
+        if (errors.length) issues.push(`${tag}: erro de JavaScript no console: ${errors.join(' | ')}`);
+        const total: number = await wc.executeJavaScript('Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)');
+        const vh = width === 390 ? 844 : 900;
+        for (let i = 0; i < 3; i++) {
+          const y = Math.min(Math.max(0, total - vh), Math.round(i * vh * 0.95));
+          await wc.executeJavaScript(`window.scrollTo(0, ${y})`);
+          await new Promise((res) => setTimeout(res, 650));
+          const name = `w${width}-${i + 1}.png`;
+          fs.writeFileSync(path.join(checkDir, name), (await wc.capturePage()).toPNG());
+          shots.push(name);
+          if (y >= total - vh) break;
+        }
+      } catch (e: any) {
+        issues.push(`não consegui renderizar a ${width}px: ${e?.message || 'erro'}`);
+      } finally {
+        try { win?.destroy(); } catch {}
+      }
+    }
+    return { issues: Array.from(new Set(issues)), shots };
+  } catch (err: any) {
+    return { error: err?.message || 'falha na auditoria' };
+  }
+});
+
+// Sonda injetada antes dos scripts da página: registra COMO o WebGL é usado (contagens e nomes de uniforms), nunca o código dos shaders.
+const WEBGL_PROBE = `(() => {
+  if (window.__auraProbe) return;
+  const P = (window.__auraProbe = { contexts: 0, kind: '', programs: 0, draws: 0, instanced: 0, points: 0, verts: 0, textures: 0, framebuffers: 0, uniforms: new Set(), attributes: new Set(), hints: new Set(), canvas: null });
+  const HINTS = [['ruído procedural (noise/simplex)', /snoise|simplex|perlin|noise\\(/i], ['animação por tempo (uTime)', /u_?time/i], ['reação ao mouse (uMouse)', /u_?mouse|u_?pointer/i], ['ligado ao scroll (uScroll)', /u_?scroll|u_?progress/i], ['deslocamento de vértices (displacement)', /displace/i], ['fresnel/brilho de borda', /fresnel/i], ['aberração cromática', /chromatic|aberration|rgbshift/i], ['raymarching/SDF', /raymarch|sdf|map\\(/i], ['grão/film grain', /grain/i], ['bloom/glow', /bloom|glow/i], ['partículas (gl_PointSize)', /gl_PointSize/], ['PBR (metallic/roughness)', /metallic|roughness/i], ['distorção por textura/vídeo', /u_?texture|sampler2D/i], ['instanciamento', /instance/i]];
+  const wrap = (proto) => {
+    if (!proto) return;
+    const o = (n, f) => { const orig = proto[n]; if (orig) proto[n] = function (...a) { try { f.apply(this, a); } catch (e) {} return orig.apply(this, a); }; };
+    o('createProgram', () => { P.programs++; });
+    o('createTexture', () => { P.textures++; });
+    o('createFramebuffer', () => { P.framebuffers++; });
+    o('shaderSource', (_s, src) => { const t = String(src || ''); HINTS.forEach(([n, re]) => { if (re.test(t)) P.hints.add(n); }); });
+    o('getUniformLocation', (_p, n) => { if (P.uniforms.size < 60) P.uniforms.add(String(n)); });
+    o('getAttribLocation', (_p, n) => { if (P.attributes.size < 30) P.attributes.add(String(n)); });
+    const cv = (gl) => { if ((!P.canvas || !P.canvas.w) && gl && gl.canvas && gl.canvas.getBoundingClientRect) { const b = gl.canvas.getBoundingClientRect(); if (b.width) P.canvas = { w: Math.round(b.width), h: Math.round(b.height), fixed: getComputedStyle(gl.canvas).position === 'fixed' }; } };
+    o('drawArrays', function (mode, _f, c) { cv(this); P.draws++; P.verts += c || 0; if (mode === 0) P.points += c || 0; });
+    o('drawElements', (_m, c) => { P.draws++; P.verts += c || 0; });
+    o('drawArraysInstanced', (_m, _f, c, n) => { P.draws++; P.instanced += n || 0; P.verts += (c || 0) * (n || 1); });
+    o('drawElementsInstanced', (_m, c, _t, _o, n) => { P.draws++; P.instanced += n || 0; P.verts += (c || 0) * (n || 1); });
+  };
+  wrap(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
+  wrap(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+  const gc = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (type, ...r) {
+    if (/webgl/i.test(String(type))) { P.contexts++; P.kind = String(type); if (!P.canvas) { const b = this.getBoundingClientRect(); P.canvas = { w: Math.round(b.width), h: Math.round(b.height), fixed: getComputedStyle(this).position === 'fixed' }; } }
+    return gc.call(this, type, ...r);
+  };
+})();`;
+
+let probeReady = false;
+/** Registra a sonda como preload da sessão de captura (roda antes dos scripts da página, no mundo principal). */
+function ensureWebglProbe() {
+  if (probeReady) return;
+  const ses = session.fromPartition('sites-capture');
+  const file = path.join(os.tmpdir(), 'aura-webgl-probe-preload.js');
+  fs.writeFileSync(file, `require('electron').webFrame.executeJavaScript(${JSON.stringify(WEBGL_PROBE)});`);
+  const anySes = ses as any;
+  if (typeof anySes.registerPreloadScript === 'function') anySes.registerPreloadScript({ type: 'frame', filePath: file });
+  else anySes.setPreloads([file]);
+  probeReady = true;
+}
+
+function threeNotes(host: string, p: any): string {
+  const perFrame = p.draws ? Math.round(p.draws) : 0;
+  const lines = [
+    `# Análise da experiência 3D de ${host}`,
+    '',
+    'Resumo TÉCNICO do que a página usa. Não contém código, shaders nem modelos dela: serve para entender a técnica e recriar algo ORIGINAL (veja os presets AURA 3D). Compare com os quadros shot-N.png (scroll) e motion-N.png (movimento e mouse).',
+    '',
+    `- Contexto: ${p.kind || 'webgl'}, ${p.contexts} canvas WebGL${p.canvas ? ` (${p.canvas.w}x${p.canvas.h}px${p.canvas.fixed ? ', fixo na tela inteira, atrás do conteúdo' : ''})` : ''}.`,
+    `- Biblioteca: ${p.three ? `Three.js r${p.three}` : 'Three.js não detectado (pode ser empacotado ou outra engine)'}${p.libs?.length ? `; também detectado: ${p.libs.join(', ')}` : ''}.`,
+    `- Programas de shader: ${p.programs}; texturas: ${p.textures}; framebuffers/pós-processamento: ${p.framebuffers}.`,
+    `- Desenho: ${perFrame} chamadas medidas${p.instanced ? `, ${p.instanced} instâncias (InstancedMesh)` : ''}${p.points ? `, ${p.points} pontos (partículas)` : ''}.`,
+    p.hints?.length ? `- Técnicas nos shaders: ${p.hints.join('; ')}.` : '',
+    p.uniforms?.length ? `- Uniforms (pistas do que controla a cena): ${p.uniforms.join(', ')}.` : '',
+    p.attributes?.length ? `- Atributos de geometria: ${p.attributes.join(', ')}.` : '',
+    '',
+    'Como usar: descreva em palavras o efeito que você VÊ nos quadros (forma, cor, movimento, como reage ao scroll e ao mouse), escolha o preset AURA 3D mais próximo (blob, particles, waves, shapes, terrain) ou escreva um shader original curto, e integre ao layout. Não copie nada além da ideia.',
+  ];
+  return lines.filter((l) => l !== '').join('\n') + '\n';
+}
+
+ipcMain.handle('sites:captureUrl', async (_event, { url, dir }: { url: string; dir: string }) => {
+  let win: BrowserWindow | null = null;
+  try {
+    const u = new URL(url);
+    if (!/^https?:$/.test(u.protocol)) return { error: 'Use um endereço http ou https.' };
+    const refDir = path.join(dir, '_reference');
+    fs.mkdirSync(refDir, { recursive: true });
+    // janela fora da tela, mas "visível": janela oculta congela o requestAnimationFrame e o WebGL não desenha
+    win = new BrowserWindow({ show: true, x: -4000, y: 0, width: 1440, height: 900, focusable: false, webPreferences: { sandbox: true, nodeIntegration: false, contextIsolation: true, partition: 'sites-capture', backgroundThrottling: false } });
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    ensureWebglProbe();
+    await Promise.race([win.loadURL(u.toString()), new Promise((_, rej) => setTimeout(() => rej(new Error('A página demorou demais para abrir.')), 25000))]);
+    await new Promise((r) => setTimeout(r, 2500));
+    const wc = win.webContents;
+    const info: { title: string; height: number; css: string[]; html: string } = await wc.executeJavaScript(`(() => {
+      const clone = document.documentElement.cloneNode(true);
+      clone.querySelectorAll('script, noscript, iframe, link[rel=preload], link[rel=prefetch]').forEach((n) => n.remove());
+      return {
+        title: document.title,
+        height: Math.max(document.body.scrollHeight, document.documentElement.scrollHeight),
+        css: Array.from(document.querySelectorAll('link[rel=stylesheet]')).map((l) => l.href).filter(Boolean).slice(0, 5),
+        html: '<!doctype html>\\n' + clone.outerHTML,
+      };
+    })()`);
+    fs.writeFileSync(path.join(refDir, 'page.html'), info.html.slice(0, 450000));
+    let css = '';
+    for (const href of info.css) {
+      try {
+        const r = await fetch(href, { signal: AbortSignal.timeout(8000) });
+        if (r.ok) css += `/* ${href} */\n${(await r.text()).slice(0, 200000)}\n`;
+      } catch {}
+    }
+    if (css) fs.writeFileSync(path.join(refDir, 'styles.css'), css.slice(0, 500000));
+    const probe0: any = await wc.executeJavaScript('window.__auraProbe ? JSON.parse(JSON.stringify(Object.assign({}, window.__auraProbe, { uniforms: [...window.__auraProbe.uniforms].slice(0, 40), attributes: [...window.__auraProbe.attributes].slice(0, 20), hints: [...window.__auraProbe.hints] }))) : null').catch(() => null);
+    const is3d = !!probe0 && (probe0.contexts > 0 || probe0.draws > 0);
+    const shots: string[] = [];
+    // páginas 3D mudam com o scroll: mais capturas, com passo menor
+    const step = is3d ? 700 : 900;
+    const total = Math.min(is3d ? 6 : 4, Math.max(1, Math.ceil(info.height / step)));
+    for (let i = 0; i < total; i++) {
+      await wc.executeJavaScript(`window.scrollTo(0, ${i * step})`);
+      await new Promise((r) => setTimeout(r, is3d ? 1100 : 700));
+      const img = await wc.capturePage();
+      const name = `shot-${i + 1}.png`;
+      fs.writeFileSync(path.join(refDir, name), img.toPNG());
+      shots.push(name);
+    }
+    let three: { detected: boolean; notes?: string; motion?: string[] } | undefined;
+    if (is3d) {
+      // movimento: quadros seguidos no topo, com o mouse se mexendo, para ver como a cena anima e reage
+      const motion: string[] = [];
+      await wc.executeJavaScript('window.scrollTo(0, 0)');
+      await new Promise((r) => setTimeout(r, 900));
+      for (let i = 0; i < 3; i++) {
+        wc.sendInputEvent({ type: 'mouseMove', x: 300 + i * 420, y: 250 + i * 120 });
+        await new Promise((r) => setTimeout(r, 650));
+        const name = `motion-${i + 1}.png`;
+        fs.writeFileSync(path.join(refDir, name), (await wc.capturePage()).toPNG());
+        motion.push(name);
+      }
+      const probe: any = await wc.executeJavaScript('JSON.parse(JSON.stringify(Object.assign({}, window.__auraProbe, { uniforms: [...window.__auraProbe.uniforms].slice(0, 40), attributes: [...window.__auraProbe.attributes].slice(0, 20), hints: [...window.__auraProbe.hints], three: window.__THREE__ || null, libs: ["gsap","ScrollTrigger","Lenis","THREE","locomotiveScroll","barba","PIXI","BABYLON","lottie"].filter((k) => typeof window[k] !== "undefined") })))').catch(() => probe0);
+      fs.writeFileSync(path.join(refDir, 'three-notes.md'), threeNotes(u.host, probe));
+      three = { detected: true, notes: 'three-notes.md', motion };
+    }
+    return { title: info.title, host: u.host, shots, hasCss: !!css, three };
+  } catch (err: any) {
+    return { error: err?.message || 'Não consegui abrir a página.' };
+  } finally {
+    try {
+      win?.destroy();
+    } catch {}
+  }
 });
 
 // Imagem/SVG do projeto como data URL (logos e ícones que a IA do Design usa nas telas). Limite de tamanho para não pesar o design.
@@ -1844,7 +2106,16 @@ ipcMain.handle('shell:exec', async (_event, { command, cwd }: { command: string;
 
 // Open external URL in default browser
 ipcMain.handle('shell:openExternal', async (_event, { url }: { url: string }) => {
-  if (!url || !/^(https?:|mailto:)/i.test(url)) {
+  // file:// só para as páginas dos sites gerados (~/.aura-dev/sites), abertas pela aba Sites
+  let allowed = !!url && /^(https?:|mailto:)/i.test(url);
+  if (!allowed && url && /^file:\/\//i.test(url)) {
+    try {
+      const file = path.resolve(decodeURIComponent(new URL(url).pathname));
+      const root = path.join(os.homedir(), '.aura-dev', 'sites') + path.sep;
+      allowed = file.startsWith(root) && file.endsWith('.html');
+    } catch {}
+  }
+  if (!allowed) {
     return { success: false, error: 'esquema não permitido' };
   }
   try {
@@ -2188,7 +2459,7 @@ ipcMain.handle(
 
 ipcMain.handle(
   'github:setIssueSubscription',
-  async (_event, { owner, repo, issueNumber, subscribed }: { owner: string; repo: string; issueNumber: number; subscribed: boolean }) => {
+  async (_event, { owner, repo, issueNumber, subscribed }: { owner: string; repo: string; issueNumber: number; subscribed: boolean | 'SUBSCRIBED' | 'UNSUBSCRIBED' | 'IGNORED' }) => {
     try {
       const res = await githubAuthService.setIssueSubscription(owner, repo, issueNumber, subscribed);
       return { success: true, ...res };
@@ -2464,6 +2735,8 @@ registerFigcraftScheme();
 
 app.whenReady().then(() => {
   handleFigcraftScheme();
+  registerUpdaterIpc();
+  startDailyInbox();
   // Desativa restrições de X-Frame-Options, COOP, COEP e frame-ancestors para que o componente de navegador
   // interno da orquestração consiga renderizar localhost e páginas externas sem erro de SAMEORIGIN ou bloqueios.
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {

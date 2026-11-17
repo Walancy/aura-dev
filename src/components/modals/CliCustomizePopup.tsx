@@ -228,6 +228,7 @@ export const CliCustomizePopup: React.FC<TerminalSettingsTabProps & { onClose: (
 
   return (
     <div
+      className="df-cli-surface df-popover"
       style={{
         position: 'fixed',
         left: pos.x,
@@ -270,7 +271,7 @@ export const CliCustomizePopup: React.FC<TerminalSettingsTabProps & { onClose: (
         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
           <GripHorizontal size={14} color={themeTokens.textSecondary} style={{ opacity: 0.8 }} />
           <SquareTerminal size={14} color={accentColor} />
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: themeTokens.textPrimary }}>Personalizar CLI</span>
+          <span style={{ fontSize: 12.5, fontWeight: 400, color: themeTokens.textPrimary }}>Personalizar CLI</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
           <TutorialTriggerButton
@@ -285,6 +286,7 @@ export const CliCustomizePopup: React.FC<TerminalSettingsTabProps & { onClose: (
           />
           <button
             type="button"
+            className="df-icon-btn"
             onClick={onClose}
             onMouseDown={(e) => e.stopPropagation()}
             title="Fechar (Esc)"

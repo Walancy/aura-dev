@@ -203,6 +203,7 @@ export const SmallButton: React.FC<{
   return (
     <button
       type="button"
+      className="df-pressable"
       title={title}
       disabled={disabled}
       onClick={(e) => {
@@ -227,7 +228,7 @@ export const SmallButton: React.FC<{
         whiteSpace: 'nowrap',
         flexShrink: 0,
         boxShadow: 'none',
-        transition: 'all 0.15s ease',
+        transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), opacity 150ms var(--ease-out), transform 140ms var(--ease-out)',
       }}
       onMouseEnter={(e) => {
         if (!disabled && !primary && !danger) {

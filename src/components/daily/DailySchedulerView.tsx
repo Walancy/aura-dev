@@ -48,6 +48,92 @@ import { getFieldTokens } from '../../utils/fieldTokens';
 import { getProjectSettings } from '../settings/projectSettingsStore';
 import { GLOBAL_PROJECTS_CACHE } from '../ProjectsSchedulerView';
 import type { HeaderActiveProjectInfo, HeaderProjectItem } from '../HeaderProjectSelector';
+import { PopupPortal, popupColors } from '../ui/PopupPortal';
+
+// Seletor compacto dos chips do card: botão transparente + popup no padrão do app (substitui o <select> nativo)
+const ChipSelect: React.FC<{
+  value: string;
+  options: string[];
+  onChange: (v: string) => void;
+  isDark: boolean;
+  accentColor: string;
+  fontSize?: number;
+  maxWidth?: number;
+  width?: number;
+  title?: string;
+  searchable?: boolean;
+}> = ({ value, options, onChange, isDark, accentColor, fontSize = 10.5, maxWidth, width = 220, title, searchable }) => {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const shown = q.trim() ? options.filter((o) => o.toLowerCase().includes(q.trim().toLowerCase())) : options;
+  const ref = useRef<HTMLButtonElement>(null);
+  const pc = popupColors(isDark);
+  return (
+    <>
+      <button
+        ref={ref}
+        type="button"
+        title={title}
+        onClick={() => {
+          setQ('');
+          setOpen((o) => !o);
+        }}
+        style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'transparent', border: 'none', color: '#ffffff', fontSize, fontWeight: 400, cursor: 'pointer', padding: 0, maxWidth, minWidth: 0, fontFamily: 'inherit' }}
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
+        <ChevronDown size={10} style={{ flexShrink: 0, opacity: 0.85, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 160ms var(--ease-out)' }} />
+      </button>
+      <PopupPortal anchor={ref.current} open={open} onClose={() => setOpen(false)} width={width} maxHeight={260} isDark={isDark}>
+        {searchable && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 28, padding: '0 8px', borderRadius: 6, background: pc.field, flexShrink: 0 }}>
+            <Search size={12} color={pc.sub} />
+            <input
+              autoFocus
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') setOpen(false);
+                if (e.key === 'Enter' && shown[0]) {
+                  onChange(shown[0]);
+                  setOpen(false);
+                }
+              }}
+              placeholder="Buscar projeto..."
+              style={{ flex: 1, minWidth: 0, background: 'transparent', border: 'none', outline: 'none', color: pc.text, fontSize: 11.5, fontWeight: 400, fontFamily: 'inherit', padding: 0 }}
+            />
+          </div>
+        )}
+        <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {shown.length === 0 && <div style={{ padding: '6px 8px', fontSize: 11.5, color: pc.sub }}>Nenhum resultado</div>}
+          {shown.map((o) => {
+            const sel = o === value;
+            return (
+              <button
+                key={o}
+                type="button"
+                className="df-pressable"
+                onClick={() => {
+                  onChange(o);
+                  setOpen(false);
+                }}
+                style={{ height: 28, padding: '0 8px', borderRadius: 6, border: 'none', background: sel ? hexToRgba(accentColor, 0.16) : 'transparent', color: pc.text, fontSize: 11.5, fontWeight: 400, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, textAlign: 'left', flexShrink: 0, fontFamily: 'inherit', transition: 'background-color 140ms ease' }}
+                onMouseEnter={(e) => {
+                  if (!sel) e.currentTarget.style.background = pc.hover;
+                }}
+                onMouseLeave={(e) => {
+                  if (!sel) e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o}</span>
+                {sel && <Check size={12} strokeWidth={2.5} style={{ flexShrink: 0 }} />}
+              </button>
+            );
+          })}
+        </div>
+      </PopupPortal>
+    </>
+  );
+};
 
 export type CardPalette = 'peach' | 'cyan' | 'lavender' | 'charcoal' | 'emerald' | 'rose';
 
@@ -99,6 +185,7 @@ interface DailySchedulerViewProps {
   selectedModel?: string;
   onSelectWorkspace?: (path: string) => void;
   installedClis?: Record<string, boolean>;
+  pinnedAis?: string[];
   activeModels?: Record<string, any>;
   onSelectAiProvider?: (providerId: string) => void;
   onSelectModel?: (modelItem: { id: string; label: string } | string, providerId?: string) => void;
@@ -252,6 +339,8 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
   selectedAiProvider = 'claude',
   selectedModel = 'sonnet',
   activeModels,
+  installedClis,
+  pinnedAis,
   onSelectAiProvider,
   onSelectModel,
   onToast = (msg: string) => console.log(msg),
@@ -489,17 +578,35 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
       .read()
       .then((raw) => {
         try {
-          const fromFile: DailyItem[] = raw ? JSON.parse(raw) : [];
-          if (Array.isArray(fromFile) && fromFile.length) {
+          const all: Array<DailyItem & { deleted?: boolean }> = raw ? JSON.parse(raw) : [];
+          if (Array.isArray(all) && all.length) {
+            // cards removidos pela IA ficam marcados no arquivo: não podem voltar pela cópia do localStorage
+            const dead = new Set(all.filter((i) => i.deleted).map((i) => i.id));
+            const fromFile = all.filter((i) => !i.deleted);
             setItems((prev) => {
-              const ids = new Set(fromFile.map((i) => i.id));
-              return [...fromFile, ...prev.filter((i) => !ids.has(i.id))];
+              const ids = new Set(all.map((i) => i.id));
+              return [...fromFile, ...prev.filter((i) => !ids.has(i.id) && !dead.has(i.id))];
             });
           }
         } catch {}
       })
       .finally(() => setDailyFileReady(true));
   }, []);
+  // cards criados pelas IAs (comando aura-daily) chegam do processo principal com a Daily aberta
+  useEffect(
+    () =>
+      window.electronAPI?.dailyStore?.onChanged?.((info) => {
+        if (info.snapshot) {
+          setItems(info.snapshot as DailyItem[]);
+          return;
+        }
+        setItems((prev) => {
+          const ids = new Set(prev.map((i) => i.id));
+          return [...prev, ...(info.items as DailyItem[]).filter((i) => !ids.has(i.id))];
+        });
+      }),
+    [],
+  );
   useEffect(() => {
     if (!dailyFileReady) return;
     const t = setTimeout(() => window.electronAPI?.dailyStore?.write(JSON.stringify(items)), 400);
@@ -566,6 +673,7 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
   // Cards gerados pela IA aguardando aceite/recusa, por coluna (só os do momento; anteriores não são afetados)
   const [pendingAiIds, setPendingAiIds] = useState<Record<string, string[]>>({});
   const [generatingCardAi, setGeneratingCardAi] = useState(false);
+  const aiSuggestedRef = useRef<{ key: string; titles: string[] }>({ key: '', titles: [] });
   const [generatingAiColumn, setGeneratingAiColumn] = useState<'yesterday' | 'blocker' | 'today' | null>(null);
 
   // Estados para criação e edição inline diretamente nas colunas da daily
@@ -997,7 +1105,8 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
   const renderSelectionActions = (col: string) => {
     const ibtn = (color: string): React.CSSProperties => ({
       width: 24, height: 24, borderRadius: 6, border: 'none', background: 'transparent', color,
-      display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.15s ease',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+      transition: 'background-color 150ms ease, color 150ms ease, transform 140ms var(--ease-out)',
     });
     const hover = (bg: string) => ({
       onMouseEnter: (e: React.MouseEvent<HTMLButtonElement>) => { e.currentTarget.style.background = bg; },
@@ -1021,8 +1130,8 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
                 const matches = availableProjects.filter((p) => !q || p.name.toLowerCase().includes(q) || (p.fullName || '').toLowerCase().includes(q));
                 return (
                   <div
-                    className="df-dropdown-menu"
-                    style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, width: 240, background: ft.dropdownMenuBg, border: ft.dropdownBorder, borderRadius: 8, boxShadow: 'none', padding: 4, display: 'flex', flexDirection: 'column', gap: 4, zIndex: 99999, animation: 'fadeIn 0.12s ease-out' }}
+                    className="df-dropdown-menu df-popover-right"
+                    style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, width: 240, background: ft.dropdownMenuBg, border: ft.dropdownBorder, borderRadius: 8, boxShadow: 'none', padding: 4, display: 'flex', flexDirection: 'column', gap: 4, zIndex: 99999, transformOrigin: 'top right', animation: 'dfPopoverIn 160ms var(--ease-out)' }}
                   >
                     <div className="df-search-box" style={{ height: 28, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', background: ft.fieldBg, borderRadius: 6 }}>
                       <Search size={12} color={theme?.textSecondary} />
@@ -1193,6 +1302,9 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
   // Gera (ou recria) título e descrição do card em edição com base no projeto selecionado, com contexto pequeno para ser rápido
   const handleGenerateCardTextWithAi = async () => {
     if (generatingCardAi) return;
+    const sugKey = `${editingItemId || 'novo'}|${draftProject}|${draftCategory}`;
+    if (aiSuggestedRef.current.key !== sugKey) aiSuggestedRef.current = { key: sugKey, titles: [] };
+    const already = aiSuggestedRef.current.titles;
     setGeneratingCardAi(true);
     try {
       const proj: any = findProjectByName(draftProject);
@@ -1205,9 +1317,10 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
       }
       const guide =
         draftCategory === 'yesterday' ? 'algo que foi ENTREGUE (passado, foco no resultado)' : draftCategory === 'blocker' ? 'um IMPEDIMENTO e o que falta para destravar' : 'o PRÓXIMO PASSO concreto de hoje (futuro, objetivo)';
-      const current = draftTitle.trim() || draftDescription.trim() ? `\nCARD ATUAL (reescreva melhor, mantendo o assunto):\nTítulo: ${draftTitle}\nDescrição: ${draftDescription}\n` : '';
+      const alreadyTxt = already.length ? `\nSUGESTÕES JÁ GERADAS (NÃO repita nem reescreva; escolha OUTRO assunto/commit/ângulo):\n${already.map((t) => `- ${t}`).join('\n')}\n` : '';
+      const current = !already.length && (draftTitle.trim() || draftDescription.trim()) ? `\nCARD ATUAL (reescreva melhor, mantendo o assunto):\nTítulo: ${draftTitle}\nDescrição: ${draftDescription}\n` : '';
       const prompt = `Escreva UM card da Daily Scrum, em primeira pessoa, sobre ${guide}, no projeto "${proj?.name || draftProject}".
-${current}
+${current}${alreadyTxt}
 ${material}
 
 Regras: título curto (até 60 caracteres, português natural); descrição de 1 ou 2 frases dizendo o que mudou e para quê, DIFERENTE do título (nunca repita o título). Sem hash de commit, número de issue/PR, prefixos feat/fix/chore nem nomes de arquivo.
@@ -1232,6 +1345,7 @@ RETORNE SOMENTE JSON: {"title":"...","description":"..."}`;
       const clean = (t: string) => String(t || '').replace(/\b[0-9a-f]{7,40}\b/g, '').replace(/\(?#\d+\)?/g, '').replace(/\s{2,}/g, ' ').trim();
       const nt = clean(out.title);
       const nd = ensureDistinctDescription(nt, clean(out.description), [], [], new Map());
+      aiSuggestedRef.current.titles = [...already, nt].slice(-8);
       setDraftTitle(nt);
       setDraftDescription(nd);
       logSystemActivity('daily', editingItemId ? 'recriar_card_ia' : 'gerar_card_ia', proj?.name || draftProject, { category: draftCategory });
@@ -1800,7 +1914,8 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
     const clear = () => setPendingAiIds((prev) => ({ ...prev, [col]: [] }));
     const btn = (color: string, hover: string): React.CSSProperties => ({
       width: 24, height: 24, borderRadius: 6, border: 'none', background: 'transparent', color,
-      display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.15s ease',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+      transition: 'background-color 150ms ease, color 150ms ease, transform 140ms var(--ease-out)',
     });
     return (
       <>
@@ -1948,7 +2063,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
       bgApp: isEffectiveDark ? '#000000' : '#f4f5f7',
       bgShelf: isEffectiveDark ? '#111111' : '#ffffff',
       shelfBorder: 'none',
-      shelfShadow: isEffectiveDark ? '0 1px 3px rgba(0,0,0,0.5)' : '0 1px 3px rgba(0,0,0,0.06)',
+      shelfShadow: 'none',
       controlBg: isEffectiveDark ? '#181818' : '#f3f4f6',
       textPrimary: isEffectiveDark ? '#ffffff' : '#111111',
       textSecondary: isEffectiveDark ? '#888888' : '#666666',
@@ -1960,6 +2075,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
 
   return (
     <div
+      className="df-daily-surface"
       style={{
         width: '100%',
         height: '100%',
@@ -2017,7 +2133,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
               background: accentColor,
               borderRadius: 10,
               border: 'none',
-              boxShadow: '0 4px 14px rgba(0,0,0,0.18)',
+              boxShadow: 'none',
               padding: '6px 8px',
               display: 'flex',
               alignItems: 'center',
@@ -2056,7 +2172,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                   display: 'flex',
                   alignItems: 'center',
                   gap: 5,
-                  transition: 'all 0.15s ease',
+                  transition: 'background-color 160ms ease, opacity 160ms ease, transform 140ms var(--ease-out)',
                   opacity: activeTab === 'daily' ? 1 : 0.8,
                 }}
               >
@@ -2079,7 +2195,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                   display: 'flex',
                   alignItems: 'center',
                   gap: 5,
-                  transition: 'all 0.15s ease',
+                  transition: 'background-color 160ms ease, opacity 160ms ease, transform 140ms var(--ease-out)',
                   opacity: activeTab === 'weekly' ? 1 : 0.8,
                 }}
               >
@@ -2104,7 +2220,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                 fontSize: 11,
                 fontWeight: 400,
                 cursor: 'pointer',
-                transition: 'all 0.15s ease',
+                transition: 'background-color 150ms ease, transform 140ms var(--ease-out)',
                 whiteSpace: 'nowrap',
               }}
               onMouseEnter={(e) => {
@@ -2130,7 +2246,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                 background: isEffectiveDark ? '#141414' : '#ffffff',
                 borderRadius: 10,
                 border: 'none',
-                boxShadow: isEffectiveDark ? '0 2px 8px rgba(0,0,0,0.2)' : '0 1px 3px rgba(0,0,0,0.06)',
+                boxShadow: 'none',
                 padding: '8px 10px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -2160,7 +2276,11 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                   <ChevronLeft size={14} />
                 </button>
 
-                <span style={{ fontSize: 13, fontWeight: 400, color: theme.textPrimary }}>
+                <span
+                  key={`cal-title-${calendarMonth.getFullYear()}-${calendarMonth.getMonth()}`}
+                  className="df-subtle-enter"
+                  style={{ fontSize: 13, fontWeight: 400, color: theme.textPrimary }}
+                >
                   {MONTH_NAMES_PT[calendarMonth.getMonth()]} {calendarMonth.getFullYear()}
                 </span>
 
@@ -2237,6 +2357,8 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
 
               {/* Matrix de Dias (Células quadradas 1:1) */}
               <div
+                key={`cal-grid-${calendarMonth.getFullYear()}-${calendarMonth.getMonth()}`}
+                className="df-subtle-enter"
                 style={{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(7, 1fr)',
@@ -2251,6 +2373,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                   return (
                     <div
                       key={dayItem.iso}
+                      className="df-pressable"
                       onClick={() => setSelectedDate(dayItem.date)}
                       style={{
                         aspectRatio: '1 / 1',
@@ -2278,7 +2401,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                         fontWeight: 400,
                         opacity: !isCurM ? 0.35 : 1,
                         position: 'relative',
-                        transition: 'all 0.12s ease',
+                        transition: 'background-color 140ms ease, color 140ms ease, opacity 140ms ease, transform 130ms var(--ease-out)',
                       }}
                       title={`${dayItem.dayNumber} de ${MONTH_NAMES_PT[dayItem.date.getMonth()]}`}
                     >
@@ -2365,6 +2488,8 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
               selectedAiProvider={selectedAiProvider}
               selectedModel={selectedModel}
               activeModels={activeModels}
+              pinnedAis={pinnedAis}
+              installedClis={installedClis}
               onSelectAiProvider={onSelectAiProvider}
               onSelectModel={onSelectModel}
               onToast={onToast}
@@ -2382,7 +2507,9 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
           {/* ===================================================================== */}
           {activeTab === 'daily' ? (
             <div
+              key={`daily-board-${selectedDateIso}`}
               data-tour="daily-board-content"
+              className="df-view-enter"
               style={{
               flex: 1,
               display: 'flex',
@@ -2411,7 +2538,9 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
               {/* COLUNA 1: O QUE FIZ NO DIA ANTERIOR (ONTEM OU SEXTA)           */}
               {/* --------------------------------------------------------------- */}
               <div
+                className="df-stagger-item"
                 style={{
+                  '--stagger-idx': 0,
                   background: theme.bgShelf,
                   borderRadius: 10,
                   border: theme.shelfBorder,
@@ -2423,7 +2552,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                   boxSizing: 'border-box',
                   overflow: 'hidden',
                   minHeight: 0,
-                }}
+                } as React.CSSProperties}
               >
                 {/* Header Coluna 1 estilo Image */}
                 <div
@@ -2477,7 +2606,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                         alignItems: 'center',
                         justifyContent: 'center',
                         cursor: yesterdayItems.length === 0 ? 'not-allowed' : 'pointer',
-                        transition: 'all 0.15s ease',
+                        transition: 'background-color 150ms ease, color 150ms ease, opacity 150ms ease, transform 140ms var(--ease-out)',
                       }}
                       onMouseEnter={(e) => {
                         if (yesterdayItems.length > 0) e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)';
@@ -2506,7 +2635,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                         alignItems: 'center',
                         justifyContent: 'center',
                         cursor: generatingAiColumn === 'yesterday' ? 'wait' : 'pointer',
-                        transition: 'all 0.15s ease',
+                        transition: 'background-color 150ms ease, color 150ms ease, opacity 150ms ease, transform 140ms var(--ease-out)',
                       }}
                       onMouseEnter={(e) => {
                         if (generatingAiColumn !== 'yesterday') {
@@ -2540,7 +2669,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                         alignItems: 'center',
                         justifyContent: 'center',
                         cursor: 'pointer',
-                        transition: 'all 0.15s ease',
+                        transition: 'background-color 150ms ease, color 150ms ease, opacity 150ms ease, transform 140ms var(--ease-out)',
                       }}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.opacity = '0.9';
@@ -2694,7 +2823,9 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
               {/* COLUNA 2: IMPEDIMENTOS E PROBLEMAS                             */}
               {/* --------------------------------------------------------------- */}
               <div
+                className="df-stagger-item"
                 style={{
+                  '--stagger-idx': 1,
                   background: theme.bgShelf,
                   borderRadius: 10,
                   border: theme.shelfBorder,
@@ -2706,7 +2837,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                   boxSizing: 'border-box',
                   overflow: 'hidden',
                   minHeight: 0,
-                }}
+                } as React.CSSProperties}
               >
                 {/* Header Coluna 2 */}
                 <div
@@ -2760,7 +2891,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                         alignItems: 'center',
                         justifyContent: 'center',
                         cursor: blockerItems.length === 0 ? 'not-allowed' : 'pointer',
-                        transition: 'all 0.15s ease',
+                        transition: 'background-color 150ms ease, color 150ms ease, opacity 150ms ease, transform 140ms var(--ease-out)',
                       }}
                       onMouseEnter={(e) => {
                         if (blockerItems.length > 0) e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)';
@@ -2789,7 +2920,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                         alignItems: 'center',
                         justifyContent: 'center',
                         cursor: generatingAiColumn === 'blocker' ? 'wait' : 'pointer',
-                        transition: 'all 0.15s ease',
+                        transition: 'background-color 150ms ease, color 150ms ease, opacity 150ms ease, transform 140ms var(--ease-out)',
                       }}
                       onMouseEnter={(e) => {
                         if (generatingAiColumn !== 'blocker') {
@@ -2823,7 +2954,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                         alignItems: 'center',
                         justifyContent: 'center',
                         cursor: 'pointer',
-                        transition: 'all 0.15s ease',
+                        transition: 'background-color 150ms ease, color 150ms ease, opacity 150ms ease, transform 140ms var(--ease-out)',
                       }}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.opacity = '0.9';
@@ -2979,7 +3110,9 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
               {/* COLUNA 3: PLANEJADO PARA HOJE                                  */}
               {/* --------------------------------------------------------------- */}
               <div
+                className="df-stagger-item"
                 style={{
+                  '--stagger-idx': 2,
                   background: theme.bgShelf,
                   borderRadius: 10,
                   border: theme.shelfBorder,
@@ -2991,7 +3124,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                   boxSizing: 'border-box',
                   overflow: 'hidden',
                   minHeight: 0,
-                }}
+                } as React.CSSProperties}
               >
                 {/* Header Coluna 3 */}
                 <div
@@ -3045,7 +3178,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                         alignItems: 'center',
                         justifyContent: 'center',
                         cursor: todayItems.length === 0 ? 'not-allowed' : 'pointer',
-                        transition: 'all 0.15s ease',
+                        transition: 'background-color 150ms ease, color 150ms ease, opacity 150ms ease, transform 140ms var(--ease-out)',
                       }}
                       onMouseEnter={(e) => {
                         if (todayItems.length > 0) e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)';
@@ -3074,7 +3207,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                         alignItems: 'center',
                         justifyContent: 'center',
                         cursor: generatingAiColumn === 'today' ? 'wait' : 'pointer',
-                        transition: 'all 0.15s ease',
+                        transition: 'background-color 150ms ease, color 150ms ease, opacity 150ms ease, transform 140ms var(--ease-out)',
                       }}
                       onMouseEnter={(e) => {
                         if (generatingAiColumn !== 'today') {
@@ -3108,7 +3241,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                         alignItems: 'center',
                         justifyContent: 'center',
                         cursor: 'pointer',
-                        transition: 'all 0.15s ease',
+                        transition: 'background-color 150ms ease, color 150ms ease, opacity 150ms ease, transform 140ms var(--ease-out)',
                       }}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.opacity = '0.9';
@@ -3445,6 +3578,7 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
 
   return (
     <div
+      className="df-pane-enter"
       style={{
         width: '100%',
         flexShrink: 0,
@@ -3619,6 +3753,7 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
           boxSizing: 'border-box',
           color: '#ffffff',
           position: 'relative',
+          transition: 'background-color 180ms ease',
         }}
       >
         {/* LADO ESQUERDO: SELETOR DE PROJETO, TAG E COLORPICKER */}
@@ -3638,34 +3773,17 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
             }}
           >
             <Folder size={11} color="rgba(255, 255, 255, 0.9)" />
-            <select
+            <ChipSelect
               value={project}
-              onChange={(e) => onChangeProject(e.target.value)}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#ffffff',
-                fontSize: 10.5,
-                fontWeight: 400,
-                outline: 'none',
-                cursor: 'pointer',
-                padding: 0,
-                maxWidth: 110,
-              }}
-            >
-              {availableProjects.map((p) => (
-                <option
-                  key={p.id}
-                  value={p.name}
-                  style={{
-                    background: isEffectiveDark ? '#1a1a1a' : '#ffffff',
-                    color: isEffectiveDark ? '#ffffff' : '#111827',
-                  }}
-                >
-                  {p.name}
-                </option>
-              ))}
-            </select>
+              options={availableProjects.map((p) => p.name)}
+              onChange={onChangeProject}
+              isDark={isEffectiveDark}
+              accentColor={accentColor}
+              maxWidth={130}
+              width={260}
+              searchable
+              title="Projeto do card"
+            />
           </div>
 
           {/* Input de Tag */}
@@ -3713,7 +3831,7 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
                 padding: '2px 7px',
                 borderRadius: 6,
                 background: 'rgba(0, 0, 0, 0.28)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
+                border: 'none',
                 color: '#ffffff',
                 fontSize: 10,
                 fontWeight: 400,
@@ -3743,6 +3861,7 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
                   flexDirection: 'column',
                   gap: 8,
                   minWidth: 160,
+                  transformOrigin: 'top left',
                 }}
               >
                 <div style={{ fontSize: 10, color: isEffectiveDark ? 'rgba(255,255,255,0.6)' : '#666666' }}>
@@ -3765,8 +3884,10 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
                           height: 24,
                           borderRadius: '50%',
                           background: pc.color,
-                          border: isSelected ? '2px solid #ffffff' : 'none',
-                          boxShadow: isSelected ? `0 0 0 2px ${pc.color}` : 'none',
+                          border: 'none',
+                          boxShadow: 'none',
+                          transform: isSelected ? 'scale(1.12)' : 'scale(1)',
+                          transition: 'transform 140ms var(--ease-out), opacity 140ms ease',
                           cursor: 'pointer',
                           display: 'flex',
                           alignItems: 'center',
@@ -3775,7 +3896,7 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
                         }}
                         title={pc.label}
                       >
-                        {isSelected && <Check size={12} color="#ffffff" strokeWidth={3} />}
+                        {isSelected && <Check size={12} color="#ffffff" strokeWidth={3} className="df-check-pop" />}
                       </button>
                     );
                   })}
@@ -3825,30 +3946,15 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
                 fontSize: 10,
               }}
             >
-              <select
+              <ChipSelect
                 value={blockerSeverity || 'Alto'}
-                onChange={(e) => onChangeBlockerSeverity(e.target.value as any)}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#ffffff',
-                  fontSize: 10,
-                  fontWeight: 400,
-                  outline: 'none',
-                  cursor: 'pointer',
-                  padding: 0,
-                }}
-              >
-                <option value="Crítico" style={{ background: isEffectiveDark ? '#1a1a1a' : '#ffffff', color: isEffectiveDark ? '#ffffff' : '#111827' }}>
-                  Crítico
-                </option>
-                <option value="Alto" style={{ background: isEffectiveDark ? '#1a1a1a' : '#ffffff', color: isEffectiveDark ? '#ffffff' : '#111827' }}>
-                  Alto
-                </option>
-                <option value="Médio" style={{ background: isEffectiveDark ? '#1a1a1a' : '#ffffff', color: isEffectiveDark ? '#ffffff' : '#111827' }}>
-                  Médio
-                </option>
-              </select>
+                options={['Crítico', 'Alto', 'Médio']}
+                onChange={(v) => onChangeBlockerSeverity(v as any)}
+                isDark={isEffectiveDark}
+                accentColor={accentColor}
+                fontSize={10}
+                width={140}
+              />
             </div>
           )}
 
@@ -3863,31 +3969,16 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
               fontSize: 10,
             }}
           >
-            <select
+            <ChipSelect
               value={priority}
-              onChange={(e) => onChangePriority(e.target.value as any)}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#ffffff',
-                fontSize: 10,
-                fontWeight: 400,
-                outline: 'none',
-                cursor: 'pointer',
-                padding: 0,
-              }}
+              options={['Baixa', 'Média', 'Alta']}
+              onChange={(v) => onChangePriority(v as any)}
+              isDark={isEffectiveDark}
+              accentColor={accentColor}
+              fontSize={10}
+              width={140}
               title="Prioridade da tarefa"
-            >
-              <option value="Baixa" style={{ background: isEffectiveDark ? '#1a1a1a' : '#ffffff', color: isEffectiveDark ? '#ffffff' : '#111827' }}>
-                Baixa
-              </option>
-              <option value="Média" style={{ background: isEffectiveDark ? '#1a1a1a' : '#ffffff', color: isEffectiveDark ? '#ffffff' : '#111827' }}>
-                Média
-              </option>
-              <option value="Alta" style={{ background: isEffectiveDark ? '#1a1a1a' : '#ffffff', color: isEffectiveDark ? '#ffffff' : '#111827' }}>
-                Alta
-              </option>
-            </select>
+            />
           </div>
 
           {/* Foto do Usuário Logado */}
@@ -3897,7 +3988,7 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
               height: 22,
               borderRadius: '50%',
               background: 'rgba(0, 0, 0, 0.35)',
-              border: '1.5px solid rgba(255, 255, 255, 0.85)',
+              border: 'none',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -3906,7 +3997,7 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
               color: '#ffffff',
               overflow: 'hidden',
               flexShrink: 0,
-              boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
+              boxShadow: 'none',
             }}
             title="Usuário logado: Walancy"
           >
@@ -3995,6 +4086,8 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
 
   return (
     <div
+      className="df-card-subtle"
+      data-dragging={isDragging || isMenuOpen ? 'true' : undefined}
       draggable
       onDragStart={(e) => {
         setIsMenuOpen(false);
@@ -4008,22 +4101,16 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
         width: '100%',
         flexShrink: 0,
         borderRadius: 12,
-        background: cardBg,
-        border: isDragOver
-          ? `2px dashed ${accentColor}`
-          : 'none',
+        background: isDragOver ? hexToRgba(accentColor, 0.14) : cardBg,
+        border: 'none',
         display: 'flex',
         flexDirection: 'row',
         alignItems: 'stretch',
         boxSizing: 'border-box',
-        boxShadow: isDragOver
-          ? `0 4px 16px ${accentColor}40`
-          : isEffectiveDark
-          ? '0 3px 12px rgba(0,0,0,0.25)'
-          : '0 2px 6px rgba(0,0,0,0.05)',
-        transition: 'border 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease, transform 0.15s ease',
+        boxShadow: 'none',
+        transition: 'background-color 150ms ease, opacity 150ms ease, transform 160ms var(--ease-out)',
         opacity: isDragging ? 0.35 : isResolved ? 0.65 : 1,
-        transform: isDragOver ? 'scale(1.01)' : 'none',
+        transform: isDragOver ? 'scale(1.01)' : undefined,
         // Cards gerados pela IA aguardando aceite/recusa: mais claros no dark e mais escuros no light
         filter: isPendingAi ? `brightness(${isEffectiveDark ? 1.3 : 0.82})` : undefined,
         position: 'relative',
@@ -4045,7 +4132,7 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
           color: isEffectiveDark ? 'rgba(255, 255, 255, 0.28)' : 'rgba(0, 0, 0, 0.28)',
           background: isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
           borderRight: 'none',
-          transition: 'all 0.15s ease',
+          transition: 'background-color 150ms ease, color 150ms ease',
           userSelect: 'none',
           flexShrink: 0,
           flexDirection: 'column',
@@ -4109,22 +4196,24 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
                 padding: 0,
                 marginTop: 2,
                 flexShrink: 0,
-                transition: 'all 0.15s ease',
+                transition: 'background-color 150ms ease, transform 140ms var(--ease-out)',
               }}
               title={item.completed ? 'Marcar como pendente' : 'Marcar como concluído'}
             >
-              {item.completed && <Check size={12} color="#ffffff" strokeWidth={2.5} />}
+              {item.completed && <Check size={12} color="#ffffff" strokeWidth={2.5} className="df-check-pop" />}
             </button>
           )}
 
           {/* Indicador de Bloqueio */}
           {item.category === 'blocker' && (
             <div
+              className="df-pressable"
               onClick={() => onToggleBlocker(item)}
               style={{
                 cursor: 'pointer',
                 marginTop: 2,
                 flexShrink: 0,
+                display: 'flex',
               }}
               title={isResolved ? 'Clique para reabrir bloqueio' : 'Clique para marcar como resolvido'}
             >
@@ -4185,7 +4274,7 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
               justifyContent: 'center',
               cursor: 'pointer',
               padding: 0,
-              transition: 'all 0.15s ease',
+              transition: 'background-color 150ms ease, color 150ms ease, transform 140ms var(--ease-out)',
             }}
             title="Mais opções do card"
           >
@@ -4195,7 +4284,7 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
           {/* Popup com opções para o card */}
           {isMenuOpen && (
             <div
-              className="df-dropdown-menu"
+              className="df-dropdown-menu df-popover-right"
               style={{
                 position: 'absolute',
                 top: 28,
@@ -4210,14 +4299,18 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
                 gap: 2,
                 minWidth: 155,
                 zIndex: 9999,
+                transformOrigin: 'top right',
               }}
             >
               <button
                 type="button"
+                className="df-row-interactive"
                 onClick={() => {
                   setIsMenuOpen(false);
                   onEdit(item);
                 }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = getFieldTokens(isEffectiveDark).dropdownItemHoverBg)}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -4241,10 +4334,13 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
               {(item.category === 'today' || item.completed) && (
                 <button
                   type="button"
+                  className="df-row-interactive"
                   onClick={() => {
                     setIsMenuOpen(false);
                     onToggleCompleted(item);
                   }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = getFieldTokens(isEffectiveDark).dropdownItemHoverBg)}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -4269,10 +4365,13 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
               {item.category === 'blocker' && (
                 <button
                   type="button"
+                  className="df-row-interactive"
                   onClick={() => {
                     setIsMenuOpen(false);
                     onToggleBlocker(item);
                   }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = getFieldTokens(isEffectiveDark).dropdownItemHoverBg)}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -4298,10 +4397,13 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
 
               <button
                 type="button"
+                className="df-row-interactive"
                 onClick={() => {
                   setIsMenuOpen(false);
                   onDelete(item);
                 }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(239, 68, 68, 0.12)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -4466,7 +4568,7 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
               height: 22,
               borderRadius: '50%',
               background: 'rgba(0, 0, 0, 0.35)',
-              border: '1.5px solid rgba(255, 255, 255, 0.85)',
+              border: 'none',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -4475,7 +4577,7 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
               color: '#ffffff',
               overflow: 'hidden',
               flexShrink: 0,
-              boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
+              boxShadow: 'none',
             }}
             title={item.assignee?.name || 'Walancy'}
           >
@@ -4544,6 +4646,7 @@ const WeeklyViewContainer: React.FC<WeeklyViewContainerProps> = ({
   return (
     <div
       data-tour="daily-board-content"
+      className="df-view-enter"
       style={{
         flex: 1,
         display: 'grid',
@@ -4556,10 +4659,12 @@ const WeeklyViewContainer: React.FC<WeeklyViewContainerProps> = ({
         overflow: 'hidden',
       }}
     >
-      {weekWorkdays.map((wd) => (
+      {weekWorkdays.map((wd, wdIdx) => (
         <div
           key={wd.iso}
+          className="df-stagger-item"
           style={{
+            '--stagger-idx': wdIdx,
             background: theme.bgShelf,
             borderRadius: 10,
             border: 'none',
@@ -4571,7 +4676,7 @@ const WeeklyViewContainer: React.FC<WeeklyViewContainerProps> = ({
             overflow: 'hidden',
             minHeight: 0,
             boxSizing: 'border-box',
-          }}
+          } as React.CSSProperties}
         >
           {/* Header da Coluna da Semana */}
           <div
@@ -4642,12 +4747,13 @@ const WeeklyViewContainer: React.FC<WeeklyViewContainerProps> = ({
               wd.items.map((it) => (
                 <div
                   key={it.id}
+                  className="df-card-subtle"
                   style={{
                     flexShrink: 0,
                     background: isEffectiveDark ? '#1a1a1c' : '#ffffff',
                     borderRadius: 8,
                     border: 'none',
-                    boxShadow: isEffectiveDark ? '0 2px 8px rgba(0,0,0,0.2)' : '0 1px 4px rgba(0,0,0,0.05)',
+                    boxShadow: 'none',
                     padding: '8px 10px',
                     fontSize: 11.5,
                     fontWeight: 400,

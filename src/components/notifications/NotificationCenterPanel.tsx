@@ -14,9 +14,10 @@ import {
   X,
   ArrowUp,
   ArrowUpCircle,
+  GitPullRequest,
 } from 'lucide-react';
 import { renderAiIcon } from '../icons/AiProviderIcons';
-import { timeAgo, type CenterNotification } from './notificationStore';
+import { reviewInfo, timeAgo, type CenterNotification } from './notificationStore';
 import { logSystemActivity } from '../../utils/brainService';
 import { TutorialTriggerButton, useRegisterTutorialOverlay } from '../tutorial/TutorialTriggerButton';
 
@@ -52,6 +53,9 @@ const C = {
 const ANIM_MS = 240;
 
 function KindIcon({ n, color }: { n: CenterNotification; color: string }) {
+  const rv = reviewInfo(n);
+  if (rv?.avatar) return <img src={rv.avatar} alt={rv.author || ''} title={rv.author} style={{ width: 24, height: 24, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />;
+  if (rv) return <GitPullRequest size={18} color={color} />;
   if ((n.kind === 'ai' || n.kind === 'design') && n.provider) {
     const provId = n.provider === 'agy' ? 'antigravity' : n.provider;
     return (
@@ -687,7 +691,7 @@ export default function NotificationCenterPanel({
                           </button>
                         )}
 
-                        {(n.projectPath || n.source) && (
+                        {(n.projectPath || n.source || reviewInfo(n)) && (
                           <button
                             type="button"
                             onClick={(e) => {
@@ -717,8 +721,8 @@ export default function NotificationCenterPanel({
                             onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.85')}
                             onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
                           >
-                            <ExternalLink size={12} />
-                            <span>Abrir</span>
+                            {reviewInfo(n) ? <GitPullRequest size={12} /> : <ExternalLink size={12} />}
+                            <span>{reviewInfo(n) ? 'Revisar' : 'Abrir'}</span>
                           </button>
                         )}
                       </div>

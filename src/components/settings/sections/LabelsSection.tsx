@@ -166,6 +166,7 @@ export const LabelsSection: React.FC<SectionProps> = ({ ctx, owner, repo, isAdmi
                 ) : (
                   <div
                     key={l.name}
+                    className="df-row-interactive"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -175,7 +176,7 @@ export const LabelsSection: React.FC<SectionProps> = ({ ctx, owner, repo, isAdmi
                       background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg,
                       border: 'none',
                       boxShadow: 'none',
-                      transition: 'all 0.15s ease',
+                      transition: 'background-color 150ms var(--ease-out), transform 150ms var(--ease-out)',
                       minWidth: 0,
                     }}
                   >

@@ -1,7 +1,15 @@
+import { createPortal } from 'react-dom';
+import { TreeCollapse } from './ui/TreeCollapse';
+import { PullRequestDetail, type PullReviewTarget } from './reviews/PullRequestDetail';
+import { PullRequestsList } from './reviews/PullRequestsList';
+import { ActionsSidebar, ActionsView } from './actions/ActionsPanels';
+import type { TeamAiProvider } from './team/TeamAiPanel';
 import type { TerminalSkinId } from './TerminalSkin';
 import { getFieldTokens } from '../utils/fieldTokens';
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
+  GitPullRequestArrow,
+  PlayCircle,
   SquareTerminal,
   Terminal as TerminalIcon,
   Plus,
@@ -12,6 +20,7 @@ import {
   XCircle,
   Columns3,
   MoreHorizontal,
+  ArrowLeft,
   ArrowRight,
   FolderPlus,
   FilePlus,
@@ -68,7 +77,9 @@ import {
 import { FileIcon, FolderIcon } from './FileIcon';
 import { NativeXTerm, scrollTerminalToText, TERMINAL_THEMES } from './NativeXTerm';
 import { TerminalSkinOverlay, skinDividerVars } from './TerminalSkin';
-import Editor from '@monaco-editor/react';
+import Editor, { DiffEditor } from '@monaco-editor/react';
+import { defineAuraDarkTheme } from './monacoTheme';
+import { AUTOCOMPLETE_OPTIONS, setupAutocomplete } from './monacoAutocomplete';
 import { OutlineTimelineCards } from './ide/OutlineTimelineCards';
 import { getFileLanguage, isMarkdownFile } from '../utils/editor';
 import { renderMarkdownPreview } from '../utils/markdown';
@@ -76,7 +87,7 @@ import { ConfirmDeleteModal } from './modals/ConfirmDeleteModal';
 import { SidebarPanels } from './ide/SidebarPanels';
 import type { ExplorerNode, TerminalSessionItem, ThemeTokens, GitHubIssueItem } from '../types/ide';
 import { ClaudeIcon, AntigravityIcon, GeminiIcon, OllamaIcon, CodexIcon } from './icons/AiProviderIcons';
-import { hexToRgba } from '../utils/color';
+import { getContrastTextColor, hexToRgba } from '../utils/color';
 import { logSystemActivity } from '../utils/brainService';
 import { AI_BRAND_COLORS } from '../constants/ai';
 
@@ -107,6 +118,8 @@ interface TerminalWorkspace {
   splitX: number;
   splitY: number;
   maximizedSlotIndex: number | null;
+  /** nome definido pelo usuário: a IA não renomeia mais a aba */
+  userNamed?: boolean;
 }
 
 export interface CliTerminalViewProps {
@@ -165,6 +178,13 @@ export interface CliTerminalViewProps {
   problemsPrompt?: string;
   onOpenBranchModal?: () => void;
   onOpenIssuesModal?: () => void;
+  /** pull requests e reviews do repositório do projeto: lista no painel lateral, detalhe na área central */
+  openPullCount?: number;
+  repoFullName?: string;
+  reviewAiProvider?: TeamAiProvider;
+  onSendPromptToAi?: (text: string) => void;
+  /** pedido externo (notificação "Revisar"): abre este pull request no painel de reviews */
+  reviewRequest?: { repo: string; number: number; nonce: number } | null;
   onOpenIssueDetails?: (issueNumber: number) => void;
   gitIssues?: GitHubIssueItem[];
   refreshGitHubIssues?: () => Promise<void>;
@@ -232,6 +252,37 @@ const IssueGitAvatar: React.FC<{
   );
 };
 
+// Mini desenho de cada layout de terminais (menu de layout)
+const LayoutGlyph: React.FC<{ mode: '1x1' | '1x2' | '2x1' | '1x3' | '3' | '2x2' }> = ({ mode }) => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" style={{ flexShrink: 0 }}>
+    <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
+    {mode === '1x2' && <path d="M8 2.5v11" />}
+    {mode === '2x1' && <path d="M1.5 8h13" />}
+    {mode === '1x3' && <path d="M5.8 2.5v11M10.2 2.5v11" />}
+    {mode === '3' && <path d="M8 2.5V8M1.5 8h13" />}
+    {mode === '2x2' && <path d="M8 2.5v11M1.5 8h13" />}
+  </svg>
+);
+
+// Ícone do botão de dividir: mostra onde o novo terminal vai aparecer (direita, embaixo) ou que o clique volta a 1 terminal
+const SplitHintIcon: React.FC<{ mode: 'right' | 'bottom' | 'merge'; size?: number }> = ({ mode, size = 14 }) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+    <rect x="1.5" y="1.5" width="13" height="13" rx="2.5" />
+    {mode === 'right' && (
+      <>
+        <rect x="8" y="2.2" width="5.8" height="11.6" rx="1.6" fill="currentColor" fillOpacity="0.45" stroke="none" />
+        <path d="M8 1.5v13" />
+      </>
+    )}
+    {mode === 'bottom' && (
+      <>
+        <rect x="2.2" y="8" width="11.6" height="5.8" rx="1.6" fill="currentColor" fillOpacity="0.45" stroke="none" />
+        <path d="M8 1.5v13M1.5 8h13" />
+      </>
+    )}
+  </svg>
+);
+
 export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   workspacePath,
   fileTree,
@@ -274,6 +325,11 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   installedClis,
   onOpenBranchModal,
   onOpenIssuesModal,
+  openPullCount = 0,
+  repoFullName,
+  reviewAiProvider,
+  onSendPromptToAi,
+  reviewRequest,
   dockTabs,
   renderDockContent,
   problemsSummary,
@@ -288,7 +344,11 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   onStartReview,
 }) => {
   // Left sidebar tabs: 'files' | 'git' | 'issues' | 'design'
-  const [sidebarTab, setSidebarTab] = useState<'files' | 'git' | 'issues' | 'design'>('files');
+  const [sidebarTab, setSidebarTab] = useState<'files' | 'git' | 'issues' | 'design' | 'reviews' | 'actions'>('files');
+  const [actionsWf, setActionsWf] = useState<number | null>(null);
+  const [actionsRun, setActionsRun] = useState<number | null>(null);
+  const [prTarget, setPrTarget] = useState<PullReviewTarget | null>(null);
+  const resolveTabs = useRef<Map<string, string>>(new Map());
   const [designManifest, setDesignManifest] = useState<DesignBridgeManifest | null>(() =>
     getDesignBridgeManifestSync(workspacePath)
   );
@@ -655,6 +715,14 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
     try { const saved = Number(localStorage.getItem('ide_explorer_width')); return Math.max(180, Math.min(800, saved && saved !== 280 ? saved : 340)); } catch { return 340; }
   });
   const [isExplorerCollapsed, setIsExplorerCollapsed] = useState<boolean>(false);
+  const showPrDetail = sidebarTab === 'reviews' && !isExplorerCollapsed && prTarget !== null;
+  const showActions = sidebarTab === 'actions' && !isExplorerCollapsed;
+  useEffect(() => {
+    if (!reviewRequest) return;
+    setSidebarTab('reviews');
+    setIsExplorerCollapsed(false);
+    setPrTarget({ repo: reviewRequest.repo, number: reviewRequest.number });
+  }, [reviewRequest?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
   const [isDraggingExplorer, setIsDraggingExplorer] = useState<boolean>(false);
   const dragStartXRef = useRef<number>(0);
   const dragStartWidthRef = useRef<number>(340);
@@ -663,6 +731,25 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedDir, setSelectedDir] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [dropSlotId, setDropSlotId] = useState<string | null>(null);
+  // O xterm é renderizado via portal (fora da árvore React do slot): drops no terminal não borbulham para o onDrop do slot.
+  // Por isso o host do terminal recebe listeners nativos que chamam este handler (sempre o mais recente).
+  const termDropRef = useRef<{ over: (id: string) => void; leave: () => void; drop: (id: string, dt: DataTransfer) => void } | null>(null);
+  // reordenar abas arrastando: aba em arraste e onde ela entraria (antes/depois da aba sob o mouse)
+  const [tabDragId, setTabDragId] = useState<string | null>(null);
+  const [tabDrop, setTabDrop] = useState<{ id: string; after: boolean } | null>(null);
+  const moveTab = (fromId: string, toId: string, after: boolean) => {
+    if (fromId === toId) return;
+    setWorkspaces((prev) => {
+      const from = prev.find((w) => w.id === fromId);
+      if (!from) return prev;
+      const rest = prev.filter((w) => w.id !== fromId);
+      const idx = rest.findIndex((w) => w.id === toId);
+      if (idx < 0) return prev;
+      rest.splice(after ? idx + 1 : idx, 0, from);
+      return rest;
+    });
+  };
   const [creating, setCreating] = useState<{ parent: string; isDirectory: boolean } | null>(null);
   const [creatingName, setCreatingName] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<ExplorerNode | null>(null);
@@ -953,6 +1040,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   const [isConfirmCloseAllOpen, setIsConfirmCloseAllOpen] = useState<boolean>(false);
   const [isClosingAll, setIsClosingAll] = useState<boolean>(false);
   const [workspaceToClose, setWorkspaceToClose] = useState<TerminalWorkspace | null>(null);
+  // aba saindo: roda a animação de saída antes de remover de fato
+  const [closingTabId, setClosingTabId] = useState<string | null>(null);
   const [isClosingWorkspace, setIsClosingWorkspace] = useState<boolean>(false);
 
   const [layoutMenuOpen, setLayoutMenuOpen] = useState<boolean>(false);
@@ -1144,7 +1233,11 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
     }
     const mode = activeWorkspace.gridMode;
     if (mode === '1x1') {
-      return [activeWorkspace.slotSessionIds[0] || activeSessionId || terminalSessions[0]?.id].filter(Boolean);
+      // o terminal salvo da área pode não existir mais (outro projeto, sessão recriada): cai na sessão ativa em vez de um terminal vazio
+      const saved = activeWorkspace.slotSessionIds[0];
+      const savedAlive = !!saved && terminalSessions.some((x) => x.id === saved);
+      const activeAlive = !!activeSessionId && terminalSessions.some((x) => x.id === activeSessionId);
+      return [savedAlive ? saved : activeAlive ? activeSessionId : terminalSessions[0]?.id || saved].filter(Boolean);
     }
     const needed = mode === '2x2' ? 4 : mode === '3' || mode === '1x3' ? 3 : 2;
     const current: string[] = [];
@@ -1282,7 +1375,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
     initialType: string = 'zsh',
     initialName?: string,
     initialCmd?: string
-  ) => {
+  ): string | undefined => {
     const wsId = `ws_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const needed = mode === '2x2' ? 4 : mode === '3' || mode === '1x3' ? 3 : mode === '1x1' ? 1 : 2;
     const slotIds: string[] = [];
@@ -1322,20 +1415,92 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
     }
     setNewTabMenuOpen(false);
     if (onToast) onToast(`Nova área de trabalho "${newWs.name}" criada`);
+    return slotIds[0];
   };
+
+  // Escreve o pedido na IA assim que ela termina de abrir (espera a saída começar e ficar quieta)
+  const sendPromptWhenReady = (sessionId: string, text: string) => {
+    let got = false;
+    let last = 0;
+    const off = window.electronAPI?.pty?.onData?.((p) => {
+      if (p.id === sessionId) {
+        got = true;
+        last = Date.now();
+      }
+    });
+    const t0 = Date.now();
+    const timer = setInterval(() => {
+      const quiet = got && Date.now() - last > 1500;
+      if (!quiet && Date.now() - t0 < 25000) return;
+      clearInterval(timer);
+      off?.();
+      window.electronAPI?.pty?.write(sessionId, `\x1b[200~${text}\x1b[201~`);
+      setTimeout(() => window.electronAPI?.pty?.write(sessionId, '\r'), 250);
+    }, 300);
+  };
+
+  // "Resolver com IA" (conflito / branch desatualizada do PR): abre uma área nova "Resolvendo conflitos" com a IA selecionada e manda o pedido
+  const openResolveWorkspace = (text: string, title: string = 'Resolvendo conflitos') => {
+    const pid = reviewAiProvider?.id || 'claude';
+    const type = pid === 'antigravity' ? 'agy' : pid;
+    if (!/^(claude|agy|codex|gemini|ollama)$/.test(type)) {
+      onToast?.('Selecione uma IA com CLI (Claude, Antigravity, Codex ou Gemini) para resolver com IA.');
+      return;
+    }
+    setSidebarTab('files'); // sai do detalhe do PR para mostrar o terminal da IA trabalhando
+    // mesma resolução do mesmo PR: reaproveita a aba (se a IA ainda estiver aberta) em vez de criar outra
+    const key = `${prTarget ? `${prTarget.repo}#${prTarget.number}` : 'pr'}|${title}|${type}`;
+    const prevSid = resolveTabs.current.get(key);
+    const ws = prevSid ? workspaces.find((w) => w.slotSessionIds.includes(prevSid)) : undefined;
+    if (prevSid && ws && terminalSessions.some((t) => t.id === prevSid)) {
+      setActiveWorkspaceId(ws.id);
+      setActiveSessionId(prevSid);
+      window.electronAPI?.pty?.write(prevSid, `\x1b[200~${text}\x1b[201~`);
+      setTimeout(() => window.electronAPI?.pty?.write(prevSid, '\r'), 250);
+      logSystemActivity('terminal', 'resolver_pr_com_ia', gitRepoName || 'default', { ia: type, reutilizada: true });
+      return;
+    }
+    const sid = handleCreateWorkspace('1x1', type, title);
+    if (!sid) return;
+    resolveTabs.current.set(key, sid);
+    sendPromptWhenReady(sid, text);
+    logSystemActivity('terminal', 'resolver_pr_com_ia', gitRepoName || 'default', { ia: type });
+  };
+
+  // pedidos de "Resolver com IA" vindos de painéis renderizados pelo App (ex.: Problems): abrem uma nova aba de IA aqui
+  const openResolveRef = useRef(openResolveWorkspace);
+  openResolveRef.current = openResolveWorkspace;
+  useEffect(() => {
+    const onRequest = (e: Event) => {
+      const d = (e as CustomEvent<{ text: string; title?: string }>).detail;
+      if (d?.text) openResolveRef.current(d.text, d.title || 'Resolvendo problemas');
+    };
+    window.addEventListener('aura:resolve-with-ai', onRequest);
+    return () => window.removeEventListener('aura:resolve-with-ai', onRequest);
+  }, []);
 
   // Solicitar fechamento de área de trabalho (abre modal estilizado)
   const handleRequestCloseWorkspace = (ws: TerminalWorkspace, e?: React.MouseEvent) => {
     e?.stopPropagation();
+    let skip = false;
+    try {
+      skip = localStorage.getItem('aura_cli_skip_close_ws') === '1';
+    } catch {}
+    if (skip) {
+      handleConfirmCloseSingleWorkspace(ws);
+      return;
+    }
     setWorkspaceToClose(ws);
   };
 
   // Confirmar fechamento de uma única área de trabalho
-  const handleConfirmCloseSingleWorkspace = async () => {
-    if (!workspaceToClose) return;
+  const handleConfirmCloseSingleWorkspace = async (target?: TerminalWorkspace) => {
+    const ws = target || workspaceToClose;
+    if (!ws) return;
     setIsClosingWorkspace(true);
+    setClosingTabId(ws.id);
+    await new Promise((r) => setTimeout(r, 180));
     try {
-      const ws = workspaceToClose;
       for (const sid of ws.slotSessionIds) {
         if (window.electronAPI?.pty?.kill) {
           window.electronAPI.pty.kill(sid);
@@ -1373,6 +1538,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
 
       if (onToast) onToast(`Área de trabalho "${ws.name}" fechada.`);
     } finally {
+      setClosingTabId(null);
       setIsClosingWorkspace(false);
       setWorkspaceToClose(null);
     }
@@ -1427,7 +1593,48 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   };
 
   // Fechar divisão (split slot) de dentro de um quadrante
-  const [dragOverSlot, setDragOverSlot] = useState<number | null>(null);
+  // Arraste de terminal por ponteiro: o terminal fica solto seguindo o mouse e o terminal sob ele desliza para a posição de origem
+  const [slotDrag, setSlotDrag] = useState<{ from: number; dx: number; dy: number; over: number | null; settling: boolean } | null>(null);
+  const slotRects = useRef<Map<number, DOMRect>>(new Map());
+  const startSlotDrag = (e: React.PointerEvent, from: number) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest('button, input, a')) return;
+    const sx = e.clientX;
+    const sy = e.clientY;
+    let active = false;
+    const hit = (x: number, y: number) => {
+      for (const [i, r] of slotRects.current) if (i !== from && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return i;
+      return null;
+    };
+    const move = (ev: PointerEvent) => {
+      if (!active) {
+        if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return;
+        active = true;
+        slotRects.current.clear();
+        document.querySelectorAll<HTMLElement>('[data-slot-index]').forEach((el) => slotRects.current.set(Number(el.dataset.slotIndex), el.getBoundingClientRect()));
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'grabbing';
+      }
+      setSlotDrag({ from, dx: ev.clientX - sx, dy: ev.clientY - sy, over: hit(ev.clientX, ev.clientY), settling: false });
+    };
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      if (!active) return;
+      const over = hit(ev.clientX, ev.clientY);
+      const src = slotRects.current.get(from);
+      const dst = over !== null ? slotRects.current.get(over) : undefined;
+      // assenta no lugar: o terminal solto desliza até a posição alvo (ou volta) antes de trocar de verdade
+      setSlotDrag({ from, dx: dst && src ? dst.left - src.left : 0, dy: dst && src ? dst.top - src.top : 0, over, settling: true });
+      window.setTimeout(() => {
+        if (over !== null) handleSwapSlots(from, over);
+        setSlotDrag(null);
+      }, 200);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
   const handleSwapSlots = (from: number, to: number) => {
     if (!activeWorkspace || from === to) return;
     const next = [...effectiveSlots];
@@ -1528,12 +1735,67 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   );
 
   // Detecção dinâmica de título do processo para identificar CLIs de IA
+  const shellRespawnedAt = useRef(new Map<string, number>());
+  // A IA do terminal terminou e o main reabriu um shell: o terminal deixa de ser "de IA" (nome, ícone e cor do cabeçalho voltam ao padrão)
+  useEffect(() => {
+    return window.electronAPI?.pty?.onSessionStatus?.((st) => {
+      if (!st.exited || !st.shellRespawned) return;
+      shellRespawnedAt.current.set(st.id, Date.now());
+      setTerminalSessions((prev) => prev.map((x) => (x.id === st.id ? { ...x, type: 'zsh', name: 'zsh', command: undefined, initialCommand: undefined } : x)));
+      setWorkspaces((prev) =>
+        prev.map((w) => {
+          const idx = w.slotSessionIds.indexOf(st.id);
+          if (idx < 0) return w;
+          const slotTypes = w.slotTypes ? w.slotTypes.map((t, i) => (i === idx ? 'zsh' : t)) : w.slotTypes;
+          const aiName = idx === 0 && /claude|antigravity|agy|gemini|codex|ollama/i.test(w.name);
+          return { ...w, slotTypes, name: aiName ? 'Terminal' : w.name };
+        }),
+      );
+    });
+  }, [setTerminalSessions]);
+
+  // Atividade da IA em abas que o usuário não está vendo: 'working' (gerando, ícone pulsa) → 'done' (terminou, ícone pula até abrir a aba)
+  const [aiTabState, setAiTabState] = useState<Record<string, 'working' | 'done'>>({});
+  const aiTabStateRef = useRef<Record<string, 'working' | 'done'>>({});
+  const aiLastOutput = useRef(new Map<string, number>());
+  const viewCtxRef = useRef<{ viewed: Set<string>; isAi: (sid: string) => boolean }>({ viewed: new Set(), isAi: () => false });
+  const setAiState = useCallback((sid: string, st?: 'working' | 'done') => {
+    const cur = aiTabStateRef.current;
+    if (cur[sid] === st) return;
+    const next = { ...cur };
+    if (st) next[sid] = st;
+    else delete next[sid];
+    aiTabStateRef.current = next;
+    setAiTabState(next);
+  }, []);
+  useEffect(() => {
+    const off = window.electronAPI?.pty?.onData?.(({ id }) => {
+      const ctx = viewCtxRef.current;
+      if (ctx.viewed.has(id) || !ctx.isAi(id)) return;
+      aiLastOutput.current.set(id, Date.now());
+      if (aiTabStateRef.current[id] !== 'working') setAiState(id, 'working');
+    });
+    const timer = setInterval(() => {
+      const now = Date.now();
+      for (const [sid, st] of Object.entries(aiTabStateRef.current)) {
+        if (st === 'working' && now - (aiLastOutput.current.get(sid) || 0) > 2500) setAiState(sid, 'done');
+      }
+    }, 1000);
+    return () => {
+      off?.();
+      clearInterval(timer);
+    };
+  }, [setAiState]);
+
   const handleSessionTitleChange = useCallback(
     (sessionId: string, newTitle: string) => {
       if (!newTitle) return;
+      // logo depois de a IA encerrar, o título velho dela ainda chega (reprodução do histórico): não pode religar o tipo de IA
+      if (Date.now() - (shellRespawnedAt.current.get(sessionId) || 0) < 5000) return;
       const lower = newTitle.toLowerCase();
       let detectedType: string | undefined;
-      if (lower.includes('claude')) detectedType = 'claude';
+      // o Claude Code põe ✳ (ocioso) ou um spinner braille (gerando) no início do título, sem citar o nome
+      if (lower.includes('claude') || /^[\u2733\u273B\u2736\u2800-\u28FF]/.test(newTitle)) detectedType = 'claude';
       else if (lower.includes('antigravity') || lower.includes('agy')) detectedType = 'antigravity';
       else if (lower.includes('gemini')) detectedType = 'gemini';
       else if (lower.includes('codex')) detectedType = 'codex';
@@ -1544,8 +1806,20 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           prev.map((s) => (s.id === sessionId ? { ...s, type: detectedType, name: newTitle } : s))
         );
       }
+
+      // a IA resume a conversa no título (ex.: "✳ Corrigindo problemas do login"): vira o nome da aba, salvo junto das áreas de trabalho
+      const topic = newTitle.replace(/^[\s\u2733\u273B\u2736\u2800-\u28FF*·•.]+/, '').trim();
+      const generic = !topic || /^(claude( code)?|antigravity|agy|gemini|codex|ollama|zsh|bash|sh|terminal|node|python)$/i.test(topic) || /^[~/]/.test(topic) || topic.length < 3;
+      if (!generic && (detectedType || /^[\u2733\u273B\u2736\u2800-\u28FF]/.test(newTitle))) {
+        const name = topic.length > 40 ? `${topic.slice(0, 39)}…` : topic;
+        setWorkspaces((prev) => {
+          const w = prev.find((x) => x.slotSessionIds[0] === sessionId);
+          if (!w || w.userNamed || w.name === name) return prev;
+          return prev.map((x) => (x.id === w.id ? { ...x, name } : x));
+        });
+      }
     },
-    [setTerminalSessions]
+    [setTerminalSessions, setWorkspaces]
   );
 
   const [cliDockTab, setCliDockTab] = useState('terminal');
@@ -1558,6 +1832,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
     content?: string;
     savedContent?: string;
     initialContent?: string;
+    originalHeadContent?: string;
+    isDiffMode?: boolean;
+    isSideBySide?: boolean;
+    gitStatus?: 'modified' | 'added' | 'deleted';
+    reviewFiles?: Array<{ path: string; name: string; repoDir?: string; relPath?: string; status?: 'modified' | 'added' | 'deleted' }>;
+    reviewIndex?: number;
     dataUrl?: string;
     error?: string;
     isSaving?: boolean;
@@ -1632,7 +1912,18 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   useEffect(() => () => onViewerStatus?.(null), []);
 
   const openViewer = useCallback(
-    async (path: string, name: string) => {
+    async (
+      path: string,
+      name: string,
+      opts?: {
+        isDiffMode?: boolean;
+        repoDir?: string;
+        relPath?: string;
+        status?: 'modified' | 'added' | 'deleted';
+        reviewFiles?: Array<{ path: string; name: string; repoDir?: string; relPath?: string; status?: 'modified' | 'added' | 'deleted' }>;
+        reviewIndex?: number;
+      }
+    ) => {
       const prev = viewerRef.current;
       if (
         prev &&
@@ -1644,11 +1935,19 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
         await handleSaveViewerFile(prev.content, true);
       }
       setPreviewDesignScreen(null);
-      setMdPreview(isMarkdownFile(name));
-      setViewer({ path, name });
+      setMdPreview(!opts?.isDiffMode && isMarkdownFile(name));
+      setViewer({
+        path,
+        name,
+        isDiffMode: Boolean(opts?.isDiffMode),
+        isSideBySide: prev?.isSideBySide ?? true,
+        gitStatus: opts?.status,
+        reviewFiles: opts?.reviewFiles,
+        reviewIndex: opts?.reviewIndex,
+      });
       const fsApi = window.electronAPI?.fs;
       try {
-        if (/\.(png|jpe?g|gif|webp|ico|bmp)$/i.test(name)) {
+        if (!opts?.isDiffMode && /\.(png|jpe?g|gif|webp|ico|bmp)$/i.test(name)) {
           const r = await fsApi?.readFileDataUrl?.(path, 20 * 1024 * 1024);
           setViewer((v) =>
             v?.path === path
@@ -1656,11 +1955,29 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               : v
           );
         } else {
-          const r = await fsApi?.readFile(path);
+          const baseDir = opts?.repoDir || workspacePath || path.split('/').slice(0, -1).join('/');
+          let rel = opts?.relPath || path;
+          if (baseDir && rel.startsWith(baseDir + '/')) {
+            rel = rel.slice(baseDir.length + 1);
+          }
+          const [r, gitShowRes] = await Promise.all([
+            opts?.status === 'deleted' ? Promise.resolve({ content: '', error: undefined }) : fsApi?.readFile(path),
+            opts?.isDiffMode && window.electronAPI?.shell?.exec && opts?.status !== 'added'
+              ? window.electronAPI.shell.exec(`git show HEAD:"${rel}"`, baseDir).catch(() => null)
+              : Promise.resolve(null),
+          ]);
           const text = r?.content ?? '';
+          const origHead = gitShowRes && gitShowRes.exitCode === 0 ? gitShowRes.stdout : '';
           setViewer((v) =>
             v?.path === path
-              ? { ...v, content: text, savedContent: text, initialContent: text, error: r?.error }
+              ? {
+                  ...v,
+                  content: text,
+                  savedContent: text,
+                  initialContent: text,
+                  originalHeadContent: origHead,
+                  error: opts?.status === 'deleted' ? undefined : r?.error,
+                }
               : v
           );
         }
@@ -1668,7 +1985,28 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
         setViewer((v) => (v?.path === path ? { ...v, error: err?.message || 'Falha ao ler o arquivo' } : v));
       }
     },
-    [handleSaveViewerFile]
+    [handleSaveViewerFile, workspacePath]
+  );
+
+  const openGitDiffInCli = useCallback(
+    (
+      files: Array<{ path: string; name: string; repoDir?: string; relPath?: string; status?: 'modified' | 'added' | 'deleted' }>,
+      index = 0
+    ) => {
+      if (!files || files.length === 0) return;
+      const safeIdx = Math.max(0, Math.min(index, files.length - 1));
+      const target = files[safeIdx];
+      if (!target) return;
+      openViewer(target.path, target.name || target.path.split('/').pop() || 'file', {
+        isDiffMode: true,
+        repoDir: target.repoDir,
+        relPath: target.relPath,
+        status: target.status,
+        reviewFiles: files,
+        reviewIndex: safeIdx,
+      });
+    },
+    [openViewer]
   );
 
   const closeViewer = useCallback(async () => {
@@ -1759,7 +2097,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
     const kindOf = (proc: string) => {
       const p = proc.toLowerCase();
       if (p === 'agy' || p.includes('antigravity')) return 'antigravity';
-      if (p.includes('claude')) return 'claude';
+      // o binário nativo do Claude Code aparece com o número da versão (ex.: 2.1.309)
+      if (p.includes('claude') || /^\d+\.\d+\.\d+/.test(p)) return 'claude';
       if (p.includes('gemini')) return 'gemini';
       if (p.includes('codex')) return 'codex';
       if (p.includes('ollama')) return 'ollama';
@@ -1931,12 +2270,33 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
     return <SquareTerminal size={size} color={accentColor} />;
   };
 
+  // sessões da aba aberta são "vistas": zera o estado delas e não anima mais
+  {
+    // só "vê" o terminal quem está com ele na tela (PRs, Actions, editor de arquivo ou outras abas do dock escondem o terminal)
+    const terminalOnScreen = !showPrDetail && !showActions && !previewDesignScreen && !viewer && !(cliDockTab !== 'terminal' && renderDockContent);
+    const viewedWs = terminalOnScreen ? workspaces.find((w) => w.id === activeWorkspaceId) : undefined;
+    viewCtxRef.current = {
+      viewed: new Set((viewedWs?.slotSessionIds || []).filter(Boolean) as string[]),
+      isAi: (sid) => {
+        for (const w of workspaces) {
+          const idx = w.slotSessionIds.indexOf(sid);
+          if (idx >= 0) return getSlotAiType(w, idx, terminalSessions.find((t) => t.id === sid)) !== 'zsh';
+        }
+        return false;
+      },
+    };
+  }
+  useEffect(() => {
+    const ws = viewCtxRef.current.viewed;
+    ws.forEach((sid) => aiTabStateRef.current[sid] && setAiState(sid, undefined));
+  }, [activeWorkspaceId, workspaces, aiTabState, setAiState, showPrDetail, showActions, previewDesignScreen, viewer, cliDockTab]);
+
   // Renderiza o(s) ícone(s) da área de trabalho na aba:
   // Se for tela única (1x1), exibe o ícone da IA ou CLI em execução.
   // Se for um grid (1x2, 2x1, 3, 2x2), exibe os ícones empilhados (stacked) em cascata!
   const renderWorkspaceTabIcons = (ws: TerminalWorkspace, isActive: boolean) => {
     const needed = ws.gridMode === '2x2' ? 4 : ws.gridMode === '3' || ws.gridMode === '1x3' ? 3 : ws.gridMode === '1x1' ? 1 : 2;
-    const slotItems: { type: string; name: string }[] = [];
+    const slotItems: { type: string; name: string; sid?: string }[] = [];
 
     for (let i = 0; i < needed; i++) {
       const sid = ws.slotSessionIds?.[i];
@@ -1944,8 +2304,14 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
       const slotType = getSlotAiType(ws, i, session);
       const slotName =
         session?.name || (slotType !== 'zsh' ? `${slotType.toUpperCase()} CLI` : `Terminal ${i + 1}`);
-      slotItems.push({ type: slotType, name: slotName });
+      slotItems.push({ type: slotType, name: slotName, sid });
     }
+
+    // cada ícone anima pelo estado da própria sessão: só a IA que gerou algo pulsa/pula
+    const animFor = (sid?: string) => {
+      const st = isActive || !sid ? undefined : aiTabState[sid];
+      return st === 'working' ? 'dfTabIconPulse 1.2s ease-in-out infinite' : st === 'done' ? 'dfTabIconBounce 0.9s var(--ease-out) infinite' : undefined;
+    };
 
     // Tela única (1x1) ou apenas 1 terminal: exibe ícone individual limpo
     if (ws.gridMode === '1x1' || slotItems.length <= 1) {
@@ -1953,7 +2319,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
       return (
         <div
           title={item.name}
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, animation: animFor(item.sid) }}
         >
           {renderAiIcon(item.type, 14.5)}
         </div>
@@ -1983,14 +2349,10 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               borderRadius: 4.5,
               marginLeft: idx === 0 ? 0 : -5,
               zIndex: slotItems.length - idx,
-              background: isEffectiveDark ? '#1a1a1a' : '#f0f0f0',
-              border: `1.5px solid ${
-                isActive
-                  ? (isEffectiveDark ? '#262626' : '#ffffff')
-                  : (isEffectiveDark ? '#161616' : '#e4e4e7')
-              }`,
-              boxShadow: '0 1px 2px rgba(0, 0, 0, 0.25)',
-              transition: 'transform 0.12s ease',
+              background: 'transparent',
+              border: 'none',
+              boxShadow: 'none',
+              animation: animFor(item.sid),
             }}
           >
             {renderAiIcon(item.type, 10.5)}
@@ -2026,6 +2388,88 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
     return fileTree.map(filterNode).filter(Boolean) as ExplorerNode[];
   }, [fileTree, searchQuery]);
 
+  // Cada terminal vive num elemento próprio e estável, montado por portal fora dos quadrantes: trocar de lugar só move esse elemento
+  // (o xterm não é recriado nem relê o histórico, então não pisca)
+  const termHosts = useRef(new Map<string, HTMLDivElement>());
+  // Cola no terminal o caminho de arquivos soltos nele (do Finder ou da árvore do projeto)
+  const dropOnSession = (sessionId: string, dt: DataTransfer) => {
+    setDropSlotId(null);
+    const paths: string[] = [];
+    for (const f of Array.from(dt.files || [])) {
+      const real = window.electronAPI?.fs?.getPathForFile?.(f);
+      if (real) paths.push(real);
+    }
+    if (!paths.length) {
+      const filePath = dt.getData('text/plain');
+      if (filePath) paths.push(filePath);
+    }
+    if (paths.length) {
+      writeToSession(sessionId, paths.map((x) => `"${x}"`).join(' ') + ' ');
+      onToast?.(paths.length === 1 ? `Caminho colado: ${paths[0].split('/').pop()}` : `${paths.length} caminhos colados`);
+      logSystemActivity('terminal', 'arrastar_arquivos_para_terminal', gitRepoName || 'default', { total: paths.length });
+    }
+    [0, 120].forEach((ms) => setTimeout(() => window.dispatchEvent(new CustomEvent('devflow:focus-terminal', { detail: { sessionId } })), ms));
+  };
+  termDropRef.current = { over: (id) => setDropSlotId((cur) => (cur === id ? cur : id)), leave: () => setDropSlotId(null), drop: dropOnSession };
+
+  const getTermHost = (id: string) => {
+    let h = termHosts.current.get(id);
+    if (!h) {
+      h = document.createElement('div');
+      h.style.cssText = 'position:relative;width:100%;height:100%';
+      const hostId = id;
+      h.addEventListener('dragover', (ev) => {
+        if (!ev.dataTransfer || Array.from(ev.dataTransfer.types).includes('application/x-aura-tab')) return;
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = 'copy';
+        termDropRef.current?.over(hostId);
+      });
+      h.addEventListener('dragleave', (ev) => {
+        if (!h!.contains(ev.relatedTarget as Node | null)) termDropRef.current?.leave();
+      });
+      h.addEventListener('drop', (ev) => {
+        if (!ev.dataTransfer || Array.from(ev.dataTransfer.types).includes('application/x-aura-tab')) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        termDropRef.current?.drop(hostId, ev.dataTransfer);
+      });
+      termHosts.current.set(id, h);
+    }
+    return h;
+  };
+  useEffect(() => {
+    const alive = new Set(terminalSessions.map((x) => x.id));
+    termHosts.current.forEach((_, id) => !alive.has(id) && termHosts.current.delete(id));
+  }, [terminalSessions]);
+  const slotTerms = new Map<string, React.ReactNode>();
+
+  // Transformação visual de cada quadrante durante o arraste: o arrastado segue o mouse, o que está sob ele ocupa o lugar do arrastado
+  const slotDragStyle = (i: number): React.CSSProperties => {
+    if (!slotDrag) return {};
+    const { from, dx, dy, over, settling } = slotDrag;
+    const src = slotRects.current.get(from);
+    if (i === from) {
+      const dst = settling && over !== null ? slotRects.current.get(over) : undefined;
+      const scale = dst && src ? `scale(${dst.width / src.width}, ${dst.height / src.height})` : 'scale(1.02)';
+      return {
+        transform: `translate(${dx}px, ${dy}px) ${scale}`,
+        transformOrigin: 'top left',
+        transition: settling ? 'transform 200ms var(--ease-out)' : 'none',
+        zIndex: 50,
+        opacity: 0.95,
+        pointerEvents: 'none',
+      };
+    }
+    const mine = slotRects.current.get(i);
+    const swapping = over === i && src && mine;
+    return {
+      transform: swapping ? `translate(${src.left - mine.left}px, ${src.top - mine.top}px) scale(${src.width / mine.width}, ${src.height / mine.height})` : 'none',
+      transformOrigin: 'top left',
+      transition: 'transform 220ms var(--ease-out)',
+      pointerEvents: 'none',
+    };
+  };
+
   // Render an individual terminal slot (used by 1x1, 1x2, 2x1, 3, 2x2 grid)
   const renderTerminalSlot = (slotIndex: number, sessionId?: string) => {
     const session = terminalSessions.find((s) => s.id === sessionId) || terminalSessions[0];
@@ -2051,7 +2495,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             onClick={() => onNewSession('zsh', `Terminal ${slotIndex + 1}`)}
             style={{
               background: accentColor,
-              color: '#ffffff',
+              color: getContrastTextColor(accentColor),
               border: 'none',
               borderRadius: 5,
               padding: '5px 12px',
@@ -2078,6 +2522,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
       return (
         <div
           key={mIssue.number}
+          className="df-pressable"
           style={{
             display: 'inline-flex',
             alignItems: 'center',
@@ -2093,7 +2538,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             border: 'none',
             boxShadow: 'none',
             cursor: 'pointer',
-            transition: 'all 0.15s ease',
+            transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease',
             maxWidth: 240,
           }}
           onClick={() => { if (!scrollTerminalToText(session.id, new RegExp(`#${mIssue.number}(?!\\d)`))) onToast?.(`#${mIssue.number} não aparece no histórico deste terminal`); }}
@@ -2139,11 +2584,43 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
       );
     });
 
+    slotTerms.set(
+      session.id,
+      <NativeXTerm
+        transparent={!!slotAiColor}
+        sessionId={session.id}
+        sessionType={session.type}
+        cwd={session.projectPath || workspacePath || ''}
+        isActive={isSlotActive}
+        alwaysVisible={true}
+        initialCommand={session.initialCommand}
+        accentColor={accentColor}
+        cursorColor={slotAiColor || accentColor}
+        isDark={isEffectiveDark}
+        fontSize={terminalFontSize}
+        cursorStyle={terminalCursorStyle}
+        cursorBlink={terminalCursorBlink}
+        scrollback={terminalScrollback}
+        copyOnSelect={terminalCopyOnSelect}
+        fontFamily={terminalFontFamily}
+        lineHeight={terminalLineHeight}
+        themePreset={terminalThemePreset}
+        skin={terminalSkin}
+        skinLayers={false}
+        cursorWidth={terminalCursorWidth}
+        scrollOnUserInput={terminalScrollOnUserInput}
+        drawBoldTextInBrightColors={terminalDrawBoldTextInBrightColors}
+        onFocus={() => handleFocusSlot(slotIndex, session.id)}
+        onTitleChange={(title) => handleSessionTitleChange(session.id, title)}
+      />,
+    );
+
     return (
       <div
         key={`slot-${activeWorkspace?.id || 'ws'}-${slotIndex}-${session.id}`}
         onClick={() => handleFocusSlot(slotIndex, session.id)}
         onMouseDown={() => handleFocusSlot(slotIndex, session.id)}
+        data-slot-index={slotIndex}
         style={{
           width: '100%',
           height: '100%',
@@ -2154,32 +2631,27 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           overflow: 'hidden',
           background: skinActive ? 'transparent' : themeTokens.bgCard,
           borderRadius: 6,
-          border: activeWorkspace?.gridMode === '1x1' || skinActive ? 'none' : `1px solid ${themeTokens.border}`,
-          borderTop: 'none',
+          border: 'none',
           boxShadow: 'none',
           position: 'relative',
-          opacity: dragOverSlot === slotIndex ? 0.6 : 1,
-          transition: 'opacity 0.12s ease',
+          outline: dropSlotId === session.id ? `1px dashed ${accentColor}` : 'none',
+          outlineOffset: -2,
+          transition: 'outline-color 150ms ease',
+          ...slotDragStyle(slotIndex),
         }}
         onDragOver={(e) => {
           e.preventDefault();
-          const moving = e.dataTransfer.types.includes('application/x-aura-slot');
-          e.dataTransfer.dropEffect = moving ? 'move' : 'copy';
-          if (moving && dragOverSlot !== slotIndex) setDragOverSlot(slotIndex);
+          e.dataTransfer.dropEffect = 'copy';
+          if (dropSlotId !== session.id) setDropSlotId(session.id);
         }}
-        onDragLeave={() => dragOverSlot === slotIndex && setDragOverSlot(null)}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropSlotId(null);
+        }}
         onDrop={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          setDragOverSlot(null);
-          const from = e.dataTransfer.getData('application/x-aura-slot');
-          if (from !== '') { handleSwapSlots(Number(from), slotIndex); return; }
           handleFocusSlot(slotIndex, session.id);
-          const filePath = e.dataTransfer.getData('text/plain');
-          if (filePath) {
-            writeToSession(session.id, `"${filePath}" `);
-            if (onToast) onToast(`Caminho colado: ${filePath.split('/').pop()}`);
-          }
+          dropOnSession(session.id, e.dataTransfer);
           // O drag tira o foco do xterm: devolve para poder digitar direto
           const sid = session.id;
           [0, 120].forEach((ms) => setTimeout(() => window.dispatchEvent(new CustomEvent('devflow:focus-terminal', { detail: { sessionId: sid } })), ms));
@@ -2188,12 +2660,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
         {/* Quadrant Mini Header (height: 27px) */}
         {(
           <div
-            draggable={activeWorkspace?.gridMode !== '1x1'}
-            onDragStart={(e) => {
-              e.dataTransfer.setData('application/x-aura-slot', String(slotIndex));
-              e.dataTransfer.effectAllowed = 'move';
-            }}
-            onDragEnd={() => setDragOverSlot(null)}
+            onPointerDown={activeWorkspace?.gridMode !== '1x1' ? (e) => startSlotDrag(e, slotIndex) : undefined}
             onClick={() => handleFocusSlot(slotIndex, session.id)}
             onMouseDown={() => handleFocusSlot(slotIndex, session.id)}
             style={{
@@ -2233,7 +2700,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   color: hdrAiColor || isSlotActive ? '#ffffff' : skinTk.textMuted,
                   letterSpacing: '0.5px',
                   flexShrink: 0,
-                  transition: 'all 0.12s ease',
+                  transition: 'background-color 140ms ease, color 140ms ease',
                 }}
               >
                 Q{slotIndex + 1}
@@ -2283,7 +2750,11 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   onMouseEnter={(e) => (e.currentTarget.style.color = hdrAiColor ? '#ffffff' : skinTk.textPrimary)}
                   onMouseLeave={(e) => (e.currentTarget.style.color = hdrAiColor ? 'rgba(255,255,255,0.8)' : skinTk.textMuted)}
                 >
-                  <ChevronDown size={11} />
+                  <ChevronDown
+                    size={11}
+                    className="df-chevron"
+                    style={{ transform: activeSlotMenuIndex === slotIndex ? 'rotate(180deg)' : 'rotate(0deg)' }}
+                  />
                 </button>
 
                 {/* Session Switcher Dropdown for this slot */}
@@ -2315,6 +2786,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       return (
                         <>
                           <div
+                            className="df-row-interactive"
                             onClick={() => {
                               idle.forEach((t) => {
                                 window.electronAPI?.pty?.kill?.(t.id);
@@ -2324,7 +2796,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                               onToast?.(`${idle.length} ${idle.length === 1 ? 'terminal fechado' : 'terminais fechados'}`);
                               setActiveSlotMenuIndex(null);
                             }}
-                            style={{ padding: '5px 8px', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, cursor: 'pointer', color: '#ef4444', transition: 'background 0.15s ease' }}
+                            style={{ padding: '5px 8px', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, cursor: 'pointer', color: '#ef4444' }}
                             onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(239,68,68,0.12)')}
                             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                           >
@@ -2341,6 +2813,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     {terminalSessions.map((s) => (
                       <div
                         key={s.id}
+                        className="df-row-interactive"
                         onClick={() => {
                           updateActiveWorkspace((w) => {
                             const nextSlots = [...effectiveSlots];
@@ -2403,6 +2876,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     ].map((opt) => (
                       <div
                         key={opt.type}
+                        className="df-row-interactive"
                         onClick={() => {
                           const newId = onNewSession(opt.type, opt.name, opt.cmd);
                           const resolvedId = typeof newId === 'string' ? newId : `term_${Date.now()}`;
@@ -2446,6 +2920,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               {/* Clear this slot */}
               <button
                 type="button"
+                className="df-hdr-act"
                 onClick={(e) => {
                   e.stopPropagation();
                   writeToSession(session.id, 'clear\r');
@@ -2454,15 +2929,15 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  color: hdrAiColor ? 'rgba(255,255,255,0.8)' : skinTk.textMuted,
+                  color: hdrAiColor ? 'rgba(0,0,0,0.75)' : skinTk.textMuted,
                   padding: '2px 4px',
                   borderRadius: 3,
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = hdrAiColor ? '#ffffff' : skinTk.textPrimary)}
-                onMouseLeave={(e) => (e.currentTarget.style.color = hdrAiColor ? 'rgba(255,255,255,0.8)' : skinTk.textMuted)}
+                onMouseEnter={(e) => (e.currentTarget.style.color = hdrAiColor ? '#000000' : skinTk.textPrimary)}
+                onMouseLeave={(e) => (e.currentTarget.style.color = hdrAiColor ? 'rgba(0,0,0,0.75)' : skinTk.textMuted)}
               >
                 <Trash2 size={11} />
               </button>
@@ -2470,6 +2945,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               {/* Maximize / Restore this slot (só faz sentido com mais de um terminal) */}
               {activeWorkspace?.gridMode !== '1x1' && <button
                 type="button"
+                className="df-hdr-act"
                 onClick={(e) => {
                   e.stopPropagation();
                   updateActiveWorkspace((w) => ({
@@ -2482,15 +2958,15 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  color: hdrAiColor ? 'rgba(255,255,255,0.8)' : skinTk.textMuted,
+                  color: hdrAiColor ? 'rgba(0,0,0,0.75)' : skinTk.textMuted,
                   padding: '2px 4px',
                   borderRadius: 3,
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = hdrAiColor ? '#ffffff' : skinTk.textPrimary)}
-                onMouseLeave={(e) => (e.currentTarget.style.color = hdrAiColor ? 'rgba(255,255,255,0.8)' : skinTk.textMuted)}
+                onMouseEnter={(e) => (e.currentTarget.style.color = hdrAiColor ? '#000000' : skinTk.textPrimary)}
+                onMouseLeave={(e) => (e.currentTarget.style.color = hdrAiColor ? 'rgba(0,0,0,0.75)' : skinTk.textMuted)}
               >
                 {activeWorkspace?.maximizedSlotIndex === slotIndex ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
               </button>}
@@ -2498,6 +2974,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               {/* Close this split slot */}
               {activeWorkspace?.gridMode !== '1x1' && <button
                 type="button"
+                className="df-hdr-act"
                 onClick={(e) => {
                   e.stopPropagation();
                   handleCloseSplitSlot(slotIndex);
@@ -2506,15 +2983,15 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 style={{
                   background: 'transparent',
                   border: 'none',
-                  color: hdrAiColor ? 'rgba(255,255,255,0.8)' : skinTk.textMuted,
+                  color: hdrAiColor ? 'rgba(0,0,0,0.75)' : skinTk.textMuted,
                   padding: '2px 4px',
                   borderRadius: 3,
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                 }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = '#ef4444')}
-                onMouseLeave={(e) => (e.currentTarget.style.color = hdrAiColor ? 'rgba(255,255,255,0.8)' : skinTk.textMuted)}
+                onMouseEnter={(e) => (e.currentTarget.style.color = hdrAiColor ? '#000000' : '#ef4444')}
+                onMouseLeave={(e) => (e.currentTarget.style.color = hdrAiColor ? 'rgba(0,0,0,0.75)' : skinTk.textMuted)}
               >
                 <X size={11} />
               </button>}
@@ -2580,34 +3057,13 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               {renderAiIcon(slotAiType === 'agy' ? 'antigravity' : slotAiType, 150)}
             </div>
           )}
-          <div style={{ position: 'relative', zIndex: 1, width: '100%', height: '100%' }}>
-          <NativeXTerm
-            transparent={!!slotAiColor}
-            sessionId={session.id}
-            sessionType={session.type}
-            cwd={session.projectPath || workspacePath || ''}
-            isActive={isSlotActive}
-            alwaysVisible={true}
-            initialCommand={session.initialCommand}
-            accentColor={accentColor}
-            isDark={isEffectiveDark}
-            fontSize={terminalFontSize}
-            cursorStyle={terminalCursorStyle}
-            cursorBlink={terminalCursorBlink}
-            scrollback={terminalScrollback}
-            copyOnSelect={terminalCopyOnSelect}
-            fontFamily={terminalFontFamily}
-            lineHeight={terminalLineHeight}
-            themePreset={terminalThemePreset}
-            skin={terminalSkin}
-            skinLayers={false}
-            cursorWidth={terminalCursorWidth}
-            scrollOnUserInput={terminalScrollOnUserInput}
-            drawBoldTextInBrightColors={terminalDrawBoldTextInBrightColors}
-            onFocus={() => handleFocusSlot(slotIndex, session.id)}
-            onTitleChange={(title) => handleSessionTitleChange(session.id, title)}
+          <div
+            ref={(el) => {
+              const h = getTermHost(session.id);
+              if (el && h.parentElement !== el) el.appendChild(h);
+            }}
+            style={{ position: 'relative', zIndex: 1, width: '100%', height: '100%' }}
           />
-          </div>
         </div>
       </div>
     );
@@ -2616,7 +3072,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   return (
     <div
       ref={viewRootRef}
-      className={skinActive ? 'cli-skin' : undefined}
+      className={['df-cli-surface', skinActive && 'cli-skin'].filter(Boolean).join(' ')}
       data-skin={skinActive ? skinId : undefined}
       style={{
         ...skinDividerVars(skinId),
@@ -2646,10 +3102,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             background: isEffectiveDark ? '#0b0b0c' : '#1f1f1f',
             color: '#f5f5f5',
             fontSize: 11,
-            fontWeight: 500,
+            fontWeight: 400,
             padding: '5px 9px',
             borderRadius: 6,
-            boxShadow: '0 6px 18px rgba(0,0,0,0.45)',
+            border: 'none',
+            boxShadow: 'none',
+            animation: 'fadeIn 120ms ease',
             maxWidth: 240,
             textAlign: 'center',
             pointerEvents: 'none',
@@ -2686,6 +3144,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
       >
         {/* 1. Arquivos / Explorer */}
         <div
+          className="df-pressable"
           style={{
             width: 38,
             height: 38,
@@ -2709,7 +3168,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 : isEffectiveDark
                 ? '#858585'
                 : skinTk.textSecondary,
-            transition: 'all 0.15s ease',
+            transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease',
           }}
           title="Explorador de Arquivos"
           onClick={() => {
@@ -2733,11 +3192,15 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             }
           }}
         >
+          {!isExplorerCollapsed && sidebarTab === 'files' && (
+            <span className="df-activity-indicator" style={{ background: accentColor }} />
+          )}
           <CodiconFiles size={22} />
         </div>
 
         {/* 2. Controle de Versão / Git */}
         <div
+          className="df-pressable"
           style={{
             width: 38,
             height: 38,
@@ -2761,7 +3224,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 : isEffectiveDark
                 ? '#858585'
                 : skinTk.textSecondary,
-            transition: 'all 0.15s ease',
+            transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease',
           }}
           title="Controle de Versão (Git)"
           onClick={() => {
@@ -2785,6 +3248,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             }
           }}
         >
+          {!isExplorerCollapsed && sidebarTab === 'git' && (
+            <span className="df-activity-indicator" style={{ background: accentColor }} />
+          )}
           <CodiconSourceControl size={22} />
           {(gitModifiedCount ?? 0) > 0 && (
             <span
@@ -2797,7 +3263,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 padding: '0 3.5px',
                 borderRadius: 8,
                 background: accentColor,
-                color: '#ffffff',
+                color: getContrastTextColor(accentColor),
                 fontSize: 9.5,
                 fontWeight: 400,
                 display: 'flex',
@@ -2814,6 +3280,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
 
         {/* 3. Issues do GitHub */}
         <div
+          className="df-pressable"
           style={{
             width: 38,
             height: 38,
@@ -2837,7 +3304,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 : isEffectiveDark
                 ? '#858585'
                 : skinTk.textSecondary,
-            transition: 'all 0.15s ease',
+            transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease',
           }}
           title="Issues do GitHub"
           onClick={() => {
@@ -2861,6 +3328,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             }
           }}
         >
+          {!isExplorerCollapsed && sidebarTab === 'issues' && (
+            <span className="df-activity-indicator" style={{ background: accentColor }} />
+          )}
           <CircleDot size={20} />
           {openIssuesCount > 0 && (
             <span
@@ -2873,7 +3343,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 padding: '0 3.5px',
                 borderRadius: 8,
                 background: '#22c55e',
-                color: '#ffffff',
+                color: getContrastTextColor('#22c55e'),
                 fontSize: 9.5,
                 fontWeight: 400,
                 display: 'flex',
@@ -2888,8 +3358,98 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           )}
         </div>
 
+        {/* Pull requests e reviews pendentes do repositório */}
+        <div
+          className="df-pressable"
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 6,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative',
+            cursor: 'pointer',
+            background: !isExplorerCollapsed && sidebarTab === 'reviews' ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)') : 'transparent',
+            color: !isExplorerCollapsed && sidebarTab === 'reviews' ? (isEffectiveDark ? '#ffffff' : skinTk.textPrimary) : isEffectiveDark ? '#858585' : skinTk.textSecondary,
+            transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease',
+          }}
+          title="Pull requests e reviews"
+          onClick={() => {
+            if (!isExplorerCollapsed && sidebarTab === 'reviews') {
+              setIsExplorerCollapsed(true);
+            } else {
+              setSidebarTab('reviews');
+              setIsExplorerCollapsed(false);
+            }
+          }}
+          onMouseEnter={(e) => {
+            if (!(!isExplorerCollapsed && sidebarTab === 'reviews')) {
+              e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+              e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : skinTk.textPrimary;
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!(!isExplorerCollapsed && sidebarTab === 'reviews')) {
+              e.currentTarget.style.background = 'transparent';
+              e.currentTarget.style.color = isEffectiveDark ? '#858585' : skinTk.textSecondary;
+            }
+          }}
+        >
+          {!isExplorerCollapsed && sidebarTab === 'reviews' && <span className="df-activity-indicator" style={{ background: accentColor }} />}
+          <GitPullRequestArrow size={20} />
+          {openPullCount > 0 && (
+            <span style={{ position: 'absolute', bottom: 4, right: 4, minWidth: 15, height: 15, padding: '0 3.5px', borderRadius: 8, background: accentColor, color: getContrastTextColor(accentColor), fontSize: 9.5, fontWeight: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, pointerEvents: 'none' }}>
+              {openPullCount > 99 ? '99+' : openPullCount}
+            </span>
+          )}
+        </div>
+
+        {/* GitHub Actions: workflows e execuções do repositório */}
+        <div
+          className="df-pressable"
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 6,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative',
+            cursor: 'pointer',
+            background: showActions ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)') : 'transparent',
+            color: showActions ? (isEffectiveDark ? '#ffffff' : skinTk.textPrimary) : isEffectiveDark ? '#858585' : skinTk.textSecondary,
+            transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease',
+          }}
+          title="Actions"
+          onClick={() => {
+            if (showActions) {
+              setIsExplorerCollapsed(true);
+            } else {
+              setSidebarTab('actions');
+              setIsExplorerCollapsed(false);
+            }
+          }}
+          onMouseEnter={(e) => {
+            if (!showActions) {
+              e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+              e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : skinTk.textPrimary;
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!showActions) {
+              e.currentTarget.style.background = 'transparent';
+              e.currentTarget.style.color = isEffectiveDark ? '#858585' : skinTk.textSecondary;
+            }
+          }}
+        >
+          {showActions && <span className="df-activity-indicator" style={{ background: accentColor }} />}
+          <PlayCircle size={20} />
+        </div>
+
         {/* 4. Telas do Design */}
         <div
+          className="df-pressable"
           style={{
             width: 38,
             height: 38,
@@ -2913,7 +3473,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 : isEffectiveDark
                 ? '#858585'
                 : skinTk.textSecondary,
-            transition: 'all 0.15s ease',
+            transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease',
           }}
           title="Telas do Design"
           onClick={() => {
@@ -2940,6 +3500,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             }
           }}
         >
+          {!isExplorerCollapsed && sidebarTab === 'design' && (
+            <span className="df-activity-indicator" style={{ background: accentColor }} />
+          )}
           <Layers size={19} />
           {(designManifest?.screens?.length ?? 0) > 0 && (
             <span
@@ -2952,7 +3515,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 padding: '0 3px',
                 borderRadius: 999,
                 background: accentColor,
-                color: '#ffffff',
+                color: getContrastTextColor(accentColor),
                 fontSize: 8.5,
                 fontWeight: 400,
                 display: 'inline-flex',
@@ -2981,9 +3544,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             width: explorerWidth,
             height: '100%',
             minHeight: 0,
-            // na aba de arquivos o painel vira três cards separados (Explorer, Outline, Timeline), como na IDE
-            background: skinActive || sidebarTab === 'files' ? 'transparent' : skinTk.bgCard,
-            borderRadius: 10,
+            // nas abas de arquivos e git o painel usa cards separados com gap, igual à IDE
+            background: skinActive || sidebarTab === 'files' || sidebarTab === 'git' ? 'transparent' : skinTk.bgCard,
+            borderRadius: skinActive ? 'var(--sk-r, 0px)' : 10,
             border: 'none',
             boxShadow: 'none',
             display: 'flex',
@@ -3000,7 +3563,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           {/* ========================================================= */}
           {sidebarTab === 'files' && (
             <>
-              <div style={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column', background: skinActive ? 'transparent' : skinTk.bgCard, borderRadius: skinActive ? 'var(--sk-r, 0px)' : 10, overflow: 'hidden' }}>
+              <div className="df-view-enter" style={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column', background: skinActive ? 'transparent' : skinTk.bgCard, borderRadius: skinActive ? 'var(--sk-r, 0px)' : 10, overflow: 'hidden' }}>
               {/* Header do Explorador */}
           <div
             style={{
@@ -3052,7 +3615,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               </button>
               {explorerOptionsOpen && (
                 <div
-                  className="df-dropdown-menu"
+                  className="df-dropdown-menu df-popover-right"
                   style={{
                     position: 'absolute',
                     top: 'calc(100% + 4px)',
@@ -3078,11 +3641,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     <button
                       key={o.label}
                       type="button"
+                      className="df-row-interactive"
                       onClick={() => {
                         setExplorerOptionsOpen(false);
                         o.run();
                       }}
-                      style={{ height: 28, padding: '0 10px', border: 'none', borderRadius: 6, background: 'transparent', color: skinTk.textPrimary, fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', cursor: 'pointer', transition: 'background 0.12s ease' }}
+                      style={{ height: 28, padding: '0 10px', border: 'none', borderRadius: 6, background: 'transparent', color: skinTk.textPrimary, fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', cursor: 'pointer' }}
                       onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
                       onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                     >
@@ -3098,7 +3662,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           {/* Search Filter Input (expandable) */}
           {isSearchOpen && (
             <div
-              className="df-search-box"
+              className="df-search-box df-subtle-enter"
               style={{
                 margin: '10px 14px 0 11px',
                 padding: '5px 8px',
@@ -3186,10 +3750,13 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   const isExpanded = expandedFolders.has(item.path);
                   const isDir = item.isDirectory;
                   const isFileActive = viewer?.path === item.path;
+                  // soltar sobre um arquivo posiciona dentro da pasta dele; a pasta inteira (linha + filhos) acende como alvo
+                  const dropDir = isDir ? item.path : item.path.split('/').slice(0, -1).join('/') || workspacePath;
 
                   return (
-                    <div key={item.path} style={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
+                    <div key={item.path} style={{ width: '100%', display: 'flex', flexDirection: 'column', borderRadius: 4, background: isDir && dropTarget === item.path ? hexToRgba(accentColor, 0.12) : 'transparent', transition: 'background-color 140ms var(--ease-out)' }}>
                       <div
+                        className="df-row-interactive"
                         draggable={true}
                         onDragStart={(e) => {
                           const dragData = {
@@ -3202,9 +3769,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                           e.dataTransfer.setData('text/plain', item.path);
                           e.dataTransfer.effectAllowed = 'copyMove';
                         }}
-                        onDragOver={isDir ? (e) => dragOverTree(e, item.path) : undefined}
-                        onDragLeave={isDir ? () => setDropTarget((cur) => (cur === item.path ? null : cur)) : undefined}
-                        onDrop={isDir ? (e) => handleTreeDrop(e, item.path) : undefined}
+                        onDragOver={(e) => dragOverTree(e, dropDir)}
+                        onDragLeave={() => setDropTarget((cur) => (cur === dropDir ? null : cur))}
+                        onDrop={(e) => handleTreeDrop(e, dropDir)}
                         onClick={() => {
                           setSelectedDir(isDir ? item.path : item.path.split('/').slice(0, -1).join('/') || null);
                           if (isDir) {
@@ -3228,14 +3795,13 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                           paddingRight: 6,
                           height: 24,
                           borderRadius: 4,
-                          background: dropTarget === item.path ? hexToRgba(accentColor, 0.18) : isFileActive ? hexToRgba(accentColor, 0.12) : 'transparent',
+                          background: isFileActive ? hexToRgba(accentColor, 0.12) : 'transparent',
                           display: 'flex',
                           alignItems: 'center',
                           gap: 6,
                           cursor: 'pointer',
                           whiteSpace: 'nowrap',
                           userSelect: 'none',
-                          transition: 'background 0.1s ease',
                           color: isFileActive ? skinTk.textPrimary : skinTk.textSecondary,
                         }}
                         onMouseEnter={(e) => {
@@ -3258,7 +3824,12 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                                 flexShrink: 0,
                               }}
                             >
-                              {isExpanded ? <ChevronDown size={13} color={accentColor} /> : <ChevronRight size={13} />}
+                              <ChevronRight
+                                size={13}
+                                className="df-chevron"
+                                color={isExpanded ? accentColor : undefined}
+                                style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                              />
                             </div>
                             <FolderIcon folderName={item.name} isOpen={isExpanded} size={15} />
                             {renaming?.path === item.path ? renderRenameInput() : (
@@ -3292,22 +3863,17 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       </div>
 
                       {/* Sub-children */}
-                      {isDir && isExpanded && ((item.children && item.children.length > 0) || (creating && creating.parent === item.path)) && (
-                        <div style={{ width: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-                          <div
-                            style={{
-                              position: 'absolute',
-                              left: depth * 12 + 10,
-                              top: 0,
-                              bottom: 0,
-                              width: 1,
-                              background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
-                              pointerEvents: 'none',
-                            }}
-                          />
+                      {isDir && ((item.children && item.children.length > 0) || (creating && creating.parent === item.path)) && (
+                        <TreeCollapse
+                          open={isExpanded}
+                          depth={depth}
+                          accentColor={accentColor}
+                          onDragOver={(e) => dragOverTree(e, item.path)}
+                          onDrop={(e) => handleTreeDrop(e, item.path)}
+                        >
                           {creating && creating.parent === item.path && renderCreateInput(depth + 1)}
                           {(item.children || []).map((child) => renderTreeItem(child, depth + 1))}
-                        </div>
+                        </TreeCollapse>
                       )}
                     </div>
                   );
@@ -3347,6 +3913,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 flex: '1 1 0',
                 display: 'flex',
                 flexDirection: 'column',
+                background: 'transparent',
                 overflow: 'hidden',
                 minHeight: 0,
                 width: '100%',
@@ -3365,7 +3932,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 onOpenFile={(filePath, fileName) => openViewer(filePath, fileName || filePath.split('/').pop() || 'file')}
                 onJumpToLine={() => {}}
                 graphSkinned={skinActive}
-                onStartReview={onStartReview}
+                onStartReview={(files, index) => openGitDiffInCli(files, index || 0)}
                 onRunTerminalCommand={(name, cmd) => {
                   if (activeSessionId && window.electronAPI?.pty?.write) {
                     window.electronAPI.pty.write(activeSessionId, cmd + '\n');
@@ -3386,7 +3953,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           {/* ========================================================= */}
           {sidebarTab === 'issues' && (
             <div
-              className="skin-bar"
+              className="skin-bar df-view-enter"
               style={{
                 flex: '1 1 0',
                 display: 'flex',
@@ -3561,7 +4128,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
 
                   {isIssuesFilterOpen && (
                     <div
-                      className="df-dropdown-menu"
+                      className="df-dropdown-menu df-popover-right"
                       style={{
                         position: 'absolute',
                         top: 32,
@@ -3697,7 +4264,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     </button>
                   </div>
                 ) : (
-                  filteredIssues.map((issue) => {
+                  filteredIssues.map((issue, idx) => {
                     const isOpen = (issue.state || 'open').toLowerCase() === 'open' && !issue.closed_at;
                     const authorLogin = typeof issue.author === 'string'
                       ? issue.author
@@ -3707,6 +4274,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       || (issue.assignees?.[0] && typeof issue.assignees[0] === 'object' && issue.assignees[0]?.avatarUrl)
                       || (authorLogin ? `https://github.com/${authorLogin.replace('@', '').trim()}.png?size=40` : undefined);
 
+                    const creatorLogin = (typeof issue.author === 'string' ? issue.author : issue.author?.login || '').replace('@', '').trim();
                     // responsáveis (assignees) da issue; o autor não entra
                     const assigneeList: Array<{ login: string; avatar?: string }> = [
                       ...(Array.isArray(issue.assignees) ? issue.assignees : []),
@@ -3719,8 +4287,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     return (
                       <div
                         key={issue.number}
-                        className="skin-tab"
+                        className="skin-tab df-card-subtle df-stagger-item"
                         style={{
+                          '--stagger-idx': idx,
                           textTransform: 'none',
                           letterSpacing: 'normal',
                           padding: 0,
@@ -3732,9 +4301,9 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                           display: 'flex',
                           flexDirection: 'column',
                           gap: 0,
-                          transition: 'background 0.15s ease',
+                          flexShrink: 0,
                           cursor: 'pointer',
-                        }}
+                        } as React.CSSProperties}
                         onClick={() => (onOpenIssueDetails ? onOpenIssueDetails(issue.number) : onOpenIssuesModal?.())}
                         onMouseEnter={(e) => {
                           e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
@@ -3751,8 +4320,17 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                             ) : (
                               <CheckCircle2 size={11} color={issueStatusColor(issue)} style={{ flexShrink: 0 }} />
                             )}
-                            {assigneeList.length > 0 && (
+                            {creatorLogin && (
                               <>
+                                <IssueGitAvatar login={creatorLogin} avatarUrl={issue.authorAvatar} size={14} isEffectiveDark={isEffectiveDark} />
+                                <span title={`Criada por @${creatorLogin}`} style={{ fontSize: 10.5, color: skinTk.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                                  {creatorLogin}
+                                </span>
+                              </>
+                            )}
+                            {assigneeList.length > 0 && (
+                              <div title={assigneeList.map((a) => `@${a.login}`).join(', ')} style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 6, minWidth: 0, flexShrink: 1 }}>
+                                <span style={{ fontSize: 10.5, color: skinTk.textMuted, flexShrink: 0 }}>Ass:</span>
                                 <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
                                   {assigneeList.slice(0, 3).map((a, i) => (
                                     <div key={a.login} style={{ marginLeft: i === 0 ? 0 : -5, display: 'flex' }}>
@@ -3760,10 +4338,10 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                                     </div>
                                   ))}
                                 </div>
-                                <span title={assigneeList.map((a) => `@${a.login}`).join(', ')} style={{ fontSize: 10.5, color: skinTk.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
-                                  {assigneeList.map((a) => a.login).join(', ')}
-                                </span>
-                              </>
+                                {assigneeList.length === 1 && (
+                                  <span style={{ fontSize: 10.5, color: skinTk.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{assigneeList[0].login}</span>
+                                )}
+                              </div>
                             )}
                           </div>
 
@@ -3786,7 +4364,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                               {issueMenuOpen === issue.number && (
                                 <>
                                   <div style={{ position: 'fixed', inset: 0, zIndex: 90 }} onClick={() => setIssueMenuOpen(null)} />
-                                  <div className="df-dropdown-menu" style={{ position: 'absolute', right: 0, top: '100%', marginTop: 4, minWidth: 190, background: getFieldTokens(isEffectiveDark).dropdownMenuBg, border: getFieldTokens(isEffectiveDark).dropdownBorder, borderRadius: 8, boxShadow: 'none', padding: 4, zIndex: 100, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                  <div className="df-dropdown-menu df-popover-right" style={{ position: 'absolute', right: 0, top: '100%', marginTop: 4, minWidth: 190, background: getFieldTokens(isEffectiveDark).dropdownMenuBg, border: getFieldTokens(isEffectiveDark).dropdownBorder, borderRadius: 8, boxShadow: 'none', padding: 4, zIndex: 100, display: 'flex', flexDirection: 'column', gap: 1 }}>
                                     {([
                                       [<AtSign size={12} key="a" />, 'Mencionar no terminal', () => handleMentionIssueInTerminal(issue)],
                                       [<GitBranch size={12} key="b" />, `Criar branch issue-${issue.number}`, () => handleCheckoutIssueBranch(issue)],
@@ -3794,6 +4372,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                                     ] as Array<[React.ReactNode, string, () => void]>).map(([icon, label, run]) => (
                                       <div
                                         key={label}
+                                        className="df-row-interactive"
                                         onClick={() => { setIssueMenuOpen(null); run(); }}
                                         style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', borderRadius: 5, fontSize: 11.5, color: skinTk.textPrimary, cursor: 'pointer' }}
                                         onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
@@ -3853,7 +4432,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                                 cursor: 'pointer',
                                 fontSize: 9,
                                 fontWeight: 400,
-                                transition: 'all 0.15s ease',
+                                transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease',
                               }}
                               onMouseEnter={(e) => {
                                 e.currentTarget.style.color = accentColor;
@@ -3870,23 +4449,24 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                         </div>
 
                         {/* Issue Title (Compact with regular font) */}
-                        <div
-                          style={{
-                            fontSize: 10.5,
-                            fontWeight: 400,
-                            color: skinTk.textPrimary,
-                            lineHeight: 1.25,
-                            wordBreak: 'break-word',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            display: '-webkit-box',
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: 'vertical',
-                            padding: '6px 7px 7px',
-                          }}
-                        >
-                          <span style={{ color: skinTk.textMuted, fontWeight: 500, marginRight: 5 }}>#{issue.number}</span>
-                          {issue.title}
+                        <div style={{ padding: '6px 7px 7px' }}>
+                          <div
+                            style={{
+                              fontSize: 10.5,
+                              fontWeight: 400,
+                              color: skinTk.textPrimary,
+                              lineHeight: 1.25,
+                              wordBreak: 'break-word',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              display: '-webkit-box',
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: 'vertical',
+                            }}
+                          >
+                            <span style={{ color: skinTk.textMuted, fontWeight: 500, marginRight: 5 }}>#{issue.number}</span>
+                            {issue.title}
+                          </div>
                         </div>
                       </div>
                     );
@@ -3899,8 +4479,37 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           {/* ========================================================= */}
           {/* TAB 4: DESIGN BRIDGE SCREENS & PROTOTYPES                */}
           {/* ========================================================= */}
+          {sidebarTab === 'reviews' && (
+            <PullRequestsList
+              isActive={!isExplorerCollapsed}
+              repoFullName={repoFullName}
+              selected={prTarget}
+              onSelect={setPrTarget}
+              isEffectiveDark={isEffectiveDark}
+              accentColor={accentColor}
+              accentContrastText={getContrastTextColor(accentColor)}
+              background={skinActive ? 'transparent' : skinTk.bgCard}
+            />
+          )}
+
+          {sidebarTab === 'actions' && (
+            <ActionsSidebar
+              isActive={!isExplorerCollapsed}
+              repoFullName={repoFullName}
+              workflowId={actionsWf}
+              onSelect={(id) => {
+                setActionsWf(id);
+                setActionsRun(null);
+              }}
+              isEffectiveDark={isEffectiveDark}
+              accentColor={accentColor}
+              background={skinActive ? 'transparent' : skinTk.bgCard}
+            />
+          )}
+
           {sidebarTab === 'design' && (
             <div
+              className="df-view-enter"
               style={{
                 flex: 1,
                 minHeight: 0,
@@ -3998,7 +4607,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                         borderRadius: 5,
                         border: 'none',
                         background: accentColor,
-                        color: '#ffffff',
+                        color: getContrastTextColor(accentColor),
                         fontSize: 10.5,
                         fontWeight: 400,
                         cursor: 'pointer',
@@ -4057,12 +4666,13 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                         scr.pageName.toLowerCase().includes(q)
                       );
                     })
-                    .map((scr) => {
+                    .map((scr, idx) => {
                       const isPreviewActive = previewDesignScreen?.id === scr.id;
                       const thumbUrl = resolvedCliDesignThumbs[scr.id] || scr.previewDataUrl || buildScreenSvgFallbackDataUrl(scr);
                       return (
                         <div
                           key={scr.id}
+                          className="df-card-subtle df-stagger-item"
                           onClick={() => {
                             setViewer(null);
                             setPreviewDesignScreen(scr);
@@ -4074,6 +4684,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                           }}
                           title={`Clique para abrir o preview de "${scr.name}" na área central`}
                           style={{
+                            '--stagger-idx': idx,
                             padding: 8,
                             borderRadius: 6,
                             background: isPreviewActive
@@ -4087,8 +4698,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                             flexDirection: 'column',
                             gap: 8,
                             cursor: 'pointer',
-                            transition: 'background 0.15s ease',
-                          }}
+                          } as React.CSSProperties}
                           onMouseEnter={(e) => {
                             if (!isPreviewActive) {
                               e.currentTarget.style.background = isEffectiveDark
@@ -4167,7 +4777,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                                   display: 'flex',
                                   alignItems: 'center',
                                   justifyContent: 'center',
-                                  transition: 'all 0.15s ease',
+                                  transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease',
                                 }}
                               >
                                 <AtSign size={12} />
@@ -4192,7 +4802,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                                   display: 'inline-flex',
                                   alignItems: 'center',
                                   gap: 4,
-                                  transition: 'all 0.15s ease',
+                                  transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease',
                                 }}
                                 onMouseEnter={(e) => {
                                   e.currentTarget.style.color = accentColor;
@@ -4275,7 +4885,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           minWidth: 0,
           background: skinActive ? 'transparent' : themeTokens.bgCard,
           borderRadius: 10,
-          border: skinActive ? 'none' : `1px solid ${themeTokens.border}`,
+          border: 'none',
+          boxShadow: 'none',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -4301,8 +4912,46 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             zIndex: 40,
           }}
         >
-          {/* Left: Collapse Sidebar Button + Tabs List */}
+          {/* Left: Back Arrow (when viewer/preview/PR open) + Collapse Sidebar Button + Tabs List */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0, flex: 1, overflow: 'visible' }}>
+            {(viewer || previewDesignScreen || showPrDetail || showActions) && (
+              <button
+                type="button"
+                className="df-pressable"
+                onClick={() => {
+                  if (showActions) {
+                    if (actionsRun !== null) setActionsRun(null);
+                    else setSidebarTab('files');
+                  } else if (showPrDetail) setPrTarget(null);
+                  else if (previewDesignScreen) setPreviewDesignScreen(null);
+                  else if (viewer) closeViewer();
+                }}
+                title="Voltar para os terminais"
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: skinTk.textSecondary,
+                  padding: '4px 6px',
+                  borderRadius: 5,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  flexShrink: 0,
+                  transition: 'color 150ms ease, background-color 150ms ease',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = skinTk.textPrimary;
+                  e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = skinTk.textSecondary;
+                  e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                <ArrowLeft size={15} />
+              </button>
+            )}
+
             {/* Toggle Explorer Button */}
             <button
               type="button"
@@ -4381,7 +5030,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     >
                       <span>{cur.label}</span>
                       {countBadge(cur.count, true)}
-                      <ChevronDown size={12} color={skinTk.textSecondary} style={{ transform: dockMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
+                      <ChevronDown size={12} className="df-chevron" color={skinTk.textSecondary} style={{ transform: dockMenuOpen ? 'rotate(180deg)' : 'rotate(0deg)' }} />
                     </button>
                     {dockMenuOpen && (
                       <>
@@ -4392,7 +5041,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                             return (
                               <div
                                 key={st.id}
-                                className="skin-tab"
+                                className="skin-tab df-row-interactive"
                                 data-on={isActive ? '1' : undefined}
                                 onClick={() => { setCliDockTab(st.id); setViewer(null); setDockMenuOpen(false); }}
                                 style={{ height: 28, padding: '0 10px', borderRadius: 5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, cursor: 'pointer', fontSize: 12, fontWeight: isActive ? 500 : 400, color: isActive ? skinTk.textPrimary : skinTk.textSecondary, background: isActive ? (isEffectiveDark ? '#2E2E2E' : '#e5e7eb') : 'transparent' }}
@@ -4434,10 +5083,28 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               }}
             >
             {workspaces.map((ws) => {
-              const isActive = ws.id === activeWorkspaceId;
+              // a aba só fica ativa quando a área central mostra os terminais (não um arquivo, uma tela de design, um PR ou o painel do dock)
+              const centerIsTerminal = !showPrDetail && !showActions && !previewDesignScreen && !viewer && !(cliDockTab !== 'terminal' && renderDockContent);
+              const isActive = ws.id === activeWorkspaceId && centerIsTerminal;
               const isRenaming = renamingWorkspaceId === ws.id;
 
 
+
+              // durante o arraste as outras abas deslizam para abrir o espaço onde a aba cairia
+              let dragShift = 0;
+              if (tabDragId && tabDrop && tabDragId !== ws.id) {
+                const ids = workspaces.map((w) => w.id);
+                const rest = ids.filter((i) => i !== tabDragId);
+                const ti = rest.indexOf(tabDrop.id);
+                const myRest = rest.indexOf(ws.id);
+                if (ti >= 0 && myRest >= 0) {
+                  const insertAt = ti + (tabDrop.after ? 1 : 0);
+                  const newI = myRest + (myRest >= insertAt ? 1 : 0);
+                  const par = tabRefs.current.get(ws.id)?.parentElement;
+                  const gap = par ? parseFloat(getComputedStyle(par).columnGap) || 0 : 0;
+                  dragShift = (newI - ids.indexOf(ws.id)) * ((tabRefs.current.get(tabDragId)?.offsetWidth || 155) + gap);
+                }
+              }
 
               const getTabMinWidth = () => {
                 if (isRenaming) return 120;
@@ -4460,7 +5127,42 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   }}
                   data-on={isActive ? '1' : undefined}
                   className={`workspace-tab skin-tab ${isActive ? 'active' : ''} ${ws.gridMode !== '1x1' ? 'is-grid' : ''}`}
-                  onClick={() => { handleSelectWorkspace(ws.id); setCliDockTab('terminal'); setViewer(null); }}
+                  draggable={!isRenaming}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('application/x-aura-tab', ws.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                    setTabDragId(ws.id);
+                  }}
+                  onDragOver={(e) => {
+                    if (!tabDragId) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    // a aba pode estar deslocada pela animação: o teste usa a posição original dela
+                    const r = e.currentTarget.getBoundingClientRect();
+                    const after = e.clientX > r.left - dragShift + r.width / 2;
+                    if (tabDrop?.id !== ws.id || tabDrop.after !== after) setTabDrop({ id: ws.id, after });
+                  }}
+                  onDrop={(e) => {
+                    if (!tabDragId) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (tabDrop) moveTab(tabDragId, tabDrop.id, tabDrop.after);
+                    setTabDragId(null);
+                    setTabDrop(null);
+                  }}
+                  onDragEnd={() => {
+                    setTabDragId(null);
+                    setTabDrop(null);
+                  }}
+                  onClick={() => {
+                    handleSelectWorkspace(ws.id);
+                    setCliDockTab('terminal');
+                    closeViewer();
+                    setPreviewDesignScreen(null);
+                    setPrTarget(null);
+                    setSidebarTab('files');
+                    setIsExplorerCollapsed(false);
+                  }}
                   onMouseDown={(e) => {
                     if (e.button === 1) {
                       e.preventDefault();
@@ -4492,7 +5194,13 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     maxWidth: 155,
                     minWidth: getTabMinWidth(),
                     position: 'relative',
-                    transition: 'background 0.15s ease, color 0.15s ease',
+                    animation: closingTabId === ws.id ? 'dfTabOut 0.18s var(--ease-out) forwards' : 'dfTabIn 0.26s var(--ease-out)',
+                    pointerEvents: closingTabId === ws.id ? 'none' : undefined,
+                    opacity: tabDragId === ws.id ? 0.35 : 1,
+                    transform: tabDragId === ws.id ? 'scale(0.96)' : dragShift ? `translateX(${dragShift}px)` : undefined,
+                    transition: tabDragId
+                      ? 'transform 0.22s var(--ease-out), background 0.15s ease, opacity 0.15s ease'
+                      : 'background 0.15s ease, color 0.15s ease, opacity 0.15s ease',
                   }}
                   onMouseEnter={(e) => {
                     if (!isActive) e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
@@ -4515,7 +5223,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       onBlur={() => {
                         if (renameWorkspaceValue.trim()) {
                           setWorkspaces((prev) =>
-                            prev.map((w) => (w.id === ws.id ? { ...w, name: renameWorkspaceValue.trim() } : w))
+                            prev.map((w) => (w.id === ws.id ? { ...w, name: renameWorkspaceValue.trim(), userNamed: true } : w))
                           );
                         }
                         setRenamingWorkspaceId(null);
@@ -4524,7 +5232,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                         if (e.key === 'Enter') {
                           if (renameWorkspaceValue.trim()) {
                             setWorkspaces((prev) =>
-                              prev.map((w) => (w.id === ws.id ? { ...w, name: renameWorkspaceValue.trim() } : w))
+                              prev.map((w) => (w.id === ws.id ? { ...w, name: renameWorkspaceValue.trim(), userNamed: true } : w))
                             );
                           }
                           setRenamingWorkspaceId(null);
@@ -4637,7 +5345,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   cursor: 'pointer',
                   fontSize: 11.5,
                   fontWeight: 500,
-                  transition: 'all 0.12s ease',
+                  transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease',
                   flexShrink: 0,
                 }}
                 onMouseEnter={(e) => {
@@ -4676,6 +5384,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     Áreas de Trabalho & Layouts
                   </div>
                   <div
+                    className="df-row-interactive"
                     onClick={() => handleCreateWorkspace('1x1')}
                     style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
@@ -4685,6 +5394,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     <span>Área Simples (1 Terminal)</span>
                   </div>
                   <div
+                    className="df-row-interactive"
                     onClick={() => handleCreateWorkspace('1x2')}
                     style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
@@ -4694,6 +5404,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     <span>Split 1x2 (Lado a Lado)</span>
                   </div>
                   <div
+                    className="df-row-interactive"
                     onClick={() => handleCreateWorkspace('2x2')}
                     style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
@@ -4703,6 +5414,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     <span>Grid 2x2 (4 Terminais)</span>
                   </div>
                   <div
+                    className="df-row-interactive"
                     onClick={() => handleCreateWorkspace('2x1')}
                     style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
@@ -4712,6 +5424,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     <span>Split 2x1 (Empilhados)</span>
                   </div>
                   <div
+                    className="df-row-interactive"
                     onClick={() => handleCreateWorkspace('3')}
                     style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
@@ -4727,6 +5440,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     CLIs de Inteligência Artificial
                   </div>
                   <div
+                    className="df-row-interactive"
                     onClick={() => handleCreateWorkspace('1x1', 'claude', 'Claude CLI', 'claude')}
                     style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
@@ -4736,6 +5450,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     <span>Claude CLI</span>
                   </div>
                   <div
+                    className="df-row-interactive"
                     onClick={() => handleCreateWorkspace('1x1', 'antigravity', 'Antigravity CLI', 'agy')}
                     style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
@@ -4745,6 +5460,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     <span>Antigravity CLI (agy)</span>
                   </div>
                   <div
+                    className="df-row-interactive"
                     onClick={() => handleCreateWorkspace('1x1', 'gemini', 'Gemini CLI', 'gemini')}
                     style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
@@ -4754,6 +5470,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     <span>Gemini CLI</span>
                   </div>
                   <div
+                    className="df-row-interactive"
                     onClick={() => handleCreateWorkspace('1x1', 'codex', 'OpenAI Codex', 'codex')}
                     style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
@@ -4769,6 +5486,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     Terminais Shell & REPL
                   </div>
                   <div
+                    className="df-row-interactive"
                     onClick={() => handleCreateWorkspace('1x1', 'bash', 'Bash Shell', 'bash')}
                     style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
@@ -4778,6 +5496,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     <span>Bash Shell</span>
                   </div>
                   <div
+                    className="df-row-interactive"
                     onClick={() => handleCreateWorkspace('1x1', 'node', 'Node.js REPL', 'node')}
                     style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
@@ -4787,6 +5506,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     <span>Node.js REPL</span>
                   </div>
                   <div
+                    className="df-row-interactive"
                     onClick={() => handleCreateWorkspace('1x1', 'python', 'Python REPL', 'python3')}
                     style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: skinTk.textPrimary }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = skinTk.hoverBg)}
@@ -4815,10 +5535,10 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   height: 26,
                   padding: '0 8px',
                   borderRadius: 6,
-                  background: gridMode !== '1x1' ? hexToRgba(accentColor, 0.14) : getFieldTokens(isEffectiveDark).fieldBg,
+                  background: getFieldTokens(isEffectiveDark).fieldBg,
                   border: getFieldTokens(isEffectiveDark).fieldBorder,
                   boxShadow: 'none',
-                  color: gridMode !== '1x1' ? accentColor : skinTk.textSecondary,
+                  color: skinTk.textSecondary,
                   display: 'flex',
                   alignItems: 'center',
                   gap: 5,
@@ -4828,365 +5548,132 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   transition: 'background 0.15s ease, color 0.15s ease, border-color 0.15s ease',
                 }}
                 onMouseEnter={(e) => {
-                  if (gridMode === '1x1') e.currentTarget.style.color = skinTk.textPrimary;
+                  e.currentTarget.style.color = skinTk.textPrimary;
                 }}
                 onMouseLeave={(e) => {
-                  if (gridMode === '1x1') e.currentTarget.style.color = skinTk.textSecondary;
+                  e.currentTarget.style.color = skinTk.textSecondary;
                 }}
               >
                 {gridMode === '2x2' ? (
-                  <Grid2x2 size={13} color={accentColor} />
+                  <Grid2x2 size={13} />
                 ) : gridMode === '3' ? (
-                  <LayoutGrid size={13} color={accentColor} />
+                  <LayoutGrid size={13} />
                 ) : gridMode === '1x3' ? (
-                  <Columns3 size={13} color={accentColor} />
+                  <Columns3 size={13} />
                 ) : gridMode === '2x1' ? (
-                  <Rows2 size={13} color={accentColor} />
+                  <Rows2 size={13} />
                 ) : gridMode === '1x2' ? (
-                  <Columns2 size={13} color={accentColor} />
+                  <Columns2 size={13} />
                 ) : (
                   <Square size={13} />
                 )}
-                <ChevronDown size={11} />
+                <ChevronDown
+                  size={11}
+                  className="df-chevron"
+                  style={{ transform: layoutMenuOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}
+                />
               </button>
 
               {/* Layout Dropdown Menu */}
               {layoutMenuOpen && (
                 <div
-                  className="skin-menu df-dropdown-menu"
+                  className="skin-menu df-dropdown-menu df-popover-right"
                   onClick={(e) => e.stopPropagation()}
                   style={{
                     position: 'absolute',
-                    top: 'calc(100% + 5px)',
+                    top: 'calc(100% + 6px)',
                     right: 0,
-                    width: 230,
-                    background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
-                    border: getFieldTokens(isEffectiveDark).dropdownBorder,
-                    borderRadius: 8,
-                    padding: '4px 0',
+                    width: 252,
+                    background: isEffectiveDark ? '#2a2a2a' : '#ffffff',
+                    border: 'none',
+                    borderRadius: 10,
+                    padding: 8,
                     boxShadow: 'none',
                     zIndex: 9999,
                     display: 'flex',
                     flexDirection: 'column',
+                    gap: 2,
                   }}
                 >
-                  <div style={{ padding: '6px 12px 4px', fontSize: 10, fontWeight: 400, color: skinTk.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                    Layout de Terminais
+                  <div style={{ padding: '4px 8px 6px', fontSize: 10.5, fontWeight: 400, color: isEffectiveDark ? '#a3a3a3' : '#737373', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Layout de terminais
                   </div>
-
-                  {/* Visual Grid Mini-Selector */}
-                  <div style={{ padding: '6px 12px 8px', borderBottom: `1px solid ${hexToRgba(skinTk.border, 0.4)}` }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 4, width: 84, height: 56, margin: '0 auto' }}>
+                  {(
+                    [
+                      { mode: '1x1', label: '1 terminal', hint: 'Tela única' },
+                      { mode: '1x2', label: '2 terminais', hint: 'Lado a lado' },
+                      { mode: '2x1', label: '2 terminais', hint: 'Empilhados' },
+                      { mode: '1x3', label: '3 terminais', hint: 'Lado a lado' },
+                      { mode: '3', label: '3 terminais', hint: '2 em cima, 1 embaixo' },
+                      { mode: '2x2', label: '4 terminais', hint: 'Grid 2x2' },
+                    ] as const
+                  ).map((o) => {
+                    const on = gridMode === o.mode;
+                    return (
                       <div
-                        onClick={() => applyGridMode('1x1')}
-                        title="1x1: 1 Terminal"
+                        key={o.mode}
+                        className="df-pressable"
+                        onClick={() => applyGridMode(o.mode)}
                         style={{
-                          borderRadius: 4,
-                          background: gridMode === '1x1' ? hexToRgba(accentColor, 0.22) : (isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'),
-                          border: 'none',
-                          cursor: 'pointer',
+                          height: 34,
+                          padding: '0 8px',
+                          borderRadius: 6,
                           display: 'flex',
                           alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: 9,
-                          fontWeight: 400,
-                          color: gridMode === '1x1' ? accentColor : skinTk.textMuted,
-                          transition: 'background 0.12s ease',
-                        }}
-                      >
-                        Q1
-                      </div>
-                      <div
-                        onClick={() => applyGridMode('1x2')}
-                        title="1x2: 2 Terminais Lado a Lado"
-                        style={{
-                          borderRadius: 4,
-                          background: gridMode === '1x2' || gridMode === '1x3' || gridMode === '3' || gridMode === '2x2' ? hexToRgba(accentColor, 0.22) : (isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'),
-                          border: 'none',
+                          gap: 10,
                           cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: 9,
+                          fontSize: 12,
                           fontWeight: 400,
-                          color: gridMode === '1x2' || gridMode === '1x3' || gridMode === '3' || gridMode === '2x2' ? accentColor : skinTk.textMuted,
-                          transition: 'background 0.12s ease',
+                          color: isEffectiveDark ? '#f2f2f2' : '#171717',
+                          background: on ? hexToRgba(accentColor, 0.18) : 'transparent',
+                          transition: 'background-color 120ms ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!on) e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!on) e.currentTarget.style.background = 'transparent';
                         }}
                       >
-                        Q2
+                        <span style={{ display: 'flex', color: on ? accentColor : (isEffectiveDark ? '#a3a3a3' : '#737373') }}>
+                          <LayoutGlyph mode={o.mode} />
+                        </span>
+                        <span style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap' }}>{o.label}</span>
+                        <span style={{ fontSize: 11, color: isEffectiveDark ? '#a3a3a3' : '#737373', whiteSpace: 'nowrap' }}>{o.hint}</span>
                       </div>
-                      <div
-                        onClick={() => applyGridMode('2x1')}
-                        title="2x1: 2 Terminais Empilhados"
-                        style={{
-                          borderRadius: 4,
-                          background: gridMode === '2x1' || gridMode === '3' || gridMode === '2x2' ? hexToRgba(accentColor, 0.22) : (isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'),
-                          border: 'none',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: 9,
-                          fontWeight: 400,
-                          color: gridMode === '2x1' || gridMode === '3' || gridMode === '2x2' ? accentColor : skinTk.textMuted,
-                          transition: 'background 0.12s ease',
-                        }}
-                      >
-                        Q3
-                      </div>
-                      <div
-                        onClick={() => applyGridMode('2x2')}
-                        title="2x2: Grid 4 Terminais"
-                        style={{
-                          borderRadius: 4,
-                          background: gridMode === '2x2' ? hexToRgba(accentColor, 0.26) : (isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'),
-                          border: 'none',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: 9,
-                          fontWeight: 400,
-                          color: gridMode === '2x2' ? accentColor : skinTk.textMuted,
-                          transition: 'background 0.12s ease',
-                        }}
-                      >
-                        Q4
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 1x1: Tela Única */}
-                  <div
-                    onClick={() => applyGridMode('1x1')}
-                    style={{
-                      padding: '7px 12px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      fontSize: 12,
-                      fontWeight: 400,
-                      cursor: 'pointer',
-                      color: gridMode === '1x1' ? accentColor : skinTk.textPrimary,
-                      background: gridMode === '1x1' ? hexToRgba(accentColor, 0.1) : 'transparent',
-                      transition: 'background 0.12s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (gridMode !== '1x1') e.currentTarget.style.background = skinTk.hoverBg;
-                    }}
-                    onMouseLeave={(e) => {
-                      if (gridMode !== '1x1') e.currentTarget.style.background = 'transparent';
-                    }}
-                  >
-                    <Square size={14} />
-                    <span>1 Terminal (Tela Única)</span>
-                  </div>
-
-                  {/* 1x2: Lado a Lado */}
-                  <div
-                    onClick={() => applyGridMode('1x2')}
-                    style={{
-                      padding: '7px 12px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      fontSize: 12,
-                      fontWeight: 400,
-                      cursor: 'pointer',
-                      color: gridMode === '1x2' ? accentColor : skinTk.textPrimary,
-                      background: gridMode === '1x2' ? hexToRgba(accentColor, 0.1) : 'transparent',
-                      transition: 'background 0.12s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (gridMode !== '1x2') e.currentTarget.style.background = skinTk.hoverBg;
-                    }}
-                    onMouseLeave={(e) => {
-                      if (gridMode !== '1x2') e.currentTarget.style.background = 'transparent';
-                    }}
-                  >
-                    <Columns2 size={14} />
-                    <span>2 Terminais (Lado a Lado)</span>
-                  </div>
-
-                  {/* 2x1: Empilhados */}
-                  <div
-                    onClick={() => applyGridMode('2x1')}
-                    style={{
-                      padding: '7px 12px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      fontSize: 12,
-                      fontWeight: 400,
-                      cursor: 'pointer',
-                      color: gridMode === '2x1' ? accentColor : skinTk.textPrimary,
-                      background: gridMode === '2x1' ? hexToRgba(accentColor, 0.1) : 'transparent',
-                      transition: 'background 0.12s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (gridMode !== '2x1') e.currentTarget.style.background = skinTk.hoverBg;
-                    }}
-                    onMouseLeave={(e) => {
-                      if (gridMode !== '2x1') e.currentTarget.style.background = 'transparent';
-                    }}
-                  >
-                    <Rows2 size={14} />
-                    <span>2 Terminais (Empilhados)</span>
-                  </div>
-
-                  {/* 1x3: 3 terminais lado a lado */}
-                  <div
-                    onClick={() => applyGridMode('1x3')}
-                    style={{
-                      padding: '7px 12px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      fontSize: 12,
-                      fontWeight: 400,
-                      cursor: 'pointer',
-                      color: gridMode === '1x3' ? accentColor : skinTk.textPrimary,
-                      background: gridMode === '1x3' ? hexToRgba(accentColor, 0.1) : 'transparent',
-                      transition: 'background 0.12s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (gridMode !== '1x3') e.currentTarget.style.background = skinTk.hoverBg;
-                    }}
-                    onMouseLeave={(e) => {
-                      if (gridMode !== '1x3') e.currentTarget.style.background = 'transparent';
-                    }}
-                  >
-                    <Columns3 size={14} />
-                    <span>3 Terminais (Lado a Lado)</span>
-                  </div>
-
-                  {/* 3: Triplo */}
-                  <div
-                    onClick={() => applyGridMode('3')}
-                    style={{
-                      padding: '7px 12px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      fontSize: 12,
-                      fontWeight: 400,
-                      cursor: 'pointer',
-                      color: gridMode === '3' ? accentColor : skinTk.textPrimary,
-                      background: gridMode === '3' ? hexToRgba(accentColor, 0.1) : 'transparent',
-                      transition: 'background 0.12s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (gridMode !== '3') e.currentTarget.style.background = skinTk.hoverBg;
-                    }}
-                    onMouseLeave={(e) => {
-                      if (gridMode !== '3') e.currentTarget.style.background = 'transparent';
-                    }}
-                  >
-                    <LayoutGrid size={14} />
-                    <span>3 Terminais (2 Topo, 1 Base)</span>
-                  </div>
-
-                  {/* 2x2: Grid 4 Terminais */}
-                  <div
-                    onClick={() => applyGridMode('2x2')}
-                    style={{
-                      padding: '7px 12px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      fontSize: 12,
-                      fontWeight: 400,
-                      cursor: 'pointer',
-                      color: gridMode === '2x2' ? accentColor : skinTk.textPrimary,
-                      background: gridMode === '2x2' ? hexToRgba(accentColor, 0.1) : 'transparent',
-                      transition: 'background 0.12s ease',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (gridMode !== '2x2') e.currentTarget.style.background = skinTk.hoverBg;
-                    }}
-                    onMouseLeave={(e) => {
-                      if (gridMode !== '2x2') e.currentTarget.style.background = 'transparent';
-                    }}
-                  >
-                    <Grid2x2 size={14} color={gridMode === '2x2' ? accentColor : undefined} />
-                    <span>Grid 2x2 (4 Terminais)</span>
-                  </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
-
-            {/* Quick Design Bridge Button in CLI Top Bar */}
-            <button
-              id="df-cli-toolbar-design-btn"
-              type="button"
-              onClick={() => {
-                setIsExplorerCollapsed(false);
-                setSidebarTab('design');
-                loadDesignBridgeManifest(workspacePath).then((m) => setDesignManifest(m));
-              }}
-              title="Abrir catálogo de telas da aba Design para enviar ou replicar no terminal"
-              style={{
-                height: 26,
-                padding: '0 8px',
-                borderRadius: 6,
-                background:
-                  sidebarTab === 'design' && !isExplorerCollapsed
-                    ? hexToRgba(accentColor, 0.16)
-                    : isEffectiveDark
-                    ? 'rgba(255, 255, 255, 0.06)'
-                    : 'rgba(0, 0, 0, 0.05)',
-                border: 'none',
-                boxShadow: 'none',
-                color: sidebarTab === 'design' && !isExplorerCollapsed ? accentColor : skinTk.textPrimary,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 5,
-                cursor: 'pointer',
-                fontSize: 11.5,
-                fontWeight: 400,
-                transition: 'all 0.15s ease',
-              }}
-            >
-              <LayoutGrid size={13} color={accentColor} />
-              <span>Design</span>
-              {(designManifest?.screens?.length ?? 0) > 0 && (
-                <span
-                  style={{
-                    fontSize: 10.5,
-                    color: accentColor,
-                    fontWeight: 400,
-                  }}
-                >
-                  {designManifest!.screens.length}
-                </span>
-              )}
-            </button>
 
             {/* Quick Toggle Split */}
             <button
               type="button"
               onClick={handleQuickToggleSplit}
-              title={gridMode === '2x2' ? 'Voltar para 1 terminal' : gridMode === '1x2' ? 'Expandir para Grid 2x2' : 'Dividir terminal lado a lado'}
+              title={gridMode === '1x1' ? 'Dividir terminal lado a lado' : gridMode === '1x2' ? 'Expandir para Grid 2x2' : 'Voltar para 1 terminal'}
               style={{
-                background: gridMode !== '1x1' ? hexToRgba(accentColor, 0.14) : 'transparent',
+                background: getFieldTokens(isEffectiveDark).fieldBg,
                 border: 'none',
                 boxShadow: 'none',
-                color: gridMode !== '1x1' ? accentColor : skinTk.textSecondary,
-                padding: '4px 6px',
-                borderRadius: 4,
+                color: skinTk.textSecondary,
+                height: 26,
+                padding: '0 8px',
+                borderRadius: 6,
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
-                transition: 'background 0.15s ease, color 0.15s ease',
+                transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease',
               }}
               onMouseEnter={(e) => {
-                if (gridMode === '1x1') e.currentTarget.style.color = skinTk.textPrimary;
+                e.currentTarget.style.color = skinTk.textPrimary;
               }}
               onMouseLeave={(e) => {
-                if (gridMode === '1x1') e.currentTarget.style.color = skinTk.textSecondary;
+                e.currentTarget.style.color = skinTk.textSecondary;
               }}
             >
-              <SplitSquareVertical size={14} />
+              {/* o ícone mostra o que o clique faz: dividir em 2, expandir para 4 ou voltar a 1 */}
+              <SplitHintIcon mode={gridMode === '1x1' ? 'right' : gridMode === '1x2' ? 'bottom' : 'merge'} />
             </button>
 
             {/* Clear Terminal */}
@@ -5227,7 +5714,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                transition: 'all 0.15s ease',
+                transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease',
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.background = 'rgba(239, 68, 68, 0.14)';
@@ -5296,8 +5783,32 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
         )}
 
         {/* Terminal Body with Grid 2x2 / Split Support */}
-        {previewDesignScreen && (
+        {showPrDetail && reviewAiProvider && (
+          <div style={{ flex: '1 1 0', minHeight: 0, minWidth: 0, display: 'flex' }}>
+            <PullRequestDetail target={prTarget} isEffectiveDark={isEffectiveDark} accentColor={accentColor} aiProvider={reviewAiProvider} onToast={(m) => onToast?.(m)} onResolveWithAi={openResolveWorkspace} />
+          </div>
+        )}
+        {showActions && (
+          <div style={{ flex: '1 1 0', minHeight: 0, minWidth: 0, display: 'flex' }}>
+            <ActionsView
+              isActive={showActions}
+              repoFullName={repoFullName}
+              workflowId={actionsWf}
+              runId={actionsRun}
+              onOpenRun={setActionsRun}
+              isEffectiveDark={isEffectiveDark}
+              accentColor={accentColor}
+              accentContrastText={getContrastTextColor(accentColor)}
+              aiProviderId={reviewAiProvider?.id}
+              onToast={(m) => onToast?.(m)}
+              onResolveWithAi={openResolveWorkspace}
+            />
+          </div>
+        )}
+        {!showPrDetail && !showActions && previewDesignScreen && (
           <div
+            key={previewDesignScreen.id}
+            className="df-view-enter"
             style={{
               flex: '1 1 0',
               minHeight: 0,
@@ -5311,7 +5822,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               overflow: 'hidden',
             }}
           >
-            {/* Top Bar: Voltar aos terminais + Screen Info + Mencionar + Implementar */}
+            {/* Top Bar: Screen Info + Mencionar + Implementar */}
             <div
               style={{
                 display: 'flex',
@@ -5324,28 +5835,6 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                <button
-                  type="button"
-                  onClick={() => setPreviewDesignScreen(null)}
-                  title="Voltar para os terminais"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    height: 28,
-                    padding: '0 10px',
-                    borderRadius: 6,
-                    border: 'none',
-                    background: isEffectiveDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
-                    color: themeTokens.textPrimary,
-                    fontSize: 11.5,
-                    fontWeight: 400,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <SquareTerminal size={13} />
-                  <span>Voltar aos terminais</span>
-                </button>
                 <span style={{ fontSize: 13, fontWeight: 400, color: themeTokens.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {previewDesignScreen.name}
                 </span>
@@ -5404,7 +5893,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     borderRadius: 6,
                     border: 'none',
                     background: accentColor,
-                    color: '#ffffff',
+                    color: getContrastTextColor(accentColor),
                     fontSize: 11.5,
                     fontWeight: 400,
                     cursor: 'pointer',
@@ -5451,45 +5940,19 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             </div>
           </div>
         )}
-        {!previewDesignScreen && viewer && (
-          <div style={{ flex: '1 1 0', minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', background: isEffectiveDark ? '#101010' : '#ffffff' }}>
+        {!showPrDetail && !showActions && !previewDesignScreen && viewer && (
+          <div className="df-opacity-enter" style={{ flex: '1 1 0', minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', background: isEffectiveDark ? '#101010' : '#ffffff' }}>
             <div
               style={{
                 height: 40,
                 padding: '0 12px',
                 display: 'flex',
                 alignItems: 'center',
-                gap: 12,
+                gap: 10,
                 borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
                 flexShrink: 0,
               }}
             >
-              <button
-                type="button"
-                onClick={closeViewer}
-                title="Voltar para os terminais"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  height: 28,
-                  padding: '0 10px',
-                  borderRadius: 6,
-                  border: 'none',
-                  boxShadow: 'none',
-                  background: isEffectiveDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
-                  color: themeTokens.textPrimary,
-                  fontSize: 11.5,
-                  fontWeight: 400,
-                  cursor: 'pointer',
-                  flexShrink: 0,
-                  transition: 'background 0.15s ease',
-                }}
-              >
-                <SquareTerminal size={13} />
-                <span>Voltar aos terminais</span>
-              </button>
-
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
                 <FileIcon fileName={viewer.name} size={15} />
                 <span style={{ fontSize: 12.5, fontWeight: 400, color: themeTokens.textPrimary, flexShrink: 0 }}>{viewer.name}</span>
@@ -5498,6 +5961,31 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     ? viewer.path.slice(workspacePath.length).replace(/^\/+/, '')
                     : viewer.path}
                 </span>
+                {viewer.isDiffMode && viewer.gitStatus && (
+                  <span
+                    style={{
+                      fontSize: 10.5,
+                      fontWeight: 400,
+                      padding: '2px 7px',
+                      borderRadius: 4,
+                      flexShrink: 0,
+                      background:
+                        viewer.gitStatus === 'added'
+                          ? 'rgba(46, 160, 67, 0.14)'
+                          : viewer.gitStatus === 'deleted'
+                            ? 'rgba(248, 81, 73, 0.14)'
+                            : 'rgba(226, 192, 141, 0.14)',
+                      color:
+                        viewer.gitStatus === 'added'
+                          ? '#3fb950'
+                          : viewer.gitStatus === 'deleted'
+                            ? '#f85149'
+                            : '#e2c08d',
+                    }}
+                  >
+                    {viewer.gitStatus === 'added' ? 'Adicionado' : viewer.gitStatus === 'deleted' ? 'Removido' : 'Alterações'}
+                  </span>
+                )}
                 {viewer.content !== undefined && !viewer.dataUrl && !viewer.error && (
                   <span
                     style={{
@@ -5525,8 +6013,118 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 )}
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto', flexShrink: 0 }}>
-                {isMarkdownFile(viewer.name) && viewer.content !== undefined && (
+              {viewer.reviewFiles && viewer.reviewFiles.length > 1 && viewer.reviewIndex !== undefined && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    className="df-pressable"
+                    disabled={viewer.reviewIndex <= 0}
+                    onClick={() => openGitDiffInCli(viewer.reviewFiles!, viewer.reviewIndex! - 1)}
+                    title="Arquivo anterior alterado"
+                    style={{
+                      height: 26,
+                      width: 26,
+                      borderRadius: 6,
+                      border: 'none',
+                      background: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
+                      color: viewer.reviewIndex > 0 ? themeTokens.textPrimary : themeTokens.textMuted,
+                      opacity: viewer.reviewIndex > 0 ? 1 : 0.4,
+                      cursor: viewer.reviewIndex > 0 ? 'pointer' : 'default',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <ArrowLeft size={13} />
+                  </button>
+                  <span style={{ fontSize: 11, fontWeight: 400, color: themeTokens.textSecondary, padding: '0 4px', fontVariantNumeric: 'tabular-nums' }}>
+                    {viewer.reviewIndex + 1} / {viewer.reviewFiles.length}
+                  </span>
+                  <button
+                    type="button"
+                    className="df-pressable"
+                    disabled={viewer.reviewIndex >= viewer.reviewFiles.length - 1}
+                    onClick={() => openGitDiffInCli(viewer.reviewFiles!, viewer.reviewIndex! + 1)}
+                    title="Próximo arquivo alterado"
+                    style={{
+                      height: 26,
+                      width: 26,
+                      borderRadius: 6,
+                      border: 'none',
+                      background: isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
+                      color: viewer.reviewIndex < viewer.reviewFiles.length - 1 ? themeTokens.textPrimary : themeTokens.textMuted,
+                      opacity: viewer.reviewIndex < viewer.reviewFiles.length - 1 ? 1 : 0.4,
+                      cursor: viewer.reviewIndex < viewer.reviewFiles.length - 1 ? 'pointer' : 'default',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <ArrowRight size={13} />
+                  </button>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto', flexShrink: 0 }}>
+                {viewer.originalHeadContent !== undefined && !viewer.dataUrl && !viewer.error && (
+                  <>
+                    <button
+                      type="button"
+                      className="df-pressable"
+                      onClick={() => setViewer((prev) => (prev ? { ...prev, isDiffMode: !prev.isDiffMode } : null))}
+                      title={viewer.isDiffMode ? 'Alternar para o editor de arquivo' : 'Comparar alterações com HEAD (Diff)'}
+                      style={{
+                        height: 28,
+                        padding: '0 10px',
+                        borderRadius: 6,
+                        border: 'none',
+                        boxShadow: 'none',
+                        background: viewer.isDiffMode ? hexToRgba(accentColor, 0.16) : isEffectiveDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                        color: viewer.isDiffMode ? accentColor : themeTokens.textPrimary,
+                        fontSize: 11.5,
+                        fontWeight: 400,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        transition: 'background 0.15s ease',
+                      }}
+                    >
+                      <Eye size={13} />
+                      <span>{viewer.isDiffMode ? 'Diff' : 'Editor'}</span>
+                    </button>
+
+                    {viewer.isDiffMode && (
+                      <button
+                        type="button"
+                        className="df-pressable"
+                        onClick={() => setViewer((prev) => (prev ? { ...prev, isSideBySide: !prev.isSideBySide } : null))}
+                        title={viewer.isSideBySide ? 'Mudar para visualização inline' : 'Mudar para visualização lado a lado'}
+                        style={{
+                          height: 28,
+                          padding: '0 10px',
+                          borderRadius: 6,
+                          border: 'none',
+                          boxShadow: 'none',
+                          background: isEffectiveDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                          color: themeTokens.textPrimary,
+                          fontSize: 11.5,
+                          fontWeight: 400,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          transition: 'background 0.15s ease',
+                        }}
+                      >
+                        <SplitSquareVertical size={13} />
+                        <span>{viewer.isSideBySide ? 'Lado a lado' : 'Inline'}</span>
+                      </button>
+                    )}
+                  </>
+                )}
+
+                {!viewer.isDiffMode && isMarkdownFile(viewer.name) && viewer.content !== undefined && (
                   <button
                     type="button"
                     onClick={() => setMdPreview((v) => !v)}
@@ -5550,6 +6148,39 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   >
                     <Eye size={13} />
                     <span>Visualizar</span>
+                  </button>
+                )}
+
+                {viewer.isDiffMode && viewer.content !== undefined && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      openResolveWorkspace(
+                        `Revise as alterações do git neste arquivo: ${viewer.path}\n\nRode \`git diff HEAD -- "${viewer.path}"\` (e leia o arquivo se precisar de contexto). Aponte bugs, regressões, problemas de segurança, tratamento de erro faltando e trechos que podem ser simplificados, citando linha e trecho. Não edite nenhum arquivo: só entregue a revisão, ordenada por gravidade.`,
+                        `Revisão: ${viewer.name}`
+                      );
+                      logSystemActivity('terminal', 'revisar_diff_com_ia', gitRepoName || 'default', { arquivo: viewer.name });
+                    }}
+                    title="A IA selecionada revisa as alterações deste arquivo"
+                    style={{
+                      height: 28,
+                      padding: '0 10px',
+                      borderRadius: 6,
+                      border: 'none',
+                      boxShadow: 'none',
+                      background: isEffectiveDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.05)',
+                      color: themeTokens.textPrimary,
+                      fontSize: 11.5,
+                      fontWeight: 400,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      transition: 'background 0.15s ease',
+                    }}
+                  >
+                    {renderAiIcon(reviewAiProvider?.id === 'antigravity' ? 'agy' : reviewAiProvider?.id || 'claude', 13)}
+                    <span>Revisar com IA</span>
                   </button>
                 )}
 
@@ -5617,7 +6248,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     </button>
                   )}
 
-                {viewer.content !== undefined && !viewer.dataUrl && !viewer.error && (
+                {viewer.content !== undefined && !viewer.dataUrl && !viewer.error && viewer.gitStatus !== 'deleted' && (
                   <button
                     type="button"
                     onClick={() => handleSaveViewerFile()}
@@ -5641,7 +6272,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: 6,
-                      transition: 'all 0.15s ease',
+                      transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease',
                     }}
                   >
                     <Save size={13} />
@@ -5654,9 +6285,44 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               {viewer.error ? (
                 <span>{viewer.error}</span>
               ) : viewer.dataUrl ? (
-                <img src={viewer.dataUrl} alt={viewer.name} style={{ maxWidth: '90%', maxHeight: '90%', objectFit: 'contain' }} />
+                <img className="df-view-enter" src={viewer.dataUrl} alt={viewer.name} style={{ maxWidth: '90%', maxHeight: '90%', objectFit: 'contain' }} />
               ) : viewer.content === undefined ? (
                 <span>Carregando…</span>
+              ) : viewer.isDiffMode ? (
+                <div style={{ width: '100%', height: '100%' }}>
+                  <DiffEditor
+                    height="100%"
+                    original={viewer.originalHeadContent ?? ''}
+                    modified={viewer.content ?? ''}
+                    language={getFileLanguage(viewer.name)}
+                    theme={isEffectiveDark ? 'cli-viewer-dark' : 'light'}
+                    beforeMount={(monaco) => defineAuraDarkTheme(monaco, 'cli-viewer-dark')}
+                    onMount={(diffEditor, monaco) => {
+                      const modifiedEditor = diffEditor.getModifiedEditor();
+                      cliEditorInstanceRef.current = modifiedEditor;
+                      const disp = modifiedEditor.onDidChangeModelContent(() => {
+                        const nextVal = modifiedEditor.getValue() ?? '';
+                        setViewer((prev) => (prev ? { ...prev, content: nextVal } : null));
+                      });
+                      modifiedEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+                        handleSaveViewerFile();
+                      });
+                      return () => disp.dispose();
+                    }}
+                    options={{
+                      readOnly: viewer.gitStatus === 'deleted',
+                      renderSideBySide: viewer.isSideBySide ?? true,
+                      fontSize: 13,
+                      fontFamily: 'JetBrains Mono, Menlo, monospace',
+                      minimap: { enabled: false },
+                      automaticLayout: true,
+                      scrollBeyondLastLine: false,
+                      smoothScrolling: true,
+                      renderOverviewRuler: false,
+                      padding: { top: 8, bottom: 8 },
+                    }}
+                  />
+                </div>
               ) : (
                 <div style={{ width: '100%', height: '100%', display: 'flex' }}>
                   <div style={{ flex: '1 1 0', minWidth: 0, height: '100%' }}>
@@ -5671,28 +6337,8 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     }}
                     theme={isEffectiveDark ? 'cli-viewer-dark' : 'light'}
                     beforeMount={(monaco) => {
-                      monaco.editor.defineTheme('cli-viewer-dark', {
-                        base: 'vs-dark',
-                        inherit: true,
-                        rules: [
-                          { token: 'comment', foreground: '6272a4', fontStyle: 'italic' },
-                          { token: 'keyword', foreground: 'ff7b72' },
-                          { token: 'string', foreground: 'a5d6ff' },
-                          { token: 'number', foreground: '79c0ff' },
-                          { token: 'type', foreground: 'ffa657' },
-                          { token: 'function', foreground: 'd2a8ff' },
-                          { token: 'variable', foreground: 'c9d1d9' },
-                        ],
-                        colors: {
-                          'editor.background': '#101010',
-                          'editor.foreground': '#d8dade',
-                          'editor.lineHighlightBackground': '#181818',
-                          'editorLineNumber.foreground': '#4e5362',
-                          'editorLineNumber.activeForeground': '#ffffff',
-                          'editor.selectionBackground': '#264f78',
-                          'editorGutter.background': '#101010',
-                        },
-                      });
+                      defineAuraDarkTheme(monaco, 'cli-viewer-dark');
+                      setupAutocomplete(monaco);
                     }}
                     onMount={(editor, monaco) => {
                       cliEditorInstanceRef.current = editor;
@@ -5709,6 +6355,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                       });
                     }}
                     options={{
+                      ...AUTOCOMPLETE_OPTIONS,
                       readOnly: false,
                       domReadOnly: false,
                       fontSize: 13,
@@ -5724,6 +6371,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   </div>
                   {mdPreview && isMarkdownFile(viewer.name) && (
                     <div
+                      className="df-panel-enter-right"
                       style={{
                         flex: '1 1 0',
                         minWidth: 0,
@@ -5751,7 +6399,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
           </div>
         )}
         {!previewDesignScreen && !viewer && cliDockTab !== 'terminal' && renderDockContent && (
-          <div style={{ flex: '1 1 0', minHeight: 0, minWidth: 0, display: 'flex', overflow: 'auto', padding: 8, background: isEffectiveDark ? '#0c0c0e' : '#ffffff' }}>
+          <div key={cliDockTab} className="df-opacity-enter" style={{ flex: '1 1 0', minHeight: 0, minWidth: 0, display: 'flex', overflow: 'auto', padding: 8, background: isEffectiveDark ? '#0c0c0e' : '#ffffff' }}>
             {renderDockContent(cliDockTab)}
           </div>
         )}
@@ -5762,7 +6410,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
             width: '100%',
             height: '100%',
             minHeight: 0,
-            display: previewDesignScreen || viewer || (cliDockTab !== 'terminal' && renderDockContent) ? 'none' : 'flex',
+            display: showPrDetail || showActions || previewDesignScreen || viewer || (cliDockTab !== 'terminal' && renderDockContent) ? 'none' : 'flex',
             overflow: 'hidden',
             position: 'relative',
             background: skinActive ? 'transparent' : isEffectiveDark ? '#0c0c0e' : '#ffffff',
@@ -5791,7 +6439,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   onClick={() => setMaximizedSlotIndex(null)}
                   style={{
                     background: accentColor,
-                    color: '#ffffff',
+                    color: getContrastTextColor(accentColor),
                     border: 'none',
                     borderRadius: 4,
                     padding: '2px 8px',
@@ -5997,7 +6645,6 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               zIndex: 99999,
               display: 'flex',
               flexDirection: 'column',
-              animation: 'fadeIn 0.12s ease',
             }}
           >
             {entries.map((entry, idx) =>
@@ -6006,6 +6653,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               ) : (
                 <div
                   key={idx}
+                  className={entry.disabled ? undefined : 'df-row-interactive'}
                   onClick={() => {
                     if (entry.disabled) return;
                     close();
@@ -6020,7 +6668,6 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     cursor: entry.disabled ? 'default' : 'pointer',
                     color: entry.disabled ? themeTokens.textMuted : entry.danger ? '#ef4444' : themeTokens.textPrimary,
                     opacity: entry.disabled ? 0.5 : 1,
-                    transition: 'background 0.1s ease',
                   }}
                   onMouseEnter={(e) => { if (!entry.disabled) e.currentTarget.style.background = themeTokens.hoverBg; }}
                   onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
@@ -6077,9 +6724,15 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
         iconType="warning"
         themeTokens={themeTokens}
         accentColor={accentColor}
-        onConfirm={handleConfirmCloseSingleWorkspace}
+        onConfirm={() => handleConfirmCloseSingleWorkspace()}
+        onDontAskAgain={() => {
+          try {
+            localStorage.setItem('aura_cli_skip_close_ws', '1');
+          } catch {}
+        }}
         onClose={() => setWorkspaceToClose(null)}
       />
+      {[...slotTerms].map(([id, node]) => createPortal(node, getTermHost(id), id))}
       {skinActive && (
         <div aria-hidden style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none' }}>
           <TerminalSkinOverlay skin={skinId} region="screen" />

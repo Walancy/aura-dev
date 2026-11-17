@@ -178,6 +178,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
     <>
       {/* Overlay isolado com zIndex alto e backdrop blur */}
       <div
+        className="df-modal-backdrop"
         onClick={onClose}
         style={{
           position: 'fixed',
@@ -193,6 +194,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
 
       {/* Drawer com zIndex 100000 e fundo 100% opaco */}
       <div
+        className="df-projects-surface df-panel-enter-right"
         style={{
           position: 'fixed',
           top: 0,
@@ -273,6 +275,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
             </SmallButton>
             <button
               type="button"
+              className="df-icon-btn"
               onClick={onClose}
               style={{
                 width: 28,
@@ -285,7 +288,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                 border: 'none',
                 color: theme.textSecondary,
                 cursor: 'pointer',
-                transition: 'all 0.15s ease',
+                transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.background = ctx.isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)';
@@ -313,6 +316,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
               return (
                 <div
                   key={s.l}
+                  className="df-card-subtle"
                   style={{
                     background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg,
                     borderRadius: 8,
@@ -322,7 +326,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                     gap: 3,
                     border: 'none',
                     boxShadow: 'none',
-                    transition: 'all 0.15s ease',
+                    transition: 'background-color 150ms var(--ease-out), transform 160ms var(--ease-out)',
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: theme.textMuted }}>
@@ -349,6 +353,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                 <button
                   key={id}
                   type="button"
+                  className="df-pressable"
                   onClick={() => setActionTab(id)}
                   style={{
                     flex: 1,
@@ -366,7 +371,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                     background: actionTab === id ? (ctx.isEffectiveDark ? '#2a2a2a' : '#ffffff') : 'transparent',
                     color: actionTab === id ? theme.textPrimary : theme.textSecondary,
                     boxShadow: 'none',
-                    transition: 'all 0.15s ease',
+                    transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                   }}
                 >
                   <Icon size={12} color={actionTab === id ? accentColor : theme.textSecondary} />
@@ -548,6 +553,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                     <button
                       key={statusKey}
                       type="button"
+                      className="df-pressable"
                       onClick={() => {
                         logSystemActivity('time', 'alterar_disponibilidade', `${ws.owner}/${ws.repo}`, { member: m.login, status: statusKey });
                         ws.setPerson(m.login, { availability: { ...av, status: statusKey as AvailabilityStatus } });
@@ -567,7 +573,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                         background: isActive ? `${statusColor}22` : ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg,
                         color: isActive ? statusColor : theme.textSecondary,
                         fontWeight: 400,
-                        transition: 'all 0.15s ease',
+                        transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                       }}
                     >
                       <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusColor }} />
@@ -740,6 +746,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                     <button
                       key={fKey}
                       type="button"
+                      className="df-pressable"
                       onClick={() => setIssueFilter(fKey)}
                       style={{
                         border: 'none',
@@ -751,7 +758,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                         background: issueFilter === fKey ? (ctx.isEffectiveDark ? '#2a2a2a' : '#e5e5e5') : 'transparent',
                         color: issueFilter === fKey ? theme.textPrimary : theme.textSecondary,
                         fontWeight: 400,
-                        transition: 'all 0.15s ease',
+                        transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                       }}
                     >
                       {fLabel}
@@ -770,6 +777,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                 {filteredAssigned.slice(0, 15).map((i) => (
                   <div
                     key={i.id}
+                    className="df-row-interactive"
                     {...rowHover(ctx)}
                     onClick={() => openUrl(i.htmlUrl)}
                     style={{
@@ -781,7 +789,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                       borderRadius: 6,
                       cursor: 'pointer',
                       background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg,
-                      transition: 'all 0.15s ease',
+                      transition: 'background-color 150ms var(--ease-out), transform 150ms var(--ease-out)',
                     }}
                   >
                     <span style={{ width: 6, height: 6, borderRadius: '50%', background: i.priorityColor, flexShrink: 0 }} />
@@ -807,6 +815,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                 <div style={{ display: 'flex', gap: 3 }}>
                   <button
                     type="button"
+                    className="df-pressable"
                     onClick={() => setPrTab('author')}
                     style={{
                       border: 'none',
@@ -818,13 +827,14 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                       background: prTab === 'author' ? (ctx.isEffectiveDark ? '#2a2a2a' : '#e5e5e5') : 'transparent',
                       color: prTab === 'author' ? theme.textPrimary : theme.textSecondary,
                       fontWeight: 400,
-                      transition: 'all 0.15s ease',
+                      transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                     }}
                   >
                     Autor ({m.openPulls.length})
                   </button>
                   <button
                     type="button"
+                    className="df-pressable"
                     onClick={() => setPrTab('review')}
                     style={{
                       border: 'none',
@@ -836,7 +846,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                       background: prTab === 'review' ? (ctx.isEffectiveDark ? '#2a2a2a' : '#e5e5e5') : 'transparent',
                       color: prTab === 'review' ? theme.textPrimary : theme.textSecondary,
                       fontWeight: 400,
-                      transition: 'all 0.15s ease',
+                      transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                     }}
                   >
                     Fila de review ({m.reviewQueue.length})
@@ -853,6 +863,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                   {m.openPulls.map((p) => (
                     <div
                       key={`o${p.number}`}
+                      className="df-row-interactive"
                       {...rowHover(ctx)}
                       onClick={() => openUrl(p.url)}
                       style={{
@@ -864,7 +875,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                         borderRadius: 6,
                         cursor: 'pointer',
                         background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg,
-                        transition: 'all 0.15s ease',
+                        transition: 'background-color 150ms var(--ease-out), transform 150ms var(--ease-out)',
                       }}
                     >
                       <Pill color="#22c55e">autor</Pill>
@@ -892,6 +903,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                     return (
                       <div
                         key={`r${pull.number}`}
+                        className="df-row-interactive"
                         {...rowHover(ctx)}
                         onClick={() => openUrl(pull.url)}
                         style={{
@@ -903,7 +915,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                           borderRadius: 6,
                           cursor: 'pointer',
                           background: ctx.isEffectiveDark ? '#1c1c1c' : theme.controlBg,
-                          transition: 'all 0.15s ease',
+                          transition: 'background-color 150ms var(--ease-out), transform 150ms var(--ease-out)',
                         }}
                       >
                         <Pill color="#f59e0b">review</Pill>
@@ -975,6 +987,7 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                 {ob.steps.map((s) => (
                   <div
                     key={s.id}
+                    className={s.manual ? 'df-row-interactive' : undefined}
                     onClick={() => {
                       if (s.manual) {
                         logSystemActivity('time', 'toggle_onboarding_step', `${ws.owner}/${ws.repo}`, { member: m.login, step: s.id, done: !s.done });
@@ -991,10 +1004,10 @@ export const TeamMemberDrawer: React.FC<Props> = ({
                       padding: '4px 6px',
                       borderRadius: 5,
                       background: s.manual ? (ctx.isEffectiveDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)') : 'transparent',
-                      transition: 'all 0.15s ease',
+                      transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 150ms var(--ease-out)',
                     }}
                   >
-                    {s.done ? <CheckSquare size={14} color="#22c55e" /> : <Square size={14} color={theme.textMuted} />}
+                    {s.done ? <CheckSquare size={14} color="#22c55e" className="df-check-pop" /> : <Square size={14} color={theme.textMuted} />}
                     <span style={{ flex: 1 }}>{s.label}</span>
                     {!s.manual && <span style={{ fontSize: 10, color: theme.textMuted, background: ctx.isEffectiveDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', padding: '1px 5px', borderRadius: 4 }}>auto</span>}
                   </div>

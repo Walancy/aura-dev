@@ -162,6 +162,7 @@ export const GeneralSection: React.FC<SectionProps & { branches: string[] }> = (
           ).map(([key, label, hint]) => (
             <div
               key={key}
+              className="df-card-subtle"
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -172,7 +173,7 @@ export const GeneralSection: React.FC<SectionProps & { branches: string[] }> = (
                 gap: 8,
                 border: 'none',
                 boxShadow: 'none',
-                transition: 'all 0.15s ease',
+                transition: 'background-color 150ms var(--ease-out), transform 160ms var(--ease-out)',
               }}
             >
               <div style={{ minWidth: 0, flex: 1 }}>

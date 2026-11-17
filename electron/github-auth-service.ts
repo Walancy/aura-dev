@@ -935,6 +935,9 @@ class GithubAuthService {
           projectsV2(first: 30) { nodes { id number title closed } }
           issue(number: $number) {
             id
+            viewerSubscription
+            locked
+            isPinned
             number
             title
             body
@@ -1064,6 +1067,9 @@ class GithubAuthService {
         labels: issue.labels?.nodes || [],
         milestone: issue.milestone,
         participants: issue.participants?.nodes || [],
+        viewerSubscription: issue.viewerSubscription || null,
+        locked: Boolean(issue.locked),
+        isPinned: Boolean(issue.isPinned),
         issueType,
         subIssuesSummary,
       },
@@ -1482,42 +1488,46 @@ class GithubAuthService {
     return { pinned };
   }
 
-  public async setIssueSubscription(owner: string, repo: string, issueNumber: number, subscribed: boolean): Promise<any> {
-    const url = `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/subscription`;
-    if (subscribed) {
-      const res = await this.authedFetch(url, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
-        body: JSON.stringify({ subscribed: true }),
-      });
-      if (!res.ok) throw new Error(`GitHub API respondeu ${res.status}`);
-      return res.json();
-    } else {
-      const res = await this.authedFetch(url, {
-        method: 'DELETE',
-        headers: { Accept: 'application/vnd.github+json' },
-      });
-      if (!res.ok && res.status !== 204) throw new Error(`GitHub API respondeu ${res.status}`);
-      return { subscribed: false };
-    }
+  // O REST de issues não tem /subscription (dava 404): a inscrição da thread é feita pelo GraphQL (updateSubscription)
+  public async setIssueSubscription(owner: string, repo: string, issueNumber: number, state: boolean | 'SUBSCRIBED' | 'UNSUBSCRIBED' | 'IGNORED'): Promise<any> {
+    const target = state === true ? 'SUBSCRIBED' : state === false ? 'UNSUBSCRIBED' : state;
+    const found = await this.graphql(
+      `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issue(number: $number) { id } } }`,
+      { owner, name: repo, number: issueNumber },
+      'Erro ao buscar a issue',
+    );
+    const id = found?.repository?.issue?.id;
+    if (!id) throw new Error(`Issue #${issueNumber} não encontrada em ${owner}/${repo}`);
+    const res = await this.graphql(
+      `mutation($id: ID!, $state: SubscriptionState!) { updateSubscription(input: { subscribableId: $id, state: $state }) { subscribable { viewerSubscription } } }`,
+      { id, state: target },
+      'Erro ao alterar notificações da issue',
+    );
+    const current = res?.updateSubscription?.subscribable?.viewerSubscription || target;
+    return { subscription: current, subscribed: current === 'SUBSCRIBED' };
   }
 
+  // A transferência não existe no REST (dava 404): usa a mutation transferIssue do GraphQL
   public async transferIssue(owner: string, repo: string, issueNumber: number, newOwner: string, newRepo: string): Promise<any> {
-    const url = `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/transfer`;
-    const res = await this.authedFetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/vnd.github+json' },
-      body: JSON.stringify({ new_owner: newOwner, new_repo: newRepo }),
-    });
-    if (!res.ok) {
-      let errMsg = `GitHub API respondeu ${res.status}`;
-      try {
-        const errJson = await res.json();
-        if (errJson?.message) errMsg = errJson.message;
-      } catch {}
-      throw new Error(errMsg);
-    }
-    return res.json();
+    const data = await this.graphql(
+      `query($owner: String!, $name: String!, $number: Int!, $newOwner: String!, $newName: String!) {
+        repository(owner: $owner, name: $name) { issue(number: $number) { id } }
+        target: repository(owner: $newOwner, name: $newName) { id }
+      }`,
+      { owner, name: repo, number: issueNumber, newOwner, newName: newRepo },
+      'Erro ao buscar a issue ou o repositório de destino',
+    );
+    const issueId = data?.repository?.issue?.id;
+    const repositoryId = data?.target?.id;
+    if (!issueId) throw new Error(`Issue #${issueNumber} não encontrada em ${owner}/${repo}`);
+    if (!repositoryId) throw new Error(`Repositório ${newOwner}/${newRepo} não encontrado`);
+    const res = await this.graphql(
+      `mutation($issueId: ID!, $repositoryId: ID!) { transferIssue(input: { issueId: $issueId, repositoryId: $repositoryId }) { issue { number url } } }`,
+      { issueId, repositoryId },
+      'Erro ao transferir a issue',
+    );
+    const issue = res?.transferIssue?.issue;
+    return { number: issue?.number, html_url: issue?.url };
   }
 
   // ---------------------------------------------------------------------------
@@ -1534,6 +1544,29 @@ class GithubAuthService {
       return { ok: false, status: res.status, data: null, message };
     }
     return { ok: true, status: res.status, data: await res.json() };
+  }
+
+  /** Commita direto; se a branch padrão é protegida (409/422 por regra), cria branch + PR. */
+  private async writeFileOrPr(owner: string, repo: string, method: 'PUT' | 'DELETE', p: any, body: any): Promise<any> {
+    const url = this.repoUrl(owner, repo, `/contents/${p.path.split('/').map(encodeURIComponent).join('/')}`);
+    try {
+      return await this.ghSend(method, url, body);
+    } catch (e: any) {
+      if (body.branch || !/respondeu (409|422)/.test(e.message) || !/pull request|rule violations|protected/i.test(e.message)) throw e;
+      const info = await this.ghGetOrThrow(this.repoUrl(owner, repo, ''));
+      const base = info.default_branch;
+      const head = await this.ghGetOrThrow(this.repoUrl(owner, repo, `/git/ref/heads/${base}`));
+      const branch = `aura/${p.path.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase()}-${Date.now().toString(36)}`;
+      await this.ghSend('POST', this.repoUrl(owner, repo, '/git/refs'), { ref: `refs/heads/${branch}`, sha: head.object.sha });
+      const res = await this.ghSend(method, url, { ...body, branch });
+      const pr = await this.ghSend('POST', this.repoUrl(owner, repo, '/pulls'), {
+        title: body.message,
+        head: branch,
+        base,
+        body: 'Alteração feita pelo Aura Dev. A branch padrão exige pull request.',
+      });
+      return { ...(res || {}), pullRequest: { number: pr.number, url: pr.html_url } };
+    }
   }
 
   private async ghSend(method: 'PUT' | 'POST' | 'DELETE' | 'PATCH', url: string, body?: any): Promise<any> {
@@ -1784,9 +1817,9 @@ class GithubAuthService {
       case 'getRepo':
         return this.ghGetOrThrow(this.repoUrl(owner, repo));
       case 'reviewRequests': {
-        // PRs abertos de outras pessoas em que o usuário logado foi pedido como revisor (todos os repositórios)
-        const data = await this.ghGetOrThrow('https://api.github.com/search/issues?q=is:pr+is:open+review-requested:@me+archived:false&sort=updated&per_page=30');
-        return (data.items || []).map((i: any) => ({
+        // PRs abertos de outras pessoas em que o usuário logado foi pedido como revisor (todos os repositórios).
+        // A busca do GitHub demora a indexar um pedido novo; as notificações (reason review_requested) chegam quase na hora, então as duas fontes se somam.
+        const toItem = (i: any) => ({
           number: i.number,
           title: i.title,
           url: i.html_url,
@@ -1795,8 +1828,611 @@ class GithubAuthService {
           authorAvatar: i.user?.avatar_url,
           draft: Boolean(i.draft),
           updatedAt: i.updated_at,
-        }));
+        });
+        const [searched, notified] = await Promise.all([
+          this.ghGet('https://api.github.com/search/issues?q=is:pr+is:open+review-requested:@me+archived:false&sort=updated&per_page=30'),
+          this.ghGet('https://api.github.com/notifications?participating=true&per_page=50'),
+        ]);
+        if (!searched.ok && !notified.ok) throw new Error(`GitHub API respondeu ${searched.status}${searched.message ? `: ${searched.message}` : ''}`);
+        const out = new Map<string, any>();
+        for (const i of searched.ok ? searched.data.items || [] : []) {
+          const it = toItem(i);
+          out.set(`${it.repo}#${it.number}`, it);
+        }
+        if (notified.ok && Array.isArray(notified.data)) {
+          const extra = notified.data.filter((n: any) => n.reason === 'review_requested' && n.subject?.type === 'PullRequest' && n.subject?.url).slice(0, 15);
+          await Promise.all(
+            extra.map(async (n: any) => {
+              const repoFull = String(n.repository?.full_name || '');
+              const num = Number(String(n.subject.url).split('/').pop());
+              if (!repoFull || !num || out.has(`${repoFull}#${num}`)) return;
+              const pr = await this.ghGet(n.subject.url);
+              if (!pr.ok || pr.data?.state !== 'open') return;
+              out.set(`${repoFull}#${num}`, {
+                number: num,
+                title: pr.data.title,
+                url: pr.data.html_url,
+                repo: repoFull,
+                author: pr.data.user?.login,
+                authorAvatar: pr.data.user?.avatar_url,
+                draft: Boolean(pr.data.draft),
+                updatedAt: pr.data.updated_at,
+              });
+            }),
+          );
+        }
+        return [...out.values()];
       }
+      case 'listPulls': {
+        // PRs do repositório para o seletor de "Development" (abertos primeiro)
+        const data = await this.ghGetOrThrow(this.repoUrl(owner, repo, '/pulls?state=all&sort=updated&per_page=50'));
+        return data.map((x: any) => ({ number: x.number, title: x.title, state: x.merged_at ? 'merged' : x.state, draft: Boolean(x.draft), author: x.user?.login, body: x.body || '' }));
+      }
+      case 'linkPullToIssue': {
+        // o GitHub vincula PR a issue pela palavra de fechamento no corpo do PR
+        const url = this.repoUrl(owner, repo, `/pulls/${p.number}`);
+        const pr = await this.ghGetOrThrow(url);
+        const body: string = pr.body || '';
+        if (!new RegExp(`(close[sd]?|fix(e[sd])?|resolve[sd]?)\\s+#${p.issueNumber}\\b`, 'i').test(body)) {
+          await this.ghSend('PATCH', url, { body: `${body}${body ? '\n\n' : ''}Closes #${p.issueNumber}` });
+        }
+        return { number: pr.number, title: pr.title };
+      }
+      case 'issueRelations': {
+        const base = this.repoUrl(owner, repo, `/issues/${p.number}`);
+        const pick = (i: any) => ({ number: i.number, title: i.title, state: i.state, id: i.id, repo: String(i.repository_url || '').replace('https://api.github.com/repos/', '') });
+        const [parent, blockedBy, blocking] = await Promise.all([
+          this.ghGet(`${base}/parent`).then((r) => (r.ok && r.data ? [pick(r.data)] : [])),
+          this.ghGet(`${base}/dependencies/blocked_by`).then((r) => (r.ok && Array.isArray(r.data) ? r.data.map(pick) : [])),
+          this.ghGet(`${base}/dependencies/blocking`).then((r) => (r.ok && Array.isArray(r.data) ? r.data.map(pick) : [])),
+        ]);
+        return { parent, blockedBy, blocking };
+      }
+      case 'addIssueRelation': {
+        // kind: parent (target é o pai) | blockedBy | blocking | relates
+        const me = await this.ghGetOrThrow(this.repoUrl(owner, repo, `/issues/${p.number}`));
+        const target = await this.ghGetOrThrow(this.repoUrl(owner, repo, `/issues/${p.target}`));
+        if (p.kind === 'parent') await this.ghSend('POST', this.repoUrl(owner, repo, `/issues/${p.target}/sub_issues`), { sub_issue_id: me.id });
+        else if (p.kind === 'blockedBy') await this.ghSend('POST', this.repoUrl(owner, repo, `/issues/${p.number}/dependencies/blocked_by`), { issue_id: target.id });
+        else if (p.kind === 'blocking') await this.ghSend('POST', this.repoUrl(owner, repo, `/issues/${p.target}/dependencies/blocked_by`), { issue_id: me.id });
+        else await this.ghSend('POST', this.repoUrl(owner, repo, `/issues/${p.number}/comments`), { body: `Relacionada a #${p.target}` });
+        return { ok: true };
+      }
+      case 'removeIssueRelation': {
+        const me = await this.ghGetOrThrow(this.repoUrl(owner, repo, `/issues/${p.number}`));
+        if (p.kind === 'parent') await this.ghSend('DELETE', this.repoUrl(owner, repo, `/issues/${p.targetNumber}/sub_issue`), { sub_issue_id: me.id });
+        else if (p.kind === 'blockedBy') await this.ghSend('DELETE', this.repoUrl(owner, repo, `/issues/${p.number}/dependencies/blocked_by/${p.targetId}`));
+        else await this.ghSend('DELETE', this.repoUrl(owner, repo, `/issues/${p.targetNumber}/dependencies/blocked_by/${me.id}`));
+        return { ok: true };
+      }
+      case 'pullList': {
+        // lista de PRs do repositório com o estado da review (GraphQL: uma chamada só)
+        const query = `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){
+          open: pullRequests(states:OPEN){ totalCount } closed: pullRequests(states:[CLOSED,MERGED]){ totalCount }
+          pullRequests(first:60, orderBy:{field:UPDATED_AT,direction:DESC}){ nodes{
+            number title state isDraft merged createdAt mergedAt closedAt updatedAt baseRefName headRefName reviewDecision mergeStateStatus mergeable additions deletions changedFiles
+            commits(last:1){ nodes{ commit{ statusCheckRollup{ state } } } }
+            author{ login avatarUrl } labels(first:6){ nodes{ name color } } assignees(first:5){ nodes{ login avatarUrl } }
+            reviewRequests(first:10){ nodes{ requestedReviewer{ __typename ... on User{ login avatarUrl } ... on Team{ name } } } }
+            comments{ totalCount } allCommits: commits{ totalCount }
+          } } } viewer{ login } }`;
+        const res = await this.authedFetch('https://api.github.com/graphql', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, variables: { owner, name: repo } }) });
+        const data: any = await res.json();
+        if (!res.ok || data.errors?.length) throw new Error(data.errors?.[0]?.message || `GitHub API respondeu ${res.status}`);
+        const r = data.data.repository;
+        return {
+          me: data.data.viewer?.login,
+          openCount: r.open.totalCount,
+          closedCount: r.closed.totalCount,
+          items: (r.pullRequests.nodes || []).map((n: any) => ({
+            number: n.number,
+            title: n.title,
+            state: n.merged ? 'merged' : n.state === 'OPEN' ? (n.isDraft ? 'draft' : 'open') : 'closed',
+            author: n.author?.login,
+            authorAvatar: n.author?.avatarUrl,
+            createdAt: n.createdAt,
+            updatedAt: n.updatedAt,
+            mergedAt: n.mergedAt,
+            closedAt: n.closedAt,
+            base: n.baseRefName,
+            head: n.headRefName,
+            reviewDecision: n.reviewDecision || null,
+            labels: (n.labels?.nodes || []).map((l: any) => ({ name: l.name, color: l.color })),
+            assignees: (n.assignees?.nodes || []).map((u: any) => ({ login: u.login, avatar: u.avatarUrl })),
+            reviewers: (n.reviewRequests?.nodes || []).map((x: any) => x.requestedReviewer).filter(Boolean).map((u: any) => ({ login: u.login || u.name, avatar: u.avatarUrl })),
+            comments: n.comments?.totalCount || 0,
+            commits: n.allCommits?.totalCount || 0,
+            mergeState: n.state === 'OPEN' ? n.mergeStateStatus : null,
+            conflicting: n.mergeable === 'CONFLICTING',
+            checks: n.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state || null,
+            additions: n.additions || 0,
+            deletions: n.deletions || 0,
+            files: n.changedFiles || 0,
+          })),
+        };
+      }
+      case 'getPullDetail': {
+        const base = this.repoUrl(owner, repo, `/pulls/${p.number}`);
+        const [pr, files, reviews, comments, reviewComments, commits] = await Promise.all([
+          this.ghGetOrThrow(base),
+          this.ghGetOrThrow(`${base}/files?per_page=100`),
+          this.ghGetOrThrow(`${base}/reviews?per_page=100`),
+          this.ghGetOrThrow(this.repoUrl(owner, repo, `/issues/${p.number}/comments?per_page=100`)),
+          this.ghGetOrThrow(`${base}/comments?per_page=100`),
+          this.ghGetOrThrow(`${base}/commits?per_page=100`),
+        ]);
+        const sha = pr.head?.sha;
+        const [timelineRes, compareRes] = await Promise.all([
+          this.ghGet(this.repoUrl(owner, repo, `/issues/${p.number}/timeline?per_page=100`)),
+          pr.base?.ref && sha ? this.ghGet(this.repoUrl(owner, repo, `/compare/${encodeURIComponent(pr.base.ref)}...${sha}`)) : Promise.resolve({ ok: false, data: null } as any),
+        ]);
+        const checkRuns = sha ? await this.ghGet(this.repoUrl(owner, repo, `/commits/${sha}/check-runs?per_page=100`)) : { ok: false, data: null };
+        const statuses = sha ? await this.ghGet(this.repoUrl(owner, repo, `/commits/${sha}/status`)) : { ok: false, data: null };
+        // estado de merge e checks como o próprio GitHub calcula (GraphQL): revisão exigida, branch atrás/bloqueada, checks obrigatórios
+        let gql: any = null;
+        try {
+          const d = await this.graphql(
+            `query($owner:String!,$name:String!,$n:Int!){ repository(owner:$owner,name:$name){ viewerPermission pullRequest(number:$n){
+              reviewDecision mergeStateStatus mergeable viewerCanMergeAsAdmin isInMergeQueue isDraft
+              baseRef{ branchProtectionRule{ requiredApprovingReviewCount requiresCodeOwnerReviews dismissesStaleReviews requiredStatusCheckContexts isAdminEnforced } }
+              commits(last:1){ nodes{ commit{ oid statusCheckRollup{ state contexts(first:100){ nodes{
+                __typename
+                ... on CheckRun{ databaseId name status conclusion detailsUrl title summary startedAt completedAt steps(first:60){ nodes{ name number conclusion } } annotations(first:5){ nodes{ message path annotationLevel location{ start{ line } } } } isRequired(pullRequestNumber:$n) checkSuite{ app{ name logoUrl } workflowRun{ event workflow{ name } } } }
+                ... on StatusContext{ id context state description targetUrl isRequired(pullRequestNumber:$n) }
+              } } } } } }
+            } } }`,
+            { owner, name: repo, n: p.number },
+            'Erro ao ler o estado do merge',
+          );
+          gql = d?.repository?.pullRequest ? { ...d.repository.pullRequest, viewerPermission: d.repository.viewerPermission } : null;
+        } catch {}
+        const baseBranch = encodeURIComponent(pr.base?.ref || '');
+        const [repoRes, rulesetRes, protRes] = await Promise.all([
+          this.ghGet(this.repoUrl(owner, repo)),
+          this.ghGet(this.repoUrl(owner, repo, `/rules/branches/${baseBranch}`)),
+          this.ghGet(this.repoUrl(owner, repo, `/branches/${baseBranch}/protection`)),
+        ]);
+        // regras de aprovação: rulesets (legíveis por quem tem acesso) + proteção clássica de branch (só admin enxerga)
+        const rules: any = { canWrite: Boolean(repoRes.data?.permissions?.push || repoRes.data?.permissions?.admin), isAdmin: Boolean(repoRes.data?.permissions?.admin), requiredApprovals: 0, requireCodeOwners: false, dismissStale: false, requireLastPush: false, requiredChecks: [] as string[], enforceAdmins: false, known: false };
+        const checks = new Set<string>();
+        if (rulesetRes.ok && Array.isArray(rulesetRes.data)) {
+          for (const r of rulesetRes.data) {
+            if (r.type === 'pull_request') {
+              rules.known = true;
+              rules.requiredApprovals = Math.max(rules.requiredApprovals, r.parameters?.required_approving_review_count || 0);
+              rules.requireCodeOwners ||= Boolean(r.parameters?.require_code_owner_review);
+              rules.dismissStale ||= Boolean(r.parameters?.dismiss_stale_reviews_on_push);
+              rules.requireLastPush ||= Boolean(r.parameters?.require_last_push_approval);
+            }
+            if (r.type === 'required_status_checks') (r.parameters?.required_status_checks || []).forEach((x: any) => x.context && checks.add(x.context));
+          }
+        }
+        if (protRes.ok && protRes.data) {
+          const pp = protRes.data;
+          rules.known = true;
+          rules.requiredApprovals = Math.max(rules.requiredApprovals, pp.required_pull_request_reviews?.required_approving_review_count || 0);
+          rules.requireCodeOwners ||= Boolean(pp.required_pull_request_reviews?.require_code_owner_reviews);
+          rules.dismissStale ||= Boolean(pp.required_pull_request_reviews?.dismiss_stale_reviews);
+          rules.requireLastPush ||= Boolean(pp.required_pull_request_reviews?.require_last_push_approval);
+          rules.enforceAdmins = Boolean(pp.enforce_admins?.enabled);
+          [...(pp.required_status_checks?.contexts || []), ...(pp.required_status_checks?.checks || []).map((x: any) => x.context)].forEach((x: string) => x && checks.add(x));
+        }
+        const rule = gql?.baseRef?.branchProtectionRule;
+        if (rule) {
+          rules.known = true;
+          rules.requiredApprovals = Math.max(rules.requiredApprovals, rule.requiredApprovingReviewCount || 0);
+          rules.requireCodeOwners ||= Boolean(rule.requiresCodeOwnerReviews);
+          rules.dismissStale ||= Boolean(rule.dismissesStaleReviews);
+          rules.enforceAdmins ||= Boolean(rule.isAdminEnforced);
+          (rule.requiredStatusCheckContexts || []).forEach((x: string) => checks.add(x));
+        }
+        if (gql?.reviewDecision === 'REVIEW_REQUIRED' && rules.requiredApprovals === 0) rules.requiredApprovals = 1;
+        if (gql?.viewerPermission) {
+          rules.canWrite = ['WRITE', 'MAINTAIN', 'ADMIN'].includes(gql.viewerPermission);
+          rules.isAdmin = gql.viewerPermission === 'ADMIN';
+        }
+        rules.requiredChecks = [...checks];
+        const rollup = gql?.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts?.nodes || [];
+        const failureText = (n: any): string => {
+          const failed = String(n.conclusion || '').toUpperCase();
+          const bad = ['FAILURE', 'TIMED_OUT', 'CANCELLED', 'STARTUP_FAILURE', 'ACTION_REQUIRED'].includes(failed);
+          const parts: string[] = [];
+          if (n.title) parts.push(String(n.title));
+          if (bad) {
+            const step = (n.steps?.nodes || []).find((x: any) => ['FAILURE', 'TIMED_OUT'].includes(String(x.conclusion || '').toUpperCase()));
+            if (step) parts.push(`Falhou no passo ${step.number}: ${step.name}`);
+            for (const a of (n.annotations?.nodes || []).filter((x: any) => x.annotationLevel === 'FAILURE').slice(0, 3)) {
+              parts.push(`${a.path && a.path !== '.github' ? `${a.path}${a.location?.start?.line ? `:${a.location.start.line}` : ''} — ` : ''}${String(a.message || '').split('\n')[0].slice(0, 240)}`);
+            }
+            if (parts.length === 0 && n.summary) parts.push(String(n.summary).split('\n').find((l: string) => l.trim()) || '');
+          }
+          return parts.filter(Boolean).join('\n');
+        };
+        const gqlChecks: any[] = rollup.map((n: any) =>
+          n.__typename === 'CheckRun'
+            ? { id: `r${n.databaseId}`, name: n.name, status: String(n.status || '').toLowerCase(), conclusion: n.conclusion ? String(n.conclusion).toLowerCase() : null, url: n.detailsUrl, app: n.checkSuite?.app?.name, appAvatar: n.checkSuite?.app?.logoUrl, description: failureText(n), required: Boolean(n.isRequired), workflow: n.checkSuite?.workflowRun?.workflow?.name, event: n.checkSuite?.workflowRun?.event, startedAt: n.startedAt, completedAt: n.completedAt }
+            : { id: `s${n.id}`, name: n.context, status: ['PENDING', 'EXPECTED'].includes(n.state) ? 'in_progress' : 'completed', conclusion: n.state === 'SUCCESS' ? 'success' : ['PENDING', 'EXPECTED'].includes(n.state) ? null : 'failure', url: n.targetUrl, app: 'status', description: n.description || '', required: Boolean(n.isRequired) },
+        );
+        gqlChecks.forEach((k) => k.required && checks.add(k.name));
+        rules.requiredChecks = [...checks];
+        const meRes = await this.ghGet('https://api.github.com/user');
+        const u = (x: any) => (x ? { login: x.login, avatar: x.avatar_url } : undefined);
+        return {
+          me: meRes.ok ? meRes.data?.login : undefined,
+          rules,
+          behindBy: compareRes.ok ? compareRes.data?.behind_by || 0 : 0,
+          allowedMethods: {
+            merge: repoRes.data?.allow_merge_commit !== false,
+            squash: repoRes.data?.allow_squash_merge !== false,
+            rebase: repoRes.data?.allow_rebase_merge !== false,
+          },
+          deleteBranchOnMerge: Boolean(repoRes.data?.delete_branch_on_merge),
+          timeline: ((timelineRes.ok && Array.isArray(timelineRes.data) ? timelineRes.data : []) as any[])
+            .filter((e) => ['labeled', 'unlabeled', 'assigned', 'unassigned', 'review_requested', 'review_request_removed', 'head_ref_force_pushed', 'head_ref_deleted', 'head_ref_restored', 'renamed', 'closed', 'reopened', 'ready_for_review', 'convert_to_draft', 'milestoned', 'demilestoned', 'locked', 'unlocked', 'merged', 'base_ref_changed'].includes(e.event))
+            .map((e) => ({
+              id: String(e.id ?? `${e.event}-${e.created_at}`),
+              event: e.event,
+              actor: e.actor?.login,
+              avatar: e.actor?.avatar_url,
+              at: e.created_at,
+              label: e.label ? { name: e.label.name, color: e.label.color } : undefined,
+              assignee: e.assignee?.login,
+              reviewer: e.requested_reviewer?.login || e.review_requester?.login,
+              milestone: e.milestone?.title,
+              rename: e.rename ? { from: e.rename.from, to: e.rename.to } : undefined,
+              sha: e.commit_id,
+            })),
+          pr: {
+            number: pr.number, title: pr.title, body: pr.body || '', state: pr.state, merged: Boolean(pr.merged), draft: Boolean(pr.draft), url: pr.html_url,
+            author: pr.user?.login, authorAvatar: pr.user?.avatar_url, base: pr.base?.ref, head: pr.head?.ref, commits: pr.commits, comments: pr.comments,
+            reviewComments: pr.review_comments, additions: pr.additions, deletions: pr.deletions, changedFiles: pr.changed_files, createdAt: pr.created_at,
+            mergedAt: pr.merged_at, closedAt: pr.closed_at, mergedBy: pr.merged_by?.login, mergeable: pr.mergeable, mergeableState: pr.mergeable_state,
+            labels: (pr.labels || []).map((l: any) => ({ name: l.name, color: l.color })), assignees: (pr.assignees || []).map(u),
+            requestedReviewers: (pr.requested_reviewers || []).map(u), milestone: pr.milestone?.title || null, milestoneNumber: pr.milestone?.number ?? null, headRepoDeleted: !pr.head?.repo, headSha: pr.head?.sha, baseSha: pr.base?.sha, headOwner: pr.head?.repo?.owner?.login, mergeCommitSha: pr.merge_commit_sha, locked: Boolean(pr.locked),
+          },
+          files: files.map((f: any) => ({ filename: f.filename, status: f.status, additions: f.additions, deletions: f.deletions, patch: f.patch || '' })),
+          reviews: reviews.filter((r: any) => r.state !== 'PENDING').map((r: any) => ({ id: r.id, user: r.user?.login, avatar: r.user?.avatar_url, state: r.state, body: r.body || '', submittedAt: r.submitted_at })),
+          comments: comments.map((c: any) => ({ id: c.id, user: c.user?.login, avatar: c.user?.avatar_url, body: c.body || '', createdAt: c.created_at, url: c.html_url })),
+          reviewComments: reviewComments.map((c: any) => ({ id: c.id, user: c.user?.login, avatar: c.user?.avatar_url, body: c.body || '', path: c.path, line: c.line || c.original_line, side: c.side, replyTo: c.in_reply_to_id, createdAt: c.created_at })),
+          commitList: commits.map((c: any) => ({ sha: c.sha, message: c.commit?.message || '', author: c.author?.login || c.commit?.author?.name, avatar: c.author?.avatar_url, date: c.commit?.author?.date, url: c.html_url })),
+          merge: gql
+            ? { status: gql.mergeStateStatus, mergeable: gql.mergeable, reviewDecision: gql.reviewDecision || null, canMergeAsAdmin: Boolean(gql.viewerCanMergeAsAdmin), permission: gql.viewerPermission, inQueue: Boolean(gql.isInMergeQueue) }
+            : null,
+          checks: gqlChecks.length > 0 ? gqlChecks : [
+            ...((checkRuns.ok ? checkRuns.data?.check_runs : []) || []).map((c: any) => ({ id: `r${c.id}`, name: c.name, status: c.status, conclusion: c.conclusion, url: c.html_url, app: c.app?.name, appAvatar: c.app?.owner?.avatar_url, description: c.output?.title || c.output?.summary?.slice(0, 160) || '' })),
+            ...((statuses.ok ? statuses.data?.statuses : []) || []).map((c: any) => ({ id: `s${c.id}`, name: c.context, status: c.state === 'pending' ? 'in_progress' : 'completed', conclusion: c.state === 'success' ? 'success' : c.state === 'pending' ? null : 'failure', url: c.target_url, app: 'status', description: c.description || '' })),
+          ],
+        };
+      }
+      case 'workflowList': {
+        const d = await this.ghGetOrThrow(this.repoUrl(owner, repo, '/actions/workflows?per_page=100'));
+        return (d.workflows || []).map((w: any) => ({ id: w.id, name: w.name, path: w.path, state: w.state }));
+      }
+      case 'workflowRuns': {
+        // execuções de um workflow (ou de todos) com os filtros do GitHub Actions
+        const q = new URLSearchParams({ per_page: String(p.perPage || 30), page: String(p.page || 1) });
+        for (const k of ['branch', 'event', 'status', 'actor'] as const) if (p[k]) q.set(k, String(p[k]));
+        const path = p.workflowId ? `/actions/workflows/${p.workflowId}/runs` : '/actions/runs';
+        const d = await this.ghGetOrThrow(this.repoUrl(owner, repo, `${path}?${q.toString()}`));
+        return {
+          total: d.total_count || 0,
+          runs: (d.workflow_runs || []).map((r: any) => ({
+            id: r.id,
+            workflowId: r.workflow_id,
+            name: r.name,
+            title: r.display_title,
+            runNumber: r.run_number,
+            attempt: r.run_attempt,
+            event: r.event,
+            status: r.status,
+            conclusion: r.conclusion,
+            branch: r.head_branch,
+            sha: r.head_sha,
+            actor: r.triggering_actor?.login || r.actor?.login,
+            actorAvatar: r.triggering_actor?.avatar_url || r.actor?.avatar_url,
+            createdAt: r.created_at,
+            startedAt: r.run_started_at || r.created_at,
+            updatedAt: r.updated_at,
+            url: r.html_url,
+            prNumbers: (r.pull_requests || []).map((x: any) => x.number),
+          })),
+        };
+      }
+      case 'workflowRunDetail': {
+        const [run, jobs] = await Promise.all([
+          this.ghGetOrThrow(this.repoUrl(owner, repo, `/actions/runs/${p.runId}`)),
+          this.ghGetOrThrow(this.repoUrl(owner, repo, `/actions/runs/${p.runId}/jobs?per_page=100`)),
+        ]);
+        return {
+          run: {
+            id: run.id,
+            workflowId: run.workflow_id,
+            name: run.name,
+            title: run.display_title,
+            runNumber: run.run_number,
+            attempt: run.run_attempt,
+            event: run.event,
+            status: run.status,
+            conclusion: run.conclusion,
+            branch: run.head_branch,
+            sha: run.head_sha,
+            commit: String(run.head_commit?.message || '').split('\n')[0],
+            actor: run.triggering_actor?.login || run.actor?.login,
+            actorAvatar: run.triggering_actor?.avatar_url || run.actor?.avatar_url,
+            createdAt: run.created_at,
+            startedAt: run.run_started_at || run.created_at,
+            updatedAt: run.updated_at,
+            url: run.html_url,
+            path: run.path,
+          },
+          jobs: (jobs.jobs || []).map((j: any) => ({
+            id: j.id,
+            name: j.name,
+            status: j.status,
+            conclusion: j.conclusion,
+            startedAt: j.started_at,
+            completedAt: j.completed_at,
+            url: j.html_url,
+            runner: j.runner_name,
+            steps: (j.steps || []).map((st: any) => ({ number: st.number, name: st.name, status: st.status, conclusion: st.conclusion, startedAt: st.started_at, completedAt: st.completed_at })),
+          })),
+        };
+      }
+      case 'workflowRunAction': {
+        const base = this.repoUrl(owner, repo, `/actions/runs/${p.runId}`);
+        if (p.op === 'rerun') await this.ghSend('POST', `${base}/rerun`);
+        else if (p.op === 'rerunFailed') await this.ghSend('POST', `${base}/rerun-failed-jobs`);
+        else if (p.op === 'cancel') await this.ghSend('POST', `${base}/cancel`);
+        else if (p.op === 'forceCancel') await this.ghSend('POST', `${base}/force-cancel`);
+        else if (p.op === 'delete') await this.ghSend('DELETE', base);
+        else throw new Error(`Operação desconhecida: ${p.op}`);
+        return { ok: true };
+      }
+      case 'dispatchWorkflow':
+        await this.ghSend('POST', this.repoUrl(owner, repo, `/actions/workflows/${p.workflowId}/dispatches`), { ref: p.ref, ...(p.inputs ? { inputs: p.inputs } : {}) });
+        return { ok: true };
+      case 'setWorkflowState':
+        await this.ghSend('PUT', this.repoUrl(owner, repo, `/actions/workflows/${p.workflowId}/${p.enable ? 'enable' : 'disable'}`));
+        return { ok: true };
+      case 'workflowInputs': {
+        // campos do workflow_dispatch lidos do próprio arquivo (nome, descrição, padrão, obrigatório, opções)
+        const f = await this.ghGet(this.repoUrl(owner, repo, `/contents/${p.path}?ref=${encodeURIComponent(p.ref || '')}`));
+        if (!f.ok) return { dispatchable: false, inputs: [] };
+        const text = Buffer.from(String(f.data?.content || ''), 'base64').toString('utf8');
+        const dispatchable = /^\s*workflow_dispatch\b/m.test(text);
+        const inputs: any[] = [];
+        const block = text.match(/workflow_dispatch:\s*\n\s+inputs:\s*\n([\s\S]*?)(?=^\S|^\s{0,3}\w[\w-]*:\s*(?:\n|$)(?!\s{5}))/m);
+        if (dispatchable && block) {
+          let cur: any = null;
+          for (const line of block[1].split('\n')) {
+            const k = line.match(/^\s{6}([\w-]+):\s*$/);
+            if (k) {
+              cur = { name: k[1], description: '', default: '', required: false, type: 'string', options: [] as string[] };
+              inputs.push(cur);
+              continue;
+            }
+            if (!cur) continue;
+            const kv = line.match(/^\s{8}(description|default|required|type):\s*(.*)$/);
+            if (kv) {
+              const v = kv[2].trim().replace(/^['"]|['"]$/g, '');
+              if (kv[1] === 'required') cur.required = v === 'true';
+              else cur[kv[1]] = v;
+              continue;
+            }
+            const opt = line.match(/^\s{10}-\s*(.+)$/);
+            if (opt) cur.options.push(opt[1].trim().replace(/^['"]|['"]$/g, ''));
+          }
+        }
+        return { dispatchable, inputs };
+      }
+      case 'checkRunDetail': {
+        // passos do job do GitHub Actions e o log de cada um (linhas do log atribuídas ao passo pelo horário)
+        const job = await this.ghGet(this.repoUrl(owner, repo, `/actions/jobs/${p.checkRunId}`));
+        if (!job.ok) return { steps: [], note: 'Este check não é um job do GitHub Actions: abra os detalhes para ver o resultado.' };
+        const steps: any[] = (job.data?.steps || []).map((st: any) => ({
+          number: st.number,
+          name: st.name,
+          status: st.status,
+          conclusion: st.conclusion,
+          startedAt: st.started_at,
+          completedAt: st.completed_at,
+          log: [] as string[],
+        }));
+        let note = '';
+        if (job.data?.status !== 'completed') return { steps, note: 'O log completo fica disponível quando o job termina.' };
+        try {
+          const res = await this.authedFetch(this.repoUrl(owner, repo, `/actions/jobs/${p.checkRunId}/logs`), { headers: { Accept: 'application/vnd.github+json' } });
+          if (res.ok) {
+            const text = await res.text();
+            let cur = 0;
+            for (const raw of text.split('\n')) {
+              const m = raw.match(/^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s?(.*)$/);
+              if (!m) continue;
+              const t = Date.parse(m[1]);
+              // avança para o passo cujo intervalo contém o horário da linha
+              while (cur < steps.length - 1 && steps[cur + 1].startedAt && t >= Date.parse(steps[cur + 1].startedAt)) cur++;
+              const line = m[2].replace(/\x1b\[[0-9;]*m/g, '').replace(/^##\[group\]/, '▶ ').replace(/^##\[endgroup\]$/, '').replace(/^##\[error\]/, 'Erro: ');
+              if (steps[cur] && line !== '' && steps[cur].log.length < 400) steps[cur].log.push(line);
+            }
+          } else {
+            note = res.status === 410 ? 'O log desta execução expirou.' : 'Não foi possível baixar o log (verifique a permissão do token para Actions).';
+          }
+        } catch {
+          note = 'Não foi possível baixar o log.';
+        }
+        return { steps, note };
+      }
+      case 'pullMeta': {
+        // dados da coluna lateral que só o GraphQL entrega: issues que serão fechadas, projetos, inscrição e id do nó
+        const d = await this.graphql(
+          `query($owner:String!,$name:String!,$n:Int!){ repository(owner:$owner,name:$name){ pullRequest(number:$n){
+            id isDraft locked viewerSubscription viewerCanUpdate viewerCanEnableAutoMerge viewerCanDisableAutoMerge
+            autoMergeRequest{ enabledBy{ login } mergeMethod }
+            closingIssuesReferences(first:20){ nodes{ number title state url repository{ nameWithOwner } linkedBranches(first:5){ nodes{ ref{ name } } } } }
+            projectItems(first:20){ nodes{ id project{ id title url } } }
+          } } }`,
+          { owner, name: repo, n: p.number },
+          'Erro ao carregar dados do pull request',
+        );
+        const pr = d?.repository?.pullRequest;
+        return {
+          nodeId: pr?.id,
+          isDraft: Boolean(pr?.isDraft),
+          locked: Boolean(pr?.locked),
+          subscription: pr?.viewerSubscription || 'UNSUBSCRIBED',
+          canUpdate: Boolean(pr?.viewerCanUpdate),
+          canAutoMerge: Boolean(pr?.viewerCanEnableAutoMerge || pr?.viewerCanDisableAutoMerge),
+          autoMerge: pr?.autoMergeRequest ? { by: pr.autoMergeRequest.enabledBy?.login, method: String(pr.autoMergeRequest.mergeMethod || '').toLowerCase() } : null,
+          closing: (pr?.closingIssuesReferences?.nodes || []).map((i: any) => ({ number: i.number, title: i.title, state: i.state, url: i.url, repo: i.repository?.nameWithOwner, branches: (i.linkedBranches?.nodes || []).map((b: any) => b.ref?.name).filter(Boolean) })),
+          projects: (pr?.projectItems?.nodes || []).map((i: any) => ({ itemId: i.id, id: i.project?.id, title: i.project?.title, url: i.project?.url })),
+        };
+      }
+      case 'assignableUsers': {
+        // todas as pessoas que podem ser escolhidas: atribuíveis do repositório, colaboradores, membros da organização
+        // e quem aparece nos itens dos Projects vinculados ao repositório
+        const map = new Map<string, { login: string; avatar?: string }>();
+        const add = (u: any) => {
+          const login = u?.login;
+          if (login && !map.has(login)) map.set(login, { login, avatar: u.avatar_url || u.avatarUrl });
+        };
+        const pages = async (url: string) => {
+          for (let page = 1; page <= 5; page++) {
+            const r = await this.ghGet(`${url}${url.includes('?') ? '&' : '?'}per_page=100&page=${page}`);
+            if (!r.ok || !Array.isArray(r.data) || r.data.length === 0) break;
+            r.data.forEach(add);
+            if (r.data.length < 100) break;
+          }
+        };
+        const repoInfo = await this.ghGet(this.repoUrl(owner, repo));
+        const jobs: Array<Promise<any>> = [pages(this.repoUrl(owner, repo, '/assignees')), pages(this.repoUrl(owner, repo, '/collaborators?affiliation=all'))];
+        if (repoInfo.data?.owner?.type === 'Organization') jobs.push(pages(`https://api.github.com/orgs/${owner}/members`));
+        jobs.push(
+          this.graphql(
+            `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){ projectsV2(first:5){ nodes{ items(first:100){ nodes{ content{
+              ... on Issue{ assignees(first:5){ nodes{ login avatarUrl } } } ... on PullRequest{ assignees(first:5){ nodes{ login avatarUrl } } } } } } } } } }`,
+            { owner, name: repo },
+            'Erro ao listar pessoas do Project',
+          )
+            .then((d: any) => (d?.repository?.projectsV2?.nodes || []).forEach((pj: any) => (pj?.items?.nodes || []).forEach((it: any) => (it?.content?.assignees?.nodes || []).forEach(add))))
+            .catch(() => {}),
+        );
+        await Promise.allSettled(jobs);
+        return [...map.values()].sort((x, y) => x.login.localeCompare(y.login));
+      }
+      case 'repoLabels': {
+        const labels = await this.ghGetOrThrow(this.repoUrl(owner, repo, '/labels?per_page=100'));
+        return labels.map((l: any) => ({ name: l.name, color: l.color, description: l.description || '' }));
+      }
+      case 'repoMilestones': {
+        const ms = await this.ghGetOrThrow(this.repoUrl(owner, repo, '/milestones?state=open&per_page=100'));
+        return ms.map((m: any) => ({ number: m.number, title: m.title, dueOn: m.due_on }));
+      }
+      case 'ownerProjects': {
+        const d = await this.graphql(
+          `query($owner:String!,$name:String!){ repository(owner:$owner,name:$name){
+            projectsV2(first:30){ nodes{ id title closed } }
+            owner{ ... on Organization{ projectsV2(first:30){ nodes{ id title closed } } } ... on User{ projectsV2(first:30){ nodes{ id title closed } } } }
+          } }`,
+          { owner, name: repo },
+          'Erro ao listar Projects',
+        );
+        const seen = new Set<string>();
+        return [...(d?.repository?.projectsV2?.nodes || []), ...(d?.repository?.owner?.projectsV2?.nodes || [])].filter((x: any) => x && !x.closed && !seen.has(x.id) && seen.add(x.id)).map((x: any) => ({ id: x.id, title: x.title }));
+      }
+      case 'setPullLabels':
+        await this.ghSend('PUT', this.repoUrl(owner, repo, `/issues/${p.number}/labels`), { labels: p.labels });
+        return { ok: true };
+      case 'setPullAssignees':
+        await this.ghSend('PATCH', this.repoUrl(owner, repo, `/issues/${p.number}`), { assignees: p.assignees });
+        return { ok: true };
+      case 'setPullMilestone':
+        await this.ghSend('PATCH', this.repoUrl(owner, repo, `/issues/${p.number}`), { milestone: p.milestone ?? null });
+        return { ok: true };
+      case 'requestPullReviewers': {
+        const url = this.repoUrl(owner, repo, `/pulls/${p.number}/requested_reviewers`);
+        if (p.add?.length) await this.ghSend('POST', url, { reviewers: p.add });
+        if (p.remove?.length) await this.ghSend('DELETE', url, { reviewers: p.remove });
+        return { ok: true };
+      }
+      case 'setPullDraft':
+        await this.graphql(
+          p.draft
+            ? `mutation($id:ID!){ convertPullRequestToDraft(input:{pullRequestId:$id}){ pullRequest{ id } } }`
+            : `mutation($id:ID!){ markPullRequestReadyForReview(input:{pullRequestId:$id}){ pullRequest{ id } } }`,
+          { id: p.nodeId },
+          p.draft ? 'Erro ao converter para rascunho' : 'Erro ao marcar como pronto para review',
+        );
+        return { ok: true };
+      case 'setPullSubscription':
+        await this.graphql(`mutation($id:ID!,$st:SubscriptionState!){ updateSubscription(input:{subscribableId:$id,state:$st}){ subscribable{ id } } }`, { id: p.nodeId, st: p.state }, 'Erro ao alterar notificações');
+        return { ok: true };
+      case 'setPullLock':
+        if (p.locked) await this.ghSend('PUT', this.repoUrl(owner, repo, `/issues/${p.number}/lock`), {});
+        else await this.ghSend('DELETE', this.repoUrl(owner, repo, `/issues/${p.number}/lock`));
+        return { ok: true };
+      case 'addPullToProject':
+        await this.graphql(`mutation($p:ID!,$c:ID!){ addProjectV2ItemById(input:{projectId:$p,contentId:$c}){ item{ id } } }`, { p: p.projectId, c: p.nodeId }, 'Erro ao adicionar ao Project');
+        return { ok: true };
+      case 'removePullFromProject':
+        await this.graphql(`mutation($p:ID!,$i:ID!){ deleteProjectV2Item(input:{projectId:$p,itemId:$i}){ deletedItemId } }`, { p: p.projectId, i: p.itemId }, 'Erro ao remover do Project');
+        return { ok: true };
+      case 'unlinkIssueFromPull': {
+        const url = this.repoUrl(owner, repo, `/pulls/${p.number}`);
+        const pr = await this.ghGetOrThrow(url);
+        const body: string = (pr.body || '').replace(new RegExp(`\\s*\\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\\s+(?:[\\w.-]+/[\\w.-]+)?#${p.issueNumber}\\b`, 'ig'), '').trimEnd();
+        await this.ghSend('PATCH', url, { body });
+        return { ok: true };
+      }
+      case 'updatePullBranch':
+        // atualiza a branch do PR com a base (merge ou rebase)
+        await this.graphql(`mutation($id:ID!,$m:PullRequestBranchUpdateMethod!){ updatePullRequestBranch(input:{pullRequestId:$id,updateMethod:$m}){ pullRequest{ id } } }`, { id: p.nodeId, m: p.method === 'rebase' ? 'REBASE' : 'MERGE' }, 'Erro ao atualizar a branch');
+        return { ok: true };
+      case 'deletePullBranch':
+        await this.ghSend('DELETE', this.repoUrl(owner, repo, `/git/refs/heads/${String(p.ref).split('/').map(encodeURIComponent).join('/')}`));
+        return { ok: true };
+      case 'restorePullBranch':
+        await this.ghSend('POST', this.repoUrl(owner, repo, '/git/refs'), { ref: `refs/heads/${p.ref}`, sha: p.sha });
+        return { ok: true };
+      case 'revertPull': {
+        const d = await this.graphql(`mutation($id:ID!){ revertPullRequest(input:{pullRequestId:$id}){ revertPullRequest{ number url } } }`, { id: p.nodeId }, 'Erro ao reverter o pull request');
+        return d?.revertPullRequest?.revertPullRequest || null;
+      }
+      case 'setAutoMerge':
+        if (p.enable) await this.graphql(`mutation($id:ID!,$m:PullRequestMergeMethod!){ enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:$m}){ pullRequest{ id } } }`, { id: p.nodeId, m: String(p.method || 'merge').toUpperCase() }, 'Erro ao ativar o merge automático');
+        else await this.graphql(`mutation($id:ID!){ disablePullRequestAutoMerge(input:{pullRequestId:$id}){ pullRequest{ id } } }`, { id: p.nodeId }, 'Erro ao desativar o merge automático');
+        return { ok: true };
+      case 'editPull': {
+        const patch: any = {};
+        if (typeof p.title === 'string') patch.title = p.title;
+        if (typeof p.body === 'string') patch.body = p.body;
+        if (typeof p.base === 'string') patch.base = p.base;
+        await this.ghSend('PATCH', this.repoUrl(owner, repo, `/pulls/${p.number}`), patch);
+        return { ok: true };
+      }
+      case 'editComment':
+        await this.ghSend('PATCH', this.repoUrl(owner, repo, `/issues/comments/${p.id}`), { body: p.body });
+        return { ok: true };
+      case 'deleteComment':
+        await this.ghSend('DELETE', this.repoUrl(owner, repo, `/issues/comments/${p.id}`));
+        return { ok: true };
+      case 'addReviewComment':
+        // comentário numa linha do diff (lado novo = RIGHT, lado antigo = LEFT)
+        await this.ghSend('POST', this.repoUrl(owner, repo, `/pulls/${p.number}/comments`), { body: p.body, commit_id: p.commitId, path: p.path, line: p.line, side: p.side === 'LEFT' ? 'LEFT' : 'RIGHT' });
+        return { ok: true };
+      case 'replyReviewComment':
+        await this.ghSend('POST', this.repoUrl(owner, repo, `/pulls/${p.number}/comments/${p.commentId}/replies`), { body: p.body });
+        return { ok: true };
+      case 'addPullComment':
+        await this.ghSend('POST', this.repoUrl(owner, repo, `/issues/${p.number}/comments`), { body: p.body });
+        return { ok: true };
+      case 'setPullState':
+        await this.ghSend('PATCH', this.repoUrl(owner, repo, `/pulls/${p.number}`), { state: p.state });
+        return { ok: true };
+      case 'mergePull':
+        return this.ghSend('PUT', this.repoUrl(owner, repo, `/pulls/${p.number}/merge`), { merge_method: p.method || 'merge', ...(p.title ? { commit_title: p.title } : {}), ...(p.message ? { commit_message: p.message } : {}) });
+      case 'assignPull':
+        await this.ghSend('POST', this.repoUrl(owner, repo, `/issues/${p.number}/assignees`), { assignees: p.assignees });
+        return { ok: true };
       case 'getPullReview': {
         const base = this.repoUrl(owner, repo, `/pulls/${p.number}`);
         const [pr, files, reviews] = await Promise.all([this.ghGetOrThrow(base), this.ghGetOrThrow(`${base}/files?per_page=100`), this.ghGetOrThrow(`${base}/reviews?per_page=100`)]);
@@ -1875,14 +2511,14 @@ class GithubAuthService {
         return (Array.isArray(r.data) ? r.data : []).map((f: any) => ({ name: f.name, path: f.path, sha: f.sha, type: f.type }));
       }
       case 'putFile':
-        return this.ghSend('PUT', this.repoUrl(owner, repo, `/contents/${encPath(p.path)}`), {
+        return this.writeFileOrPr(owner, repo, 'PUT', p, {
           message: p.message,
           content: Buffer.from(p.content, 'utf8').toString('base64'),
           ...(p.sha ? { sha: p.sha } : {}),
           ...(p.branch ? { branch: p.branch } : {}),
         });
       case 'deleteFile':
-        return this.ghSend('DELETE', this.repoUrl(owner, repo, `/contents/${encPath(p.path)}`), { message: p.message, sha: p.sha });
+        return this.writeFileOrPr(owner, repo, 'DELETE', p, { message: p.message, sha: p.sha });
       case 'listWorkflowRuns': {
         const data = await this.ghGetOrThrow(this.repoUrl(owner, repo, `/actions/runs?per_page=${p.perPage || 15}`));
         return (data.workflow_runs || []).map((r: any) => ({

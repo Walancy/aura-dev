@@ -18,6 +18,9 @@
   --dropdown-bg: #1b1b1d;
   --dropdown-border: none;
   --dropdown-item-hover: rgba(255, 255, 255, 0.06);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 :root[data-theme="light"] {
@@ -86,25 +89,34 @@ button {
   border: none;
   box-shadow: none;
   font-weight: 400;
-  transition: background-color 0.15s ease, color 0.15s ease;
+  transition: background-color 150ms ease, color 150ms ease, transform 140ms var(--ease-out);
 }
 
-.df-field:hover,
-.df-search-box:hover,
-.df-dropdown-trigger:hover {
-  background: var(--field-bg-hover);
+@media (hover: hover) and (pointer: fine) {
+  .df-field:hover,
+  .df-search-box:hover,
+  .df-dropdown-trigger:hover {
+    background: var(--field-bg-hover);
+  }
+}
+
+.df-dropdown-trigger:not(:disabled):active {
+  transform: scale(0.98);
 }
 
 .df-field:focus,
 .df-search-box:focus-within,
 .df-dropdown-trigger[data-open="true"] {
   border: none;
+  background: var(--field-bg-hover);
 }
 
 .df-dropdown-menu {
   background: var(--dropdown-bg);
   border: none;
   box-shadow: none;
+  transform-origin: var(--popover-origin, top left);
+  animation: dfPopoverIn 160ms var(--ease-out);
 }
 
 select {
@@ -255,6 +267,15 @@ select {
   flex-shrink: 0;
 }
 
+.resizer-row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -4px;
+  bottom: -4px;
+}
+
 .resizer-row::after {
   content: '';
   height: 2px;
@@ -344,6 +365,13 @@ body.resizing-row {
 }
 
 
+
+@keyframes dfUpdateGlow {
+  0%, 100% { filter: drop-shadow(0 0 2px var(--update-color)); transform: scale(1); }
+  50% { filter: drop-shadow(0 0 7px var(--update-color)); transform: scale(1.12); }
+}
+.df-update-glow svg { animation: dfUpdateGlow 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .df-update-glow svg { animation: none; } }
 
 @keyframes spin {
   from {
@@ -651,4 +679,472 @@ body.resizing-row {
   .auradev-tutorial-card button {
     transition: none !important;
   }
+}
+
+/* ==========================================================================
+   Aura Dev — Sistema de Micro-Animações (CLI, IDE, Projetos e Daily)
+   Propriedades compostas (transform, opacity) + transições de cor/fundo,
+   zero bordas, zero sombras, curvas físicas var(--ease-out).
+   ========================================================================== */
+
+@keyframes dfShimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes dfOpacityEnter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes dfIndicatorIn {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) scaleY(0.35);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(-50%) scaleY(1);
+  }
+}
+
+@keyframes dfPopoverIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes dfPopoverInUp {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes dfViewEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes dfSubtleFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes dfPanelSlideLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes dfPanelSlideRight {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes dfPaneScaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes dfCardStaggerIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes dfModalBackdropIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes dfModalContentIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes dfCheckPop {
+  0% {
+    transform: scale(0.84);
+  }
+  55% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Menus suspensos universais (mesmo fora de .cli-skin) */
+.skin-menu,
+.df-popover {
+  transform-origin: var(--popover-origin, top left);
+  animation: dfPopoverIn 160ms var(--ease-out);
+}
+
+.df-popover[data-placement="top"],
+.df-dropdown-menu[data-placement="top"] {
+  transform-origin: var(--popover-origin, bottom left);
+  animation: dfPopoverInUp 160ms var(--ease-out);
+}
+
+.df-popover-right {
+  --popover-origin: top right;
+}
+
+/* Entradas de tela, aba, painel lateral, terminal dividido e modais */
+.df-view-enter {
+  animation: dfViewEnter 190ms var(--ease-out);
+}
+
+.df-opacity-enter {
+  animation: dfOpacityEnter 150ms ease;
+}
+
+.df-activity-indicator {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 2.5px;
+  height: 16px;
+  border-radius: 0 3px 3px 0;
+  transform: translateY(-50%) scaleY(1);
+  transform-origin: center;
+  pointer-events: none;
+  animation: dfIndicatorIn 170ms var(--ease-out);
+}
+
+.df-subtle-enter {
+  animation: dfSubtleFadeIn 160ms var(--ease-out);
+}
+
+.df-panel-enter-left {
+  animation: dfPanelSlideLeft 180ms var(--ease-out);
+}
+
+.df-panel-enter-right {
+  animation: dfPanelSlideRight 180ms var(--ease-out);
+}
+
+.df-pane-enter {
+  animation: dfPaneScaleIn 180ms var(--ease-out);
+}
+
+.df-modal-backdrop {
+  animation: dfModalBackdropIn 160ms ease;
+}
+
+.df-modal-content {
+  transform-origin: center;
+  animation: dfModalContentIn 200ms var(--ease-out);
+}
+
+/* Coreografia escalonada com teto curto (máximo 6 itens * 32ms = 192ms) */
+.df-stagger-item {
+  animation: dfCardStaggerIn 220ms var(--ease-out) both;
+  animation-delay: calc(min(var(--stagger-idx, 0), 6) * 32ms);
+}
+
+/* Feedback tátil universal em todos os botões das superfícies CLI, IDE, Projetos e Daily */
+.df-cli-surface button:not(:disabled):not([data-no-motion]):not([draggable="true"]),
+.df-ide-surface button:not(:disabled):not([data-no-motion]):not([draggable="true"]),
+.df-projects-surface button:not(:disabled):not([data-no-motion]):not([draggable="true"]),
+.df-daily-surface button:not(:disabled):not([data-no-motion]):not([draggable="true"]),
+.df-header-surface button:not(:disabled):not([data-no-motion]):not([draggable="true"]),
+.df-pressable:not([data-disabled="true"]):not([data-no-motion]):not([draggable="true"]),
+.skin-tab:not([data-no-motion]):not([draggable="true"]):not(.workspace-tab) {
+  transition: transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease, opacity 150ms ease;
+}
+
+.df-cli-surface button:not(:disabled):not([data-no-motion]):not([draggable="true"]):active,
+.df-ide-surface button:not(:disabled):not([data-no-motion]):not([draggable="true"]):active,
+.df-projects-surface button:not(:disabled):not([data-no-motion]):not([draggable="true"]):active,
+.df-daily-surface button:not(:disabled):not([data-no-motion]):not([draggable="true"]):active,
+.df-header-surface button:not(:disabled):not([data-no-motion]):not([draggable="true"]):active,
+.df-pressable:not([data-disabled="true"]):not([data-no-motion]):not([draggable="true"]):active,
+.skin-tab:not([data-no-motion]):not([draggable="true"]):not(.workspace-tab):active {
+  transform: scale(0.97);
+}
+
+.workspace-tab:not([data-no-motion]):not([draggable="true"]) {
+  transition: background-color 150ms ease, color 150ms ease, opacity 150ms ease;
+}
+
+/* Protege editores Monaco, terminais xterm e divisores contra transformações de botão */
+.monaco-editor button,
+.monaco-editor button:active,
+.monaco-diff-editor button,
+.monaco-diff-editor button:active,
+.xterm button,
+.xterm button:active {
+  transform: none !important;
+}
+
+/* Cards interativos (Projetos, Sprints, Kanban, Marcos, Riscos, Links, Daily) */
+.df-card-interactive {
+  transition: transform 180ms var(--ease-out), background-color 160ms ease, opacity 160ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .df-card-interactive:not([data-dragging="true"]):hover {
+    transform: translateY(-2px);
+  }
+  .df-card-subtle:not([data-dragging="true"]):hover {
+    transform: translateY(-1px);
+  }
+  .df-row-interactive:not(tr):hover {
+    transform: translateX(1.5px);
+  }
+  .df-icon-btn:not(:disabled):hover svg {
+    transform: scale(1.08);
+  }
+  .df-card-interactive:hover .df-hover-reveal,
+  .df-row-interactive:hover .df-hover-reveal {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.df-card-interactive:not([data-dragging="true"]):active {
+  transform: translateY(0) scale(0.99);
+}
+
+.df-card-subtle {
+  transition: transform 160ms var(--ease-out), background-color 150ms ease, opacity 150ms ease;
+}
+
+.df-card-subtle:not([data-dragging="true"]):active {
+  transform: scale(0.988);
+}
+
+.df-card-interactive[data-dragging="true"],
+.df-card-subtle[data-dragging="true"] {
+  transition: opacity 120ms ease !important;
+}
+
+/* Linhas interativas (árvore de arquivos da IDE, listas Git, tabelas de tarefas/issues, time) */
+.df-row-interactive {
+  transition: transform 140ms var(--ease-out), background-color 140ms ease, color 140ms ease, opacity 140ms ease;
+}
+
+.df-row-interactive:not(tr):active {
+  transform: scale(0.995);
+}
+
+.df-icon-btn svg {
+  transition: transform 150ms var(--ease-out), color 150ms ease, opacity 150ms ease;
+}
+
+.df-hover-reveal {
+  opacity: 0.55;
+  transform: translateX(2px);
+  transition: opacity 140ms ease, transform 140ms var(--ease-out);
+}
+
+.df-chevron {
+  transition: transform 160ms var(--ease-out), color 150ms ease;
+}
+
+.df-check-pop {
+  animation: dfCheckPop 180ms var(--ease-out);
+}
+
+/* Respeito total à preferência de movimento reduzido do sistema operacional */
+@media (prefers-reduced-motion: reduce) {
+  .df-view-enter,
+  .df-opacity-enter,
+  .df-activity-indicator,
+  .df-subtle-enter,
+  .df-panel-enter-left,
+  .df-panel-enter-right,
+  .df-pane-enter,
+  .df-modal-backdrop,
+  .df-modal-content,
+  .df-stagger-item,
+  .df-check-pop,
+  .skin-menu,
+  .df-popover,
+  .df-dropdown-menu {
+    animation: none !important;
+  }
+
+  .df-cli-surface button,
+  .df-ide-surface button,
+  .df-projects-surface button,
+  .df-daily-surface button,
+  .df-header-surface button,
+  .df-pressable,
+  .df-card-interactive,
+  .df-card-subtle,
+  .df-row-interactive,
+  .df-icon-btn svg,
+  .df-chevron {
+    transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease !important;
+    transform: none !important;
+  }
+}
+
+/* Sidebar da issue: entrada em cascata das seções, engrenagens que giram, popups que descem e cliques com retorno */
+@media (prefers-reduced-motion: no-preference) {
+  .issue-sidebar > div { animation: dfSubtleFadeIn 240ms var(--ease-out) both; }
+  .issue-sidebar > div:nth-child(2) { animation-delay: 30ms; }
+  .issue-sidebar > div:nth-child(3) { animation-delay: 60ms; }
+  .issue-sidebar > div:nth-child(4) { animation-delay: 90ms; }
+  .issue-sidebar > div:nth-child(5) { animation-delay: 120ms; }
+  .issue-sidebar > div:nth-child(6) { animation-delay: 150ms; }
+  .issue-sidebar > div:nth-child(7) { animation-delay: 180ms; }
+  .issue-sidebar > div:nth-child(n+8) { animation-delay: 210ms; }
+  .issue-sidebar [data-sidebar-trigger] svg { transition: transform 320ms var(--ease-out); }
+  .issue-sidebar [data-sidebar-trigger]:hover svg:last-child { transform: rotate(75deg); }
+  .issue-sidebar [data-sidebar-popup] { transform-origin: top center; animation: dfSubtleFadeIn 160ms var(--ease-out); }
+  .issue-sidebar button { transition: background-color 150ms ease, color 150ms ease, transform 150ms var(--ease-out), opacity 150ms ease; }
+  .issue-sidebar button:active { transform: scale(0.97); }
+  .issue-sidebar img { transition: transform 200ms var(--ease-out); }
+  .issue-sidebar img:hover { transform: scale(1.12); }
+}
+
+@keyframes dfBlink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+/* Diff do PR: o botão de comentar aparece ao passar o mouse na linha */
+div:hover > .pr-line-add { opacity: 1 !important; }
+
+/* Esqueleto de carregamento: brilho que percorre o bloco */
+.df-skel {
+  display: block;
+  background: linear-gradient(90deg, var(--skel-a, rgba(255, 255, 255, 0.05)) 25%, var(--skel-b, rgba(255, 255, 255, 0.12)) 50%, var(--skel-a, rgba(255, 255, 255, 0.05)) 75%);
+  background-size: 220% 100%;
+  animation: dfSkeleton 1.5s ease-in-out infinite;
+}
+@keyframes dfSkeleton {
+  0% { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .df-skel { animation: none; }
+}
+
+/* caixa de merge: a primeira linha não leva divisória em cima */
+.pr-merge-rows > :first-child { border-top: none !important; }
+
+/* Problems: ações da linha ficam discretas e acendem ao passar o mouse */
+.pp-row .pp-actions button { opacity: 0.55; transition: opacity 150ms ease, background-color 150ms ease, color 150ms ease; }
+.pp-row:hover .pp-actions button { opacity: 1; }
+.pp-act:hover { background: rgba(127, 127, 127, 0.18) !important; }
+
+/* ícone da aba do CLI: IA gerando (pulsa) e IA terminou (pula) */
+@keyframes dfTabIconPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.88); }
+}
+@keyframes dfTabIconBounce {
+  0%, 55%, 100% { transform: translateY(0); }
+  25% { transform: translateY(-4px); }
+  40% { transform: translateY(0); }
+  48% { transform: translateY(-1.5px); }
+}
+
+/* ações do cabeçalho do terminal (limpar, maximizar, fechar) */
+.df-hdr-act { transition: transform 140ms var(--ease-out), color 150ms ease; }
+.df-hdr-act svg { transition: transform 200ms var(--ease-out); }
+.df-hdr-act:hover { transform: scale(1.18); }
+.df-hdr-act:active { transform: scale(0.86); }
+.df-hdr-act:hover svg { transform: rotate(-8deg); }
+.df-hdr-act[title^="Maximizar"]:hover svg, .df-hdr-act[title^="Restaurar"]:hover svg { transform: scale(1.15) rotate(0deg); }
+.df-hdr-act[title^="Fechar"]:hover svg { transform: rotate(90deg); }
+
+/* aba do CLI criada / excluída */
+@keyframes dfTabIn {
+  from { opacity: 0; transform: scale(0.85); max-width: 0; min-width: 0; padding-left: 0; padding-right: 0; overflow: hidden; }
+  to { opacity: 1; transform: scale(1); max-width: 155px; overflow: hidden; }
+}
+@keyframes dfTabOut {
+  from { opacity: 1; transform: scale(1); max-width: 155px; overflow: hidden; }
+  to { opacity: 0; transform: scale(0.85); max-width: 0; min-width: 0; padding-left: 0; padding-right: 0; overflow: hidden; }
+}
+
+/* Brain: entradas suaves de painéis, linhas e seções */
+@keyframes brainFadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes brainSlideIn { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
+@keyframes brainRowIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+@keyframes brainPulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.18); opacity: 0.75; } }
+@media (prefers-reduced-motion: reduce) {
+  [style*="brainFadeUp"], [style*="brainSlideIn"], [style*="brainRowIn"], [style*="brainPulse"] { animation: none !important; }
 }

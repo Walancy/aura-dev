@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { readSharedSidebarWidth } from '../sharedSidebarWidth';
 import { Grid3x3, History, KeyRound, LayoutDashboard, Layers, Loader2, RefreshCw, ShieldAlert, Sparkles, Users } from 'lucide-react';
 import type { ProjectIssue, SprintOption } from '../ProjectsSchedulerView';
 import { ManageAccessView, type AccessItem } from './ManageAccessView';
@@ -360,6 +361,7 @@ export const TeamWorkspaceView: React.FC<Props> = ({
 
   return (
     <div
+      className="df-projects-surface df-view-enter"
       style={{
         display: 'flex',
         flexDirection: 'row',
@@ -372,13 +374,14 @@ export const TeamWorkspaceView: React.FC<Props> = ({
         overflow: 'hidden',
         boxSizing: 'border-box',
         fontFamily: "'Poppins', -apple-system, sans-serif",
+        fontWeight: 400,
       }}
     >
       {/* Sidebar */}
       <div
         data-tour="time-left-sidebar"
         style={{
-          width: 'clamp(160px, 20%, 220px)',
+          width: readSharedSidebarWidth(),
           minWidth: 160,
           background: isEffectiveDark ? '#161616' : '#ffffff',
           borderRadius: 8,
@@ -404,6 +407,7 @@ export const TeamWorkspaceView: React.FC<Props> = ({
               return (
                 <div
                   key={tab.id}
+                  className="df-pressable"
                   onClick={() => {
                     setSection(tab.id);
                     logSystemActivity('time_workspace', 'trocar_secao', tab.label, { secao: tab.id, repo: repoFullName });
@@ -419,7 +423,6 @@ export const TeamWorkspaceView: React.FC<Props> = ({
                     color: isActive ? theme.textPrimary : theme.textSecondary,
                     fontWeight: 400,
                     fontSize: 12,
-                    transition: 'all 0.15s ease',
                   }}
                   onMouseEnter={(e) => {
                     if (!isActive) e.currentTarget.style.background = isEffectiveDark ? '#242424' : '#f0f0f0';
@@ -469,7 +472,20 @@ export const TeamWorkspaceView: React.FC<Props> = ({
         {raw && raw.errors.length > 0 && (
           <div style={{ background: isEffectiveDark ? '#161616' : '#ffffff', borderRadius: 8, padding: '6px 12px', fontSize: 11.5, color: '#f59e0b', flexShrink: 0, border: 'none', boxShadow: 'none' }}>{raw.errors.join(' ')}</div>
         )}
-        {renderSection()}
+        <div
+          key={section}
+          className="df-view-enter"
+          style={{
+            flex: section === 'acesso' ? 1 : '1 0 auto',
+            minHeight: section === 'acesso' ? 0 : undefined,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 5,
+            fontWeight: 400,
+          }}
+        >
+          {renderSection()}
+        </div>
       </div>
 
       {drawer && drawerMember && raw && (

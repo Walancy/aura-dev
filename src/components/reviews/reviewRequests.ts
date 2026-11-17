@@ -26,7 +26,8 @@ export function loadDismissedReviews(): string[] {
 // PRs que já geraram aviso: um PR só avisa uma vez, mesmo que continue pendente
 const SEEN_KEY = 'devflow_review_seen_v1';
 
-// Retorna os ainda não avisados e marca todos como vistos. Na primeira execução só registra (não avisa o backlog antigo).
+// Retorna os ainda não avisados e marca todos como vistos. Na primeira execução só avisa os pedidos recentes (o backlog antigo é só registrado).
+const RECENT_MS = 3 * 24 * 60 * 60 * 1000;
 export function takeNewReviews(requests: ReviewRequest[]): ReviewRequest[] {
   try {
     const raw = localStorage.getItem(SEEN_KEY);
@@ -34,7 +35,7 @@ export function takeNewReviews(requests: ReviewRequest[]): ReviewRequest[] {
     const fresh = requests.filter((r) => !seen.has(reviewRequestId(r)));
     fresh.forEach((r) => seen.add(reviewRequestId(r)));
     localStorage.setItem(SEEN_KEY, JSON.stringify([...seen].slice(-500)));
-    return raw === null ? [] : fresh;
+    return raw === null ? fresh.filter((r) => Date.now() - new Date(r.updatedAt).getTime() < RECENT_MS) : fresh;
   } catch {
     return [];
   }

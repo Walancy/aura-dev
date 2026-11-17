@@ -23,6 +23,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dailyStore: {
     read: () => ipcRenderer.invoke('dailyStore:read'),
     write: (json: string) => ipcRenderer.invoke('dailyStore:write', json),
+    onChanged: (cb: (info: { count: number; titles: string[]; items: any[]; snapshot?: any[]; message?: string; kind?: 'created' | 'updated' }) => void) => {
+      const handler = (_e: unknown, info: { count: number; titles: string[]; items: any[]; snapshot?: any[]; message?: string; kind?: 'created' | 'updated' }) => cb(info);
+      ipcRenderer.on('dailyStore:changed', handler);
+      return () => ipcRenderer.removeListener('dailyStore:changed', handler);
+    },
   },
   aiSessions: {
     list: (provider: string, cwd: string) => ipcRenderer.invoke('aiSessions:list', { provider, cwd }),
@@ -81,7 +86,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('pty:context-alert', handler);
       return () => ipcRenderer.removeListener('pty:context-alert', handler);
     },
-    onSessionStatus: (callback: (payload: { id: string; type: string; cwd: string; isAi: boolean; isRunning: boolean; exited?: boolean }) => void) => {
+    onSessionStatus: (callback: (payload: { id: string; type: string; cwd: string; isAi: boolean; isRunning: boolean; exited?: boolean; shellRespawned?: boolean }) => void) => {
       const handler = (_event: any, payload: any) => callback(payload);
       ipcRenderer.on('pty:session-status', handler);
       return () => ipcRenderer.removeListener('pty:session-status', handler);
@@ -140,7 +145,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     writeFile: (filePath: string, content: string) =>
       ipcRenderer.invoke('fs:writeFile', { filePath, content }),
     getCapabilities: () => ipcRenderer.invoke('app:capabilities'),
-    stockImage: (payload: { query: string; width: number; height: number; key?: string; index?: number; people?: boolean; pexelsKey?: string }) => ipcRenderer.invoke('unsplash:image', payload),
+    auditSite: (dir: string) => ipcRenderer.invoke('sites:audit', { dir }),
+    captureSiteReference: (url: string, dir: string) => ipcRenderer.invoke('sites:captureUrl', { url, dir }),
+    stockImage: (payload: { query: string; width: number; height: number; key?: string; index?: number; people?: boolean; maxSide?: number; pexelsKey?: string }) => ipcRenderer.invoke('unsplash:image', payload),
     exportPdf: (html: string, defaultName: string) => ipcRenderer.invoke('design:exportPdf', { html, defaultName }),
     figmaFetch: (token: string, apiPath: string) => ipcRenderer.invoke('figma:fetch', { token, apiPath }),
     figmaDownloadImages: (urls: Record<string, string>) => ipcRenderer.invoke('figma:downloadImages', { urls }),
@@ -289,6 +296,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
   },
 
+  // Atualização do app (GitHub Releases)
+  updater: {
+    check: () => ipcRenderer.invoke('updater:check'),
+    install: () => ipcRenderer.invoke('updater:install'),
+    openReleasePage: (url?: string) => ipcRenderer.invoke('updater:openReleasePage', { url }),
+    onProgress: (callback: (p: { stage: 'download' | 'install'; percent: number }) => void) => {
+      const handler = (_e: any, p: any) => callback(p);
+      ipcRenderer.on('updater:progress', handler);
+      return () => ipcRenderer.removeListener('updater:progress', handler);
+    },
+  },
+
   // Shell execution
   shell: {
     exec: (command: string, cwd?: string) =>
@@ -392,7 +411,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('github:lockIssue', { owner, repo, issueNumber, locked }),
     pinIssue: (issueId: string, pinned: boolean) =>
       ipcRenderer.invoke('github:pinIssue', { issueId, pinned }),
-    setIssueSubscription: (owner: string, repo: string, issueNumber: number, subscribed: boolean) =>
+    setIssueSubscription: (owner: string, repo: string, issueNumber: number, subscribed: boolean | 'SUBSCRIBED' | 'UNSUBSCRIBED' | 'IGNORED') =>
       ipcRenderer.invoke('github:setIssueSubscription', { owner, repo, issueNumber, subscribed }),
     transferIssue: (owner: string, repo: string, issueNumber: number, newOwner: string, newRepo: string) =>
       ipcRenderer.invoke('github:transferIssue', { owner, repo, issueNumber, newOwner, newRepo }),

@@ -57,7 +57,7 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
   showTodayShortcut = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [popupPos, setPopupPos] = useState<{ top: number; left: number } | null>(null);
+  const [popupPos, setPopupPos] = useState<{ top: number; left: number; placeAbove: boolean } | null>(null);
   const selectedDate = value ? toDateOnly(value) : null;
   const minDate = min ? toDateOnly(min) : null;
   const [viewMonth, setViewMonth] = useState(() => selectedDate || new Date());
@@ -87,12 +87,14 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
     if (left < 8) left = 8;
 
     let top = rect.bottom + 6;
+    let placeAbove = false;
     if (top + POPUP_HEIGHT_ESTIMATE > window.innerHeight - 8) {
       const above = rect.top - POPUP_HEIGHT_ESTIMATE - 6;
       top = above < 8 ? 8 : above;
+      placeAbove = true;
     }
 
-    setPopupPos({ top, left });
+    setPopupPos({ top, left, placeAbove });
   };
 
   const handleTriggerClick = () => {
@@ -151,6 +153,8 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
     <div ref={containerRef} style={{ position: 'relative' }}>
       <button
         type="button"
+        className="df-dropdown-trigger"
+        data-open={isOpen ? 'true' : undefined}
         onClick={handleTriggerClick}
         style={{
           display: 'flex',
@@ -170,7 +174,7 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
           cursor: 'pointer',
           textAlign: 'left',
           fontFamily: 'inherit',
-          transition: 'background 0.15s ease',
+          transition: 'background-color 150ms ease, color 150ms ease, transform 140ms var(--ease-out)',
           boxSizing: 'border-box',
         }}
         onMouseEnter={(e) => {
@@ -216,6 +220,8 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
       {isOpen && popupPos && createPortal(
         <div
           ref={popupRef}
+          className="df-dropdown-menu"
+          data-placement={popupPos.placeAbove ? 'top' : 'bottom'}
           onClick={(e) => e.stopPropagation()}
           style={{
             position: 'fixed',
@@ -228,11 +234,14 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
             padding: 10,
             boxShadow: 'none',
             border: resolvedDropdownBorder,
+            transformOrigin: popupPos.placeAbove ? 'bottom left' : 'top left',
+            animation: `${popupPos.placeAbove ? 'dfPopoverInUp' : 'dfPopoverIn'} 160ms var(--ease-out)`,
           }}
         >
           {/* Cabeçalho: mês/ano + navegação */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, padding: '0 2px' }}>
             <div
+              className="df-pressable"
               onClick={() => setViewMonth(new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1))}
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: 5, cursor: 'pointer', color: textSecondary }}
               onMouseEnter={(e) => (e.currentTarget.style.background = dropdownItemHover)}
@@ -240,10 +249,15 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
             >
               <ChevronLeft size={14} />
             </div>
-            <span style={{ fontSize: 12, fontWeight: 500, color: textPrimary, textTransform: 'capitalize' }}>
+            <span
+              key={`${viewMonth.getFullYear()}-${viewMonth.getMonth()}`}
+              className="df-subtle-enter"
+              style={{ fontSize: 12, fontWeight: 400, color: textPrimary, textTransform: 'capitalize' }}
+            >
               {viewMonth.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
             </span>
             <div
+              className="df-pressable"
               onClick={() => setViewMonth(new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1))}
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: 5, cursor: 'pointer', color: textSecondary }}
               onMouseEnter={(e) => (e.currentTarget.style.background = dropdownItemHover)}
@@ -263,7 +277,11 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
           </div>
 
           {/* Grade de dias */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+          <div
+            key={`grid-${viewMonth.getFullYear()}-${viewMonth.getMonth()}`}
+            className="df-subtle-enter"
+            style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}
+          >
             {cells.map((d, i) => {
               const inCurrentMonth = d.getMonth() === viewMonth.getMonth();
               const isSelected = selectedDate && isSameDay(d, selectedDate);
@@ -272,6 +290,7 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
               return (
                 <div
                   key={i}
+                  className={disabled ? undefined : 'df-pressable'}
                   onClick={() => {
                     if (disabled) return;
                     onChange(toIsoDate(d));
@@ -289,14 +308,20 @@ export const DatePickerField: React.FC<DatePickerFieldProps> = ({
                       ? (isEffectiveDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)')
                       : isSelected
                       ? '#ffffff'
+                      : isToday
+                      ? accentColor
                       : !inCurrentMonth
                       ? textSecondary
                       : textPrimary,
-                    background: isSelected ? accentColor : 'transparent',
+                    background: isSelected
+                      ? accentColor
+                      : isToday
+                      ? hexToRgba(accentColor, 0.14)
+                      : 'transparent',
                     opacity: !inCurrentMonth && !isSelected ? 0.4 : 1,
-                    border: isToday && !isSelected ? `1px solid ${accentColor}` : '1px solid transparent',
-                    fontWeight: isToday || isSelected ? 600 : 400,
-                    transition: 'background 0.1s ease',
+                    border: 'none',
+                    fontWeight: 400,
+                    transition: 'background-color 120ms ease, color 120ms ease, transform 120ms var(--ease-out)',
                   }}
                   onMouseEnter={(e) => {
                     if (!disabled && !isSelected) e.currentTarget.style.background = dropdownItemHover;

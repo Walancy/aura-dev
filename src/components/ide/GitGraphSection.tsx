@@ -1,5 +1,6 @@
+import { createPortal } from 'react-dom';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDownToLine, ArrowUpFromLine, Check, ChevronRight, Cloud, CloudDownload, Folder, MoreHorizontal, RefreshCw, Tag, Target } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, Check, ChevronRight, Cloud, CloudDownload, Folder, Loader2, MoreHorizontal, RefreshCw, Tag, Target } from 'lucide-react';
 import { logSystemActivity } from '../../utils/brainService';
 import { getFieldTokens } from '../../utils/fieldTokens';
 
@@ -13,6 +14,9 @@ interface Props {
   onToast?: (msg: string) => void;
   /** CLI com estilo visual: a primeira coluna e a branch atual usam a cor do estilo */
   skinned?: boolean;
+  /** estado controlado de expansão para que o card externo recolha igual a Outline/Timeline */
+  open?: boolean;
+  onToggleOpen?: () => void;
 }
 
 interface Commit {
@@ -116,11 +120,13 @@ const GraphCell: React.FC<{ row: Row; width: number; bg: string; isHead: boolean
 
 const statusColor = (s: string) => (s.startsWith('A') ? '#3fb950' : s.startsWith('D') ? '#f85149' : s.startsWith('R') ? '#58a6ff' : '#e3b341');
 
-export const GitGraphSection: React.FC<Props> = ({ dir, themeTokens, isEffectiveDark, accentColor, refreshSignal, onToast, skinned }) => {
+export const GitGraphSection: React.FC<Props> = ({ dir, themeTokens, isEffectiveDark, accentColor, refreshSignal, onToast, skinned, open: controlledOpen, onToggleOpen }) => {
   SKIN = !!skinned;
   const BLUE = color(0);
   const ft = getFieldTokens(isEffectiveDark);
-  const [open, setOpen] = useState(true);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen !== undefined ? controlledOpen : uncontrolledOpen;
+  const toggleOpen = onToggleOpen ?? (() => setUncontrolledOpen((v) => !v));
   const [scope, setScope] = useState<Scope>('auto');
   const [commits, setCommits] = useState<Commit[]>([]);
   const [headHash, setHeadHash] = useState('');
@@ -135,6 +141,17 @@ export const GitGraphSection: React.FC<Props> = ({ dir, themeTokens, isEffective
       return false;
     }
   });
+  const [tip, setTip] = useState<{ x: number; y: number; commit?: Commit; text?: string } | null>(null);
+  const tipTimer = useRef<number | undefined>(undefined);
+  const showTip = (e: React.MouseEvent, t: { commit?: Commit; text?: string }) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    window.clearTimeout(tipTimer.current);
+    tipTimer.current = window.setTimeout(() => setTip({ x: r.left, y: r.bottom + 6, ...t }), 350);
+  };
+  const hideTip = () => {
+    window.clearTimeout(tipTimer.current);
+    setTip(null);
+  };
   const [expanded, setExpanded] = useState<string | null>(null);
   const [files, setFiles] = useState<Record<string, FileChange[]>>({});
   const menuRef = useRef<HTMLDivElement>(null);
@@ -225,7 +242,21 @@ export const GitGraphSection: React.FC<Props> = ({ dir, themeTokens, isEffective
         e.stopPropagation();
         onClick();
       }}
-      style={{ background: active ? themeTokens.hoverBg : 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', width: 22, height: 22, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.12s ease, color 0.12s ease', flexShrink: 0 }}
+      style={{
+        background: active ? themeTokens.hoverBg : 'transparent',
+        border: 'none',
+        boxShadow: 'none',
+        color: themeTokens.textSecondary,
+        cursor: 'pointer',
+        width: 22,
+        height: 22,
+        borderRadius: 4,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease, opacity 150ms ease',
+        flexShrink: 0,
+      }}
       onMouseEnter={(e) => {
         e.currentTarget.style.background = themeTokens.hoverBg;
         e.currentTarget.style.color = themeTokens.textPrimary;
@@ -244,7 +275,7 @@ export const GitGraphSection: React.FC<Props> = ({ dir, themeTokens, isEffective
     const label = ref.replace('HEAD -> ', '');
     if (label.startsWith('tag: ')) {
       return (
-        <span key={ref} title={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: '#f0a830', background: '#f0a83026', padding: '1px 7px', borderRadius: 10, maxWidth: 110, flexShrink: 0 }}>
+        <span key={ref} onMouseEnter={(e) => showTip(e, { text: label })} onMouseLeave={hideTip} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, color: '#f0a830', background: '#f0a83026', padding: '1px 7px', borderRadius: 10, maxWidth: 110, flexShrink: 0 }}>
           <Tag size={10} />
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label.slice(5)}</span>
         </span>
@@ -253,13 +284,13 @@ export const GitGraphSection: React.FC<Props> = ({ dir, themeTokens, isEffective
     if (!head && label.includes('/')) {
       // remota: só o ícone de nuvem (o nome completo fica na dica)
       return (
-        <span key={ref} title={label} style={{ width: 20, height: 20, borderRadius: '50%', background: '#a78bfa', color: '#17122b', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <span key={ref} onMouseEnter={(e) => showTip(e, { text: label })} onMouseLeave={hideTip} style={{ width: 20, height: 20, borderRadius: '50%', background: '#a78bfa', color: '#17122b', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           <Cloud size={12} />
         </span>
       );
     }
     return (
-      <span key={ref} title={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, padding: '1px 8px 1px 6px', borderRadius: 10, maxWidth: 120, flexShrink: 0, background: head ? BLUE : mix(BLUE, 17), color: head ? (skinned ? 'var(--sk-ink, #0a0a0a)' : '#0b1b33') : BLUE }}>
+      <span key={ref} onMouseEnter={(e) => showTip(e, { text: label })} onMouseLeave={hideTip} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, padding: '1px 8px 1px 6px', borderRadius: 10, maxWidth: 120, flexShrink: 0, background: head ? BLUE : mix(BLUE, 17), color: head ? (skinned ? 'var(--sk-ink, #0a0a0a)' : '#0b1b33') : BLUE }}>
         <Target size={11} />
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
       </span>
@@ -299,10 +330,10 @@ export const GitGraphSection: React.FC<Props> = ({ dir, themeTokens, isEffective
   };
 
   return (
-    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <div onClick={() => setOpen((v) => !v)} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '2px 0', userSelect: 'none', minHeight: 26 }}>
-        <ChevronRight size={12} color={themeTokens.textSecondary} style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s ease' }} />
-        <span style={{ fontSize: 10.5, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: skinned ? 'var(--sk-ls, 0)' : undefined }}>Graph</span>
+    <div className="df-ide-surface" style={{ width: '100%', flex: open ? '1 1 0' : '0 0 auto', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div onClick={toggleOpen} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', padding: '2px 0', height: 22, boxSizing: 'border-box', userSelect: 'none', flexShrink: 0 }}>
+        <ChevronRight size={13} color={themeTokens.textSecondary} className="df-chevron" style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', flexShrink: 0 }} />
+        <span style={{ fontSize: 12, fontWeight: 400, color: themeTokens.textPrimary, letterSpacing: skinned ? 'var(--sk-ls, 0)' : undefined, textTransform: skinned ? ('var(--sk-tt, none)' as any) : undefined }}>Graph</span>
         <div style={{ flex: 1 }} />
         {open && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 1 }} onClick={(e) => e.stopPropagation()}>
@@ -310,19 +341,19 @@ export const GitGraphSection: React.FC<Props> = ({ dir, themeTokens, isEffective
               type="button"
               title={scope === 'auto' ? 'Mostrando a branch atual e a remota dela (clique para ver todas)' : 'Mostrando todas as referências (clique para voltar ao automático)'}
               onClick={() => setScope((s) => (s === 'auto' ? 'all' : 'auto'))}
-              style={{ background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer', fontSize: 11, padding: '0 6px', height: 22, borderRadius: 4, fontFamily: 'inherit' }}
+              style={{ background: 'transparent', border: 'none', boxShadow: 'none', color: themeTokens.textSecondary, cursor: 'pointer', fontSize: 11, fontWeight: 400, padding: '0 6px', height: 22, borderRadius: 4, fontFamily: 'inherit' }}
             >
               {scope === 'auto' ? 'Auto' : 'Todas'}
             </button>
             {iconBtn('Ir para o commit atual', () => (listRef.current?.querySelector('[data-head="1"]') as HTMLElement | null)?.scrollIntoView({ block: 'center', behavior: 'smooth' }), <Target size={14} />)}
-            {iconBtn('Fetch (todas as remotas)', () => runGit('fetch', 'git fetch --all --prune', 'Fetch concluído'), <CloudDownload size={14} className={busy === 'fetch' ? 'spin-animate' : ''} />)}
-            {iconBtn('Pull', () => runGit('pull', 'git pull', 'Pull concluído'), <ArrowDownToLine size={14} className={busy === 'pull' ? 'spin-animate' : ''} />)}
-            {iconBtn('Push', () => runGit('push', 'git push', 'Push concluído'), <ArrowUpFromLine size={14} className={busy === 'push' ? 'spin-animate' : ''} />)}
-            {iconBtn('Atualizar o gráfico', load, <RefreshCw size={13} className={loading ? 'spin-animate' : ''} />)}
+            {iconBtn('Fetch (todas as remotas)', () => runGit('fetch', 'git fetch --all --prune', 'Fetch concluído'), busy === 'fetch' ? <Loader2 size={14} className="spin-animate" color={accentColor} /> : <CloudDownload size={14} />)}
+            {iconBtn('Pull', () => runGit('pull', 'git pull', 'Pull concluído'), busy === 'pull' ? <Loader2 size={14} className="spin-animate" color={accentColor} /> : <ArrowDownToLine size={14} />)}
+            {iconBtn('Push', () => runGit('push', 'git push', 'Push concluído'), busy === 'push' ? <Loader2 size={14} className="spin-animate" color={accentColor} /> : <ArrowUpFromLine size={14} />)}
+            {iconBtn('Atualizar o gráfico', load, loading ? <Loader2 size={13} className="spin-animate" color={accentColor} /> : <RefreshCw size={13} />)}
             <div ref={menuRef} style={{ position: 'relative' }}>
               {iconBtn('Mais ações', () => setMenuOpen((v) => !v), <MoreHorizontal size={14} />, menuOpen)}
               {menuOpen && (
-                <div className="df-dropdown-menu" style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, minWidth: 170, background: ft.dropdownMenuBg, border: ft.dropdownBorder, borderRadius: 8, boxShadow: 'none', padding: 4, display: 'flex', flexDirection: 'column', gap: 2, zIndex: 9999 }}>
+                <div className="df-dropdown-menu df-popover df-popover-right" style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, minWidth: 170, background: ft.dropdownMenuBg, border: 'none', borderRadius: 8, boxShadow: 'none', padding: 4, display: 'flex', flexDirection: 'column', gap: 2, zIndex: 9999 }}>
                   {[
                     { label: 'Ver como lista', tree: false },
                     { label: 'Ver como árvore', tree: true },
@@ -330,6 +361,7 @@ export const GitGraphSection: React.FC<Props> = ({ dir, themeTokens, isEffective
                     <button
                       key={o.label}
                       type="button"
+                      className="df-row-interactive"
                       onClick={() => {
                         setViewAsTree(o.tree);
                         setMenuOpen(false);
@@ -337,7 +369,7 @@ export const GitGraphSection: React.FC<Props> = ({ dir, themeTokens, isEffective
                           localStorage.setItem('graph_view_tree', o.tree ? '1' : '0');
                         } catch {}
                       }}
-                      style={{ height: 28, padding: '0 10px', border: 'none', borderRadius: 6, background: 'transparent', color: themeTokens.textPrimary, fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', textAlign: 'left', transition: 'background 0.12s ease' }}
+                      style={{ height: 28, padding: '0 10px', border: 'none', boxShadow: 'none', borderRadius: 6, background: 'transparent', color: themeTokens.textPrimary, fontSize: 11.5, fontWeight: 400, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', textAlign: 'left' }}
                       onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
                       onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                     >
@@ -352,39 +384,68 @@ export const GitGraphSection: React.FC<Props> = ({ dir, themeTokens, isEffective
         )}
       </div>
 
-      {open &&
-        (rows.length === 0 ? (
-          <div style={{ padding: '14px 0', textAlign: 'center', color: themeTokens.textSecondary, fontSize: 11 }}>{loading ? 'Carregando histórico...' : 'Nenhum commit encontrado'}</div>
-        ) : (
-          <div ref={listRef} style={{ display: 'flex', flexDirection: 'column' }}>
-            {rows.map((r) => {
-              const isHead = r.commit.hash === headHash;
-              const lanes = Math.max(r.before.length, r.after.length, r.col + 1);
-              const width = lanes * LANE + 2;
-              const isOpen = expanded === r.commit.hash;
-              const showAuthor = r.commit.author && r.commit.author !== me;
-              return (
-                <React.Fragment key={r.commit.hash}>
-                  <div
-                    data-head={isHead ? '1' : undefined}
-                    onClick={() => toggleCommit(r.commit.hash)}
-                    title={`${r.commit.hash.slice(0, 7)} • ${r.commit.author} • ${r.commit.rel}\n${r.commit.subject}`}
-                    style={{ display: 'flex', alignItems: 'center', gap: 6, height: ROW_H, borderRadius: 4, cursor: 'pointer', transition: 'background 0.1s ease', background: isOpen ? themeTokens.hoverBg : 'transparent' }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = isOpen ? themeTokens.hoverBg : 'transparent')}
-                  >
-                    <GraphCell row={r} width={width} bg={bg} isHead={isHead} />
-                    <span style={{ minWidth: 0, flex: '0 1 auto', fontSize: 12, fontWeight: isHead ? 600 : 400, color: themeTokens.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.commit.subject}</span>
-                    {showAuthor && <span style={{ fontSize: 11, color: themeTokens.textSecondary, flexShrink: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.commit.author}</span>}
-                    <span style={{ flex: 1 }} />
-                    {r.commit.refs.slice(0, 3).map(renderRef)}
-                  </div>
-                  {isOpen && <div style={{ paddingBottom: 4 }}>{renderFiles(r.commit.hash, width + 8)}</div>}
-                </React.Fragment>
-              );
-            })}
-          </div>
-        ))}
+      {open && (
+        <div className="df-subtle-enter no-scrollbar" style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', overflowX: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          {rows.length === 0 ? (
+            <div style={{ padding: '14px 0', textAlign: 'center', color: themeTokens.textSecondary, fontSize: 11 }}>{loading ? 'Carregando histórico...' : 'Nenhum commit encontrado'}</div>
+          ) : (
+            <div ref={listRef} style={{ display: 'flex', flexDirection: 'column' }}>
+              {rows.map((r) => {
+                const isHead = r.commit.hash === headHash;
+                const lanes = Math.max(r.before.length, r.after.length, r.col + 1);
+                const width = lanes * LANE + 2;
+                const isOpen = expanded === r.commit.hash;
+                const showAuthor = r.commit.author && r.commit.author !== me;
+                return (
+                  <React.Fragment key={r.commit.hash}>
+                    <div
+                      className="df-row-interactive"
+                      data-head={isHead ? '1' : undefined}
+                      onClick={() => toggleCommit(r.commit.hash)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, height: ROW_H, borderRadius: 4, cursor: 'pointer', background: isOpen ? themeTokens.hoverBg : 'transparent' }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = themeTokens.hoverBg;
+                        showTip(e, { commit: r.commit });
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = isOpen ? themeTokens.hoverBg : 'transparent';
+                        hideTip();
+                      }}
+                    >
+                      <GraphCell row={r} width={width} bg={bg} isHead={isHead} />
+                      <span style={{ minWidth: 0, flex: '0 1 auto', fontSize: 12, fontWeight: 400, color: themeTokens.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.commit.subject}</span>
+                      {showAuthor && <span style={{ fontSize: 11, color: themeTokens.textSecondary, flexShrink: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.commit.author}</span>}
+                      <span style={{ flex: 1 }} />
+                      {r.commit.refs.slice(0, 3).map(renderRef)}
+                    </div>
+                    {isOpen && <div className="df-subtle-enter" style={{ paddingBottom: 4 }}>{renderFiles(r.commit.hash, width + 8)}</div>}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+      {tip &&
+        createPortal(
+          <div
+            className="df-subtle-enter"
+            style={{ position: 'fixed', left: Math.min(tip.x, window.innerWidth - 340), top: Math.min(tip.y, window.innerHeight - 120), maxWidth: 320, zIndex: 10000, pointerEvents: 'none', background: ft.dropdownMenuBg, color: themeTokens.textPrimary, borderRadius: 6, padding: 8, fontSize: 11.5, display: 'flex', flexDirection: 'column', gap: 4, wordBreak: 'break-word' }}
+          >
+            {tip.commit ? (
+              <>
+                <span>{tip.commit.subject}</span>
+                <span style={{ color: themeTokens.textSecondary, fontSize: 11 }}>
+                  {tip.commit.hash.slice(0, 7)} • {tip.commit.author} • {tip.commit.rel}
+                </span>
+                {tip.commit.refs.length > 0 && <span style={{ color: themeTokens.textSecondary, fontSize: 11 }}>{tip.commit.refs.map((r) => r.replace('HEAD -> ', '')).join(', ')}</span>}
+              </>
+            ) : (
+              <span>{tip.text}</span>
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 };

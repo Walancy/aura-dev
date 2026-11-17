@@ -200,9 +200,9 @@ export const TemplatesSection: React.FC<SectionProps> = ({ ctx, owner, repo, isA
               confirmLabel: 'Excluir',
               onConfirm: async () => {
                 try {
-                  await ghSettings('deleteFile', { owner, repo, path: selected, sha, message: `chore: remove ${selected} via Aura Dev` });
+                  const res = await ghSettings<any>('deleteFile', { owner, repo, path: selected, sha, message: `chore: remove ${selected} via Aura Dev` });
                   logSystemActivity('configuracoes_projeto', 'excluir_template', `${owner}/${repo}`, { path: selected });
-                  showToast('Template excluído.');
+                  showToast(res?.pullRequest ? `Branch protegida: PR #${res.pullRequest.number} aberto para excluir.` : 'Template excluído.');
                   setSelected(null);
                   load();
                 } catch (e: any) {

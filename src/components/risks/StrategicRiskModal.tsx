@@ -98,6 +98,7 @@ export const StrategicRiskModal: React.FC<StrategicRiskModalProps> = ({
 
   return (
     <div
+      className="df-modal-backdrop"
       onClick={onClose}
       style={{
         position: 'fixed',
@@ -112,6 +113,7 @@ export const StrategicRiskModal: React.FC<StrategicRiskModalProps> = ({
       }}
     >
       <div
+        className="df-projects-surface df-modal-content"
         onClick={(e) => e.stopPropagation()}
         style={{
           width: '100%',
@@ -119,13 +121,10 @@ export const StrategicRiskModal: React.FC<StrategicRiskModalProps> = ({
           background: bgModal,
           borderRadius: 10,
           border: 'none',
-          boxShadow: isEffectiveDark
-            ? '0 20px 50px rgba(0, 0, 0, 0.85)'
-            : '0 20px 50px rgba(0, 0, 0, 0.15)',
+          boxShadow: 'none',
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
-          animation: 'fadeInScale 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
         }}
       >
         {/* Top Header */}
@@ -293,6 +292,7 @@ export const StrategicRiskModal: React.FC<StrategicRiskModalProps> = ({
                   <button
                     key={lvl}
                     type="button"
+                    className="df-pressable"
                     onClick={() => setImpact(lvl)}
                     style={{
                       flex: 1,
@@ -304,7 +304,7 @@ export const StrategicRiskModal: React.FC<StrategicRiskModalProps> = ({
                       background: impact === lvl ? (isEffectiveDark ? 'rgba(255, 106, 0, 0.2)' : 'rgba(255, 106, 0, 0.12)') : inputBg,
                       color: impact === lvl ? accentColor : textSecondary,
                       cursor: 'pointer',
-                      transition: 'all 0.15s ease',
+                      transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                     }}
                   >
                     {lvl === 'low' ? 'Baixo' : lvl === 'medium' ? 'Médio' : 'Alto'}
@@ -322,6 +322,7 @@ export const StrategicRiskModal: React.FC<StrategicRiskModalProps> = ({
                   <button
                     key={lvl}
                     type="button"
+                    className="df-pressable"
                     onClick={() => setProbability(lvl)}
                     style={{
                       flex: 1,
@@ -333,7 +334,7 @@ export const StrategicRiskModal: React.FC<StrategicRiskModalProps> = ({
                       background: probability === lvl ? (isEffectiveDark ? 'rgba(255, 106, 0, 0.2)' : 'rgba(255, 106, 0, 0.12)') : inputBg,
                       color: probability === lvl ? accentColor : textSecondary,
                       cursor: 'pointer',
-                      transition: 'all 0.15s ease',
+                      transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                     }}
                   >
                     {lvl === 'low' ? 'Baixa' : lvl === 'medium' ? 'Média' : 'Alta'}

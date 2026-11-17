@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { ChevronDown, ChevronUp, Search, X, FolderGit2, DownloadCloud, Loader2, Check } from 'lucide-react';
+import { ChevronDown, Search, X, FolderGit2, DownloadCloud, Loader2, Check } from 'lucide-react';
 import { getFieldTokens } from '../../utils/fieldTokens';
 
 export interface ProjectWorkspaceItem {
@@ -200,7 +200,6 @@ export const ProjectWorkspaceSelector: React.FC<ProjectWorkspaceSelectorProps> =
       if (seenNames.has(locRepo.name.toLowerCase())) return;
       if (locRepo.repoFullName && seenNames.has(locRepo.repoFullName.toLowerCase())) return;
 
-      const isCurrent = locRepo.dir.toLowerCase() === workspacePath.toLowerCase();
       const stats = repoDetails[locRepo.name] || (locRepo.repoFullName ? repoDetails[locRepo.repoFullName] : null);
 
       list.push({
@@ -293,7 +292,6 @@ export const ProjectWorkspaceSelector: React.FC<ProjectWorkspaceSelectorProps> =
       // Already cloned: Switch workspace path and load files
       await onSelectWorkspace(project.localDir, project.name);
       setIsOpen(false);
-      onToast(`Projeto ativo: ${project.name}`);
     } else {
       // Not cloned: Trigger clone workflow
       await handleCloneProject(project);
@@ -365,27 +363,30 @@ export const ProjectWorkspaceSelector: React.FC<ProjectWorkspaceSelectorProps> =
       {/* ===================================================================== */}
       <div
         className="df-dropdown-trigger"
+        data-open={isOpen ? 'true' : 'false'}
         onClick={() => setIsOpen(!isOpen)}
         style={{
           width: '100%',
           padding: '8px 10px',
-          background: getFieldTokens(isEffectiveDark).fieldBg,
+          background: isOpen ? getFieldTokens(isEffectiveDark).fieldBgHover : getFieldTokens(isEffectiveDark).fieldBg,
           borderRadius: 8,
-          border: isOpen ? `1px solid ${accentColor}` : getFieldTokens(isEffectiveDark).fieldBorder,
+          border: 'none',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           cursor: 'pointer',
           boxSizing: 'border-box',
           opacity: activeProject.isCloned ? 1 : 0.55,
-          transition: 'all 0.15s ease',
+          transition: 'background-color 150ms ease, color 150ms ease, opacity 150ms ease, transform 140ms var(--ease-out)',
           boxShadow: 'none',
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.background = getFieldTokens(isEffectiveDark).fieldBgHover;
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.background = getFieldTokens(isEffectiveDark).fieldBg;
+          e.currentTarget.style.background = isOpen
+            ? getFieldTokens(isEffectiveDark).fieldBgHover
+            : getFieldTokens(isEffectiveDark).fieldBg;
         }}
         title={activeProject.isCloned ? 'Projeto atual (clonado)' : 'Projeto atual (não clonado)'}
       >
@@ -430,7 +431,11 @@ export const ProjectWorkspaceSelector: React.FC<ProjectWorkspaceSelectorProps> =
             flexShrink: 0,
           }}
         >
-          {isOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          <ChevronDown
+            size={14}
+            className="df-chevron"
+            style={{ transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}
+          />
         </div>
       </div>
 
@@ -447,24 +452,24 @@ export const ProjectWorkspaceSelector: React.FC<ProjectWorkspaceSelectorProps> =
             right: 0,
             background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
             borderRadius: 8,
-            border: getFieldTokens(isEffectiveDark).dropdownBorder,
+            border: 'none',
             boxShadow: 'none',
             zIndex: 1000,
             overflow: 'hidden',
             display: 'flex',
             flexDirection: 'column',
-            animation: 'fadeIn 0.12s ease-out',
             boxSizing: 'border-box',
           }}
         >
           {/* Campo de Busca no Topo */}
-          <div style={{ padding: 6, borderBottom: getFieldTokens(isEffectiveDark).dropdownBorder }}>
+          <div style={{ padding: 6, borderBottom: isEffectiveDark ? '1px solid rgba(255, 255, 255, 0.05)' : '1px solid rgba(0, 0, 0, 0.05)' }}>
             <div
               className="df-search-box"
               style={{
                 padding: '5px 8px',
                 borderRadius: 6,
-                border: getFieldTokens(isEffectiveDark).fieldBorder,
+                border: 'none',
+                boxShadow: 'none',
                 background: getFieldTokens(isEffectiveDark).fieldBg,
                 display: 'flex',
                 alignItems: 'center',
@@ -493,6 +498,7 @@ export const ProjectWorkspaceSelector: React.FC<ProjectWorkspaceSelectorProps> =
             {searchQuery && (
               <button
                 type="button"
+                className="df-pressable"
                 onClick={() => setSearchQuery('')}
                 style={{
                   background: 'transparent',
@@ -540,19 +546,22 @@ export const ProjectWorkspaceSelector: React.FC<ProjectWorkspaceSelectorProps> =
                 return (
                   <div
                     key={project.id}
+                    className="df-row-interactive df-pressable"
                     onClick={() => {
                       if (!isCloningThis) handleSelectProject(project);
                     }}
                     style={{
                       padding: '8px 10px',
                       borderRadius: 6,
+                      border: 'none',
+                      boxShadow: 'none',
                       background: isActive ? (isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)') : 'transparent',
                       cursor: isCloningThis ? 'wait' : 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       opacity: project.isCloned ? 1 : 0.55,
-                      transition: 'all 0.12s ease',
+                      transition: 'transform 140ms var(--ease-out), background-color 140ms ease, color 140ms ease, opacity 140ms ease',
                       position: 'relative',
                     }}
                     onMouseEnter={(e) => {

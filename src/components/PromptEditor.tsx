@@ -78,6 +78,7 @@ export function createPillNode(filePath: string, fileName?: string): HTMLSpanEle
   span.style.userSelect = 'none';
   span.style.cursor = 'default';
   span.style.boxShadow = 'none';
+  span.style.transition = 'background-color 150ms ease, opacity 150ms ease';
 
   // Icon container
   const iconContainer = document.createElement('span');
@@ -574,8 +575,14 @@ export const PromptEditor = forwardRef<PromptEditorRef, PromptEditorProps>(
           width: '100%',
           minHeight: 46,
           borderRadius: 6,
-          transition: 'all 0.15s ease',
+          border: 'none',
           boxShadow: 'none',
+          background: isDragOver
+            ? isEffectiveDark
+              ? 'rgba(255, 255, 255, 0.03)'
+              : 'rgba(0, 0, 0, 0.025)'
+            : 'transparent',
+          transition: 'background-color 150ms ease, color 150ms ease, opacity 150ms ease',
           ...style,
         }}
       >
@@ -621,6 +628,7 @@ export const PromptEditor = forwardRef<PromptEditorRef, PromptEditorProps>(
             lineHeight: '22px',
             background: 'transparent',
             border: 'none',
+            boxShadow: 'none',
             outline: 'none',
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',

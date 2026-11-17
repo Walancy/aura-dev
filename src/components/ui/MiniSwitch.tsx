@@ -7,7 +7,8 @@ export const MiniSwitch: React.FC<{
   onChange: () => void;
   disabled?: boolean;
   accentColor?: string;
-}> = ({ checked, onChange, disabled, accentColor = '#FF6A00' }) => (
+  title?: string;
+}> = ({ checked, onChange, disabled, accentColor = '#FF6A00', title }) => (
   <div
     onClick={(e) => {
       e.stopPropagation();
@@ -24,7 +25,7 @@ export const MiniSwitch: React.FC<{
       flexShrink: 0,
       opacity: disabled ? 0.35 : 1,
     }}
-    title={checked ? 'Incluído no Orquestrador' : 'Desativado no Orquestrador'}
+    title={title ?? (checked ? 'Incluído no Orquestrador' : 'Desativado no Orquestrador')}
   >
     <div
       style={{

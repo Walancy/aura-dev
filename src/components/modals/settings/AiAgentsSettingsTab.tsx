@@ -54,6 +54,22 @@ export interface AiAgentsSettingsTabProps {
   onUpdateAi?: (providerId: string) => void;
 }
 
+/** Junta os níveis de um mesmo modelo (Low/Medium/High/XHigh) em um item só; modelos sem nível ficam sozinhos. */
+const LEVEL_RE = /\s*\((Low|Medium|High|XHigh)\)\s*$/i;
+const LEVEL_ORDER = ['low', 'medium', 'high', 'xhigh'];
+function groupModelsByLevel<T extends { id: string; label: string; legacy?: boolean }>(options: T[]) {
+  const groups: Array<{ key: string; name: string; items: Array<T & { level: string }> }> = [];
+  for (const m of options) {
+    const lv = m.label.match(LEVEL_RE);
+    const name = m.label.replace(LEVEL_RE, '');
+    let g = groups.find((x) => x.name === name);
+    if (!g) groups.push((g = { key: name, name, items: [] }));
+    g.items.push({ ...m, level: lv ? lv[1] : '' });
+  }
+  groups.forEach((g) => g.items.sort((a, b) => LEVEL_ORDER.indexOf(a.level.toLowerCase()) - LEVEL_ORDER.indexOf(b.level.toLowerCase())));
+  return groups;
+}
+
 export const AiAgentsSettingsTab: React.FC<AiAgentsSettingsTabProps> = ({
   themeTokens,
   isEffectiveDark,
@@ -803,24 +819,30 @@ export const AiAgentsSettingsTab: React.FC<AiAgentsSettingsTabProps> = ({
                     <>
                       <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)' }} />
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                        {options.map((m) => (
-                          <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                            <span style={{ fontSize: 11.5, color: themeTokens.textSecondary }}>
-                              {m.label}
-                              {m.legacy && <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.7 }}>versão antiga</span>}
-                            </span>
-                            <MiniSwitch
-                              checked={isVisible(m)}
-                              onChange={() => {
-                                const current = options.filter(isVisible).map((o) => o.id);
-                                const next = isVisible(m) ? current.filter((id) => id !== m.id) : [...current, m.id];
-                                onSetVisibleModels(p.id, next);
-                                logSystemActivity('configuracoes_ia', 'toggle_modelo_visivel', p.id, { modelo: m.id, visivel: !isVisible(m) });
-                              }}
-                              accentColor={accentColor}
-                            />
-                          </div>
-                        ))}
+                        {groupModelsByLevel(options).map((g) => {
+                          const on = g.items.some(isVisible);
+                          return (
+                            <div key={g.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                              <span style={{ fontSize: 11.5, color: themeTokens.textSecondary }}>
+                                {g.name}
+                                {g.items.length > 1 && <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.7 }}>{g.items.map((m) => m.level).join(' · ')}</span>}
+                                {g.items.every((m) => m.legacy) && <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.7 }}>versão antiga</span>}
+                              </span>
+                              <MiniSwitch
+                                checked={on}
+                                title={on ? 'Visível no seletor' : 'Oculto no seletor'}
+                                onChange={() => {
+                                  const ids = new Set(g.items.map((m) => m.id));
+                                  const current = options.filter(isVisible).map((o) => o.id);
+                                  const next = on ? current.filter((id) => !ids.has(id)) : [...current, ...g.items.map((m) => m.id)];
+                                  onSetVisibleModels(p.id, next);
+                                  logSystemActivity('configuracoes_ia', 'toggle_modelo_visivel', p.id, { modelo: g.name, niveis: g.items.map((m) => m.id), visivel: !on });
+                                }}
+                                accentColor={accentColor}
+                              />
+                            </div>
+                          );
+                        })}
                       </div>
                     </>
                   )}

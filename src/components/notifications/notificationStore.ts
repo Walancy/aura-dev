@@ -9,23 +9,28 @@ export interface CenterNotification {
   projectName?: string;
   provider?: string;
   /** de onde veio: usado para abrir o lugar certo ao clicar */
-  source?: 'ide' | 'cli' | 'design';
+  source?: 'ide' | 'cli' | 'design' | 'site';
   timestamp: number;
   read: boolean;
   isUpdate?: boolean;
   updateVersion?: string;
   updateCommand?: string;
   patchNotesUrl?: string;
+  /** pedido de review no GitHub: quem pediu (com a foto) e o PR a abrir */
+  review?: { repo: string; number: number; author?: string; avatar?: string };
 }
 
 export const STORAGE_KEY = 'devflow_notification_center_v1';
 export const MAX_NOTIFICATIONS = 300;
 
+/** Confirmações antigas de ações do usuário ("Caminho colado", "Arquivos copiados"...) que não são mais registradas */
+const isNoise = (n: CenterNotification) => n.kind === 'info' && !n.body && !n.isUpdate && !n.review && !n.title.startsWith('🔔');
+
 export function loadNotifications(storage: Pick<Storage, 'getItem'> = localStorage): CenterNotification[] {
   try {
     const raw = storage.getItem(STORAGE_KEY);
     const list = raw ? JSON.parse(raw) : [];
-    return Array.isArray(list) ? list.filter((n) => n && typeof n.id === 'string' && typeof n.title === 'string').slice(0, MAX_NOTIFICATIONS) : [];
+    return Array.isArray(list) ? list.filter((n) => n && typeof n.id === 'string' && typeof n.title === 'string' && !isNoise(n)).slice(0, MAX_NOTIFICATIONS) : [];
   } catch {
     return [];
   }
@@ -47,6 +52,13 @@ export function addNotification(list: CenterNotification[], input: Omit<CenterNo
   // Avisos de IA do mesmo projeto não se empilham: o novo substitui o anterior ainda não lido
   const rest = input.projectPath && input.kind === 'ai' && !input.isUpdate ? list.filter((n) => n.read || n.isUpdate || n.kind !== 'ai' || n.projectPath !== input.projectPath) : list;
   return [item, ...rest].slice(0, MAX_NOTIFICATIONS);
+}
+
+/** Dados do pedido de review: do campo novo ou, nos avisos antigos, lidos do título ("repo: autor pediu sua review no PR #N") */
+export function reviewInfo(n: Pick<CenterNotification, 'title' | 'review'>): { repo: string; number: number; author?: string; avatar?: string } | null {
+  if (n.review) return n.review;
+  const m = n.title.match(/^(.+?): (.+?) pediu sua review no PR #(\d+)$/);
+  return m ? { repo: m[1], number: Number(m[3]), author: m[2], avatar: `https://github.com/${m[2]}.png?size=64` } : null;
 }
 
 export const markRead = (list: CenterNotification[], id: string) => list.map((n) => (n.id === id && !n.read ? { ...n, read: true } : n));

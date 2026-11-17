@@ -47,6 +47,7 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
     <>
       {/* Backdrop */}
       <div
+        className="df-modal-backdrop"
         onClick={onClose}
         style={{
           position: 'fixed',
@@ -54,12 +55,12 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
           background: 'rgba(0, 0, 0, 0.55)',
           zIndex: 999998,
           backdropFilter: 'blur(3px)',
-          animation: 'fadeIn 0.12s ease-out',
         }}
       />
 
       {/* Modal Dialog */}
       <div
+        className="df-ide-surface df-opacity-enter"
         style={{
           position: 'fixed',
           top: '12%',
@@ -76,7 +77,6 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
           flexDirection: 'column',
           overflow: 'hidden',
           boxSizing: 'border-box',
-          animation: 'fadeIn 0.12s ease-out',
           fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
         }}
       >
@@ -149,6 +149,7 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
                     return (
                       <div
                         key={item.id}
+                        className="df-row-interactive"
                         onClick={() => onSelectSession(item.id)}
                         onMouseEnter={() => setChatHistorySelectedIndex(flatIdx)}
                         style={{
@@ -160,14 +161,14 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
                           borderRadius: 6,
                           cursor: 'pointer',
                           background: isSelected ? 'rgba(255, 255, 255, 0.08)' : 'rgba(255, 255, 255, 0.025)',
-                          transition: 'background 0.08s ease',
+                          transition: 'background-color 120ms var(--ease-out), transform 140ms var(--ease-out)',
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden', minWidth: 0, flex: 1 }}>
                           <span
                             style={{
                               fontSize: 13,
-                              fontWeight: 500,
+                              fontWeight: 400,
                               color: '#ffffff',
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',
@@ -241,6 +242,7 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
                     return (
                       <div
                         key={item.id}
+                        className="df-row-interactive"
                         onClick={() => onSelectSession(item.id)}
                         onMouseEnter={() => setChatHistorySelectedIndex(flatIdx)}
                         style={{
@@ -252,14 +254,14 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
                           borderRadius: 6,
                           cursor: 'pointer',
                           background: isSelected ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
-                          transition: 'background 0.08s ease',
+                          transition: 'background-color 120ms var(--ease-out), transform 140ms var(--ease-out)',
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden', minWidth: 0, flex: 1 }}>
                           <span
                             style={{
                               fontSize: 13,
-                              fontWeight: 500,
+                              fontWeight: 400,
                               color: '#ffffff',
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',
@@ -314,6 +316,7 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
                     return (
                       <div
                         key={item.id}
+                        className="df-row-interactive"
                         onClick={() => onSelectSession(item.id)}
                         onMouseEnter={() => setChatHistorySelectedIndex(flatIdx)}
                         style={{
@@ -325,14 +328,14 @@ export const ChatHistoryModal: React.FC<ChatHistoryModalProps> = ({
                           borderRadius: 6,
                           cursor: 'pointer',
                           background: isSelected ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
-                          transition: 'background 0.08s ease',
+                          transition: 'background-color 120ms var(--ease-out), transform 140ms var(--ease-out)',
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden', minWidth: 0, flex: 1 }}>
                           <span
                             style={{
                               fontSize: 13,
-                              fontWeight: 500,
+                              fontWeight: 400,
                               color: '#ffffff',
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',

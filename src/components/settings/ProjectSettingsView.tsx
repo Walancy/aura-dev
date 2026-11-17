@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { readSharedSidebarWidth, SHARED_SIDEBAR_WIDTH_KEY } from '../sharedSidebarWidth';
 import {
   Bell,
   Bot,
@@ -119,16 +120,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
   const [sidebarSearch, setSidebarSearch] = useState('');
 
   // Redimensionamento horizontal da sidebar (estilo Marcos)
-  const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(() => {
-    try {
-      const saved = localStorage.getItem('aura_project_settings_sidebar_width');
-      if (saved) {
-        const val = Number(saved);
-        if (!isNaN(val) && val >= 180 && val <= 450) return val;
-      }
-    } catch {}
-    return 240;
-  });
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState<number>(readSharedSidebarWidth);
   const [isDraggingLeftSidebar, setIsDraggingLeftSidebar] = useState(false);
 
   const startResizeLeftSidebar = useCallback(
@@ -146,7 +138,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
         const newWidth = Math.max(180, Math.min(450, initialWidth + deltaX));
         setLeftSidebarWidth(newWidth);
         try {
-          localStorage.setItem('aura_project_settings_sidebar_width', String(newWidth));
+          localStorage.setItem(SHARED_SIDEBAR_WIDTH_KEY, String(newWidth));
         } catch {}
       };
 
@@ -166,7 +158,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
   const resetLeftSidebarWidth = useCallback(() => {
     setLeftSidebarWidth(240);
     try {
-      localStorage.setItem('aura_project_settings_sidebar_width', '240');
+      localStorage.setItem(SHARED_SIDEBAR_WIDTH_KEY, '240');
     } catch {}
   }, []);
 
@@ -239,7 +231,10 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
 
   if (!owner || !repo) {
     return (
-      <div style={{ flex: 1, background: theme.bgShelf, borderRadius: 10, padding: 24, color: theme.textSecondary, fontSize: 13 }}>
+      <div
+        className="df-projects-surface df-view-enter"
+        style={{ flex: 1, background: theme.bgShelf, borderRadius: 10, padding: 24, color: theme.textSecondary, fontSize: 13, fontWeight: 400, border: 'none', boxShadow: 'none' }}
+      >
         Selecione um projeto vinculado a um repositório do GitHub para ver as configurações.
       </div>
     );
@@ -295,6 +290,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
 
   return (
     <div
+      className="df-projects-surface df-view-enter"
       style={{
         width: '100%',
         flex: 1,
@@ -310,6 +306,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
         boxShadow: 'none',
         overflow: 'hidden',
         fontFamily: "'Poppins', -apple-system, sans-serif",
+        fontWeight: 400,
       }}
     >
       {/* ========================================================================= */}
@@ -377,7 +374,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
             style={{
               width: '100%',
               height: 28,
-              border: getFieldTokens(isEffectiveDark).fieldBorder,
+              border: 'none',
               borderRadius: 6,
               padding: '0 8px 0 26px',
               fontSize: 11.5,
@@ -424,6 +421,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
                 return (
                   <div
                     key={tab.id}
+                    className="df-pressable"
                     onClick={() => {
                       setSection(tab.id);
                       logSystemActivity('configuracoes_projeto', 'trocar_secao', tab.label, { secao: tab.id, repo: repoFullName });
@@ -440,7 +438,6 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
                       color: isActive ? theme.textPrimary : tab.id === 'perigo' ? '#ef4444' : theme.textSecondary,
                       fontWeight: 400,
                       fontSize: 12,
-                      transition: 'all 0.15s ease',
                       flexShrink: 0,
                     }}
                     onMouseEnter={(e) => {
@@ -587,6 +584,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
 
           {/* Cards Modulares de Status à Direita (Estilo Marcos) */}
           <div
+            className="df-card-subtle df-stagger-item"
             style={{
               background: isEffectiveDark ? '#161616' : '#ffffff',
               borderRadius: 8,
@@ -598,7 +596,9 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
               minWidth: 100,
               border: 'none',
               boxShadow: 'none',
-            }}
+              fontWeight: 400,
+              '--stagger-idx': 0,
+            } as React.CSSProperties}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: theme.textSecondary }}>
               <Shield size={11} color={accentColor} />
@@ -610,6 +610,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
           </div>
 
           <div
+            className="df-card-subtle df-stagger-item"
             style={{
               background: isEffectiveDark ? '#161616' : '#ffffff',
               borderRadius: 8,
@@ -621,7 +622,9 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
               minWidth: 100,
               border: 'none',
               boxShadow: 'none',
-            }}
+              fontWeight: 400,
+              '--stagger-idx': 1,
+            } as React.CSSProperties}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: theme.textSecondary }}>
               {repoInfo?.private ? <Lock size={11} /> : <Globe size={11} />}
@@ -633,6 +636,7 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
           </div>
 
           <div
+            className="df-card-subtle df-stagger-item"
             style={{
               background: isEffectiveDark ? '#161616' : '#ffffff',
               borderRadius: 8,
@@ -644,7 +648,9 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
               minWidth: 110,
               border: 'none',
               boxShadow: 'none',
-            }}
+              fontWeight: 400,
+              '--stagger-idx': 2,
+            } as React.CSSProperties}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: theme.textSecondary }}>
               <GitBranch size={11} color={accentColor} />
@@ -672,14 +678,26 @@ export const ProjectSettingsView: React.FC<ProjectSettingsViewProps> = ({
           className="no-scrollbar"
         >
           {repoError && (
-            <div style={{ background: isEffectiveDark ? '#141414' : '#ffffff', borderRadius: 8, padding: '8px 12px', fontSize: 11.5, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <div style={{ background: isEffectiveDark ? '#141414' : '#ffffff', borderRadius: 8, padding: '8px 12px', fontSize: 11.5, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, border: 'none', boxShadow: 'none' }}>
               Não foi possível carregar o repositório: {repoError}
               <SmallButton ctx={ctx} onClick={reloadRepo}>
                 Tentar novamente
               </SmallButton>
             </div>
           )}
-          {renderSection()}
+          <div
+            key={section}
+            className="df-view-enter"
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 5,
+              flex: '1 0 auto',
+              fontWeight: 400,
+            }}
+          >
+            {renderSection()}
+          </div>
         </div>
       </div>
 

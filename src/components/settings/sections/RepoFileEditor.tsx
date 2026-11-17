@@ -70,7 +70,7 @@ export const RepoFileEditor: React.FC<Props> = ({ ctx, owner, repo, path, title,
         message: `${file ? 'chore: atualiza' : 'chore: cria'} ${path} via Aura Dev`,
       });
       setFile({ sha: res?.content?.sha, content: text });
-      showToast(`${path} salvo (commit na branch padrão).`);
+      showToast(res?.pullRequest ? `Branch protegida: PR #${res.pullRequest.number} aberto com ${path}.` : `${path} salvo (commit na branch padrão).`);
       onSaved?.();
     } catch (e: any) {
       showToast(`Falhou: ${e.message}`);

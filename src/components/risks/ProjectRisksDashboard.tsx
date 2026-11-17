@@ -394,7 +394,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
     issues.forEach((i) => {
       if (i.status !== 'Concluído' && i.rawState !== 'closed' && i.assignees && i.assignees.length > 0) {
         i.assignees.forEach((ass) => {
-          const name = ass.name || ass.login;
+          const name = ass.name || (ass as { login?: string }).login;
           if (name) {
             const cur = devWorkloadMap.get(name) || { name, avatarUrl: ass.avatarUrl, activeCount: 0 };
             cur.activeCount += 1;
@@ -424,6 +424,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
   return (
     <>
       <div
+        className="df-projects-surface df-view-enter"
         style={{
           width: '100%',
           display: 'flex',
@@ -769,7 +770,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                   padding: '6px 8px',
                   border: 'none',
                   boxShadow: 'none',
-                  transition: 'all 0.15s ease',
+                  transition: 'background-color 150ms ease, color 150ms ease',
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -800,7 +801,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                   padding: '6px 8px',
                   border: 'none',
                   boxShadow: 'none',
-                  transition: 'all 0.15s ease',
+                  transition: 'background-color 150ms ease, color 150ms ease',
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -967,6 +968,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                   {sideCardStats.topDevs.map((dev, idx) => (
                     <div
                       key={idx}
+                      className="df-row-interactive"
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -977,7 +979,6 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                         border: 'none',
                         boxShadow: 'none',
                         flexShrink: 0,
-                        transition: 'all 0.15s ease',
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
@@ -1068,7 +1069,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                 justifyContent: 'space-between',
                 gap: 8,
                 flexShrink: 0,
-                transition: 'all 0.15s ease',
+                transition: 'background-color 150ms ease, color 150ms ease',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
@@ -1189,7 +1190,6 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                   color: viewMode === 'alerts' ? textPrimary : textSecondary,
                   border: 'none',
                   cursor: 'pointer',
-                  transition: 'all 0.15s ease',
                 }}
               >
                 Alertas ({autoRisks.length})
@@ -1206,7 +1206,6 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                   color: viewMode === 'matrix' ? textPrimary : textSecondary,
                   border: 'none',
                   cursor: 'pointer',
-                  transition: 'all 0.15s ease',
                 }}
               >
                 Matriz
@@ -1223,7 +1222,6 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                   color: viewMode === 'strategic' ? textPrimary : textSecondary,
                   border: 'none',
                   cursor: 'pointer',
-                  transition: 'all 0.15s ease',
                 }}
               >
                 Estratégia ({strategicRisks.length})
@@ -1248,7 +1246,6 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                 fontWeight: 400,
                 border: 'none',
                 cursor: 'pointer',
-                transition: 'opacity 0.15s ease',
               }}
               onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.9')}
               onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
@@ -1272,13 +1269,14 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
               { key: 'deadline' as const, label: 'Prazos', count: deadlineCount, color: '#f97316', icon: Clock },
               { key: 'blocker' as const, label: 'Bloqueios', count: blockerCount, color: '#eab308', icon: Link2 },
               { key: 'workload' as const, label: 'Alocação', count: workloadCount, color: accentColor, icon: Users },
-            ].map((item) => {
+            ].map((item, idx) => {
               const isActive = activeFilter === item.key && viewMode === 'alerts';
               const Icon = item.icon;
 
               return (
                 <div
                   key={item.key}
+                  className="df-card-interactive df-stagger-item"
                   onClick={() => {
                     setViewMode('alerts');
                     setActiveFilter(item.key);
@@ -1295,8 +1293,8 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                     justifyContent: 'space-between',
                     minHeight: 56,
                     boxShadow: 'none',
-                    transition: 'all 0.15s ease',
-                  }}
+                    '--stagger-idx': idx,
+                  } as React.CSSProperties}
                   onMouseEnter={(e) => {
                     if (!isActive) e.currentTarget.style.background = isEffectiveDark ? '#242424' : '#f4f4f5';
                   }}
@@ -1317,6 +1315,11 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
           </div>
 
           {/* Área Central: Cards em Grid Responsivo Sem Linha Colorida */}
+          <div
+            key={viewMode}
+            className="df-view-enter"
+            style={{ display: 'flex', flexDirection: 'column', flex: '1 0 auto', fontWeight: 400 }}
+          >
           {viewMode === 'alerts' ? (
             filteredAlerts.length === 0 ? (
               <div
@@ -1353,7 +1356,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                   gap: 8,
                 }}
               >
-                {filteredAlerts.map((risk) => {
+                {filteredAlerts.map((risk, idx) => {
                   const severityColor =
                     risk.severity === 'critical'
                       ? '#ef4444'
@@ -1364,6 +1367,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                   return (
                     <div
                       key={risk.id}
+                      className="df-card-interactive df-stagger-item"
                       style={{
                         background: cardBg,
                         borderRadius: 8,
@@ -1374,9 +1378,9 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                         flexDirection: 'column',
                         justifyContent: 'space-between',
                         gap: 8,
-                        boxShadow: isEffectiveDark ? 'none' : '0 1px 2px rgba(0,0,0,0.03)',
-                        transition: 'background 0.15s ease',
-                      }}
+                        boxShadow: 'none',
+                        '--stagger-idx': idx,
+                      } as React.CSSProperties}
                       onMouseEnter={(e) => (e.currentTarget.style.background = cardHoverBg)}
                       onMouseLeave={(e) => (e.currentTarget.style.background = cardBg)}
                     >
@@ -1528,7 +1532,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                   gap: 8,
                 }}
               >
-                {strategicRisks.map((risk) => {
+                {strategicRisks.map((risk, idx) => {
                   const getImpactBadge = (impact?: string) => {
                     switch (impact) {
                       case 'high':
@@ -1583,6 +1587,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                   return (
                     <div
                       key={risk.id}
+                      className="df-card-interactive df-stagger-item"
                       style={{
                         background: cardBg,
                         borderRadius: 8,
@@ -1591,8 +1596,11 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
                         display: 'flex',
                         flexDirection: 'column',
                         gap: 8,
-                        boxShadow: isEffectiveDark ? 'none' : '0 1px 2px rgba(0,0,0,0.03)',
-                      }}
+                        boxShadow: 'none',
+                        '--stagger-idx': idx,
+                      } as React.CSSProperties}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = cardHoverBg)}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = cardBg)}
                     >
                       {/* Top Header: Title + Action Buttons */}
                       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
@@ -1713,6 +1721,7 @@ export const ProjectRisksDashboard: React.FC<ProjectRisksDashboardProps> = ({
               </div>
             )
           )}
+          </div>
             </div>
           </div>
         </div>

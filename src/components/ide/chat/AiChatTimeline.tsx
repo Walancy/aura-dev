@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import {
-  ChevronDown,
   ChevronRight,
   Terminal,
   Search,
@@ -87,6 +86,7 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
 
   return (
     <div
+      className="df-ide-surface df-subtle-enter"
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -98,7 +98,7 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
         boxShadow: 'none',
         width: '100%',
         boxSizing: 'border-box',
-        transition: 'all 0.15s ease',
+        transition: 'background-color 150ms ease, color 150ms ease, opacity 150ms ease',
       }}
     >
       {/* Top Header: Worked for X or Thinking... */}
@@ -112,18 +112,23 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
             gap: 6,
             background: 'transparent',
             border: 'none',
+            boxShadow: 'none',
             color: themeTokens.textPrimary,
             fontSize: 12,
-            fontWeight: 500,
+            fontWeight: 400,
             cursor: 'pointer',
             padding: 0,
             textAlign: 'left',
             minWidth: 0,
             flex: 1,
-            transition: 'color 0.15s ease',
+            transition: 'transform 140ms var(--ease-out), color 150ms ease, opacity 150ms ease',
           }}
         >
-          {isAccordionOpen ? <ChevronDown size={13} style={{ flexShrink: 0 }} /> : <ChevronRight size={13} style={{ flexShrink: 0 }} />}
+          <ChevronRight
+            size={13}
+            className="df-chevron"
+            style={{ flexShrink: 0, transform: isAccordionOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}
+          />
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
             {isWorking ? (liveAction || 'Pensando…') : workedDuration ? `Trabalhou por ${workedDuration}` : 'Concluído'}
           </span>
@@ -144,14 +149,14 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
 
         {changedFiles.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
-            <span style={{ color: '#22c55e', fontWeight: 500 }}>+{totalAdditions}</span>
-            <span style={{ color: '#ef4444', fontWeight: 500 }}>-{totalDeletions}</span>
+            <span style={{ color: '#22c55e', fontWeight: 400 }}>+{totalAdditions}</span>
+            <span style={{ color: '#ef4444', fontWeight: 400 }}>-{totalDeletions}</span>
           </div>
         )}
       </div>
 
       {isAccordionOpen && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 4 }}>
+        <div className="df-subtle-enter" style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingTop: 4 }}>
           {/* Chain of Thought text if available */}
           {thoughtSnippet && (
             <div
@@ -195,6 +200,7 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
                     }}
                   >
                     <div
+                      className="df-row-interactive"
                       onClick={() => setExpandedCommandIdx(isExp ? null : idx)}
                       style={{
                         display: 'flex',
@@ -206,7 +212,11 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1 }}>
-                        {isExp ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                        <ChevronRight
+                          size={11}
+                          className="df-chevron"
+                          style={{ flexShrink: 0, transform: isExp ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                        />
                         <span style={{ fontFamily: 'monospace', fontSize: 11, color: themeTokens.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           $ {tc.command}
                         </span>
@@ -232,6 +242,7 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
 
                     {isExp && (
                       <div
+                        className="df-subtle-enter"
                         style={{
                           padding: '6px 8px',
                           borderTop: `1px solid ${divider}`,
@@ -313,6 +324,7 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
               return (
                 <div
                   key={stepKey}
+                  className={st.path || st.file ? 'df-row-interactive' : undefined}
                   onClick={() => {
                     if (st.path || st.file) {
                       onOpenFileAction?.(st.path || st.file!, st.file || 'Arquivo');
@@ -327,7 +339,6 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
                     cursor: st.path || st.file ? 'pointer' : 'default',
                     gap: 6,
                     fontSize: 12,
-                    transition: 'background 0.15s ease',
                   }}
                   onMouseEnter={(e) => {
                     if (st.path || st.file) {
@@ -341,18 +352,18 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1 }}>
                     <span style={{ color: themeTokens.textSecondary, fontSize: 11 }}>Edited</span>
                     <FileIcon fileName={st.file || 'file'} size={12} />
-                    <span style={{ fontWeight: 500, color: themeTokens.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span style={{ fontWeight: 400, color: themeTokens.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {st.file || st.label}
                     </span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                     {st.additions !== undefined && (
-                      <span style={{ color: '#22c55e', fontSize: 11, fontWeight: 500 }}>
+                      <span style={{ color: '#22c55e', fontSize: 11, fontWeight: 400 }}>
                         +{st.additions}
                       </span>
                     )}
                     {st.deletions !== undefined && (
-                      <span style={{ color: '#ef4444', fontSize: 11, fontWeight: 500 }}>
+                      <span style={{ color: '#ef4444', fontSize: 11, fontWeight: 400 }}>
                         -{st.deletions}
                       </span>
                     )}
@@ -366,6 +377,7 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
               return (
                 <div key={stepKey} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   <div
+                    className={hasKids ? 'df-row-interactive' : undefined}
                     onClick={() => hasKids && toggleStepKey(stepKey)}
                     style={{
                       display: 'flex',
@@ -378,16 +390,23 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
                       color: themeTokens.textSecondary,
                     }}
                   >
-                    {hasKids && (isStepExp ? <ChevronDown size={11} /> : <ChevronRight size={11} />)}
+                    {hasKids && (
+                      <ChevronRight
+                        size={11}
+                        className="df-chevron"
+                        style={{ flexShrink: 0, transform: isStepExp ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                      />
+                    )}
                     {st.type === 'search' ? <Search size={11} /> : <FileCode2 size={11} />}
                     <span style={{ color: themeTokens.textPrimary, fontWeight: 400 }}>{st.label}</span>
                   </div>
 
                   {hasKids && isStepExp && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 18 }}>
+                    <div className="df-subtle-enter" style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 18 }}>
                       {(st.children || []).map((ch, cIdx) => (
                         <div
                           key={cIdx}
+                          className={ch.path || ch.file ? 'df-row-interactive' : undefined}
                           onClick={() => {
                             if (ch.path || ch.file) {
                               onOpenFileAction?.(ch.path || ch.file!, ch.file || 'Arquivo', ch.lineRange);
@@ -445,7 +464,7 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5 }}>
-                <span style={{ fontWeight: 500, color: themeTokens.textPrimary }}>
+                <span style={{ fontWeight: 400, color: themeTokens.textPrimary }}>
                   {changedFiles.length} {changedFiles.length === 1 ? 'arquivo alterado' : 'arquivos alterados'}
                 </span>
               </div>
@@ -460,12 +479,12 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
                       padding: '0 8px',
                       borderRadius: 4,
                       border: 'none',
+                      boxShadow: 'none',
                       background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
                       color: themeTokens.textPrimary,
                       fontSize: 11,
-                      fontWeight: 500,
+                      fontWeight: 400,
                       cursor: 'pointer',
-                      transition: 'background 0.15s ease',
                     }}
                   >
                     Revisar
@@ -481,6 +500,7 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
                       padding: '0 8px',
                       borderRadius: 4,
                       border: 'none',
+                      boxShadow: 'none',
                       background: 'transparent',
                       color: '#ef4444',
                       fontSize: 11,
@@ -489,7 +509,6 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
                       display: 'flex',
                       alignItems: 'center',
                       gap: 4,
-                      transition: 'opacity 0.15s ease',
                     }}
                   >
                     <RotateCcw size={11} />
@@ -506,15 +525,15 @@ export const AiChatTimeline: React.FC<AiChatTimelineProps> = ({
                       padding: '0 8px',
                       borderRadius: 4,
                       border: 'none',
+                      boxShadow: 'none',
                       background: '#16a34a',
                       color: '#ffffff',
                       fontSize: 11,
-                      fontWeight: 500,
+                      fontWeight: 400,
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       gap: 4,
-                      transition: 'opacity 0.15s ease',
                     }}
                   >
                     <Check size={11} />

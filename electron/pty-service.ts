@@ -68,9 +68,13 @@ const CONTEXT_LEFT_RES = [/(\d{1,3})%\s+context\s+left/gi, /context\s+left\s+unt
 const CONTEXT_ALERT_LEFT = 20; // avisa com 20% ou menos
 const CONTEXT_REARM_LEFT = 40; // só avisa de novo depois que o contexto voltou a ter folga (novo contexto ou compactação)
 /** linhas de moldura do TUI das CLIs (rodapé, spinner, banner) que não dizem nada no resumo */
+/** rodapés que a IA/TUI imprime ao terminar ("Worked for 41s · done", "Skills usadas", nome do projeto): comparados sem espaços porque o terminal às vezes os perde */
+export const FOOTER_NOISE = /workedfor|done\d|skillsusadas|^projeto:|^#?skills|esctointerrupt|tokens|^\W*$/i;
 const TUI_CHROME = /bypass permissions|esc to interrupt|to manage|shift\+tab|ctrl\+[a-z]|Checking for updates|for shortcuts|auto-update|^\s*[·✻✽✶✳*]\s.*(…|\.\.\.|tokens)|^\s*[▸▶⏵]+\s/i;
 
 export interface NativePtySession {
+  /** shell reaberto depois da IA encerrar: respostas automáticas do terminal (DA/cursor) vindas da IA que acabou não podem virar texto no prompt */
+  dropReportsUntil?: number;
   id: string;
   type: string;
   title: string;
@@ -670,9 +674,11 @@ export class NativePtyService extends EventEmitter {
                 .filter((l, idx, arr) => idx === 0 || l !== arr[idx - 1]);
               const cleanText = lines.join('\n');
               const lastFew = lines
-                .slice(-6)
                 .filter((l) => !TUI_CHROME.test(l))
-                .filter((l) => !l.startsWith('❯') && !l.startsWith('agy>') && !l.startsWith('╭') && !l.startsWith('╰') && !l.startsWith('│'));
+                .filter((l) => /[\p{L}\p{N}]/u.test(l))
+                .filter((l) => !FOOTER_NOISE.test(l.replace(/\s+/g, '')))
+                .filter((l) => !l.startsWith('❯') && !l.startsWith('agy>') && !l.startsWith('╭') && !l.startsWith('╰') && !l.startsWith('│'))
+                .slice(-4);
               const summary = lastFew.join(' ').slice(0, 160) || 'Tarefa finalizada no terminal.';
 
               const projectName = path.basename(session.cwd) || 'Projeto';
@@ -715,10 +721,28 @@ export class NativePtyService extends EventEmitter {
           isAi: session.isAi,
           isRunning: false,
           exited: true,
+          shellRespawned: isAi && !isOrchCli,
         });
         this.mainWindow.webContents.send('pty:exit', { id, exitCode, signal });
       }
       this.sessions.delete(id);
+      // A CLI da IA terminou sozinha (ex.: Ctrl+C duas vezes): sem isto o terminal ficava morto, com a última tela congelada.
+      // Reabre um shell na mesma pasta e no mesmo terminal para o usuário continuar de onde está.
+      if (isAi && !isOrchCli && this.mainWindow && !this.mainWindow.isDestroyed()) {
+        try {
+          session.seq = (session.seq || 0) + 1;
+          this.mainWindow.webContents.send('pty:data', {
+            id,
+            data: '\r\n\x1b[2m[A IA foi encerrada. Terminal liberado: digite o comando da IA para abrir de novo]\x1b[0m\r\n',
+            seq: session.seq,
+          });
+          this.sessionHistories.delete(id); // o shell novo começa limpo (e a tela da IA que acabou não é reproduzida de volta)
+          const shell = this.createSession(id, 'zsh', cleanCwd, session.term.cols, session.term.rows);
+          shell.dropReportsUntil = Date.now() + 2500;
+        } catch (err) {
+          console.warn('[Native PTY] falha ao reabrir o shell depois da IA encerrar:', err);
+        }
+      }
     });
 
     this.sessions.set(id, session);
@@ -920,6 +944,7 @@ export class NativePtyService extends EventEmitter {
   write(id: string, data: string) {
     const session = this.sessions.get(id);
     if (session && session.term) {
+      if (session.dropReportsUntil && Date.now() < session.dropReportsUntil && /^\x1b(\[[?>]?[0-9;]*[cR]|\][0-9;]+;.*(\x07|\x1b\\))$/.test(data)) return;
       if (/[\r\n]/.test(data) && (session.isAi || session.aiProvider)) session.turnStartedAt ||= Date.now();
       session.term.write(data);
     }

@@ -50,17 +50,15 @@ export const OutlineTimelineCards: React.FC<Props> = ({ file, themeTokens, isEff
   };
 
   const countBadge = (n: number) => (
-    <span style={{ fontSize: 10, fontWeight: 500, color: themeTokens.textSecondary, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)', padding: '1px 6px', borderRadius: 10, fontFamily: 'monospace' }}>{n}</span>
+    <span style={{ fontSize: 10, fontWeight: 400, color: themeTokens.textSecondary, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)', padding: '1px 6px', borderRadius: 10, fontFamily: 'monospace' }}>{n}</span>
   );
 
   const card = (title: string, open: boolean, toggle: () => void, count: number | null, body: React.ReactNode) => (
-    <div style={{ width: '100%', padding: '8px 10px', background: skinned ? 'transparent' : themeTokens.bgCard, borderRadius: skinned ? 'var(--sk-r, 0px)' : 10, display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0, boxSizing: 'border-box' }}>
+    <div style={{ width: '100%', padding: '8px 10px', background: skinned ? 'transparent' : themeTokens.bgCard, border: 'none', boxShadow: 'none', borderRadius: skinned ? 'var(--sk-r, 0px)' : 10, display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0, boxSizing: 'border-box' }}>
       <div onClick={toggle} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', whiteSpace: 'nowrap', cursor: 'pointer', userSelect: 'none', padding: '2px 0' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <div style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s ease', display: 'flex', color: themeTokens.textSecondary }}>
-            <ChevronRight size={13} />
-          </div>
-          <div style={{ color: themeTokens.textPrimary, fontSize: 12, fontWeight: 500, letterSpacing: skinned ? 'var(--sk-ls, 0)' : undefined, textTransform: skinned ? ('var(--sk-tt, none)' as any) : undefined }}>{title}</div>
+          <ChevronRight size={13} className="df-chevron" style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', color: themeTokens.textSecondary, flexShrink: 0 }} />
+          <div style={{ color: themeTokens.textPrimary, fontSize: 12, fontWeight: 400, letterSpacing: skinned ? 'var(--sk-ls, 0)' : undefined, textTransform: skinned ? ('var(--sk-tt, none)' as any) : undefined }}>{title}</div>
         </div>
         {count !== null && count > 0 && countBadge(count)}
       </div>
@@ -69,18 +67,18 @@ export const OutlineTimelineCards: React.FC<Props> = ({ file, themeTokens, isEff
   );
 
   return (
-    <div className={skinned ? 'skin-bar' : undefined} style={{ display: 'flex', flexDirection: 'column', gap: 5, flexShrink: 0 }}>
+    <div className={skinned ? 'skin-bar df-ide-surface' : 'df-ide-surface'} style={{ display: 'flex', flexDirection: 'column', gap: 5, flexShrink: 0 }}>
       {card(
         'Outline',
         outlineOpen,
         () => setOutlineOpen((v) => !v),
         file ? symbols.length : null,
-        <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div className="df-subtle-enter" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
           {symbols.length > 3 && (
-            <div className="df-search-box" style={{ display: 'flex', alignItems: 'center', background: ft.fieldBg, borderRadius: 6, padding: '4px 8px', gap: 6, boxSizing: 'border-box' }}>
+            <div className="df-search-box" style={{ display: 'flex', alignItems: 'center', background: ft.fieldBg, border: 'none', boxShadow: 'none', borderRadius: 6, padding: '4px 8px', gap: 6, boxSizing: 'border-box' }}>
               <Search size={11} color={themeTokens.textSecondary} />
-              <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filtrar símbolos..." style={{ background: 'transparent', border: 'none', outline: 'none', color: themeTokens.textPrimary, fontSize: 11, width: '100%', fontFamily: 'inherit' }} />
-              {filter && <X size={11} color={themeTokens.textSecondary} style={{ cursor: 'pointer' }} onClick={() => setFilter('')} />}
+              <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filtrar símbolos..." style={{ background: 'transparent', border: 'none', outline: 'none', color: themeTokens.textPrimary, fontSize: 11, fontWeight: 400, width: '100%', fontFamily: 'inherit' }} />
+              {filter && <X size={11} className="df-pressable" color={themeTokens.textSecondary} style={{ cursor: 'pointer' }} onClick={() => setFilter('')} />}
             </div>
           )}
           <div className="no-scrollbar" style={{ maxHeight: 180, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -88,9 +86,10 @@ export const OutlineTimelineCards: React.FC<Props> = ({ file, themeTokens, isEff
               shown.map((sym, idx) => (
                 <div
                   key={`${sym.name}-${sym.line}-${idx}`}
+                  className="df-row-interactive"
                   onClick={() => onJumpToLine(sym.line)}
                   title={`Ir para linha ${sym.line}: ${sym.name} (${sym.kind})`}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 6px', borderRadius: 5, cursor: 'pointer', transition: 'background 0.1s ease' }}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 6px', borderRadius: 5, cursor: 'pointer' }}
                   onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
                   onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                 >
@@ -113,7 +112,7 @@ export const OutlineTimelineCards: React.FC<Props> = ({ file, themeTokens, isEff
         timelineOpen,
         () => setTimelineOpen((v) => !v),
         file ? entries.length : null,
-        <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div className="df-subtle-enter" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 2px' }}>
             <span style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>Histórico local</span>
             <button
@@ -121,7 +120,7 @@ export const OutlineTimelineCards: React.FC<Props> = ({ file, themeTokens, isEff
               onClick={takeSnapshot}
               disabled={!file}
               title="Criar snapshot manual deste arquivo"
-              style={{ background: 'transparent', border: 'none', color: accentColor, fontSize: 10.5, fontWeight: 500, cursor: file ? 'pointer' : 'default', opacity: file ? 1 : 0.4, display: 'flex', alignItems: 'center', gap: 3, padding: '2px 4px', borderRadius: 4 }}
+              style={{ background: 'transparent', border: 'none', boxShadow: 'none', color: accentColor, fontSize: 10.5, fontWeight: 400, cursor: file ? 'pointer' : 'default', opacity: file ? 1 : 0.4, display: 'flex', alignItems: 'center', gap: 3, padding: '2px 4px', borderRadius: 4 }}
               onMouseEnter={(e) => file && (e.currentTarget.style.background = mix(accentColor, 10))}
               onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
             >
@@ -134,8 +133,9 @@ export const OutlineTimelineCards: React.FC<Props> = ({ file, themeTokens, isEff
               entries.map((item) => (
                 <div
                   key={item.id}
+                  className="df-row-interactive"
                   onClick={() => onToast?.(`${item.label} (${item.time})`)}
-                  style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '5px 6px', borderRadius: 6, cursor: 'pointer', transition: 'background 0.1s ease' }}
+                  style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '5px 6px', borderRadius: 6, cursor: 'pointer' }}
                   onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
                   onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                 >

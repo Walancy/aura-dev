@@ -271,6 +271,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
 
   return (
     <div
+      className="df-projects-surface df-view-enter"
       style={{
         width: '100%',
         height: '100%',
@@ -285,6 +286,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
         flex: 1,
         minHeight: 0,
         overflow: 'hidden',
+        fontWeight: 400,
       }}
     >
       {/* ========================================================================= */}
@@ -342,7 +344,6 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                   display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  transition: 'background 0.15s ease, color 0.15s ease',
                   boxShadow: 'none',
                 }}
               >
@@ -367,7 +368,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
               borderRadius: 6,
               padding: '0 8px',
               width: 190,
-              border: c.inputBorder,
+              border: 'none',
               boxShadow: 'none',
             }}
           >
@@ -416,7 +417,6 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
               fontSize: 11.5,
               fontWeight: 400,
               cursor: 'pointer',
-              transition: 'opacity 0.15s ease',
               boxShadow: 'none',
             }}
           >
@@ -454,11 +454,12 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                 gap: 5,
               }}
             >
-              {filteredOfficialLinks.map((link) => {
+              {filteredOfficialLinks.map((link, idx) => {
                 const IconComponent = link.icon;
                 return (
                   <div
                     key={link.label}
+                    className="df-card-interactive df-stagger-item"
                     style={{
                       background: c.card,
                       borderRadius: 8,
@@ -469,8 +470,9 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                       gap: 10,
                       border: 'none',
                       boxShadow: 'none',
-                      transition: 'background 0.15s ease',
-                    }}
+                      fontWeight: 400,
+                      '--stagger-idx': idx,
+                    } as React.CSSProperties}
                     onMouseEnter={(e) => (e.currentTarget.style.background = c.cardHover)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = c.card)}
                   >
@@ -593,7 +595,6 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: 4,
-                  transition: 'opacity 0.15s ease',
                 }}
               >
                 <Plus size={12} />
@@ -608,13 +609,14 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                 gap: 5,
               }}
             >
-              {filteredCustomLinks.map((link) => {
+              {filteredCustomLinks.map((link, idx) => {
                 const svc = getServiceInfo(link.url, link.label);
                 const IconComp = svc.icon;
 
                 return (
                   <div
                     key={link.id}
+                    className="df-card-interactive df-stagger-item"
                     style={{
                       background: c.card,
                       borderRadius: 8,
@@ -625,8 +627,9 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                       gap: 10,
                       border: 'none',
                       boxShadow: 'none',
-                      transition: 'background 0.15s ease',
-                    }}
+                      fontWeight: 400,
+                      '--stagger-idx': idx,
+                    } as React.CSSProperties}
                     onMouseEnter={(e) => (e.currentTarget.style.background = c.cardHover)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = c.card)}
                   >
@@ -743,6 +746,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
       {/* ========================================================================= */}
       {isModalOpen && (
         <div
+          className="df-modal-backdrop"
           style={{
             position: 'fixed',
             inset: 0,
@@ -758,6 +762,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
           }}
         >
           <div
+            className="df-modal-content"
             style={{
               background: c.card,
               borderRadius: 8,
@@ -769,6 +774,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
               display: 'flex',
               flexDirection: 'column',
               gap: 12,
+              fontWeight: 400,
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -803,7 +809,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                     width: '100%',
                     height: 32,
                     background: c.inputBg,
-                    border: c.inputBorder,
+                    border: 'none',
                     boxShadow: 'none',
                     borderRadius: 6,
                     padding: '0 10px',
@@ -831,7 +837,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                     width: '100%',
                     height: 32,
                     background: c.inputBg,
-                    border: c.inputBorder,
+                    border: 'none',
                     boxShadow: 'none',
                     borderRadius: 6,
                     padding: '0 10px',
@@ -856,7 +862,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                     width: '100%',
                     height: 32,
                     background: c.inputBg,
-                    border: c.inputBorder,
+                    border: 'none',
                     boxShadow: 'none',
                     borderRadius: 6,
                     padding: '0 10px',
@@ -882,7 +888,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                   type="button"
                   onClick={() => setIsModalOpen(false)}
                   style={{
-                    height: 30,
+                    height: 32,
                     background: 'transparent',
                     border: 'none',
                     boxShadow: 'none',
@@ -899,7 +905,7 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                   type="submit"
                   disabled={!newLabel.trim() || !newUrl.trim()}
                   style={{
-                    height: 30,
+                    height: 32,
                     background: accentColor,
                     color: accentContrastText,
                     border: 'none',
@@ -910,7 +916,6 @@ export const ProjectLinksView: React.FC<ProjectLinksViewProps> = ({
                     fontWeight: 400,
                     cursor: 'pointer',
                     opacity: !newLabel.trim() || !newUrl.trim() ? 0.5 : 1,
-                    transition: 'opacity 0.15s ease',
                   }}
                 >
                   Salvar Link

@@ -6,6 +6,18 @@ const ACTIVE_BRAIN_KEY = 'devflow_active_brain_path';
 // In-memory cache for synchronous instant access (e.g. during prompt assembly in handleAiSubmit)
 const brainCache = new Map<string, ProjectBrainContext>();
 
+// Resumo das notas do vault (aba Brain) por projeto: entra no contexto das IAs ao lado da arquitetura
+const vaultSummary = new Map<string, string>();
+export function setBrainVaultSummary(workspacePath: string, text: string) {
+  vaultSummary.set(workspacePath.trim(), text);
+  try { localStorage.setItem(`devflow_brain_vault_${workspacePath.trim()}`, text); } catch {}
+}
+function getBrainVaultSummary(workspacePath: string): string {
+  const key = workspacePath.trim();
+  if (vaultSummary.has(key)) return vaultSummary.get(key)!;
+  try { return localStorage.getItem(`devflow_brain_vault_${key}`) || ''; } catch { return ''; }
+}
+
 export function getBrainStorageKey(workspacePath: string): string {
   return `${BRAIN_STORAGE_PREFIX}${workspacePath.trim()}`;
 }
@@ -611,6 +623,7 @@ export function generateBrainAiContext(brain: ProjectBrainContext | null): strin
     `${brain.modulesSummary ? `- Modulos Principais: ${brain.modulesSummary}\n` : ''}` +
     `- Diretrizes Obrigatorias de Codificacao para IAs:\n${brain.aiDirectives}\n` +
     `${designBridgeSection}` +
+    `${getBrainVaultSummary(brain.workspacePath) ? `\n- Notas do Brain (vault estilo Obsidian, links [[assim]]; leia o arquivo quando precisar do detalhe):\n${getBrainVaultSummary(brain.workspacePath)}\n` : ''}` +
     `${topNodes ? `\n- Mapa de Componentes & Conexoes Principais:\n${topNodes}\n` : ''}`
   );
 }

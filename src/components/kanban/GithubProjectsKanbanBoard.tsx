@@ -295,6 +295,7 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
 
   return (
     <div
+      className="df-projects-surface df-view-enter"
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -305,6 +306,7 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
         gap: 8,
         boxSizing: 'border-box',
         fontFamily: "'Poppins', -apple-system, sans-serif",
+        fontWeight: 400,
       }}
     >
 
@@ -354,9 +356,10 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                   : '#f1f5f9',
                 borderRadius: 9,
                 border: 'none',
+                boxShadow: 'none',
                 display: 'flex',
                 flexDirection: 'column',
-                transition: 'background 0.15s ease',
+                transition: 'background-color 150ms ease',
                 overflow: 'hidden',
               }}
             >
@@ -464,13 +467,13 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
 
                     {columnMenuOpenId === col.id && (
                       <div
-                        className="df-dropdown-menu"
+                        className="df-dropdown-menu df-popover-right"
                         style={{
                           position: 'absolute',
                           top: 24,
                           right: 0,
                           background: getFieldTokens(isEffectiveDark).dropdownMenuBg,
-                          border: getFieldTokens(isEffectiveDark).dropdownBorder,
+                          border: 'none',
                           borderRadius: 6,
                           boxShadow: 'none',
                           padding: 4,
@@ -479,6 +482,7 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                           display: 'flex',
                           flexDirection: 'column',
                           gap: 2,
+                          fontWeight: 400,
                         }}
                       >
                         {onAddNewIssue && (
@@ -583,7 +587,7 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                 }}
                 className="no-scrollbar"
               >
-                {colCards.map((task) => {
+                {colCards.map((task, idx) => {
                   const isBeingDragged = draggedIssueId === task.id;
                   const isClosed = task.status === 'Concluído' || task.rawState === 'closed';
                   const assignee = task.assignees && task.assignees[0];
@@ -603,6 +607,8 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                   return (
                     <div
                       key={task.id}
+                      className="df-card-interactive df-stagger-item"
+                      data-dragging={isBeingDragged ? 'true' : undefined}
                       draggable={true}
                       onDragStart={(e) => handleDragStart(e, task.id)}
                       onDragEnd={handleDragEnd}
@@ -618,19 +624,18 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                         cursor: isBeingDragged ? 'grabbing' : 'grab',
                         opacity: isBeingDragged ? 0.35 : 1,
                         boxShadow: 'none',
-                        transition: 'transform 0.12s ease, background 0.15s ease',
                         userSelect: 'none',
-                      }}
+                        fontWeight: 400,
+                        '--stagger-idx': idx,
+                      } as React.CSSProperties}
                       onMouseEnter={(e) => {
                         if (!isBeingDragged) {
                           e.currentTarget.style.background = isEffectiveDark ? '#262626' : '#f8fafc';
-                          e.currentTarget.style.transform = 'translateY(-1px)';
                         }
                       }}
                       onMouseLeave={(e) => {
                         if (!isBeingDragged) {
                           e.currentTarget.style.background = isEffectiveDark ? '#202020' : '#ffffff';
-                          e.currentTarget.style.transform = 'translateY(0)';
                         }
                       }}
                     >
@@ -668,10 +673,11 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                               justifyContent: 'center',
                               fontSize: 9.5,
                               color: '#ffffff',
-                              fontWeight: 600,
+                              fontWeight: 400,
                               flexShrink: 0,
                               overflow: 'hidden',
-                              border: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`,
+                              border: 'none',
+                              boxShadow: 'none',
                             }}
                           >
                             {assignee.avatarUrl ? (
@@ -841,12 +847,12 @@ export const GithubProjectsKanbanBoard: React.FC<GithubProjectsKanbanBoardProps>
                       padding: '6px 10px',
                       background: 'transparent',
                       border: 'none',
+                      boxShadow: 'none',
                       borderRadius: 6,
                       color: theme.textSecondary,
                       fontSize: 12,
-                      fontWeight: 500,
+                      fontWeight: 400,
                       cursor: 'pointer',
-                      transition: 'background 0.15s ease, color 0.15s ease',
                     }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)';

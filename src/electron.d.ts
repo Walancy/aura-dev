@@ -30,6 +30,9 @@ export interface GithubIssueDetails {
     labels: Array<{ name: string; color: string }>;
     milestone?: { number: number; title: string; dueOn?: string | null } | null;
     participants: Array<{ login: string; avatarUrl: string }>;
+    viewerSubscription?: 'SUBSCRIBED' | 'UNSUBSCRIBED' | 'IGNORED' | null;
+    locked?: boolean;
+    isPinned?: boolean;
     issueType?: { id: string; name: string; color?: string } | null;
     subIssuesSummary?: { total: number; completed: number; percentCompleted: number } | null;
   };
@@ -50,6 +53,7 @@ export interface ElectronAPI {
   dailyStore?: {
     read: () => Promise<string | null>;
     write: (json: string) => Promise<boolean>;
+    onChanged: (cb: (info: { count: number; titles: string[]; items: any[]; snapshot?: any[]; message?: string; kind?: 'created' | 'updated' }) => void) => () => void;
   };
   aiSessions: {
     list: (provider: string, cwd: string) => Promise<Array<{ id: string; title: string; updatedAt: number }>>;
@@ -73,17 +77,19 @@ export interface ElectronAPI {
     onSessionBound?: (callback: (payload: { id: string; resumeId: string }) => void) => () => void;
     onContextAlert?: (callback: (payload: { id: string; type: string; cwd: string; projectName: string; left: number }) => void) => () => void;
     onAiCompleted?: (callback: (payload: { id: string; type: string; cwd: string; projectName: string; summary: string; needsInput?: boolean; timestamp: number }) => void) => () => void;
-    onSessionStatus?: (callback: (payload: { id: string; type: string; cwd: string; isAi: boolean; isRunning: boolean; exited?: boolean }) => void) => () => void;
+    onSessionStatus?: (callback: (payload: { id: string; type: string; cwd: string; isAi: boolean; isRunning: boolean; exited?: boolean; shellRespawned?: boolean }) => void) => () => void;
     onData: (callback: (payload: { id: string; data: string; seq?: number }) => void) => () => void;
     onExit: (callback: (payload: { id: string; exitCode: number }) => void) => () => void;
   };
   fs: {
     getHomeDir?: () => Promise<string>;
     getTree: (dirPath: string, depth?: number) => Promise<{ tree: any }>;
+    auditSite?: (dir: string) => Promise<{ error?: string; issues?: string[]; shots?: string[] }>;
+    captureSiteReference?: (url: string, dir: string) => Promise<{ error?: string; title?: string; host?: string; shots?: string[]; hasCss?: boolean; three?: { detected: boolean; notes?: string; motion?: string[] } }>;
     readFile: (filePath: string) => Promise<{ content: string; error?: string }>;
     writeFile: (filePath: string, content: string) => Promise<{ success: boolean }>;
     getCapabilities?: () => Promise<{ designAi: number; stockImage: boolean; tempImages: boolean; exportPdf: boolean }>;
-    stockImage?: (payload: { query: string; width: number; height: number; key?: string; index?: number; people?: boolean; pexelsKey?: string }) => Promise<{ dataUrl?: string; credit?: string; source?: string; error?: string }>;
+    stockImage?: (payload: { query: string; width: number; height: number; key?: string; index?: number; people?: boolean; maxSide?: number; pexelsKey?: string }) => Promise<{ dataUrl?: string; credit?: string; source?: string; error?: string }>;
     exportPdf?: (html: string, defaultName: string) => Promise<{ path?: string; canceled?: boolean; error?: string }>;
     figmaFetch?: (token: string, apiPath: string) => Promise<{ data?: any; error?: string; status?: number }>;
     figmaDownloadImages?: (urls: Record<string, string>) => Promise<Record<string, string>>;
@@ -182,6 +188,12 @@ export interface ElectronAPI {
     openFile: () => Promise<{ filePath: string; name: string; content: string; error?: string } | null>;
     openFolder: () => Promise<{ folderPath: string; name: string; tree: any[] } | null>;
   };
+  updater?: {
+    check: () => Promise<{ success: boolean; error?: string; info?: { current: string; latest: string; available: boolean; notes: string; pageUrl: string; asset?: { name: string; url: string; size: number } } }>;
+    install: () => Promise<{ success: boolean; manual?: boolean; version?: string; error?: string }>;
+    openReleasePage: (url?: string) => Promise<{ success: boolean }>;
+    onProgress: (callback: (p: { stage: 'download' | 'install'; percent: number }) => void) => () => void;
+  };
   shell: {
     exec: (command: string, cwd?: string) => Promise<{ stdout: string; stderr: string; error: string | null; exitCode: number; newCwd?: string | null }>;
     openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
@@ -270,7 +282,7 @@ export interface ElectronAPI {
     deleteIssue: (input: string | { nodeId?: string; owner?: string; repo?: string; issueNumber?: number }) => Promise<{ success: boolean; error?: string }>;
     lockIssue?: (owner: string, repo: string, issueNumber: number, locked: boolean) => Promise<{ success: boolean; locked?: boolean; error?: string }>;
     pinIssue?: (issueId: string, pinned: boolean) => Promise<{ success: boolean; pinned?: boolean; error?: string }>;
-    setIssueSubscription?: (owner: string, repo: string, issueNumber: number, subscribed: boolean) => Promise<{ success: boolean; subscribed?: boolean; error?: string }>;
+    setIssueSubscription?: (owner: string, repo: string, issueNumber: number, subscribed: boolean | 'SUBSCRIBED' | 'UNSUBSCRIBED' | 'IGNORED') => Promise<{ success: boolean; subscribed?: boolean; subscription?: string; error?: string }>;
     transferIssue?: (owner: string, repo: string, issueNumber: number, newOwner: string, newRepo: string) => Promise<{ success: boolean; issue?: any; error?: string }>;
     fetchTeamInsights?: (owner: string, repo: string) => Promise<{ success: boolean; insights?: import('./components/team/teamTypes').TeamInsightsRaw; error?: string }>;
     fetchOrgTeams?: (org: string) => Promise<{ success: boolean; teams?: Array<{ id: number; slug: string; name: string; description: string }>; error?: string }>;

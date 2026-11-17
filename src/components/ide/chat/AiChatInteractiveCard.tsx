@@ -61,6 +61,7 @@ export const InteractiveQuestionCard: React.FC<InteractiveQuestionCardProps> = (
 
   return (
     <div
+      className="df-subtle-enter"
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -78,7 +79,7 @@ export const InteractiveQuestionCard: React.FC<InteractiveQuestionCardProps> = (
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <HelpCircle size={15} color={accentColor} />
-        <span style={{ fontSize: 12.5, fontWeight: 500, color: themeTokens.textPrimary }}>
+        <span style={{ fontSize: 12.5, fontWeight: 400, color: themeTokens.textPrimary }}>
           {data.question}
         </span>
       </div>
@@ -91,6 +92,7 @@ export const InteractiveQuestionCard: React.FC<InteractiveQuestionCardProps> = (
           return (
             <div
               key={opt}
+              className={hasSubmitted ? undefined : 'df-row-interactive'}
               onClick={() => toggleOption(opt)}
               style={{
                 display: 'flex',
@@ -98,11 +100,13 @@ export const InteractiveQuestionCard: React.FC<InteractiveQuestionCardProps> = (
                 gap: 8,
                 padding: '6px 10px',
                 borderRadius: 6,
+                border: 'none',
+                boxShadow: 'none',
                 background: isSelected
                   ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)')
                   : 'transparent',
                 cursor: hasSubmitted ? 'default' : 'pointer',
-                transition: 'background 0.15s ease',
+                transition: 'transform 140ms var(--ease-out), background-color 140ms ease, color 140ms ease, opacity 140ms ease',
               }}
               onMouseEnter={(e) => {
                 if (!isSelected && !hasSubmitted) {
@@ -125,10 +129,10 @@ export const InteractiveQuestionCard: React.FC<InteractiveQuestionCardProps> = (
                   alignItems: 'center',
                   justifyContent: 'center',
                   flexShrink: 0,
-                  transition: 'background 0.15s ease',
+                  transition: 'background-color 150ms ease, transform 140ms var(--ease-out)',
                 }}
               >
-                {isSelected && <Check size={10} color="#ffffff" />}
+                {isSelected && <Check size={10} color="#ffffff" className="df-check-pop" />}
               </div>
               <span style={{ fontSize: 12, fontWeight: 400, color: themeTokens.textPrimary }}>
                 {opt}
@@ -156,7 +160,7 @@ export const InteractiveQuestionCard: React.FC<InteractiveQuestionCardProps> = (
               height: 26,
               padding: '0 8px',
               borderRadius: 5,
-              border: getFieldTokens(isEffectiveDark).fieldBorder,
+              border: 'none',
               background: getFieldTokens(isEffectiveDark).fieldBg,
               boxShadow: 'none',
               color: themeTokens.textPrimary,
@@ -172,18 +176,20 @@ export const InteractiveQuestionCard: React.FC<InteractiveQuestionCardProps> = (
             {onSkip && (
               <button
                 type="button"
+                className="df-pressable"
                 onClick={handleSkip}
                 style={{
                   height: 26,
                   padding: '0 10px',
                   borderRadius: 4,
                   border: 'none',
+                  boxShadow: 'none',
                   background: 'transparent',
                   color: themeTokens.textSecondary,
                   fontSize: 11.5,
                   fontWeight: 400,
                   cursor: 'pointer',
-                  transition: 'background 0.15s ease',
+                  transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease, opacity 150ms ease',
                 }}
               >
                 Pular
@@ -191,6 +197,7 @@ export const InteractiveQuestionCard: React.FC<InteractiveQuestionCardProps> = (
             )}
             <button
               type="button"
+              className="df-pressable"
               disabled={selectedOptions.length === 0 && !writeIn.trim()}
               onClick={handleSubmit}
               style={{
@@ -198,15 +205,16 @@ export const InteractiveQuestionCard: React.FC<InteractiveQuestionCardProps> = (
                 padding: '0 12px',
                 borderRadius: 4,
                 border: 'none',
+                boxShadow: 'none',
                 background: selectedOptions.length > 0 || writeIn.trim() ? accentColor : (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)'),
                 color: selectedOptions.length > 0 || writeIn.trim() ? '#ffffff' : themeTokens.textSecondary,
                 fontSize: 11.5,
-                fontWeight: 500,
+                fontWeight: 400,
                 cursor: selectedOptions.length > 0 || writeIn.trim() ? 'pointer' : 'default',
                 display: 'flex',
                 alignItems: 'center',
                 gap: 5,
-                transition: 'all 0.15s ease',
+                transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease, opacity 150ms ease',
               }}
             >
               <span>Confirmar</span>
@@ -217,7 +225,7 @@ export const InteractiveQuestionCard: React.FC<InteractiveQuestionCardProps> = (
       )}
 
       {hasSubmitted && (
-        <div style={{ fontSize: 11, color: themeTokens.textSecondary, opacity: 0.8 }}>
+        <div className="df-subtle-enter" style={{ fontSize: 11, color: themeTokens.textSecondary, opacity: 0.8 }}>
           Resposta enviada: {selectedOptions.join(', ')} {writeIn ? `("${writeIn}")` : ''}
         </div>
       )}
@@ -251,30 +259,39 @@ export const AlertCallout: React.FC<AlertCalloutProps> = ({
 
   return (
     <div
+      className="df-subtle-enter"
       style={{
         display: 'flex',
-        flexDirection: 'column',
+        flexDirection: 'row',
         padding: 10,
-        gap: 6,
+        gap: 10,
         borderRadius: 6,
         background: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
-        borderLeft: `2px solid ${current.color}`,
-        borderTop: 'none',
-        borderRight: 'none',
-        borderBottom: 'none',
+        border: 'none',
         boxShadow: 'none',
         marginTop: 6,
         marginBottom: 6,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <Icon size={13} color={current.color} />
-        <span style={{ fontSize: 11.5, fontWeight: 500, color: current.color }}>
-          {current.label}
-        </span>
-      </div>
-      <div style={{ fontSize: 12, color: themeTokens.textPrimary, lineHeight: '18px', fontWeight: 400 }}>
-        {content}
+      <div
+        style={{
+          width: 2.5,
+          borderRadius: 2,
+          background: current.color,
+          alignSelf: 'stretch',
+          flexShrink: 0,
+        }}
+      />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Icon size={13} color={current.color} />
+          <span style={{ fontSize: 11.5, fontWeight: 400, color: current.color }}>
+            {current.label}
+          </span>
+        </div>
+        <div style={{ fontSize: 12, color: themeTokens.textPrimary, lineHeight: '18px', fontWeight: 400 }}>
+          {content}
+        </div>
       </div>
     </div>
   );

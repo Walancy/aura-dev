@@ -12,7 +12,12 @@ jobs:
   draft:
     runs-on: ubuntu-latest
     steps:
-      - run: gh release create "$GITHUB_REF_NAME" --draft --title "${GITHUB_REF_NAME#v}" --generate-notes --repo "$GITHUB_REPOSITORY"
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      # toda release precisa do changelog da versão (novidades e, se couber, prints): sem ele a release falha aqui
+      - run: bun scripts/changelog.ts check "$GITHUB_REF_NAME"
+      - run: bun scripts/changelog.ts notes "$GITHUB_REF_NAME" > release-notes.md
+      - run: gh release create "$GITHUB_REF_NAME" --draft --title "${GITHUB_REF_NAME#v}" --notes-file release-notes.md --repo "$GITHUB_REPOSITORY"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

@@ -120,7 +120,7 @@ export const TeamMembersPanel: React.FC<Props> = ({ ctx, raw, members, people, d
     <div style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
       {/* Toolbar */}
       <div style={{ background: ctx.isEffectiveDark ? '#141414' : '#ffffff', borderRadius: 8, padding: '8px 12px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', border: 'none', boxShadow: 'none' }}>
-        <div className="df-search-box" style={{ display: 'flex', alignItems: 'center', gap: 6, background: getFieldTokens(ctx.isEffectiveDark).fieldBg, border: getFieldTokens(ctx.isEffectiveDark).fieldBorder, boxShadow: 'none', borderRadius: 6, padding: '0 8px', height: 28, flex: '1 1 200px', maxWidth: 280, boxSizing: 'border-box' }}>
+        <div className="df-search-box" style={{ display: 'flex', alignItems: 'center', gap: 6, background: getFieldTokens(ctx.isEffectiveDark).fieldBg, border: 'none', boxShadow: 'none', borderRadius: 6, padding: '0 8px', height: 28, flex: '1 1 200px', maxWidth: 280, boxSizing: 'border-box' }}>
           <Search size={13} color={theme.textSecondary} />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por nome, skill ou time..." style={{ ...inputStyle(ctx), background: 'transparent', border: 'none', padding: 0 }} />
         </div>
@@ -184,7 +184,6 @@ export const TeamMembersPanel: React.FC<Props> = ({ ctx, raw, members, people, d
                 outline: 'none',
                 boxShadow: 'none',
                 cursor: 'pointer',
-                transition: 'all 0.15s ease',
               }}
             >
               <LayoutGrid size={12} color={viewMode === 'cards' ? accentColor : 'currentColor'} />
@@ -210,7 +209,6 @@ export const TeamMembersPanel: React.FC<Props> = ({ ctx, raw, members, people, d
                 outline: 'none',
                 boxShadow: 'none',
                 cursor: 'pointer',
-                transition: 'all 0.15s ease',
               }}
             >
               <Table size={12} color={viewMode === 'table' ? accentColor : 'currentColor'} />
@@ -224,14 +222,31 @@ export const TeamMembersPanel: React.FC<Props> = ({ ctx, raw, members, people, d
       {newcomers.length > 0 && (
         <Panel ctx={ctx} icon={<GraduationCap size={14} color={accentColor} />} title="Onboarding" right={<span style={{ fontSize: 11, color: theme.textMuted }}>quem chegou nos últimos 30 dias</span>}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 6 }}>
-            {newcomers.map((m) => {
+            {newcomers.map((m, idx) => {
               const ob = computeOnboarding(m, raw, repoData.onboarding[m.login.toLowerCase()]);
               const started = Boolean(repoData.onboarding[m.login.toLowerCase()]);
               return (
-                <div key={m.login} onClick={() => onOpenMember(m.login)} style={{ background: theme.controlBg, borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 6, cursor: 'pointer' }}>
+                <div
+                  key={m.login}
+                  className="df-card-interactive df-stagger-item"
+                  onClick={() => onOpenMember(m.login)}
+                  style={{
+                    background: theme.controlBg,
+                    borderRadius: 8,
+                    padding: 10,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                    cursor: 'pointer',
+                    border: 'none',
+                    boxShadow: 'none',
+                    fontWeight: 400,
+                    '--stagger-idx': idx,
+                  } as React.CSSProperties}
+                >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <Avatar ctx={ctx} login={m.login} url={m.avatarUrl} size={24} />
-                    <span style={{ fontSize: 12, fontWeight: 500, color: theme.textPrimary, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.login}</span>
+                    <span style={{ fontSize: 12, fontWeight: 400, color: theme.textPrimary, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.login}</span>
                     <span style={{ fontSize: 11, color: ob.percent === 100 ? '#22c55e' : theme.textSecondary }}>
                       {ob.done}/{ob.total}
                     </span>
@@ -258,8 +273,8 @@ export const TeamMembersPanel: React.FC<Props> = ({ ctx, raw, members, people, d
           <EmptyState ctx={ctx} icon={<Users size={24} color={theme.textMuted} />} text="Nenhum membro encontrado com esses filtros." />
         </Panel>
       ) : viewMode === 'cards' ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(270px, 1fr))', gap: 5 }}>
-          {filtered.map((m) => {
+        <div key="cards" className="df-view-enter" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(270px, 1fr))', gap: 5 }}>
+          {filtered.map((m, idx) => {
             const p = people[m.login.toLowerCase()] || {};
             const meta = LOAD_META[m.loadLevel];
             const d = daily[m.login.toLowerCase()];
@@ -268,8 +283,22 @@ export const TeamMembersPanel: React.FC<Props> = ({ ctx, raw, members, people, d
             return (
               <div
                 key={m.login}
+                className="df-card-interactive df-stagger-item"
                 onClick={() => onOpenMember(m.login)}
-                style={{ background: ctx.isEffectiveDark ? '#141414' : '#ffffff', borderRadius: 8, padding: 12, display: 'flex', flexDirection: 'column', gap: 8, cursor: 'pointer', transition: 'background 0.15s ease', minWidth: 0, border: 'none', boxShadow: 'none' }}
+                style={{
+                  background: ctx.isEffectiveDark ? '#141414' : '#ffffff',
+                  borderRadius: 8,
+                  padding: 12,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  cursor: 'pointer',
+                  minWidth: 0,
+                  border: 'none',
+                  boxShadow: 'none',
+                  fontWeight: 400,
+                  '--stagger-idx': idx,
+                } as React.CSSProperties}
                 onMouseEnter={(e) => (e.currentTarget.style.background = ctx.isEffectiveDark ? '#242424' : '#f0f0f0')}
                 onMouseLeave={(e) => (e.currentTarget.style.background = ctx.isEffectiveDark ? '#141414' : '#ffffff')}
               >
@@ -356,6 +385,8 @@ export const TeamMembersPanel: React.FC<Props> = ({ ctx, raw, members, people, d
         </div>
       ) : (
         <div
+          key="table"
+          className="df-view-enter"
           style={{
             background: ctx.isEffectiveDark ? '#141414' : '#ffffff',
             borderRadius: 8,
@@ -364,6 +395,7 @@ export const TeamMembersPanel: React.FC<Props> = ({ ctx, raw, members, people, d
             minWidth: 0,
             border: 'none',
             boxShadow: 'none',
+            fontWeight: 400,
           }}
         >
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, textAlign: 'left', fontFamily: 'inherit' }}>
@@ -512,7 +544,7 @@ export const TeamMembersPanel: React.FC<Props> = ({ ctx, raw, members, people, d
               </tr>
             </thead>
             <tbody>
-              {filtered.map((m) => {
+              {filtered.map((m, idx) => {
                 const p = people[m.login.toLowerCase()] || {};
                 const meta = LOAD_META[m.loadLevel];
                 const d = daily[m.login.toLowerCase()];
@@ -523,6 +555,7 @@ export const TeamMembersPanel: React.FC<Props> = ({ ctx, raw, members, people, d
                 return (
                   <tr
                     key={m.login}
+                    className="df-row-interactive df-stagger-item"
                     onClick={() => {
                       onOpenMember(m.login);
                       logSystemActivity('membros', 'abrir_detalhes', m.login);
@@ -530,8 +563,9 @@ export const TeamMembersPanel: React.FC<Props> = ({ ctx, raw, members, people, d
                     style={{
                       borderBottom: `1px solid ${ctx.isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'}`,
                       cursor: 'pointer',
-                      transition: 'background 0.12s ease',
-                    }}
+                      fontWeight: 400,
+                      '--stagger-idx': idx,
+                    } as React.CSSProperties}
                     onMouseEnter={(e) => (e.currentTarget.style.background = ctx.isEffectiveDark ? '#1c1c1c' : '#f5f5f5')}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >

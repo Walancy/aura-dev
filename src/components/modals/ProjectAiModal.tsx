@@ -9,14 +9,18 @@ interface ProjectAiModalProps {
   isOpen: boolean;
   onClose: () => void;
   repoFullName?: string;
+  /** pasta local do projeto: de lá vêm as regras de CI (.github/workflows) */
+  workspacePath?: string;
   isEffectiveDark: boolean;
   accentColor: string;
   accentContrastText: string;
   onToast: (msg: string) => void;
+  /** provedor/modelo escolhidos aqui passam a valer no chat da IA do app */
+  onApplyAi?: (providerId: string, model?: string) => void;
 }
 
 // Configuração da IA do projeto ativo (mesma seção das Configurações do projeto), aberta pelo menu da engrenagem
-export const ProjectAiModal: React.FC<ProjectAiModalProps> = ({ isOpen, onClose, repoFullName = '', isEffectiveDark, accentColor, accentContrastText, onToast }) => {
+export const ProjectAiModal: React.FC<ProjectAiModalProps> = ({ isOpen, onClose, repoFullName = '', workspacePath, isEffectiveDark, accentColor, accentContrastText, onToast, onApplyAi }) => {
   const [owner, repo] = repoFullName.split('/');
   const [settings, setSettings] = useState<ProjectSettings>(() => getProjectSettings(repoFullName));
   const [repoInfo, setRepoInfo] = useState<any | null>(null);
@@ -69,11 +73,13 @@ export const ProjectAiModal: React.FC<ProjectAiModalProps> = ({ isOpen, onClose,
   const update = useCallback(
     (fn: (prev: ProjectSettings) => ProjectSettings) => {
       if (!repoFullName) return;
-      const next = fn(getProjectSettings(repoFullName));
+      const prev = getProjectSettings(repoFullName);
+      const next = fn(prev);
       saveProjectSettings(repoFullName, next);
       setSettings(next);
+      if (next.ai.providerId && (next.ai.providerId !== prev.ai.providerId || next.ai.model !== prev.ai.model)) onApplyAi?.(next.ai.providerId, next.ai.model);
     },
-    [repoFullName],
+    [repoFullName, onApplyAi],
   );
 
   if (!isOpen) return null;
@@ -107,6 +113,7 @@ export const ProjectAiModal: React.FC<ProjectAiModalProps> = ({ isOpen, onClose,
             <AiSection
               ctx={{ theme, accentColor, accentContrastText, isEffectiveDark }}
               repoFullName={repoFullName}
+              workspacePath={workspacePath}
               owner={owner}
               repo={repo}
               repoInfo={repoInfo}

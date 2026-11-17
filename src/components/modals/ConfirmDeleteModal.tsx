@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { Trash2, AlertTriangle, X, Loader2 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Trash2, AlertTriangle, X, Loader2, Check } from 'lucide-react';
 import type { ThemeTokens } from '../../types/ide';
 
 export interface ConfirmDeleteModalProps {
@@ -14,6 +14,8 @@ export interface ConfirmDeleteModalProps {
   themeTokens?: any;
   accentColor?: string;
   onConfirm: () => void | Promise<void>;
+  /** com isto, o modal mostra "Não mostrar novamente"; chamado ao confirmar com a opção marcada */
+  onDontAskAgain?: () => void;
   onClose: () => void;
 }
 
@@ -29,8 +31,17 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
   themeTokens,
   accentColor = '#f97316',
   onConfirm,
+  onDontAskAgain,
   onClose,
 }) => {
+  const [dontAsk, setDontAsk] = useState(false);
+  useEffect(() => {
+    if (isOpen) setDontAsk(false);
+  }, [isOpen]);
+  const confirm = () => {
+    if (dontAsk) onDontAskAgain?.();
+    return onConfirm();
+  };
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -38,12 +49,12 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
         onClose();
       } else if (e.key === 'Enter' && !isDeleting) {
         e.preventDefault();
-        onConfirm();
+        confirm();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isDeleting, onConfirm, onClose]);
+  }, [isOpen, isDeleting, onConfirm, onClose, dontAsk, onDontAskAgain]);
 
   if (!isOpen) return null;
 
@@ -54,6 +65,7 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
 
   return (
     <div
+      className="df-modal-backdrop"
       onClick={() => {
         if (!isDeleting) onClose();
       }}
@@ -70,10 +82,10 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
         alignItems: 'center',
         justifyContent: 'center',
         padding: 20,
-        animation: 'fadeIn 0.15s ease-out',
       }}
     >
       <div
+        className="df-modal-content"
         onClick={(e) => e.stopPropagation()}
         style={{
           width: '100%',
@@ -116,7 +128,7 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
                 style={{
                   margin: 0,
                   fontSize: 15,
-                  fontWeight: 600,
+                  fontWeight: 400,
                   color: textPrimary,
                   letterSpacing: '-0.01em',
                 }}
@@ -128,6 +140,7 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
 
           <button
             type="button"
+            className="df-pressable"
             disabled={isDeleting}
             onClick={onClose}
             style={{
@@ -142,7 +155,7 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
               cursor: isDeleting ? 'not-allowed' : 'pointer',
               color: textSecondary,
               opacity: isDeleting ? 0.4 : 0.7,
-              transition: 'all 0.15s ease',
+              transition: 'opacity 150ms ease, color 150ms ease, transform 140ms var(--ease-out)',
             }}
             onMouseEnter={(e) => {
               if (!isDeleting) {
@@ -192,6 +205,22 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
           )}
         </div>
 
+        {onDontAskAgain && (
+          <div
+            role="checkbox"
+            aria-checked={dontAsk}
+            tabIndex={0}
+            onClick={() => setDontAsk((v) => !v)}
+            onKeyDown={(e) => e.key === ' ' && (e.preventDefault(), setDontAsk((v) => !v))}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12, color: textSecondary, width: 'fit-content', userSelect: 'none' }}
+          >
+            <span style={{ width: 16, height: 16, borderRadius: 4, background: dontAsk ? accentColor : 'rgba(255, 255, 255, 0.08)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 150ms ease' }}>
+              {dontAsk && <Check size={12} color="#ffffff" />}
+            </span>
+            Não mostrar novamente
+          </div>
+        )}
+
         {/* Rodapé com botões Cancelar e Excluir */}
         <div
           style={{
@@ -205,6 +234,7 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
         >
           <button
             type="button"
+            className="df-pressable"
             disabled={isDeleting}
             onClick={onClose}
             style={{
@@ -216,7 +246,7 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
               border: 'none',
               color: textSecondary,
               cursor: isDeleting ? 'not-allowed' : 'pointer',
-              transition: 'all 0.15s ease',
+              transition: 'background-color 150ms ease, color 150ms ease, transform 140ms var(--ease-out)',
             }}
             onMouseEnter={(e) => {
               if (!isDeleting) {
@@ -236,8 +266,9 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
 
           <button
             type="button"
+            className="df-pressable"
             disabled={isDeleting}
-            onClick={onConfirm}
+            onClick={confirm}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -251,7 +282,7 @@ export const ConfirmDeleteModal: React.FC<ConfirmDeleteModalProps> = ({
               color: '#ffffff',
               cursor: isDeleting ? 'not-allowed' : 'pointer',
               opacity: isDeleting ? 0.7 : 1,
-              transition: 'all 0.15s ease',
+              transition: 'background-color 150ms ease, opacity 150ms ease, transform 140ms var(--ease-out)',
               boxShadow: 'none',
             }}
             onMouseEnter={(e) => {

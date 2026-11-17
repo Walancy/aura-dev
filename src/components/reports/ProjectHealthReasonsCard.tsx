@@ -401,7 +401,7 @@ export const ProjectHealthReasonsCard: React.FC<ProjectHealthReasonsCardProps> =
                       gap: 2,
                       border: 'none',
                       boxShadow: 'none',
-                      transition: 'all 0.15s ease',
+                      transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out)',
                     }}
                   >
                     <span style={{ fontWeight: 400 }}>{pillar.points}</span>

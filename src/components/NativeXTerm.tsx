@@ -21,6 +21,36 @@ const selectContent = (term: XTerm) => {
   term.select(0, first, (last - first) * term.cols + b.getLine(last)!.translateToString(true).length);
 };
 
+/** Ctrl+A (1º toque): seleciona só o texto do campo de prompt da IA ("❯ texto", inclusive em várias linhas). Devolve false se não achar o campo. */
+const selectPromptText = (term: XTerm): boolean => {
+  const b = term.buffer.active;
+  const cur = b.baseY + b.cursorY;
+  const text = (y: number) => b.getLine(y)?.translateToString(true) ?? '';
+  const isBorder = (t: string) => /^\s*[╭╰─━┌└]/.test(t);
+  const marker = /^(\s*[│┃]?\s*)([❯>›»])\s?/;
+  // sobe do cursor até a linha com o marcador do prompt (sem atravessar a borda da caixa)
+  let start = -1;
+  for (let y = cur; y >= Math.max(0, cur - 20); y--) {
+    const t = text(y);
+    if (marker.test(t)) { start = y; break; }
+    if (y !== cur && isBorder(t)) break;
+  }
+  if (start < 0) return false;
+  let end = start;
+  for (let y = start + 1; y < Math.min(b.length, start + 40); y++) {
+    const t = text(y);
+    if (isBorder(t) || !t.trim()) break;
+    end = y;
+  }
+  const startX = (marker.exec(text(start)) as RegExpExecArray)[0].length;
+  const endLine = text(end).replace(/\s*[│┃]\s*$/, '');
+  const endX = Math.max(endLine.length, end === start ? startX : 0);
+  const length = (end - start) * term.cols + endX - startX;
+  if (length <= 0) return false;
+  term.select(startX, start, length);
+  return true;
+};
+
 export interface TerminalThemeDef {
   id: string;
   name: string;
@@ -551,6 +581,8 @@ export interface NativeXTermProps {
   isActive: boolean;
   initialCommand?: string;
   accentColor?: string;
+  /** cor do cursor: a da IA rodando no terminal; sem IA, usa a cor de destaque */
+  cursorColor?: string;
   isDark?: boolean;
   fontSize?: number;
   cursorStyle?: 'block' | 'bar' | 'underline';
@@ -576,6 +608,8 @@ export interface NativeXTermProps {
   cursorWidth?: number;
 }
 
+const isGrayRgb = (c: number) => { const r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255; return Math.abs(r - g) < 14 && Math.abs(g - b) < 14 && r > 60 && r < 190; };
+
 export const NativeXTerm: React.FC<NativeXTermProps> = ({
   sessionId,
   sessionType = 'zsh',
@@ -586,6 +620,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
   skinLayers = true,
   initialCommand,
   accentColor = '#FF6A00',
+  cursorColor,
   isDark = true,
   fontSize = 12,
   cursorStyle = 'block',
@@ -618,10 +653,16 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
   const [stickyOpen, setStickyOpen] = useState(false);
   const [stickyMore, setStickyMore] = useState(false);
   const typedRef = useRef('');
+  // seletor do /resume aberto: lá o Ctrl+A é "mostrar todos os projetos", então não pode virar "selecionar tudo" (Esc ou Enter encerram)
+  const resumePickerRef = useRef(false);
+  // Ctrl+A em dois passos: 1º só o campo de prompt, 2º tudo (qual dos dois está selecionado agora)
+  const selStepRef = useRef<'prompt' | 'all' | null>(null);
   // prompts enviados (em ordem): rolando o terminal, a barra mostra o prompt daquele ponto
   const promptsRef = useRef<string[]>([]);
   const refreshStickyRef = useRef<(() => void) | undefined>(undefined);
   const aiSessionRef = useRef(false);
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
   const termRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const copyOnSelectRef = useRef(copyOnSelect);
@@ -684,7 +725,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
       cursorBlink,
       cursorStyle,
       // sem foco o xterm desenha um contorno de bloco por padrão; mantém o estilo escolhido
-      cursorInactiveStyle: cursorStyle,
+      cursorInactiveStyle: 'none', // terminal sem seleção/foco não mostra o cursor
       cursorWidth: cursorWidth || 2,
       fontSize,
       scrollback,
@@ -695,7 +736,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
       theme: {
         background: transparent ? 'rgba(0, 0, 0, 0)' : isDark ? customTheme.background : '#ffffff',
         foreground: isDark ? customTheme.foreground : '#1f1f1f',
-        cursor: accentColor,
+        cursor: cursorColor || accentColor,
         cursorAccent: isDark ? customTheme.background : '#ffffff',
         selectionBackground: hexToRgba(accentColor, 0.22),
         scrollbarSliderBackground: isDark ? 'rgba(255, 255, 255, 0.28)' : 'rgba(0, 0, 0, 0.28)',
@@ -751,7 +792,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
     try {
       if (containerRef.current.offsetWidth >= 50 && containerRef.current.offsetHeight >= 50) fitAddon.fit();
     } catch {}
-    term.focus();
+    if (isActiveRef.current) term.focus();
 
     // Garante que Backspace, Delete e atalhos de apagar funcionem com precisão no CLI
     // apagar seleção: segura a saída por instantes e escreve de uma vez, para o cursor não "andar" até a seleção
@@ -767,9 +808,29 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
           return false;
         }
       }
+      // no seletor do /resume o Ctrl+A vai para a IA ("show all projects"); o Cmd+A continua selecionando
+      if (resumePickerRef.current && e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey && (e.key === 'a' || e.key === 'A')) {
+        return true;
+      }
       // Cmd+A / Ctrl+A seleciona todo o texto do terminal (em vez do "início da linha" do shell)
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'a' || e.key === 'A')) {
-        if (e.type === 'keydown') selectContent(term);
+        if (e.type === 'keydown') {
+          if (aiSessionRef.current && selStepRef.current !== 'prompt' && selectPromptText(term)) {
+            selStepRef.current = 'prompt';
+          } else {
+            selectContent(term);
+            selStepRef.current = 'all';
+          }
+        }
+        e.preventDefault();
+        return false;
+      }
+      // Shift+Enter: quebra a linha no campo de prompt da IA (o Enter puro envia). O xterm manda o mesmo \r nos dois; ESC+CR é o "Meta+Enter" que as CLIs tratam como nova linha
+      if (e.key === 'Enter' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && (aiSessionRef.current || /^(claude|agy|antigravity|codex|gemini|ollama)$/.test(sessionType))) {
+        if (e.type === 'keydown') {
+          window.electronAPI?.pty?.write(sessionId, '\x1b\r');
+          typedRef.current += ' ';
+        }
         e.preventDefault();
         return false;
       }
@@ -929,6 +990,13 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
           if (row !== buf.cursorY || col < 0 || col >= term.cols) return;
           const delta = col - buf.cursorX;
           if (delta === 0) return;
+          // seta para a direita no fim do texto ACEITA a sugestão cinza da CLI (Claude, autosuggestions do zsh): o clique só anda para a direita
+          // dentro de texto real. Nas CLIs de IA nunca anda para a direita; no shell, só se a célula clicada não for sugestão (dim/cinza).
+          if (delta > 0) {
+            if (/^(claude|agy|antigravity|gemini|codex|ollama)$/i.test(String(sessionType))) return;
+            const cell = buf.getLine(buf.cursorY + buf.viewportY)?.getCell(col);
+            if (!cell || !cell.getChars().trim() || cell.isDim() || (cell.isFgPalette() && [8, 0].includes(cell.getFgColor())) || (cell.isFgRGB() && cell.getFgColor() !== undefined && isGrayRgb(cell.getFgColor()))) return;
+          }
           pty.write(sessionId, (delta > 0 ? '\x1b[C' : '\x1b[D').repeat(Math.abs(delta)));
         };
         host?.addEventListener('mousedown', onDown, true);
@@ -1082,6 +1150,8 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         if (pasted) typedRef.current += data.replace(/\x1b\[20[01]~/g, '').replace(/[\r\n]+/g, ' ');
         else if (data === '\r') {
           const t = typedRef.current.trim();
+          if (resumePickerRef.current) resumePickerRef.current = false;
+          else if (/^\/resume\b/.test(t)) resumePickerRef.current = true;
           // comandos (/resume, /clear...) não são prompts: não substituem o prompt da barra
           if (/^\/(resume|clear)\b/.test(t)) {
             // a conversa muda: o que foi digitado antes não vale mais, os prompts passam a vir do transcript
@@ -1094,6 +1164,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
           typedRef.current = '';
         } else if (data === '\x7f') typedRef.current = typedRef.current.slice(0, -1);
         else if (data === '\x03' || data === '\x15') typedRef.current = '';
+        if (data === '\x1b' || data === '\x03') resumePickerRef.current = false;
         else if (data[0] !== '\x1b' && data >= ' ') typedRef.current += data;
         // digitar descarta a seleção (como em campos de texto); sem isso o bloco do Cmd+A fica pintado enquanto a IA redesenha a tela
         if (term.hasSelection()) term.clearSelection();
@@ -1102,6 +1173,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
       });
 
       const onSelectionDisp = term.onSelectionChange(() => {
+        if (!term.hasSelection()) selStepRef.current = null;
         if (copyOnSelectRef.current && term.hasSelection()) {
           navigator.clipboard.writeText(term.getSelection()).catch(() => {});
         }
@@ -1247,7 +1319,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
       termRef.current.options.theme = {
         background: transparent ? 'rgba(0, 0, 0, 0)' : isDark ? customTheme.background : '#ffffff',
         foreground: isDark ? customTheme.foreground : '#1f1f1f',
-        cursor: accentColor,
+        cursor: cursorColor || accentColor,
         cursorAccent: isDark ? customTheme.background : '#ffffff',
         selectionBackground: hexToRgba(accentColor, 0.22),
         scrollbarSliderBackground: isDark ? 'rgba(255, 255, 255, 0.28)' : 'rgba(0, 0, 0, 0.28)',
@@ -1272,7 +1344,12 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
       };
     }
     if (termRef.current) termRef.current.options.allowTransparency = transparent;
-  }, [accentColor, isDark, transparent, themePreset]);
+  }, [accentColor, cursorColor, isDark, transparent, themePreset]);
+
+  // terminal que deixou de ser o selecionado perde o foco: sem foco, o cursor some
+  useEffect(() => {
+    if (!isActive) termRef.current?.blur();
+  }, [isActive]);
 
   // Dynamically apply font size, font family, line height, cursor style/blink, cursor width, scrollback
   // without tearing down the PTY-backed session (which would lose scroll position).
@@ -1283,7 +1360,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
         : TERMINAL_FONT_FAMILY;
       termRef.current.options.fontSize = fontSize;
       termRef.current.options.cursorStyle = cursorStyle;
-      termRef.current.options.cursorInactiveStyle = cursorStyle;
+      termRef.current.options.cursorInactiveStyle = 'none';
       termRef.current.options.cursorBlink = cursorBlink;
       termRef.current.options.cursorWidth = cursorWidth || 2;
       termRef.current.options.scrollback = scrollback;
@@ -1375,7 +1452,7 @@ export const NativeXTerm: React.FC<NativeXTermProps> = ({
     }).catch(() => {});
     return window.electronAPI?.pty?.onSessionStatus?.((st) => {
       if (st.id !== sessionId) return;
-      if (st.exited) { aiSessionRef.current = false; typedRef.current = ''; promptsRef.current = []; setStickyPrompt(''); }
+      if (st.exited) { aiSessionRef.current = false; resumePickerRef.current = false; typedRef.current = ''; promptsRef.current = []; setStickyPrompt(''); }
       else if (st.isAi && !aiSessionRef.current) { aiSessionRef.current = true; refreshStickyRef.current?.(); }
     });
   }, [sessionId]);

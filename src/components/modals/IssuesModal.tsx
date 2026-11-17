@@ -32,11 +32,11 @@ export interface IssuesModalProps {
 }
 
 /** Foto do usuário do GitHub (com a inicial como alternativa quando a imagem não carrega) */
-const Avatar: React.FC<{ login: string; url?: string; size?: number; ring: string }> = ({ login, url, size = 18, ring }) => {
+const Avatar: React.FC<{ login: string; url?: string; size?: number; ring: string }> = ({ login, url, size = 18 }) => {
   const [failed, setFailed] = useState(false);
   const clean = login.replace('@', '').trim();
   return failed || !clean ? (
-    <span title={`@${clean}`} style={{ width: size, height: size, borderRadius: '50%', background: '#3f3f46', color: '#e4e4e7', fontSize: size * 0.5, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 0 0 2px ${ring}`, flexShrink: 0 }}>
+    <span title={`@${clean}`} style={{ width: size, height: size, borderRadius: '50%', background: '#3f3f46', color: '#e4e4e7', fontSize: size * 0.5, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'none', flexShrink: 0 }}>
       {(clean[0] || '?').toUpperCase()}
     </span>
   ) : (
@@ -45,7 +45,7 @@ const Avatar: React.FC<{ login: string; url?: string; size?: number; ring: strin
       alt={clean}
       title={`@${clean}`}
       onError={() => setFailed(true)}
-      style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', boxShadow: `0 0 0 2px ${ring}`, flexShrink: 0 }}
+      style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', boxShadow: 'none', flexShrink: 0 }}
     />
   );
 };
@@ -144,6 +144,7 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
       onClick={onClose}
     >
       <div
+        className="df-ide-surface"
         onClick={(e) => e.stopPropagation()}
         style={{
           width: 'clamp(520px, 46vw, 760px)',
@@ -157,7 +158,6 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
           flexDirection: 'column',
           overflow: 'hidden',
           animation: 'sidesheetPanelSlideIn 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards',
-          willChange: 'transform',
         }}
       >
         {/* Cabeçalho */}
@@ -173,12 +173,12 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
         >
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 20, fontWeight: 500, color: themeTokens.textPrimary }}>Issues do GitHub</span>
-              <span style={{ background: hexToRgba(OPEN, 0.14), color: OPEN, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999 }}>
+              <span style={{ fontSize: 20, fontWeight: 400, color: themeTokens.textPrimary }}>Issues do GitHub</span>
+              <span style={{ background: hexToRgba(OPEN, 0.14), color: OPEN, fontSize: 11, fontWeight: 400, padding: '2px 8px', borderRadius: 999 }}>
                 {openCount} abertas
               </span>
               {closedCount > 0 && (
-                <span style={{ background: hexToRgba(CLOSED, 0.16), color: CLOSED, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 999 }}>
+                <span style={{ background: hexToRgba(CLOSED, 0.16), color: CLOSED, fontSize: 11, fontWeight: 400, padding: '2px 8px', borderRadius: 999 }}>
                   {closedCount} fechadas
                 </span>
               )}
@@ -203,7 +203,7 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
                 border: 'none',
                 borderRadius: 8,
                 fontSize: 12.5,
-                fontWeight: 500,
+                fontWeight: 400,
                 cursor: 'pointer',
               }}
             >
@@ -221,8 +221,8 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
 
         {/* Criação rápida */}
         {isCreatingIssue && (
-          <div style={{ padding: '14px 24px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 10, flexShrink: 0 }}>
-            <span style={{ fontSize: 12, fontWeight: 500, color: themeTokens.textSecondary }}>Nova issue no GitHub</span>
+          <div className="df-subtle-enter" style={{ padding: '14px 24px', borderBottom: `1px solid ${divider}`, display: 'flex', flexDirection: 'column', gap: 10, flexShrink: 0 }}>
+            <span style={{ fontSize: 12, fontWeight: 400, color: themeTokens.textSecondary }}>Nova issue no GitHub</span>
             <div style={{ display: 'flex', gap: 8 }}>
               <input
                 className="df-field"
@@ -326,8 +326,9 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
             return (
               <div
                 key={issue.number}
+                className="df-card-subtle"
                 onClick={() => onOpenIssueDetails?.(issue.number)}
-                style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '14px 16px', borderRadius: 10, background: cardBg, transition: 'background 0.12s ease', cursor: onOpenIssueDetails ? 'pointer' : 'default' }}
+                style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '14px 16px', borderRadius: 10, background: cardBg, transition: 'background-color 150ms var(--ease-out), transform 160ms var(--ease-out)', cursor: onOpenIssueDetails ? 'pointer' : 'default' }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = cardHoverBg)}
                 onMouseLeave={(e) => (e.currentTarget.style.background = cardBg)}
               >
@@ -420,14 +421,15 @@ export const IssuesModal: React.FC<IssuesModalProps> = ({
                             {aiProviders.map((p) => (
                               <div
                                 key={p.id}
+                                className="df-row-interactive"
                                 onClick={() => { onChangeAiProvider?.(p.id); setAiMenuFor(null); }}
-                                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 7, fontSize: 12.5, color: themeTokens.textPrimary, cursor: 'pointer', background: p.id === aiProvider ? controlBg : 'transparent' }}
+                                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 7, fontSize: 12.5, color: themeTokens.textPrimary, cursor: 'pointer', background: p.id === aiProvider ? controlBg : 'transparent', transition: 'background-color 150ms var(--ease-out), transform 140ms var(--ease-out)' }}
                                 onMouseEnter={(e) => (e.currentTarget.style.background = controlHoverBg)}
                                 onMouseLeave={(e) => (e.currentTarget.style.background = p.id === aiProvider ? controlBg : 'transparent')}
                               >
                                 <span style={{ display: 'flex', width: 18, justifyContent: 'center' }}>{renderAiIcon?.(p.id, 16)}</span>
                                 <span style={{ flex: 1 }}>{p.name}</span>
-                                {p.id === aiProvider && <Check size={13} color={accentColor} />}
+                                {p.id === aiProvider && <Check size={13} color={accentColor} className="df-check-pop" />}
                               </div>
                             ))}
                           </div>

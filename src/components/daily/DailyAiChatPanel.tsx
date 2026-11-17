@@ -2,9 +2,9 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   ArrowRight,
   Sparkles,
-  RotateCcw,
   Check,
   Plus,
+  History,
   GitCommit,
   Calendar,
   AlertTriangle,
@@ -23,6 +23,8 @@ import { DailyItem, WeeklyGoal } from './DailySchedulerView';
 import { AI_BRAND_COLORS, AI_PROVIDERS, formatModelDisplayName } from '../../constants/ai';
 import { logSystemActivity } from '../../utils/brainService';
 import { getFieldTokens } from '../../utils/fieldTokens';
+import { ChatHistoryModal } from '../modals/ChatHistoryModal';
+import type { UnifiedConvoItem } from '../../types/ide';
 
 function hexToRgba(hex: string, alpha: number): string {
   if (!hex) return `rgba(255, 255, 255, ${alpha})`;
@@ -234,6 +236,8 @@ interface DailyAiChatPanelProps {
   selectedAiProvider?: string;
   selectedModel?: string;
   activeModels?: Record<string, any>;
+  pinnedAis?: string[];
+  installedClis?: Record<string, boolean>;
   onSelectAiProvider?: (providerId: string) => void;
   onSelectModel?: (modelItem: { id: string; label: string } | string, providerId?: string) => void;
   onToast?: (msg: string) => void;
@@ -255,6 +259,8 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
   selectedAiProvider = 'claude',
   selectedModel,
   activeModels,
+  pinnedAis,
+  installedClis,
   onSelectAiProvider,
   onSelectModel,
   onToast,
@@ -347,6 +353,99 @@ export const DailyAiChatPanel: React.FC<DailyAiChatPanelProps> = ({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   const [inputPrompt, setInputPrompt] = useState('');
+  // histórico de conversas da Daily (localStorage), no mesmo modal do chat da IDE
+  type DailySession = { id: string; title: string; updatedAt: number; provider: string; messages: ChatMessage[] };
+  const SESSIONS_KEY = 'daily_chat_sessions';
+  const readSessions = (): DailySession[] => {
+    try {
+      return JSON.parse(localStorage.getItem(SESSIONS_KEY) || '[]');
+    } catch {
+      return [];
+    }
+  };
+  const [sessionId, setSessionId] = useState(() => `daily-${Date.now()}`);
+  const [sessions, setSessions] = useState<DailySession[]>(readSessions);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyIdx, setHistoryIdx] = useState(0);
+  const [historyShowAll, setHistoryShowAll] = useState(false);
+  const historyInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const first = messages.find((m) => m.sender === 'user')?.text.replace(/\s+/g, ' ').trim() || 'Conversa';
+    const next: DailySession = { id: sessionId, title: first.slice(0, 60), updatedAt: Date.now(), provider: currentAiProvider, messages };
+    setSessions((prev) => {
+      const list = [next, ...prev.filter((x) => x.id !== sessionId)].slice(0, 50);
+      try {
+        localStorage.setItem(SESSIONS_KEY, JSON.stringify(list));
+      } catch {}
+      return list;
+    });
+  }, [messages]);
+
+  const startNewChat = () => {
+    setMessages([]);
+    setInputPrompt('');
+    setSessionId(`daily-${Date.now()}`);
+  };
+  const openSession = (id: string) => {
+    const found = sessions.find((x) => x.id === id);
+    if (found) {
+      setSessionId(found.id);
+      setMessages(found.messages);
+      setInputPrompt('');
+    }
+    setHistoryOpen(false);
+  };
+  const deleteSession = (id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const list = sessions.filter((x) => x.id !== id);
+    setSessions(list);
+    try {
+      localStorage.setItem(SESSIONS_KEY, JSON.stringify(list));
+    } catch {}
+    if (id === sessionId) startNewChat();
+    logSystemActivity('daily_copilot', 'Conversa excluída do histórico', repoName || 'Daily', { id });
+  };
+  const convos: UnifiedConvoItem[] = useMemo(() => {
+    const q = historySearch.trim().toLowerCase();
+    return sessions
+      .filter((x) => !q || x.title.toLowerCase().includes(q))
+      .map((x) => ({ id: x.id, title: x.title, provider: x.provider, updatedAt: x.updatedAt, isCurrent: x.id === sessionId && !historySearch.trim() }));
+  }, [sessions, historySearch, sessionId]);
+  const currentConvo = convos.find((x) => x.isCurrent);
+  const recentConvos = convos.filter((x) => !x.isCurrent).sort((a, b) => b.updatedAt - a.updatedAt);
+  const visibleRecentConvos = historyShowAll || historySearch.trim() ? recentConvos : recentConvos.slice(0, 4);
+  const selectableConvos = [...(currentConvo ? [currentConvo] : []), ...visibleRecentConvos];
+  const timeAgo = (t?: number) => {
+    if (!t) return 'recentemente';
+    const m = Math.floor(Math.max(0, Date.now() - t) / 60000);
+    if (m < 1) return 'agora';
+    if (m < 60) return `há ${m} min`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return h === 1 ? 'há 1 hora' : `há ${h} horas`;
+    const d = Math.floor(h / 24);
+    return d === 1 ? 'ontem' : `há ${d} dias`;
+  };
+  const onHistoryKeyDown = (e: React.KeyboardEvent) => {
+    const n = selectableConvos.length;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setHistoryOpen(false);
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHistoryIdx((i) => (n ? (i + 1) % n : 0));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHistoryIdx((i) => (n ? (i - 1 + n) % n : 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const t = selectableConvos[historyIdx];
+      if (t) openSession(t.id);
+    }
+  };
+
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -794,7 +893,12 @@ DIRETRIZES OBRIGATÓRIAS:
    - Cada tarefa DEVE OBRIGATORIAMENTE ter o campo "projectName" preenchido com o NOME EXATO do repositório/projeto onde a alteração/commit realmente aconteceu (ex: "${primaryActiveRepo}").
    - NUNCA use o repositório selecionado no cabeçalho (${repoName}) se os commits vieram de outro repositório! Use sempre o nome do repositório onde o commit foi realizado (ex: ${detectedProjects.join(', ') || primaryActiveRepo}).
 5. NÃO DUPLICAR: antes de sugerir qualquer tarefa nova, compare com a lista em [TAREFAS ATUAIS DA DAILY] e [METAS DA WEEKLY] acima. Se uma atividade equivalente (mesmo assunto/commit/entrega, mesmo com título ligeiramente diferente) já está nessas listas, NÃO a inclua de novo — sugira apenas o que ainda não está coberto. Se não houver nada novo para sugerir, retorne um array vazio "[]" em vez de repetir o que já existe.
-6. Ao final da sua resposta, inclua OBRIGATORIAMENTE um bloco com array JSON válido no formato:
+6. QUANDO GERAR CARDS: um card é uma ENTREGA ou AÇÃO concreta (algo feito, a fazer ou um impedimento real), com título de ação curto (ex: "Corrigir cálculo de frete"). NUNCA crie card para:
+   - comentários, observações, avisos, explicações ou justificativas (ex: "os outros commits são de outra pessoa", "não listei X"). Isso vai no texto da resposta, nunca no JSON;
+   - trabalho de outras pessoas: use só commits do próprio desenvolvedor; se não der para saber a autoria, não invente nem preencha com commits alheios;
+   - itens que já existem na Daily/Weekly, ou que você precisaria inventar para completar uma quantidade.
+   O "title" e a "description" de um card descrevem a tarefa em si, em linguagem de entrega, nunca falam sobre o próprio processo de sugerir. Se não houver nada concreto, retorne "[]".
+7. Ao final da sua resposta, inclua OBRIGATORIAMENTE um bloco com array JSON válido no formato:
 \`\`\`json
 [
   {
@@ -807,7 +911,7 @@ DIRETRIZES OBRIGATÓRIAS:
   }
 ]
 \`\`\`
-Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefas relevantes.`;
+Não adicione texto explicativo dentro do bloco json. Retorne até 5 tarefas, somente as que atendem à regra 6 (pode ser nenhuma).`;
 
       const { rawOutput, usedCliName, usedModelName } = await callAi(aiPrompt);
 
@@ -1104,6 +1208,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
           zIndex: 30,
         }}
       >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
         {/* Seletor de IA e Modelos (microcomponente integrado com divisória sutil) */}
         <div
           style={{
@@ -1199,7 +1304,8 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                     gap: 4,
                     zIndex: 99999,
                     minWidth: 160,
-                    animation: 'fadeIn 0.12s ease-out',
+                    transformOrigin: 'top left',
+                    animation: 'dfPopoverIn 160ms var(--ease-out)',
                   }}
                   onClick={(e) => e.stopPropagation()}
                 >
@@ -1215,11 +1321,12 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                   >
                     Provedor de IA
                   </div>
-                  {AI_PROVIDERS.map((prov) => {
+                  {AI_PROVIDERS.filter((prov) => prov.id === currentAiProvider || (installedClis?.[prov.id] !== false && (!pinnedAis?.length || pinnedAis.includes(prov.id)))).map((prov) => {
                     const isSelected = prov.id === currentAiProvider;
                     return (
                       <div
                         key={prov.id}
+                        className="df-row-interactive"
                         onClick={() => handleSelectProvider(prov.id)}
                         style={{
                           display: 'flex',
@@ -1365,7 +1472,8 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                     maxWidth: 240,
                     maxHeight: 240,
                     overflowY: 'auto',
-                    animation: 'fadeIn 0.12s ease-out',
+                    transformOrigin: 'top left',
+                    animation: 'dfPopoverIn 160ms var(--ease-out)',
                   }}
                   className="df-dropdown-menu no-scrollbar"
                   onClick={(e) => e.stopPropagation()}
@@ -1391,6 +1499,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                     return (
                       <div
                         key={m.id}
+                        className="df-row-interactive"
                         onClick={() => handleSelectModelOption(m)}
                         style={{
                           display: 'flex',
@@ -1439,21 +1548,20 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
             )}
           </div>
         </div>
-
-        {/* Botão de Reload / Limpar chat à direita */}
         <button
           type="button"
+          title="Histórico de conversas"
           onClick={() => {
-            setMessages([]);
-            logSystemActivity('daily_copilot', 'Chat reiniciado', repoName || 'Daily', {
-              provider: currentAiProvider,
-              model: currentModel,
-            });
-            onToast?.('Chat reiniciado');
+            setHistorySearch('');
+            setHistoryIdx(0);
+            setHistoryShowAll(false);
+            setHistoryOpen(true);
+            setTimeout(() => historyInputRef.current?.focus(), 60);
           }}
           style={{
             width: 28,
             height: 28,
+            flexShrink: 0,
             background: 'transparent',
             border: 'none',
             outline: 'none',
@@ -1463,26 +1571,91 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            transition: 'all 0.15s ease',
-            flexShrink: 0,
+            transition: 'background-color 150ms ease, color 150ms ease',
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = isEffectiveDark
-              ? 'rgba(255, 255, 255, 0.06)'
-              : 'rgba(0, 0, 0, 0.06)';
+            e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)';
             e.currentTarget.style.color = themeTokens.textPrimary;
-            e.currentTarget.style.transform = 'rotate(-45deg)';
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.background = 'transparent';
             e.currentTarget.style.color = themeTokens.textSecondary;
-            e.currentTarget.style.transform = 'rotate(0deg)';
           }}
-          title="Limpar histórico do chat"
         >
-          <RotateCcw size={13} />
+          <History size={14} />
+        </button>
+        </div>
+
+        {/* Novo chat / limpar conversa à direita */}
+        <button
+          type="button"
+          disabled={messages.length === 0 && !inputPrompt}
+          onClick={() => {
+            startNewChat();
+            logSystemActivity('daily_copilot', 'Chat reiniciado', repoName || 'Daily', {
+              provider: currentAiProvider,
+              model: currentModel,
+            });
+            onToast?.('Chat reiniciado');
+          }}
+          style={{
+            height: 28,
+            padding: '0 8px',
+            gap: 6,
+            fontSize: 12,
+            fontWeight: 400,
+            background: 'transparent',
+            border: 'none',
+            outline: 'none',
+            color: themeTokens.textSecondary,
+            borderRadius: 6,
+            cursor: messages.length === 0 && !inputPrompt ? 'default' : 'pointer',
+            opacity: messages.length === 0 && !inputPrompt ? 0.4 : 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transition: 'background-color 150ms ease, color 150ms ease, opacity 150ms ease',
+            flexShrink: 0,
+          }}
+          onMouseEnter={(e) => {
+            if (e.currentTarget.disabled) return;
+            e.currentTarget.style.background = isEffectiveDark
+              ? 'rgba(255, 255, 255, 0.06)'
+              : 'rgba(0, 0, 0, 0.06)';
+            e.currentTarget.style.color = themeTokens.textPrimary;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'transparent';
+            e.currentTarget.style.color = themeTokens.textSecondary;
+          }}
+          title="Limpar a conversa e começar um novo chat"
+        >
+          <Plus size={13} />
+          Novo chat
         </button>
       </div>
+
+      {historyOpen && (
+        <ChatHistoryModal
+          onClose={() => setHistoryOpen(false)}
+          inputRef={historyInputRef}
+          chatHistorySearch={historySearch}
+          setChatHistorySearch={setHistorySearch}
+          setChatHistorySelectedIndex={setHistoryIdx}
+          chatHistorySelectedIndex={historyIdx}
+          onKeyDown={onHistoryKeyDown}
+          selectableConvosList={selectableConvos}
+          currentConvo={currentConvo}
+          runningConvos={[]}
+          visibleRecentConvos={visibleRecentConvos}
+          recentConvos={recentConvos}
+          chatHistoryShowAllRecent={historyShowAll}
+          setChatHistoryShowAllRecent={setHistoryShowAll}
+          onSelectSession={openSession}
+          onDeleteSession={deleteSession}
+          formatTimeAgo={timeAgo}
+        />
+      )}
 
       {/* 2. Área de Mensagens com Scroll */}
       <div
@@ -1532,6 +1705,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
             return (
               <div
                 key={msg.id}
+                className="df-subtle-enter"
                 style={{
                   alignSelf: 'flex-end',
                   display: 'flex',
@@ -1566,6 +1740,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
           return (
             <div
               key={msg.id}
+              className="df-subtle-enter"
               style={{
                 alignSelf: 'flex-start',
                 display: 'flex',
@@ -1623,8 +1798,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                         }}
                       >
                         <Sparkles size={10} />
-                        {msg.usedCli}
-                        {msg.modelUsed ? ` (${msg.modelUsed})` : ''}
+                        {msg.usedCli.replace(/\s*(Code\s*)?CLI$/i, '')}
                       </span>
                     )}
                     {msg.commitsReferenced && msg.commitsReferenced.length > 0 && (
@@ -1782,6 +1956,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                       return (
                         <div
                           key={t.id}
+                          className="df-card-subtle"
                           style={{
                             background: isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)',
                             border: 'none',
@@ -1791,7 +1966,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                             display: 'flex',
                             flexDirection: 'column',
                             gap: 8,
-                            transition: 'all 0.15s ease',
+                            transition: 'background-color 150ms ease, transform 160ms var(--ease-out)',
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -1861,7 +2036,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                                 <button
                                   type="button"
                                   onClick={() => handleRejectTask(msg.id, t)}
-                                  style={{ height: 28, background: 'transparent', border: 'none', color: themeTokens.textSecondary, borderRadius: 6, padding: '0 8px', fontSize: 11, fontWeight: 400, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5, transition: 'all 0.15s ease' }}
+                                  style={{ height: 28, background: 'transparent', border: 'none', color: themeTokens.textSecondary, borderRadius: 6, padding: '0 8px', fontSize: 11, fontWeight: 400, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 5, transition: 'background-color 150ms ease, color 150ms ease, transform 140ms var(--ease-out)' }}
                                   onMouseEnter={(e) => {
                                     e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)';
                                     e.currentTarget.style.color = '#ef4444';
@@ -1891,7 +2066,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                                   display: 'inline-flex',
                                   alignItems: 'center',
                                   gap: 5,
-                                  transition: 'all 0.15s ease',
+                                  transition: 'background-color 150ms ease, color 150ms ease, transform 140ms var(--ease-out)',
                                 }}
                                 onMouseEnter={(e) => {
                                   e.currentTarget.style.background = chatAccentColor;
@@ -2004,6 +2179,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
         {shortcutsOpen && (
           <div
             className="df-dropdown-menu"
+            data-placement="top"
             style={{
               position: 'absolute',
               bottom: 'calc(100% + 4px)',
@@ -2018,6 +2194,8 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
               flexDirection: 'column',
               gap: 2,
               zIndex: 50,
+              transformOrigin: 'bottom right',
+              animation: 'dfPopoverInUp 160ms var(--ease-out)',
             }}
           >
             {QUICK_ACTIONS.map((q) => (
@@ -2087,7 +2265,7 @@ Não adicione texto explicativo dentro do bloco json. Retorne entre 2 e 5 tarefa
                 alignItems: 'center',
                 justifyContent: 'center',
                 cursor: inputPrompt.trim() && !isLoading ? 'pointer' : 'default',
-                transition: 'all 0.15s ease',
+                transition: 'background-color 150ms ease, color 150ms ease, transform 140ms var(--ease-out)',
                 flexShrink: 0,
               }}
               title="Enviar mensagem (Enter)"

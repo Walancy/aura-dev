@@ -878,191 +878,6 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
         WebkitAppRegion: 'no-drag' as any,
       }}
     >
-      {/* 1. SELETOR DE ORGANIZAÇÃO (À ESQUERDA) */}
-      <div style={{ position: 'relative' }} ref={orgRef}>
-        <div
-          onClick={() => {
-            setIsOrgOpen((prev) => !prev);
-            setIsProjectOpen(false);
-          }}
-          className="skin-tab"
-          data-on={isOrgOpen ? '1' : undefined}
-          style={{
-            height: 28,
-            paddingLeft: isCollapsed ? 7 : 10,
-            paddingRight: isCollapsed ? 7 : 10,
-            background: isOrgOpen ? ft.fieldBgHover : ft.fieldBg,
-            borderRadius: 6,
-            border: 'none',
-            boxShadow: 'none',
-            justifyContent: 'center',
-            alignItems: 'center',
-            display: 'flex',
-            cursor: 'pointer',
-            whiteSpace: 'nowrap',
-            flexShrink: 0,
-            gap: 6,
-            transition: 'background 0.15s ease, border-color 0.15s ease',
-            userSelect: 'none',
-            boxSizing: 'border-box',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = ft.fieldBgHover;
-          }}
-          onMouseLeave={(e) => {
-            if (!isOrgOpen) {
-              e.currentTarget.style.background = ft.fieldBg;
-            }
-          }}
-          title={isCollapsed ? `Organização: ${selectedOrg}` : 'Filtrar projetos por organização'}
-        >
-          {selectedOrg !== 'Todas' && selectedOrgObj?.avatarUrl ? (
-            <img
-              src={selectedOrgObj.avatarUrl}
-              alt=""
-              style={{ width: 14, height: 14, borderRadius: '50%', objectFit: 'cover' }}
-            />
-          ) : (
-            <Building2 size={13.5} color={themeTokens.textSecondary} />
-          )}
-          {!isCollapsed && (
-            <>
-              <span
-                style={{
-                  color: isOrgOpen ? themeTokens.textPrimary : themeTokens.textSecondary,
-                  fontSize: 12,
-                  fontFamily: 'Poppins, sans-serif',
-                  fontWeight: 400,
-                  whiteSpace: 'nowrap',
-                  maxWidth: 130,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                }}
-              >
-                {selectedOrg}
-              </span>
-              <ChevronDown
-                size={12}
-                color={themeTokens.textSecondary}
-                style={{
-                  transform: isOrgOpen ? 'rotate(180deg)' : 'none',
-                  transition: 'transform 0.15s ease',
-                }}
-              />
-            </>
-          )}
-        </div>
-
-        {/* Popover Dropdown de Organizações */}
-        {isOrgOpen && (
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="skin-menu"
-            style={{
-              position: 'absolute',
-              top: 'calc(100% + 8px)',
-              left: 0,
-              minWidth: 210,
-              background: ft.dropdownMenuBg,
-              borderRadius: 10,
-              border: 'none',
-              boxShadow: 'none',
-              zIndex: 10000,
-              overflow: 'hidden',
-              display: 'flex',
-              flexDirection: 'column',
-              padding: 4,
-              gap: 4,
-            }}
-          >
-            <div
-              style={{
-                padding: '6px 8px',
-                fontSize: 10,
-                fontWeight: 600,
-                color: themeTokens.textSecondary,
-                textTransform: 'uppercase',
-                letterSpacing: '0.04em',
-              }}
-            >
-              Filtrar por Organização
-            </div>
-            {organizations.map((org) => {
-              const isSelected = selectedOrg === org.name;
-              const countForOrg =
-                org.name === 'Todas' || org.name === 'all'
-                  ? allProjects.length
-                  : allProjects.filter((p) => {
-                      const orgQ = org.name.toLowerCase();
-                      return (
-                        p.owner?.toLowerCase() === orgQ ||
-                        p.fullName?.toLowerCase().startsWith(`${orgQ}/`) ||
-                        ((p as any).org && (p as any).org.toLowerCase() === orgQ)
-                      );
-                    }).length;
-
-              return (
-                <div
-                  key={org.id}
-                  onClick={() => {
-                    setSelectedOrg(org.name);
-                    try {
-                      localStorage.setItem('header_selected_org', org.name);
-                      window.dispatchEvent(new CustomEvent('header_selected_org_changed', { detail: org.name }));
-                    } catch {}
-                    setIsOrgOpen(false);
-                  }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '7px 10px',
-                    borderRadius: 6,
-                    background: isSelected ? `${accentColor}18` : 'transparent',
-                    color: isSelected ? accentColor : themeTokens.textPrimary,
-                    fontSize: 12,
-                    cursor: 'pointer',
-                    transition: 'all 0.12s ease',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isSelected) e.currentTarget.style.background = themeTokens.hoverBg;
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isSelected) e.currentTarget.style.background = 'transparent';
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
-                    {org.avatarUrl ? (
-                      <img
-                        src={org.avatarUrl}
-                        alt=""
-                        style={{ width: 16, height: 16, borderRadius: '50%', objectFit: 'cover' }}
-                      />
-                    ) : (
-                      <Building2 size={13.5} color={isSelected ? accentColor : themeTokens.textSecondary} />
-                    )}
-                    <span
-                      style={{
-                        maxWidth: 130,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {org.name}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>{countForOrg}</span>
-                    {isSelected && <Check size={13} color={accentColor} />}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
       {/* Projetos com tarefa de IA concluída: clicar abre o projeto */}
       {finishedProjects.map((p) => (
         <button
@@ -1128,14 +943,16 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
           }}
           title={isCollapsed ? `Projeto: ${currentProjectName}` : 'Alternar projeto ativo'}
         >
-          <ProjectHeaderIcon
-            project={currentProject}
-            size={16}
-            accentColor={accentColor}
-            customIcons={customProjectIcons}
-            repos={repos}
-            orgs={organizations}
-          />
+          {selectedOrg !== 'Todas' && selectedOrgObj?.avatarUrl ? (
+            <span title={`Organização: ${selectedOrg}`} style={{ position: 'relative', width: 24, height: 16, flexShrink: 0, display: 'flex' }}>
+              <img src={selectedOrgObj.avatarUrl} alt="" style={{ position: 'absolute', left: 0, top: 0, width: 16, height: 16, borderRadius: '50%', objectFit: 'cover', opacity: 0.7 }} />
+              <span style={{ position: 'absolute', left: 8, top: 0, display: 'flex' }}>
+                <ProjectHeaderIcon project={currentProject} size={16} accentColor={accentColor} customIcons={customProjectIcons} repos={repos} orgs={organizations} />
+              </span>
+            </span>
+          ) : (
+            <ProjectHeaderIcon project={currentProject} size={16} accentColor={accentColor} customIcons={customProjectIcons} repos={repos} orgs={organizations} />
+          )}
           {!isCollapsed && (
             <>
               <span
@@ -1201,7 +1018,6 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
             <div
               style={{
                 padding: 8,
-                borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'}`,
               }}
             >
               <div
@@ -1275,6 +1091,86 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
                   </button>
                 )}
               </div>
+            </div>
+
+            {/* Filtro por organização (topo do popup) */}
+            <div style={{ padding: '0 8px 8px 8px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div
+                onClick={() => setIsOrgOpen((o) => !o)}
+                className="df-pressable"
+                title="Filtrar projetos por organização"
+                style={{
+                  height: 30,
+                  padding: '0 8px',
+                  borderRadius: 6,
+                  background: isOrgOpen ? ft.fieldBgHover : ft.fieldBg,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  cursor: 'pointer',
+                  userSelect: 'none',
+                  boxSizing: 'border-box',
+                  transition: 'background-color 140ms ease',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = ft.fieldBgHover)}
+                onMouseLeave={(e) => (e.currentTarget.style.background = isOrgOpen ? ft.fieldBgHover : ft.fieldBg)}
+              >
+                {selectedOrg !== 'Todas' && selectedOrgObj?.avatarUrl ? (
+                  <img src={selectedOrgObj.avatarUrl} alt="" style={{ width: 14, height: 14, borderRadius: '50%', objectFit: 'cover' }} />
+                ) : (
+                  <Building2 size={13} color={themeTokens.textSecondary} />
+                )}
+                <span style={{ flex: 1, fontSize: 12, fontFamily: 'Poppins, sans-serif', color: themeTokens.textPrimary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {selectedOrg === 'Todas' ? 'Todas as organizações' : selectedOrg}
+                </span>
+                <ChevronDown size={12} color={themeTokens.textSecondary} style={{ transform: isOrgOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
+              </div>
+              {isOrgOpen && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {organizations.map((org, oi) => {
+                    const isSelected = selectedOrg === org.name;
+                    return (
+                      <div
+                        key={org.id}
+                        onClick={() => {
+                          setSelectedOrg(org.name);
+                          try {
+                            localStorage.setItem('header_selected_org', org.name);
+                            window.dispatchEvent(new CustomEvent('header_selected_org_changed', { detail: org.name }));
+                          } catch {}
+                          setIsOrgOpen(false);
+                        }}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                          padding: '6px 8px',
+                          borderRadius: 6,
+                          background: isSelected ? `${accentColor}18` : 'transparent',
+                          color: isSelected ? accentColor : themeTokens.textPrimary,
+                          fontSize: 12,
+                          cursor: 'pointer',
+                          transition: 'background-color 140ms ease, color 140ms ease',
+                          animation: `skin-menu-in 160ms var(--ease-out) ${oi * 25}ms both`,
+                        }}
+                        onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = themeTokens.hoverBg; }}
+                        onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
+                      >
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                          {org.avatarUrl ? (
+                            <img src={org.avatarUrl} alt="" style={{ width: 16, height: 16, borderRadius: '50%', objectFit: 'cover' }} />
+                          ) : (
+                            <Building2 size={13.5} color={isSelected ? accentColor : themeTokens.textSecondary} />
+                          )}
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{org.name}</span>
+                        </span>
+                        {isSelected && <Check size={13} color={accentColor} />}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Chip/Aviso de Filtro por Organização Ativo */}
@@ -1363,63 +1259,38 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
 
                   return (
                     <React.Fragment key={project.id}>
-                      {!searchQuery && isFirstCloned && (
+                      {!searchQuery && (isFirstCloned || isFirstRemote) && (
                         <div
                           style={{
-                            padding: '4px 8px 2px 8px',
+                            padding: isFirstCloned ? '4px 8px 2px 8px' : '8px 8px 2px 8px',
+                            marginTop: isFirstCloned ? 0 : 4,
                             fontSize: 10,
-                            fontWeight: 600,
-                            color: '#22c55e',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.04em',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 5,
-                          }}
-                        >
-                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e' }} />
-                          <span>Projetos Locais</span>
-                        </div>
-                      )}
-                      {!searchQuery && isFirstRemote && (
-                        <div
-                          style={{
-                            padding: '8px 8px 2px 8px',
-                            marginTop: 4,
-                            borderTop: `1px solid ${themeTokens.border}`,
-                            fontSize: 10,
-                            fontWeight: 600,
+                            fontWeight: 400,
                             color: themeTokens.textSecondary,
                             textTransform: 'uppercase',
                             letterSpacing: '0.04em',
                             display: 'flex',
                             alignItems: 'center',
-                            gap: 5,
+                            gap: 8,
                           }}
                         >
-                          <span
-                            style={{
-                              width: 6,
-                              height: 6,
-                              borderRadius: '50%',
-                              background: themeTokens.textSecondary,
-                            }}
-                          />
-                          <span>Repositórios GitHub</span>
+                          <span>{isFirstCloned ? 'Projetos Locais' : 'Repositórios GitHub'}</span>
+                          <span style={{ flex: 1, height: 1, background: isEffectiveDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }} />
                         </div>
                       )}
                       <div
+                        className="df-row-interactive"
                         onClick={() => handleSelect(project)}
                         style={{
                           padding: '7px 10px',
                           borderRadius: 6,
                           background: isActive ? `${accentColor}18` : 'transparent',
-                          border: '1px solid transparent',
+                          border: 'none',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
                           cursor: 'pointer',
-                          transition: 'all 0.12s ease',
+                          transition: 'background-color 140ms ease, color 140ms ease, transform 140ms var(--ease-out)',
                         }}
                         onMouseEnter={(e) => {
                           if (!isActive) e.currentTarget.style.background = themeTokens.hoverBg;
@@ -1531,20 +1402,10 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
                               }}
                             >
                               <Check size={12} strokeWidth={2.5} />
-                              <span>Ativo</span>
                             </span>
                           ) : (
-                            <span
-                              style={{
-                                fontSize: 9.5,
-                                color: '#22c55e',
-                                background: 'rgba(34, 197, 94, 0.12)',
-                                padding: '2px 6px',
-                                borderRadius: 4,
-                                fontWeight: 500,
-                              }}
-                            >
-                              Local
+                            <span title="Projeto local" style={{ display: 'flex', alignItems: 'center', color: '#22c55e' }}>
+                              <HardDrive size={13} />
                             </span>
                           )}
                         </div>
@@ -1565,6 +1426,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
             >
               <button
                 type="button"
+                className="df-pressable"
                 onClick={handleOpenOtherFolder}
                 style={{
                   width: '100%',
@@ -1579,7 +1441,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
                   color: themeTokens.textSecondary,
                   fontSize: 11,
                   cursor: 'pointer',
-                  transition: 'all 0.12s ease',
+                  transition: 'background-color 140ms ease, color 140ms ease, transform 140ms var(--ease-out)',
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.color = themeTokens.textPrimary;
@@ -1623,6 +1485,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
 
       {/* 3. BOTÃO DE RECOLHER / EXPANDIR (SETA NA DIREITA) */}
       <div
+        className="df-pressable"
         onClick={(e) => {
           e.stopPropagation();
           const next = !isCollapsed;
@@ -1645,7 +1508,7 @@ export const HeaderProjectSelector: React.FC<HeaderProjectSelectorProps> = ({
           background: 'transparent',
           border: 'none',
           boxShadow: 'none',
-          transition: 'all 0.15s ease',
+          transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease',
           flexShrink: 0,
           userSelect: 'none',
         }}

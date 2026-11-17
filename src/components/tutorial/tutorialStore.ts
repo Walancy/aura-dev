@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import type { Step } from 'react-joyride';
 
-export type TutorialScreenId = 'projetos' | 'orchestration' | 'daily' | 'ide' | 'cli' | 'design';
+export type TutorialScreenId = 'projetos' | 'orchestration' | 'daily' | 'ide' | 'cli' | 'design' | 'site';
 export type MainTutorialScreenId = TutorialScreenId;
 
 export type OverlayTutorialId =
@@ -62,6 +62,7 @@ export const SCREEN_TUTORIAL_LABELS: Record<TutorialContextId, string> = {
   ide: 'IDE',
   cli: 'CLI',
   design: 'Design',
+  site: 'Sites',
   modal_skills: 'Skills de IA',
   modal_settings: 'Configurações',
   modal_ai_rules: 'Regras Globais de IA',
@@ -587,6 +588,33 @@ const STATIC_CONTEXT_CANDIDATES: Record<Exclude<TutorialContextId, 'projetos'>, 
         'Projete telas, protótipos e especificações visuais e utilize @design na IDE ou no CLI para implementá-las.',
     },
   ],
+  site: [
+    {
+      id: 'site-modelos',
+      target: '[data-tour="sites-left-panel"]',
+      placement: 'right',
+      title: 'Modelos e seus sites',
+      content:
+        'Escolha um modelo de site (ou cole um prompt do GetLayers) e descreva o negócio no chat: a IA escreve um index.html completo.',
+    },
+    {
+      id: 'site-preview',
+      target: '[data-tour="sites-toolbar"]',
+      spotlightTarget: '[data-tour="sites-preview"]',
+      placement: 'bottom',
+      title: 'Preview com seleção',
+      content:
+        'Veja o site em desktop, tablet e celular. Com a seleção ligada, clique nas seções ou elementos para apontar o que deve mudar.',
+    },
+    {
+      id: 'site-chat',
+      target: '[data-tour="sites-chat"]',
+      placement: 'left',
+      title: 'Peça alterações no chat',
+      content:
+        'O que estiver selecionado vai junto com o pedido. Desfaça a última edição, recarregue, abra no navegador ou baixe o HTML pela barra.',
+    },
+  ],
 
   modal_skills: [
     {
@@ -666,17 +694,17 @@ const STATIC_CONTEXT_CANDIDATES: Record<Exclude<TutorialContextId, 'projetos'>, 
       id: 'brain-lateral',
       target: '[data-tour="brain-sidebar-tabs"]',
       placement: 'right-start',
-      title: 'Visão de arquitetura e inspetor',
+      title: 'Notas e contexto da IA',
       content:
-        'Consulte o resumo estrutural do projeto, inspecione propriedades de cada nó selecionado ou adicione notas arquiteturais.',
+        'Liste e busque as notas (.md) do projeto, crie novas e edite o resumo e as diretrizes que as IAs recebem.',
     },
     {
       id: 'brain-acoes',
       target: '[data-tour="brain-header-actions"]',
       placement: 'bottom-end',
-      title: 'Escaneamento e contexto para IA',
+      title: 'Atualizar e criar notas',
       content:
-        'Escaneie o código para atualizar o mapa de dependências e salve o arquivo de contexto para orientar os agentes.',
+        'Releia as notas do projeto ou crie uma nova. Links no formato [[Nota]] ligam as notas no grafo.',
     },
     {
       id: 'brain-grafo',
@@ -685,7 +713,7 @@ const STATIC_CONTEXT_CANDIDATES: Record<Exclude<TutorialContextId, 'projetos'>, 
       placement: 'bottom',
       title: 'Grafo interativo de conhecimento',
       content:
-        'Explore visualmente módulos, rotas, tabelas, regras e logs do sistema conectados por relações semânticas.',
+        'Como no Obsidian: cada nota é um ponto, cada [[link]] uma linha. Arraste, dê zoom e use o ícone de ajustes para filtros, grupos, exibição e forças.',
     },
   ],
   popup_theme: [
@@ -1039,6 +1067,14 @@ const FALLBACK_STEP_BY_SCREEN: Record<TutorialContextId, CandidateStep> = {
     title: 'Ambiente de Design',
     content:
       'Crie interfaces, fluxos e especificações visuais sincronizadas com o repositório ativo para implementação direta.',
+  },
+  site: {
+    id: 'site-fallback',
+    target: 'body',
+    placement: 'center',
+    title: 'Criação de sites',
+    content:
+      'Escolha um modelo, descreva o site e refine clicando nas seções do preview e pedindo alterações no chat da IA.',
   },
   modal_skills: {
     id: 'modal-skills-fallback',

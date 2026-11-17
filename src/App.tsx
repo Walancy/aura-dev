@@ -49,6 +49,13 @@ import {
   Sparkles,
   Download,
   Layers,
+  FolderKanban as HdrProjects,
+  Workflow as HdrFlow,
+  CalendarCheck as HdrDaily,
+  Code2 as HdrIde,
+  Terminal as HdrCli,
+  Globe as HdrSites,
+  Palette as HdrDesign,
   PlusCircle,
   MessageSquare,
   Wand2,
@@ -56,6 +63,8 @@ import {
   RotateCcw,
   Eye,
   GitPullRequest,
+  GitPullRequestArrow,
+  PlayCircle,
   Clock,
   Pencil,
   BookOpen,
@@ -89,6 +98,7 @@ import { HeaderProjectSelector, type HeaderActiveProjectInfo, type HeaderProject
 import { OrchestrationCanvas } from './components/OrchestrationCanvas';
 import { DailySchedulerView } from './components/daily/DailySchedulerView';
 import FigcraftStudioView from './components/design3/FigcraftStudioView';
+import SitesStudioView from './components/sites/SitesStudioView';
 import {
   loadDesignBridgeManifest,
   getDesignBridgeManifestSync,
@@ -112,6 +122,10 @@ import {
   type ProjectIssue,
 } from './components/ProjectsSchedulerView';
 import { ProjectBrainModal } from './components/brain/ProjectBrainModal';
+import { WhatsNewModal } from './components/modals/WhatsNewModal';
+import { setBrainActivity, pulseBrainActivity, useBrainActive } from './utils/brainActivity';
+import changelogRaw from '../CHANGELOG.md?raw';
+import { parseChangelog, releasesToShow, type ChangelogRelease } from './changelog/parseChangelog';
 import { ConfirmUndoModal } from './components/modals/ConfirmUndoModal';
 import { ConfirmDeleteModal } from './components/modals/ConfirmDeleteModal';
 import { AiChatPermissionsModal, DEFAULT_AI_PERMISSIONS } from './components/ide/chat/AiChatPermissionsModal';
@@ -120,6 +134,9 @@ import { InteractiveQuestionCard, AlertCallout, type InteractiveQuestionData } f
 import { AiChatMessageQueue, type QueuedMessageItem } from './components/ide/chat/AiChatMessageQueue';
 import { getFieldTokens } from './utils/fieldTokens';
 import { MermaidDiagram } from './components/ide/chat/MermaidDiagram';
+import { ImageLightbox } from './components/ui/ImageLightbox';
+import { HeaderTabGroup } from './components/ui/HeaderTabGroup';
+import { AppUpdateButton } from './components/ui/AppUpdateButton';
 import { AiChatMentionsMenu, type MentionItem } from './components/ide/chat/AiChatMentionsMenu';
 import {
   loadProjectBrain,
@@ -141,6 +158,7 @@ import {
 import { CustomizeLayoutIcon, GitDiamondIcon } from './components/icons/MiscIcons';
 import { ClaudeIcon, AntigravityIcon, GeminiIcon, OllamaIcon, CodexIcon, renderAiIcon } from './components/icons/AiProviderIcons';
 import { getContrastTextColor, hexToRgba, hexToRgb, rgbToHex, rgbToHsv, hsvToRgb, hexToHsv } from './utils/color';
+import { GroupedModelMenu } from './components/ui/GroupedModelMenu';
 import { MiniSwitch } from './components/ui/MiniSwitch';
 import { detectDevCommand, detectPackageManager, listScripts, otherCommands, scriptCommand, PACKAGE_MANAGERS, type PackageManager } from './utils/devCommand';
 import { computeDailyBudget, parseResetTimestamp, type DailyBudget } from './utils/dailyBudget';
@@ -166,7 +184,14 @@ import { ProjectOnboardingModal } from './components/modals/ProjectOnboardingMod
 import { GithubMarkIcon } from './components/auth/GithubLoginScreen';
 import { ResumeSessionModal } from './components/modals/ResumeSessionModal';
 import { ProjectAiModal } from './components/modals/ProjectAiModal';
-import { PullReviewModal, type PullReviewTarget } from './components/reviews/PullReviewModal';
+import { PullRequestDetail, type PullReviewTarget } from './components/reviews/PullRequestDetail';
+import { PullRequestsList } from './components/reviews/PullRequestsList';
+import { ActionsSidebar, ActionsView } from './components/actions/ActionsPanels';
+import { getCachedPulls, refreshPulls, subscribePulls } from './components/reviews/pullListStore';
+import { TreeCollapse } from './components/ui/TreeCollapse';
+import { RainbowWave } from './components/ui/RainbowWave';
+import { getProjectSettings } from './components/settings/projectSettingsStore';
+import { gateBlock, memoryBlock } from './components/settings/sections/AiSection';
 import { dismissReview, fetchReviewRequests, loadDismissedReviews, reviewRequestId, takeNewReviews } from './components/reviews/reviewRequests';
 import { GithubLoginScreen } from './components/auth/GithubLoginScreen';
 import type { GithubAuthenticatedUser } from './components/auth/GithubLoginScreen';
@@ -189,7 +214,11 @@ import type {
 } from './types/ide';
 import { ProjectAiNotificationToast, ProjectAiNotificationItem, appendNotification } from './components/notifications/ProjectAiNotificationToast';
 import NotificationCenterPanel from './components/notifications/NotificationCenterPanel';
+import { reviewInfo } from './components/notifications/notificationStore';
 import { useNotificationCenter } from './components/notifications/useNotificationCenter';
+import { AUTOCOMPLETE_OPTIONS, setupAutocomplete } from './components/monacoAutocomplete';
+import { defineAuraDarkTheme } from './components/monacoTheme';
+import { usePresence } from './components/usePresence';
 import { useProjectNotifier } from './components/notifications/useProjectNotifier';
 import { SkillsModal } from './components/skills/SkillsModal';
 import { ScreenTutorialTour } from './components/tutorial/ScreenTutorialTour';
@@ -250,6 +279,7 @@ const DailyBudgetInfoTooltip: React.FC<DailyBudgetInfoTooltipProps> = ({
     >
       <button
         type="button"
+        className="df-pressable"
         onClick={(e) => {
           e.stopPropagation();
           setIsOpen((prev) => {
@@ -274,7 +304,7 @@ const DailyBudgetInfoTooltip: React.FC<DailyBudgetInfoTooltipProps> = ({
           alignItems: 'center',
           justifyContent: 'center',
           color: isOpen ? accentColor : themeTokens.textMuted,
-          transition: 'all 0.15s ease',
+          transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
         }}
       >
         <Info size={11} />
@@ -282,6 +312,7 @@ const DailyBudgetInfoTooltip: React.FC<DailyBudgetInfoTooltipProps> = ({
 
       {isOpen && (
         <div
+          className="df-popover"
           ref={(el) => {
             if (el && clampPopupToViewport) {
               clampPopupToViewport(el);
@@ -305,7 +336,6 @@ const DailyBudgetInfoTooltip: React.FC<DailyBudgetInfoTooltipProps> = ({
             boxShadow: 'none',
             zIndex: 1000000,
             pointerEvents: 'auto',
-            transition: 'all 0.15s ease',
           }}
         >
           {/* Bridge between button and tooltip */}
@@ -403,7 +433,7 @@ const DailyBudgetInfoTooltip: React.FC<DailyBudgetInfoTooltipProps> = ({
 };
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'projetos' | 'orchestration' | 'daily' | 'ide' | 'cli' | 'design'>('projetos');
+  const [activeTab, setActiveTab] = useState<'projetos' | 'orchestration' | 'daily' | 'ide' | 'cli' | 'design' | 'site'>('projetos');
   const [activeTermTab, setActiveTermTab] = useState<'problems' | 'output' | 'debug' | 'terminal' | 'ports' | 'tasks'>('terminal');
 
   // Code Review (Diff View) state
@@ -509,16 +539,27 @@ export const App: React.FC = () => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   // Centro de notificações (lista + histórico no armazenamento local)
   const notifCenter = useNotificationCenter();
+  // abas do grupo IDE/CLI/Sites com IA que terminou e ainda não foi vista
+  const groupPending = useMemo(
+    () => ['ide', 'cli', 'site'].filter((id) => notifCenter.items.some((n) => !n.read && n.source === id && (n.kind === 'ai' || n.kind === 'design'))),
+    [notifCenter.items],
+  );
+  useEffect(() => {
+    for (const n of notifCenter.items) if (!n.read && n.source === activeTab && (n.kind === 'ai' || n.kind === 'design')) notifCenter.read(n.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, notifCenter.items]);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
-  // Todo toast também vai para o histórico (erros ficam como novos para não passarem despercebidos)
+  // Só erros vão para o histórico: confirmações de ações do próprio usuário ("copiado", "salvo") são ruído
   useEffect(() => {
     if (!toastMessage) return;
-    const isError = /\b(erro|falha|falhou|não foi possível)\b/i.test(toastMessage);
-    notifCenter.add({ kind: isError ? 'error' : 'info', title: toastMessage, read: !isError });
+    if (/\b(erro|falha|falhou|não foi possível)\b/i.test(toastMessage)) notifCenter.add({ kind: 'error', title: toastMessage, read: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [toastMessage]);
   // Notificações de GitHub por projeto (Configurações → Alertas e notificações)
-  useProjectNotifier((msg) => setToastMessage(msg));
+  useProjectNotifier((msg) => {
+    setToastMessage(msg);
+    notifCenter.add({ kind: 'info', title: msg, read: false });
+  });
 
   // Auto-dismiss toast notification after 3.5 seconds
   useEffect(() => {
@@ -966,6 +1007,7 @@ export const App: React.FC = () => {
 
   const MAX_ATTACHED_IMAGES = 7;
   const [attachedFiles, setAttachedFiles] = useState<AttachedFileItem[]>([]);
+  const [zoomImage, setZoomImage] = useState<string | null>(null);
   const [attachedImages, setAttachedImages] = useState<AttachedImageItem[]>([]);
   const [imageLimitWarning, setImageLimitWarning] = useState<string | null>(null);
   const [isPromptDragOver, setIsPromptDragOver] = useState<boolean>(false);
@@ -2123,6 +2165,7 @@ export const App: React.FC = () => {
         return (
           <div
             key={stepKey}
+            className={step.path || step.file ? 'df-row-interactive' : undefined}
             onClick={() => {
               if (step.path || step.file) {
                 const p = step.path || step.file!;
@@ -2138,7 +2181,7 @@ export const App: React.FC = () => {
               cursor: step.path || step.file ? 'pointer' : 'default',
               padding: '3px 6px',
               borderRadius: 6,
-              transition: 'all 0.15s ease',
+              transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
               fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, sans-serif',
               width: 'fit-content',
             }}
@@ -2197,6 +2240,7 @@ export const App: React.FC = () => {
             }}
           >
             <div
+              className={hasChildren ? 'df-pressable' : undefined}
               onClick={() => {
                 if (hasChildren) {
                   setExpandedStepGroupsMap((prev) => ({
@@ -2215,7 +2259,7 @@ export const App: React.FC = () => {
                 padding: isStepExpanded && hasChildren ? '4px 8px' : '2px 4px',
                 borderRadius: 6,
                 background: isStepExpanded && hasChildren ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)') : 'transparent',
-                transition: 'all 0.15s ease',
+                transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                 width: 'fit-content',
                 maxWidth: '100%',
               }}
@@ -2231,15 +2275,19 @@ export const App: React.FC = () => {
               }}
             >
               <span>{step.label}</span>
-              {hasChildren ? (
-                isStepExpanded ? <ChevronDown size={13} style={{ color: '#9ca3af' }} /> : <ChevronRight size={13} style={{ color: '#9ca3af' }} />
-              ) : (
-                <ChevronRight size={13} style={{ color: '#6b7280' }} />
-              )}
+              <ChevronRight
+                size={13}
+                className="df-chevron"
+                style={{
+                  color: hasChildren ? '#9ca3af' : '#6b7280',
+                  transform: hasChildren && isStepExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                }}
+              />
             </div>
 
             {hasChildren && isStepExpanded && (
               <div
+                className="df-subtle-enter"
                 style={{
                   display: 'flex',
                   flexDirection: 'column',
@@ -2382,7 +2430,9 @@ export const App: React.FC = () => {
 
   // Panel & Layout Visibility Controls (Antigravity & VS Code Customize Layout)
   const [showExplorer, setShowExplorer] = useState(true);
-  const [activeActivityTab, setActiveActivityTab] = useState<'explorer' | 'search' | 'git' | 'debug' | 'preview' | 'testing' | 'design'>('explorer');
+  const [activeActivityTab, setActiveActivityTab] = useState<'explorer' | 'search' | 'git' | 'debug' | 'preview' | 'testing' | 'design' | 'reviews' | 'actions'>('explorer');
+  const [actionsWf, setActionsWf] = useState<number | null>(null);
+  const [actionsRun, setActionsRun] = useState<number | null>(null);
   const [previewTabUrl, setPreviewTabUrl] = useState<string | null>(null);
   const [previewTabActive, setPreviewTabActive] = useState(false);
   const [gitModifiedCount, setGitModifiedCount] = useState<number>(0);
@@ -2618,7 +2668,28 @@ export const App: React.FC = () => {
   const [isResumeModalOpen, setIsResumeModalOpen] = useState(false);
   const [isProjectAiModalOpen, setIsProjectAiModalOpen] = useState(false);
   const [reviewTarget, setReviewTarget] = useState<PullReviewTarget | null>(null);
+  // abre o pull request pedido para review no CLI: painel lateral com a lista e a área central com o detalhe
+  const [cliReviewRequest, setCliReviewRequest] = useState<{ repo: string; number: number; nonce: number } | null>(null);
+  const openReviewsInCli = (target: PullReviewTarget) => {
+    // troca para o projeto do repositório do PR (se ele estiver clonado na máquina)
+    const proj = headerProjectsList.find((p) => p.fullName?.toLowerCase() === target.repo.toLowerCase() && p.localDir);
+    if (proj?.localDir && proj.localDir.toLowerCase() !== (workspacePathRef.current || '').toLowerCase()) handleSelectWorkspace(proj.localDir, proj.name);
+    setCliReviewRequest({ ...target, nonce: Date.now() });
+    setActiveTab('cli');
+  };
   const [isBrainModalOpen, setIsBrainModalOpen] = useState(false);
+  const brainBusy = useBrainActive();
+  // novidades da versão: abre uma vez na primeira execução depois de instalar ou atualizar
+  const [whatsNew, setWhatsNew] = useState<ChangelogRelease[]>([]);
+  useEffect(() => {
+    let seen: string | null = null;
+    try { seen = localStorage.getItem('aura_last_seen_version'); } catch {}
+    if (seen === __APP_VERSION__) return;
+    const list = releasesToShow(parseChangelog(changelogRaw), __APP_VERSION__, seen);
+    if (!list.length) { try { localStorage.setItem('aura_last_seen_version', __APP_VERSION__); } catch {} return; }
+    const id = setTimeout(() => setWhatsNew(list), 1500);
+    return () => clearTimeout(id);
+  }, []);
   const [activeSkills, setActiveSkills] = useState<Array<{ id: string; name: string }>>([]);
   useEffect(() => {
     const load = async () => {
@@ -2701,19 +2772,19 @@ export const App: React.FC = () => {
     try { localStorage.setItem('ide_use_ai_system_accent', String(useAiSystemAccent)); } catch {}
   }, [useAiSystemAccent]);
   // destaque rainbow: percorre as cores (pontos) em loop, como um efeito RGB
-  const [rainbow, setRainbow] = useState<{ on: boolean; stops: string[]; speed: number }>(() => {
+  const [rainbow, setRainbow] = useState<{ on: boolean; stops: string[]; speed: number; mode: 'loop' | 'wave' }>(() => {
     try {
       const r = JSON.parse(localStorage.getItem('ide_accent_rainbow') || 'null');
-      if (r && Array.isArray(r.stops) && r.stops.length >= 2) return { on: !!r.on, stops: r.stops, speed: Number(r.speed) > 0 ? Number(r.speed) : 10 };
+      if (r && Array.isArray(r.stops) && r.stops.length >= 2) return { on: !!r.on, stops: r.stops, speed: Number(r.speed) > 0 ? Number(r.speed) : 10, mode: r.mode === 'wave' ? 'wave' : 'loop' };
     } catch {}
-    return { on: false, stops: ['#EF4444', '#EAB308', '#10B981', '#3B82F6', '#A855F7'], speed: 10 };
+    return { on: false, stops: ['#EF4444', '#EAB308', '#10B981', '#3B82F6', '#A855F7'], speed: 10, mode: 'loop' };
   });
   useEffect(() => {
     try { localStorage.setItem('ide_accent_rainbow', JSON.stringify(rainbow)); } catch {}
   }, [rainbow]);
   const [rainbowColor, setRainbowColor] = useState<string>(rainbow.stops[0]);
   useEffect(() => {
-    if (!rainbow.on) return;
+    if (!rainbow.on || rainbow.mode === 'wave') return; // na onda a cor varia por posição (RainbowWave), não no tempo
     const rgbs = rainbow.stops.map(hexToRgb);
     const tick = () => {
       const pos = ((Date.now() / (rainbow.speed * 1000)) % 1) * rgbs.length;
@@ -2727,7 +2798,7 @@ export const App: React.FC = () => {
     const t = setInterval(tick, 150);
     return () => clearInterval(t);
   }, [rainbow]);
-  const accentColor = rainbow.on ? rainbowColor : useAiSystemAccent ? (AI_BRAND_COLORS[selectedAiProvider] || baseAccentColor) : baseAccentColor;
+  const accentColor = rainbow.on ? (rainbow.mode === 'wave' ? rainbow.stops[0] : rainbowColor) : useAiSystemAccent ? (AI_BRAND_COLORS[selectedAiProvider] || baseAccentColor) : baseAccentColor;
   const accentTextColor = getContrastTextColor(accentColor);
   const chatAccentColor = useAiChatThemeColor
     ? (AI_BRAND_COLORS[selectedAiProvider] || accentColor)
@@ -3006,6 +3077,25 @@ export const App: React.FC = () => {
   // Terminal Interactive States
   const [isTerminalMaximized, setIsTerminalMaximized] = useState(false);
   const [isTerminalCollapsed, setIsTerminalCollapsed] = useState(false);
+  const explorerP = usePresence(showExplorer);
+  const aiP = usePresence(showAiPanel);
+  const termP = usePresence(!isTerminalCollapsed);
+  // PRs e Actions desmarcam os painéis inferior e de IA; ao sair delas, voltam como estavam
+  const isWideSideView = showExplorer && (activeActivityTab === 'reviews' || activeActivityTab === 'actions');
+  const panelsBeforeWideRef = useRef<{ term: boolean; ai: boolean } | null>(null);
+  useEffect(() => {
+    if (isWideSideView) {
+      if (!panelsBeforeWideRef.current) panelsBeforeWideRef.current = { term: !isTerminalCollapsed, ai: showAiPanel };
+      setIsTerminalCollapsed(true);
+      setShowAiPanel(false);
+    } else if (panelsBeforeWideRef.current) {
+      const prev = panelsBeforeWideRef.current;
+      panelsBeforeWideRef.current = null;
+      setIsTerminalCollapsed(!prev.term);
+      setShowAiPanel(prev.ai);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isWideSideView]);
   const [isSplitTerminal, setIsSplitTerminal] = useState(false);
   const [terminalShell, setTerminalShell] = useState('zsh');
   const [shellDropdownOpen, setShellDropdownOpen] = useState(false);
@@ -3022,6 +3112,8 @@ export const App: React.FC = () => {
   useEffect(() => {
     let dirty = false;
     const off = window.electronAPI?.pty?.onData?.((payload) => {
+      // a CLI abriu/listou uma nota do Brain: acende o botão por alguns segundos
+      if (payload.data.includes('.aura/brain')) pulseBrainActivity(`cli:${payload.id}`);
       const proj = terminalSessionsRef.current.find((t) => t.id === payload.id)?.projectPath;
       if (!proj) return;
       const buf = (outputBuf.current[proj] ||= { lines: [], partial: {} });
@@ -3073,7 +3165,10 @@ export const App: React.FC = () => {
   const cliTerminalSessions = useMemo(() => terminalSessions.filter((s) => s.scope === 'cli' && inActiveProject(s)), [terminalSessions, workspacePath]);
   const [cliActiveSessionId, setCliActiveSessionId] = useState('');
   useEffect(() => {
-    if (cliTerminalSessions.length > 0 && !cliTerminalSessions.some((s) => s.id === cliActiveSessionId)) setCliActiveSessionId(cliTerminalSessions[0].id);
+    // ao trocar de projeto a sessão ativa deixa de existir: volta para a IA do projeto (e não para um terminal vazio)
+    if (cliTerminalSessions.length > 0 && !cliTerminalSessions.some((s) => s.id === cliActiveSessionId)) {
+      setCliActiveSessionId((cliTerminalSessions.find((s) => ['claude', 'agy', 'antigravity', 'gemini', 'codex', 'ollama'].includes(s.type)) || cliTerminalSessions[0]).id);
+    }
   }, [cliTerminalSessions, cliActiveSessionId]);
   const setCliSessions = (update: React.SetStateAction<TerminalSessionItem[]>) =>
     setTerminalSessions((prev) => {
@@ -3128,39 +3223,46 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (activeTab === 'design' || activeActivityTab === 'design') setDesignMounted(true);
   }, [activeTab, activeActivityTab]);
-  // Avisa que a IA do Design terminou quando o usuário está em outra tela, em outro projeto ou com o app em segundo plano
+  const [siteMounted, setSiteMounted] = useState(false);
+  useEffect(() => {
+    if (activeTab === 'site') setSiteMounted(true);
+  }, [activeTab]);
+  // Avisa que a IA do Design (ou dos Sites) terminou quando o usuário está em outra tela, em outro projeto ou com o app em segundo plano
   const handleDesignAiDone = useCallback(
-    (r: { ok: boolean; message: string; workspace: string }) => {
-      const otherProject = !!r.workspace && r.workspace.toLowerCase() !== (workspacePathRef.current || '').toLowerCase();
-      const away = activeTabRef.current !== 'design' || otherProject;
+    (r: { ok: boolean; message: string; workspace: string }, area: 'design' | 'site' = 'design') => {
+      const label = area === 'site' ? 'Sites' : 'Design';
+      // a pasta de um site não é um projeto: não entra na troca de workspace ao clicar na notificação
+      const projectPath = area === 'site' ? '' : r.workspace;
+      const otherProject = !!projectPath && projectPath.toLowerCase() !== (workspacePathRef.current || '').toLowerCase();
+      const away = activeTabRef.current !== area || otherProject;
       const background = !document.hasFocus();
-      const name = r.workspace.split('/').filter(Boolean).pop() || 'Design';
+      const name = r.workspace.split('/').filter(Boolean).pop() || label;
       // sempre fica no histórico; só conta como "nova" se o usuário não estava olhando
       notifCenter.add({
         kind: r.ok ? 'design' : 'error',
-        title: r.ok ? `${name}: a IA do Design terminou` : `${name}: a IA do Design falhou`,
+        title: r.ok ? `${name}: a IA do ${label} terminou` : `${name}: a IA do ${label} falhou`,
         body: r.message,
-        projectPath: r.workspace,
+        projectPath,
         projectName: name,
         provider: selectedAiProvider,
-        source: 'design',
+        source: area,
         read: !(away || background),
       });
       if (!away && !background) return;
       const notif: ProjectAiNotificationItem = {
         id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        projectPath: r.workspace,
+        projectPath,
         projectName: name,
         provider: selectedAiProvider,
-        summary: r.ok ? `Design: ${r.message}` : `Design falhou: ${r.message}`,
+        summary: r.ok ? `${label}: ${r.message}` : `${label} falhou: ${r.message}`,
         timestamp: Date.now(),
         kind: 'done',
-        source: 'design',
+        source: area,
       };
       setAiNotifications((prev) => appendNotification(prev, notif));
       setTimeout(() => setAiNotifications((prev) => prev.filter((n) => n.id !== notif.id)), 15000);
       try {
-        if (background && 'Notification' in window) new Notification(r.ok ? `${name}: a IA do Design terminou` : `${name}: a IA do Design falhou`, { body: notif.summary.slice(0, 140) });
+        if (background && 'Notification' in window) new Notification(r.ok ? `${name}: a IA do ${label} terminou` : `${name}: a IA do ${label} falhou`, { body: notif.summary.slice(0, 140) });
       } catch {}
     },
     [selectedAiProvider, notifCenter.add]
@@ -3192,9 +3294,14 @@ export const App: React.FC = () => {
 
   // Avisa que a IA de OUTRO projeto terminou ou está esperando resposta (nunca para o projeto aberto)
   const notifyProjectAi = useCallback(
-    (item: Omit<ProjectAiNotificationItem, 'id' | 'timestamp'>) => {
+    (raw: Omit<ProjectAiNotificationItem, 'id' | 'timestamp'>) => {
       const cur = workspacePathRef.current?.toLowerCase();
-      if (cur && item.projectPath.toLowerCase() === cur) return;
+      if (cur && raw.projectPath.toLowerCase() === cur) return;
+      const item = {
+        ...raw,
+        summary:
+          raw.summary.split('\n').filter((l) => /[\p{L}\p{N}]/u.test(l) && !/workedfor|done\d|skillsusadas|^projeto:/i.test(l.replace(/\s+/g, ''))).join('\n') || 'Tarefa finalizada no terminal.',
+      };
       const notif: ProjectAiNotificationItem = {
         ...item,
         id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -3423,6 +3530,60 @@ export const App: React.FC = () => {
     } catch {}
   }, [terminalSessions, workspacePath]);
 
+  // a IA (CLI ou chat) criou cards na Daily: avisa onde quer que o usuário esteja
+  useEffect(
+    () =>
+      window.electronAPI?.dailyStore?.onChanged?.((info) => {
+        setToastMessage(info.message || (info.count === 1 ? `IA adicionou um card à Daily: ${info.titles[0]}` : `IA adicionou ${info.count} cards à Daily`));
+        logSystemActivity('daily', info.kind === 'updated' ? 'ia_alterou_cards' : 'ia_criou_cards', 'Daily', { total: info.count });
+      }),
+    [],
+  );
+
+  // responsáveis disponíveis no painel da issue: colaboradores do repositório (sem isso só aparecia o próprio usuário)
+  const [sidesheetCollaborators, setSidesheetCollaborators] = useState<Array<{ login: string; avatarUrl: string; htmlUrl: string }>>([]);
+  const sidesheetOpen = Boolean(sidesheetIssue);
+  useEffect(() => {
+    if (!sidesheetOpen) return;
+    const fullRepo = gitRepoName ? (gitRepoName.includes('/') ? gitRepoName : `Walancy/${gitRepoName}`) : 'Walancy/aura-dev';
+    const [owner, repo] = fullRepo.split('/');
+    let cancelled = false;
+    window.electronAPI?.github
+      ?.fetchRepoCollaborators?.(owner, repo)
+      .then((res) => {
+        if (cancelled || !res?.success) return;
+        setSidesheetCollaborators((res.collaborators || []).map((c: any) => ({ login: c.login, avatarUrl: c.avatar_url, htmlUrl: c.html_url })));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [sidesheetOpen, gitRepoName]);
+
+  // quantidade de pull requests abertos do projeto ativo (badge do ícone): usa o mesmo cache da lista e atualiza em segundo plano
+  const [openPrCount, setOpenPrCount] = useState(0);
+  useEffect(() => {
+    const repo = activeHeaderProject?.fullName || '';
+    if (!repo.includes('/') || githubAuthStatus !== 'authenticated') {
+      setOpenPrCount(0);
+      return;
+    }
+    const sync = () => setOpenPrCount(getCachedPulls(repo)?.data.openCount ?? 0);
+    sync();
+    const unsub = subscribePulls(sync);
+    const poll = () => {
+      if (!document.hidden) refreshPulls(repo).then(sync).catch(() => {});
+    };
+    poll();
+    const timer = setInterval(poll, 90 * 1000);
+    window.addEventListener('focus', poll);
+    return () => {
+      unsub();
+      clearInterval(timer);
+      window.removeEventListener('focus', poll);
+    };
+  }, [activeHeaderProject?.fullName, githubAuthStatus]);
+
   // Review pedido a mim no GitHub: aviso fixo que só fecha no X; cada PR avisa uma única vez (o backlog antigo é ignorado na primeira leitura)
   useEffect(() => {
     if (githubAuthStatus !== 'authenticated') return;
@@ -3436,7 +3597,11 @@ export const App: React.FC = () => {
           .filter((r) => !dismissed.has(reviewRequestId(r)))
           .forEach((r) => {
             logSystemActivity('review', 'review_solicitado', `${r.repo}#${r.number}`, { autor: r.author });
-            notifCenter.add({ kind: 'ai', title: `${r.repo}: ${r.author} pediu sua review no PR #${r.number}`, body: r.title, projectName: r.repo, source: 'cli' });
+            // fora do app (ou com a janela sem foco) avisa também pelo sistema
+            try {
+              if (!document.hasFocus() && 'Notification' in window && Notification.permission !== 'denied') new Notification(`${r.author} pediu sua review`, { body: `${r.repo} #${r.number}: ${r.title}` });
+            } catch {}
+            notifCenter.add({ kind: 'ai', title: `${r.repo}: ${r.author} pediu sua review no PR #${r.number}`, body: r.title, projectName: r.repo, source: 'cli', review: { repo: r.repo, number: r.number, author: r.author, avatar: r.authorAvatar } });
             setAiNotifications((prev) =>
               appendNotification(prev, {
                 id: reviewRequestId(r),
@@ -3448,15 +3613,24 @@ export const App: React.FC = () => {
                 kind: 'review',
                 reviewRepo: r.repo,
                 reviewNumber: r.number,
+                reviewAvatar: r.authorAvatar,
               }),
             );
           });
-      } catch {}
+      } catch (err) {
+        console.warn('[reviews] falha ao buscar review requests:', err);
+      }
     };
     check();
-    const timer = setInterval(check, 2 * 60 * 1000);
+    window.addEventListener('focus', check);
+    const onVisible = () => { if (!document.hidden) check(); };
+    document.addEventListener('visibilitychange', onVisible);
+    // 45s: o pedido de review aparece em até menos de um minuto (antes eram 2 min mais o atraso da busca do GitHub)
+    const timer = setInterval(check, 45 * 1000);
     return () => {
       stopped = true;
+      window.removeEventListener('focus', check);
+      document.removeEventListener('visibilitychange', onVisible);
       clearInterval(timer);
     };
   }, [githubAuthStatus, githubUser?.login, notifCenter.add]);
@@ -3709,6 +3883,8 @@ export const App: React.FC = () => {
       console.warn('Monaco ts setup error:', e);
     }
 
+    setupAutocomplete(monaco);
+
     // Track real cursor position (Ln, Col)
     editor.onDidChangeCursorPosition((e) => {
       setCursorPosition({ line: e.position.lineNumber, col: e.position.column });
@@ -3757,29 +3933,7 @@ export const App: React.FC = () => {
     };
     monaco.editor.onDidChangeMarkers(updateMarkers);
     updateMarkers();
-    monaco.editor.defineTheme('aura-dev-dark', {
-      base: 'vs-dark',
-      inherit: true,
-      rules: [
-        { token: 'comment', foreground: '6272a4', fontStyle: 'italic' },
-        { token: 'keyword', foreground: 'ff7b72' },
-        { token: 'string', foreground: 'a5d6ff' },
-        { token: 'number', foreground: '79c0ff' },
-        { token: 'type', foreground: 'ffa657' },
-        { token: 'function', foreground: 'd2a8ff' },
-        { token: 'variable', foreground: 'c9d1d9' },
-      ],
-      colors: {
-        'editor.background': '#101010',
-        'editor.foreground': '#d8dade',
-        'editorCursor.foreground': accentColor,
-        'editor.lineHighlightBackground': '#181818',
-        'editorLineNumber.foreground': '#4e5362',
-        'editorLineNumber.activeForeground': '#ffffff',
-        'editor.selectionBackground': '#264f78',
-        'editorGutter.background': '#101010',
-      },
-    });
+    defineAuraDarkTheme(monaco, 'aura-dev-dark', accentColor);
     monaco.editor.setTheme('aura-dev-dark');
   };
 
@@ -4269,9 +4423,6 @@ export const App: React.FC = () => {
         localStorage.setItem('ide_ai_chat_sessions', JSON.stringify(projectChatSessions));
       } catch {}
 
-      setToastMessage(`Projeto ativo: ${displayName}`);
-      setTimeout(() => setToastMessage(null), 3000);
-
       // 5. Troca de Contexto do Brain (estilo Sistema Operacional)
       switchProjectBrainContext(newPath, repoName).catch((err) => {
         console.warn('[handleSelectWorkspace] Erro ao alternar contexto do Brain:', err);
@@ -4368,7 +4519,60 @@ export const App: React.FC = () => {
     setEditorErrors(0);
     setEditorWarnings(0);
     setLastProjectCheckTime(null);
-    if (activeTermTab === 'problems') handleRunProjectCheck();
+  }, [workspacePath]);
+
+  // A contagem de problemas carrega sozinha ao abrir o projeto (sem precisar abrir a aba Problems)
+  const autoCheckedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!workspacePath || autoCheckedRef.current === workspacePath) return;
+    const timer = setTimeout(() => {
+      if (autoCheckedRef.current === workspacePath) return;
+      autoCheckedRef.current = workspacePath;
+      if (!isCheckingProject) handleRunProjectCheck();
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [workspacePath]);
+
+  // Verificação automática: quando o código do projeto muda (salvar, edição da IA, git), refaz a checagem sem precisar clicar em Verificar
+  const runCheckRef = useRef(handleRunProjectCheck);
+  runCheckRef.current = handleRunProjectCheck;
+  const isCheckingRef = useRef(isCheckingProject);
+  isCheckingRef.current = isCheckingProject;
+  useEffect(() => {
+    if (!workspacePath || !window.electronAPI?.shell?.exec) return;
+    let cancelled = false;
+    let last: string | null = null;
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const signature = async () => {
+      try {
+        const r = await window.electronAPI.shell.exec('git status --porcelain=v1; git diff HEAD --shortstat', workspacePath);
+        return r.exitCode === 0 || r.stdout ? `${r.stdout || ''}` : null;
+      } catch {
+        return null;
+      }
+    };
+    const tick = async () => {
+      if (cancelled || document.hidden) return;
+      const sig = await signature();
+      if (cancelled || sig === null) return;
+      if (last === null) {
+        last = sig;
+        return;
+      }
+      if (sig === last) return;
+      last = sig;
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        if (!cancelled && !isCheckingRef.current) runCheckRef.current();
+      }, 2500);
+    };
+    tick();
+    const timer = setInterval(tick, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      if (debounce) clearTimeout(debounce);
+    };
   }, [workspacePath]);
 
   // Open File in Monaco Editor (with line range / line number precision navigation)
@@ -4473,6 +4677,7 @@ export const App: React.FC = () => {
                   e.stopPropagation();
                   handleOpenFile(filePath, fileName);
                 }}
+                className="df-pressable"
                 title={`Abrir no editor: ${filePath}`}
                 style={{
                   display: 'inline-flex',
@@ -4481,24 +4686,22 @@ export const App: React.FC = () => {
                   padding: '1px 6px',
                   borderRadius: 4,
                   background: 'rgba(59, 130, 246, 0.18)',
-                  border: '1px solid rgba(59, 130, 246, 0.35)',
+                  border: 'none',
                   color: '#60a5fa',
                   fontSize: 11.5,
-                  fontWeight: 500,
+                  fontWeight: 400,
                   fontFamily: 'Poppins, monospace',
                   cursor: 'pointer',
                   verticalAlign: 'baseline',
                   margin: '0 2px',
                   userSelect: 'none',
-                  transition: 'all 0.15s ease',
+                  transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = 'rgba(59, 130, 246, 0.3)';
-                  e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.6)';
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = 'rgba(59, 130, 246, 0.18)';
-                  e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.35)';
                 }}
               >
                 {isImg ? (
@@ -4632,8 +4835,8 @@ export const App: React.FC = () => {
     const targetFile = files[safeIdx];
     if (!targetFile) return;
 
-    const baseCwd = workspacePath || targetFile.path.split('/').slice(0, -1).join('/');
-    let relPath = targetFile.path;
+    const baseCwd = (targetFile as any).repoDir || workspacePath || targetFile.path.split('/').slice(0, -1).join('/');
+    let relPath = (targetFile as any).relPath || targetFile.path;
     if (relPath.startsWith(baseCwd + '/')) {
       relPath = relPath.slice(baseCwd.length + 1);
     }
@@ -4679,8 +4882,8 @@ export const App: React.FC = () => {
     const current = activeReview.files[activeReview.currentIndex];
     if (!current) return;
 
-    const baseCwd = workspacePath || current.path.split('/').slice(0, -1).join('/');
-    let relPath = current.path;
+    const baseCwd = (current as any).repoDir || workspacePath || current.path.split('/').slice(0, -1).join('/');
+    let relPath = (current as any).relPath || current.path;
     if (relPath.startsWith(baseCwd + '/')) {
       relPath = relPath.slice(baseCwd.length + 1);
     }
@@ -4730,13 +4933,15 @@ export const App: React.FC = () => {
   // GitHub Issues Integration unificada com o método e cache da tela de Projetos
   const issuesReqRef = useRef(0);
   const issuesOwnerRef = useRef('');
-  const refreshGitHubIssues = useCallback(async () => {
+  // silent (só `true`): atualização em segundo plano, sem cache antigo na frente, sem spinner e sem log
+  const refreshGitHubIssues = useCallback(async (silent?: unknown) => {
+    const quiet = silent === true;
     const targetProjectFull = activeHeaderProject?.fullName || gitRepoName;
     const cwd = activeHeaderProject?.localDir || workspacePath || process.cwd();
     // buscas de um projeto anterior que terminam depois da troca não podem sobrescrever a lista do projeto atual
     const reqId = ++issuesReqRef.current;
     const stale = () => reqId !== issuesReqRef.current;
-    setIsLoadingIssues(true);
+    if (!quiet) setIsLoadingIssues(true);
 
     let owner = '';
     let repo = '';
@@ -4757,7 +4962,7 @@ export const App: React.FC = () => {
 
     try {
       // 1. Hidratação imediata via cache de Projetos (GLOBAL_PROJECTS_CACHE)
-      const cache = GLOBAL_PROJECTS_CACHE?.repoDetailsCache;
+      const cache = quiet ? undefined : GLOBAL_PROJECTS_CACHE?.repoDetailsCache;
       if (cache) {
         const candidates = [
           targetProjectFull,
@@ -4884,8 +5089,9 @@ export const App: React.FC = () => {
             };
           });
 
-          if (!stale()) setGitIssues(mapped);
-          logSystemActivity('tarefas', 'refresh_issues', targetProjectFull, { count: mapped.length, source: 'github_api' });
+          // sem mudança real, mantém a lista atual (não re-renderiza a cada checagem)
+          if (!stale()) setGitIssues((prev) => (JSON.stringify(prev) === JSON.stringify(mapped) ? prev : mapped));
+          if (!quiet) logSystemActivity('tarefas', 'refresh_issues', targetProjectFull, { count: mapped.length, source: 'github_api' });
           if (!stale()) setIsLoadingIssues(false);
           return;
         }
@@ -5013,6 +5219,31 @@ export const App: React.FC = () => {
     window.electronAPI?.pty?.write(sess.id, `\x1b[200~${text}\x1b[201~`);
     setTimeout(() => window.electronAPI?.pty?.write(sess.id, '\r'), 200);
     setToastMessage(`Issue #${issue.number} enviada para a IA do terminal ativo`);
+    setTimeout(() => setToastMessage(null), 2500);
+  };
+
+  // Manda um pedido para a IA: no CLI vai para o terminal de IA ativo; na IDE preenche o chat da IA
+  const sendPromptToAi = (text: string) => {
+    if (activeTab !== 'cli') {
+      if (activeTab !== 'ide') setActiveTab('ide');
+      setShowAiPanel(true);
+      setAskPrompt(text);
+      setTimeout(() => {
+        inputRef.current?.focus();
+        promptEditorRef.current?.focus();
+      }, 150);
+      setToastMessage('Pedido enviado ao chat de IA: revise e envie');
+      return;
+    }
+    const sess = cliTerminalSessions.find((x) => x.id === cliActiveSessionId) || cliTerminalSessions[0];
+    if (!sess || !/^(claude|agy|antigravity|gemini|codex|ollama)$/.test((sess.type || '').toLowerCase())) {
+      setToastMessage('O terminal ativo não é uma IA: abra o Claude, Antigravity, Gemini ou Codex nele');
+      setTimeout(() => setToastMessage(null), 3000);
+      return;
+    }
+    window.electronAPI?.pty?.write(sess.id, `\x1b[200~${text}\x1b[201~`);
+    setTimeout(() => window.electronAPI?.pty?.write(sess.id, '\r'), 200);
+    setToastMessage('Pedido enviado para a IA do terminal ativo');
     setTimeout(() => setToastMessage(null), 2500);
   };
 
@@ -5284,6 +5515,26 @@ export const App: React.FC = () => {
     refreshGitBranches();
     refreshGitHubIssues();
   }, [refreshGitBranches, refreshGitHubIssues]);
+
+  // Issues em tempo (quase) real: o GitHub não avisa o app, então checa em segundo plano a cada 90s com a janela visível
+  // e ao voltar para ela, para status/responsável/título novos aparecerem sem clicar em "Atualizar"
+  useEffect(() => {
+    if (githubAuthStatus !== 'authenticated') return;
+    let last = Date.now();
+    const poll = () => {
+      if (document.hidden || Date.now() - last < 15000) return;
+      last = Date.now();
+      refreshGitHubIssues(true);
+    };
+    const timer = setInterval(poll, 90 * 1000);
+    window.addEventListener('focus', poll);
+    document.addEventListener('visibilitychange', poll);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', poll);
+      document.removeEventListener('visibilitychange', poll);
+    };
+  }, [githubAuthStatus, refreshGitHubIssues]);
 
   // Mantém o gitRepoName alinhado com o projeto ativo selecionado no cabeçalho
   useEffect(() => {
@@ -7567,6 +7818,7 @@ export const App: React.FC = () => {
     let runOutcome: 'done' | 'waiting' | null = null;
     let runSummary = '';
     const endRun = () => {
+      setBrainActivity(`chat:${runWorkspace}`, false);
       runningAiWorkspacesRef.current.delete(runWorkspace);
       const isVisible = workspacePathRef.current === runWorkspace;
       if (isVisible) endRun();
@@ -8080,6 +8332,7 @@ INSTRUÇÕES:
           const projectBrain = getActiveBrainContextSync(effectiveCwd);
           if (projectBrain) {
             brainContextBlock = `\n\n${generateBrainAiContext(projectBrain)}`;
+            setBrainActivity(`chat:${runWorkspace}`, true);
           }
         } catch {}
 
@@ -8106,6 +8359,12 @@ ${editorSelectionText ? `- Trecho Selecionado no Editor:\n\`\`\`\n${editorSelect
 - Sistema Operacional: macOS
 - Horário Local: ${new Date().toLocaleString('pt-BR')}`;
 
+        // "IA do projeto": contexto fixo, "antes de entregar" e memória do projeto entram em todo prompt do chat
+        const projectAiCfg = activeHeaderProject?.fullName ? getProjectSettings(activeHeaderProject.fullName).ai : null;
+        const projectAiBlock = projectAiCfg
+          ? [projectAiCfg.contextNotes.trim() && `Contexto fixo do projeto:\n${projectAiCfg.contextNotes.trim()}`, projectAiCfg.gate.trim() && gateBlock(projectAiCfg.gate), projectAiCfg.useMemory && memoryBlock].filter(Boolean).join('\n\n')
+          : '';
+
         if (!prompt.startsWith('/')) {
           promptWithContext = `[Contexto do Projeto Aberto no Aura Dev]:
 ${modeInstruction}
@@ -8116,7 +8375,7 @@ ${appSubDir ? `- Módulo/Subaplicação em Edição: ${appSubDir}` : ''}
 ${projectActiveFile?.path ? `- Arquivo Aberto no Editor: ${projectActiveFile.path}` : ''}
 ${projectOpenFiles.length > 0 ? `- Arquivos Abertos: ${projectOpenFiles.map((f) => f.path).filter(Boolean).join(', ')}` : ''}${brainContextBlock}${attachedContextBlock}${silentEditorContext}
 
-INSTRUÇÕES OBRIGATÓRIAS:
+${projectAiBlock ? `${projectAiBlock}\n\n` : ''}INSTRUÇÕES OBRIGATÓRIAS:
 1. Você está executando DIRETAMENTE no diretório do projeto: "${effectiveCwd}" (${projectName}).
 2. Crie, leia, modifique e organize TODOS os arquivos e pastas SEMPRE dentro deste projeto ("${effectiveCwd}"${appSubDir ? ` ou mais especificamente em "${appSubDir}"` : ''}).
 3. NUNCA assuma outro projeto nem crie arquivos na pasta pessoal do usuário (~ ou /Users/walancy) ou fora da raiz deste projeto.
@@ -8891,7 +9150,31 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     accentColor={accentColor}
                     isEffectiveDark={isEffectiveDark}
                     onAskAiAboutProblem={(prob) => {
-                      setActiveTab('cli');
+                      const rel = prob.relPath || prob.filePath;
+                      const text = `Corrija este problema no projeto:\n\n${rel}:${prob.line}:${prob.column} (${prob.severity}${prob.code ? ` ${prob.code}` : ''}${prob.source ? `, ${prob.source}` : ''})\n${prob.message}\n\nAbra o arquivo, corrija a causa e rode a verificação para confirmar.`;
+                      if (activeTab === 'cli') window.dispatchEvent(new CustomEvent('aura:resolve-with-ai', { detail: { text, title: 'Corrigindo problema' } }));
+                      else sendPromptToAi(text);
+                    }}
+                    aiProviderId={selectedAiProvider}
+                    onResolveWithAi={(list) => {
+                      const sorted = [...list].sort((a, b) => b.severityCode - a.severityCode);
+                      const LIMIT = 80;
+                      const shown = sorted.slice(0, LIMIT);
+                      const errors = list.filter((p) => p.severity === 'error').length;
+                      const warnings = list.filter((p) => p.severity === 'warning').length;
+                      const line = (p: IdeProblem) => `- ${p.relPath || p.filePath}:${p.line}:${p.column} [${p.severity}${p.code ? ` ${p.code}` : ''}] ${p.message.replace(/\s+/g, ' ').slice(0, 200)}`;
+                      // resumo por regra: mostra o tamanho real do trabalho, inclusive dos avisos que não cabem na lista detalhada
+                      const byRule = new Map<string, { n: number; sev: string }>();
+                      for (const p of list) {
+                        const k = `${p.source || 'editor'} ${p.code ?? ''}`.trim();
+                        const cur = byRule.get(k);
+                        byRule.set(k, { n: (cur?.n || 0) + 1, sev: p.severity === 'error' || cur?.sev === 'error' ? 'erro' : 'aviso' });
+                      }
+                      const rules = [...byRule.entries()].sort((x, y) => y[1].n - x[1].n).slice(0, 15).map(([k, v]) => `- ${k}: ${v.n} (${v.sev})`).join('\n');
+                      const text = `Resolva TODOS os problemas do projeto: ${errors} erros e ${warnings} avisos${list.length - errors - warnings > 0 ? ` (mais ${list.length - errors - warnings} infos)` : ''}. Avisos também precisam ser corrigidos, não só os erros.\n\nRegras:\n- Comece pelos erros e depois corrija os avisos.\n- Corrija a causa de cada problema, sem mudar o comportamento e sem silenciar com ignore/disable/@ts-ignore.\n- A lista detalhada abaixo traz só os ${shown.length} primeiros${list.length > shown.length ? ` de ${list.length}` : ''}: rode a verificação do projeto (tsc/ESLint/oxlint, conforme o package.json) para ver o restante e repita até zerar.\n- No final, rode a verificação de novo para confirmar.\n\nResumo por regra:\n${rules}\n\nDetalhe:\n${shown.map(line).join('\n')}`;
+                      if (activeTab === 'cli') window.dispatchEvent(new CustomEvent('aura:resolve-with-ai', { detail: { text, title: 'Corrigindo problemas' } }));
+                      else sendPromptToAi(text);
+                      logSystemActivity('ide', 'resolver_problemas_com_ia', gitRepoName || 'projeto', { total: list.length, enviados: shown.length });
                     }}
                   />
                 )}
@@ -9095,6 +9378,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
       >
         {/* Left: Animated Traffic lights spacer + Nav Tabs */}
         <div
+          className="df-header-surface"
           style={{
             justifyContent: 'flex-start',
             alignItems: 'center',
@@ -9114,7 +9398,9 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               background: 'transparent',
               boxShadow: 'none',
               flexShrink: 0,
-              transition: isDraggingExplorer || isDraggingAi || isDraggingTerminal ? 'none' : 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+              transition: isDraggingExplorer || isDraggingAi || isDraggingTerminal
+                ? 'none'
+                : 'width 0.3s cubic-bezier(0.16, 1, 0.3, 1), margin-left 0.3s cubic-bezier(0.16, 1, 0.3, 1), margin-right 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
               overflow: 'hidden',
               display: 'flex',
               alignItems: 'center',
@@ -9128,7 +9414,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               padding: 5,
               background: themeTokens.bgCard,
               borderRadius: 10,
-              border: '1px solid ' + themeTokens.border,
+              border: 'none',
               justifyContent: 'flex-start',
               alignItems: 'center',
               gap: 5,
@@ -9137,19 +9423,31 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             }}
           >
             {[
-              { id: 'projetos', label: 'Projetos' },
-              { id: 'orchestration', label: 'Orquestração' },
-              { id: 'daily', label: 'Daily' },
-              { id: 'ide', label: 'IDE' },
-              { id: 'cli', label: 'CLI' },
-              { id: 'design', label: 'Design' },
+              { id: 'projetos', label: 'Projetos', icon: HdrProjects },
+              { id: 'orchestration', label: 'Orquestração', icon: HdrFlow },
+              { id: 'daily', label: 'Daily', icon: HdrDaily },
+              { id: 'group', label: '' },
+              { id: 'design', label: 'Design', icon: HdrDesign },
             ].map((t) => {
+              if (t.id === 'group')
+                return (
+                  <HeaderTabGroup
+                    key="group"
+                    items={[{ id: 'ide', label: 'IDE', icon: HdrIde }, { id: 'cli', label: 'CLI', icon: HdrCli }, { id: 'site', label: 'Sites', icon: HdrSites }]}
+                    activeId={activeTab}
+                    onSelect={(id) => setActiveTab(id as any)}
+                    pending={groupPending}
+                    accentColor={accentColor}
+                    isDark={isEffectiveDark}
+                    textPrimary={themeTokens.textPrimary}
+                    textSecondary={themeTokens.textSecondary}
+                  />
+                );
               const isActive = activeTab === t.id;
-              const TabIcon = (t as any).icon;
               return (
                 <div
                   key={t.id}
-                  className="skin-tab"
+                  className="skin-tab df-pressable"
                   data-on={isActive ? '1' : undefined}
                   onClick={() => setActiveTab(t.id as any)}
                   style={{
@@ -9166,16 +9464,15 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     cursor: 'pointer',
                     whiteSpace: 'nowrap',
                     flexShrink: 0,
-                    transition: 'all 0.15s ease',
+                    transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                   }}
                 >
-                  {TabIcon && <TabIcon size={13} style={{ marginRight: 5 }} />}
                   <div
                     style={{
                       color: isActive ? themeTokens.textPrimary : themeTokens.textSecondary,
                       fontSize: 12,
                       fontFamily: 'Poppins',
-                      fontWeight: isActive ? '500' : '400',
+                      fontWeight: '400',
                       whiteSpace: 'nowrap',
                     }}
                   >
@@ -9229,8 +9526,9 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
           {/* Botão Brain do Projeto (Grafo Obsidian & Contexto de IA) */}
           <button
+            className="df-pressable"
             onClick={() => setIsBrainModalOpen(true)}
-            title="Aura Dev Brain - Contexto do Projeto e Grafo Obsidian"
+            title={brainBusy ? 'Brain aceso: uma IA está usando o contexto do projeto agora' : 'Aura Dev Brain - Contexto do Projeto e Grafo Obsidian'}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -9238,14 +9536,14 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               gap: 6,
               padding: 6,
               borderRadius: 6,
-              background: isBrainModalOpen
+              background: isBrainModalOpen || brainBusy
                 ? `${accentColor}18`
                 : 'transparent',
               border: 'none',
               boxShadow: 'none',
               cursor: 'pointer',
-              color: isBrainModalOpen ? accentColor : themeTokens.textSecondary,
-              transition: 'all 0.15s ease',
+              color: isBrainModalOpen || brainBusy ? accentColor : themeTokens.textSecondary,
+              transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
               fontWeight: 400,
               fontFamily: 'Poppins, sans-serif',
               fontSize: 11.5,
@@ -9259,15 +9557,15 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 : 'rgba(0, 0, 0, 0.05)';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.color = isBrainModalOpen
+              e.currentTarget.style.color = isBrainModalOpen || brainBusy
                 ? accentColor
                 : themeTokens.textSecondary;
-              e.currentTarget.style.background = isBrainModalOpen
+              e.currentTarget.style.background = isBrainModalOpen || brainBusy
                 ? `${accentColor}18`
                 : 'transparent';
             }}
           >
-            <Brain size={14} strokeWidth={1.8} />
+            <Brain size={14} strokeWidth={1.8} style={brainBusy ? { animation: 'brainPulse 1.3s ease-in-out infinite' } : undefined} />
           </button>
 
           {/* Servidor do projeto rodando: link para abrir no navegador e botão para encerrar */}
@@ -9275,6 +9573,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             <div style={{ position: 'relative', display: 'flex', alignItems: 'center', borderRadius: 6, flexShrink: 0, background: startingServer ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)') : 'transparent', WebkitAppRegion: 'no-drag' as any }}>
               <button
                 type="button"
+                className="df-pressable"
                 disabled={startingServer}
                 onClick={() => (devOptions ? setDevMenuOpen((v) => !v) : devStartCommand && startProject(devStartCommand))}
                 title={startingServer ? `Iniciando (${devStartCommand})…` : devOptions ? 'Iniciar o projeto: escolha o gerenciador e o script' : `Iniciar o projeto (${devStartCommand})`}
@@ -9288,7 +9587,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 <>
                   <div style={{ position: 'fixed', inset: 0, zIndex: 99998 }} onClick={() => setDevMenuOpen(false)} />
                   <div
-                    className="df-dropdown-menu"
+                    className="df-dropdown-menu df-popover-right"
                     style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, width: 232, maxHeight: 420, overflowY: 'auto', background: fieldTokens.dropdownMenuBg, border: fieldTokens.dropdownBorder, borderRadius: 10, boxShadow: 'none', padding: '6px 6px 8px', zIndex: 99999, display: 'flex', flexDirection: 'column', gap: 2, fontFamily: 'Poppins, sans-serif' }}
                   >
                     {devOptions.scripts.length > 0 && (
@@ -9300,7 +9599,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               key={pm}
                               onClick={() => setDevMenuPm(pm)}
                               title={pm === devOptions.pm ? `${pm} (detectado no projeto)` : pm}
-                              style={{ fontSize: 12, cursor: 'pointer', fontWeight: devMenuPm === pm ? 600 : 400, color: devMenuPm === pm ? accentColor : themeTokens.textMuted, borderBottom: `1.5px solid ${devMenuPm === pm ? accentColor : 'transparent'}`, paddingBottom: 2, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                              style={{ fontSize: 12, cursor: 'pointer', fontWeight: 400, color: devMenuPm === pm ? accentColor : themeTokens.textMuted, borderBottom: `1.5px solid ${devMenuPm === pm ? accentColor : 'transparent'}`, paddingBottom: 2, display: 'inline-flex', alignItems: 'center', gap: 4 }}
                             >
                               {pm}
                               {pm === devOptions.pm && <span style={{ width: 4, height: 4, borderRadius: '50%', background: '#3fb950' }} />}
@@ -9310,6 +9609,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         {devOptions.scripts.slice(0, 14).map((sc) => (
                           <div
                             key={sc}
+                            className="df-row-interactive"
                             onClick={() => startProject(scriptCommand(devMenuPm, sc, devForce))}
                             title={scriptCommand(devMenuPm, sc, devForce)}
                             style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 10px', borderRadius: 7, cursor: 'pointer', fontSize: 12.5, color: themeTokens.textPrimary }}
@@ -9339,6 +9639,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         {devOptions.others.map((o) => (
                           <div
                             key={o.command}
+                            className="df-row-interactive"
                             onClick={() => startProject(o.command)}
                             title={o.command}
                             style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 10px', borderRadius: 7, cursor: 'pointer', fontSize: 12.5, color: themeTokens.textPrimary }}
@@ -9397,13 +9698,14 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               key={srv.pid + ':' + srv.port}
               onMouseEnter={() => setHoveredServerKey(srv.pid + ':' + srv.port)}
               onMouseLeave={() => setHoveredServerKey(null)}
-              style={{ position: 'relative', display: 'flex', alignItems: 'center', borderRadius: 6, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)', flexShrink: 0, WebkitAppRegion: 'no-drag' as any }}
+              style={{ position: 'relative', display: 'flex', alignItems: 'center', height: 28, boxSizing: 'border-box', borderRadius: 6, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)', flexShrink: 0, WebkitAppRegion: 'no-drag' as any }}
             >
               <button
                 type="button"
+                className="df-pressable"
                 onClick={() => window.electronAPI?.shell?.openExternal?.(srv.url)}
                 title={`Abrir ${srv.url} no navegador${srv.serviceName ? ` (${srv.serviceName})` : ''}`}
-                style={{ display: 'flex', alignItems: 'center', padding: '6px 5px 6px 7px', border: 'none', background: 'transparent', cursor: 'pointer', color: '#3fb950' }}
+                style={{ display: 'flex', alignItems: 'center', padding: '0 5px 0 7px', border: 'none', background: 'transparent', cursor: 'pointer', color: '#3fb950' }}
                 onMouseEnter={(e) => (e.currentTarget.style.color = accentColor)}
                 onMouseLeave={(e) => (e.currentTarget.style.color = '#3fb950')}
               >
@@ -9411,9 +9713,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               </button>
               {hoveredServerKey === srv.pid + ':' + srv.port && (
                 <div
+                  className="df-popover"
                   style={{
                     position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 100000, padding: '5px 9px', borderRadius: 6,
-                    background: themeTokens.bgCard, border: `1px solid ${themeTokens.border}`, boxShadow: '0 6px 20px rgba(0,0,0,0.45)',
+                    background: themeTokens.bgCardSecondary, border: 'none', boxShadow: 'none',
                     color: themeTokens.textPrimary, fontSize: 11.5, whiteSpace: 'nowrap', pointerEvents: 'none',
                   }}
                 >
@@ -9425,7 +9728,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   type="button"
                   onClick={openDevTerminal}
                   title="Ver a saída no terminal"
-                  style={{ display: 'flex', alignItems: 'center', padding: '6px 3px', border: 'none', background: 'transparent', cursor: 'pointer', color: themeTokens.textMuted }}
+                  style={{ display: 'flex', alignItems: 'center', padding: '0 3px', border: 'none', background: 'transparent', cursor: 'pointer', color: themeTokens.textMuted }}
                   onMouseEnter={(e) => (e.currentTarget.style.color = accentColor)}
                   onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textMuted)}
                 >
@@ -9441,7 +9744,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   setTimeout(() => setToastMessage(null), 2500);
                 }}
                 title={`Encerrar o servidor da porta ${srv.port}`}
-                style={{ display: 'flex', alignItems: 'center', padding: '6px 7px 6px 3px', border: 'none', background: 'transparent', cursor: 'pointer', color: themeTokens.textMuted }}
+                style={{ display: 'flex', alignItems: 'center', padding: '0 7px 0 3px', border: 'none', background: 'transparent', cursor: 'pointer', color: themeTokens.textMuted }}
                 onMouseEnter={(e) => (e.currentTarget.style.color = '#ef4444')}
                 onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textMuted)}
               >
@@ -9452,7 +9755,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
         </div>
 
         {/* Right: Layout Icons, Dividers, Profile */}
-        <div style={{ justifyContent: 'center', alignItems: 'center', gap: 10, display: 'flex', WebkitAppRegion: 'no-drag' as any, flexShrink: 0 }}>
+        <div className="df-header-surface" style={{ justifyContent: 'center', alignItems: 'center', gap: 10, display: 'flex', WebkitAppRegion: 'no-drag' as any, flexShrink: 0 }}>
           {activeTab === 'ide' && (
             <>
               {/* Layout Controls: Customize Layout + 3 Panel Toggles */}
@@ -9460,6 +9763,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 <div style={{ justifyContent: 'flex-start', alignItems: 'center', gap: 6, display: 'flex', WebkitAppRegion: 'no-drag' as any }}>
                   {/* 1. Customize Layout Button */}
                   <div
+                    className="df-pressable"
                     onClick={() => setIsCustomizeLayoutOpen((prev) => !prev)}
                     style={{
                       width: 26,
@@ -9471,7 +9775,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       color: isCustomizeLayoutOpen ? accentColor : themeTokens.textSecondary,
                       background: isCustomizeLayoutOpen ? hexToRgba(accentColor, 0.12) : 'transparent',
                       cursor: 'pointer',
-                      transition: 'all 0.15s ease',
+                      transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                       WebkitAppRegion: 'no-drag' as any,
                     }}
                     onMouseEnter={(e) => {
@@ -9489,6 +9793,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                   {/* 2. Primary Sidebar (Explorer) */}
                   <div
+                    className="df-pressable"
                     onClick={() => setShowExplorer((prev) => !prev)}
                     style={{
                       width: 26,
@@ -9500,7 +9805,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       color: showExplorer ? accentColor : themeTokens.textSecondary,
                       background: showExplorer ? hexToRgba(accentColor, 0.12) : 'transparent',
                       cursor: 'pointer',
-                      transition: 'all 0.15s ease',
+                      transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                       WebkitAppRegion: 'no-drag' as any,
                     }}
                     onMouseEnter={(e) => {
@@ -9518,6 +9823,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                   {/* 3. Bottom Panel (Terminal) */}
                   <div
+                    className="df-pressable"
                     onClick={() => setIsTerminalCollapsed((prev) => !prev)}
                     style={{
                       width: 26,
@@ -9529,7 +9835,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       color: !isTerminalCollapsed ? accentColor : themeTokens.textSecondary,
                       background: !isTerminalCollapsed ? hexToRgba(accentColor, 0.12) : 'transparent',
                       cursor: 'pointer',
-                      transition: 'all 0.15s ease',
+                      transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                       WebkitAppRegion: 'no-drag' as any,
                     }}
                     onMouseEnter={(e) => {
@@ -9547,6 +9853,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                   {/* 4. Secondary Sidebar (AI Assistant Panel) */}
                   <div
+                    className="df-pressable"
                     onClick={() => setShowAiPanel((prev) => !prev)}
                     style={{
                       width: 26,
@@ -9558,7 +9865,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       color: showAiPanel ? accentColor : themeTokens.textSecondary,
                       background: showAiPanel ? hexToRgba(accentColor, 0.12) : 'transparent',
                       cursor: 'pointer',
-                      transition: 'all 0.15s ease',
+                      transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                       WebkitAppRegion: 'no-drag' as any,
                     }}
                     onMouseEnter={(e) => {
@@ -9612,6 +9919,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
               {/* Search file by name */}
               <div
+                className="df-pressable"
                 onClick={() => {
                   setIsQuickOpenOpen((prev) => !prev);
                   setQuickOpenQuery('');
@@ -9626,7 +9934,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   color: isQuickOpenOpen ? accentColor : themeTokens.textSecondary,
                   cursor: 'pointer',
                   borderRadius: 4,
-                  transition: 'all 0.15s ease',
+                  transition: 'color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.color = themeTokens.textPrimary)}
                 onMouseLeave={(e) => (e.currentTarget.style.color = isQuickOpenOpen ? accentColor : themeTokens.textSecondary)}
@@ -9750,9 +10058,20 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     {renderAiIcon(pid, 17, undefined, !!aiUpdatesAvailable[pid]?.hasUpdate)}
                   </div>
 
+                  {/* Claude: barra no fim do botão com os pontos diários ("Hoje") ainda disponíveis; esvazia conforme o uso */}
+                  {pid === 'claude' && isSelected && claudeDaily && (() => {
+                    const left = claudeDaily.budget > 0 ? Math.max(0, Math.min(100, Math.round((claudeDaily.remaining / claudeDaily.budget) * 100))) : 0;
+                    return (
+                      <div title={`Hoje: ${claudeDaily.remaining.toFixed(1)} pts disponíveis`} style={{ position: 'absolute', left: 6, right: 6, bottom: 1, height: 2, borderRadius: 1, background: isEffectiveDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)', overflow: 'hidden', pointerEvents: 'none' }}>
+                        <div style={{ width: `${left}%`, height: '100%', borderRadius: 1, background: claudeDaily.exceeded || left === 0 ? '#ef4444' : left <= 15 ? '#f97316' : accentColor, transition: 'width 400ms var(--ease-out), background-color 200ms ease' }} />
+                      </div>
+                    );
+                  })()}
+
                   {/* Header Quota Tooltip Popup */}
                   {headerQuotaTooltipOpen && quotaTooltipProvider === pid && (
                     <div
+                      className="df-popover df-popover-right"
                       ref={clampPopupToViewport}
                       onClick={(e) => e.stopPropagation()}
                       onMouseEnter={cancelHeaderQuotaClose}
@@ -9779,7 +10098,6 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         maxWidth: 340,
                         boxSizing: 'border-box',
                         pointerEvents: 'auto',
-                        transition: 'all 0.15s ease',
                       }}
                     >
                       {/* Transparent Hover Bridge connecting trigger to popup */}
@@ -9887,6 +10205,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             {/* Header AI Selector Button & Dropdown */}
             <div data-tour="header-ai-selector" style={{ position: 'relative' }} ref={headerAiMenuRef}>
             <div
+              className="df-pressable"
               onClick={() => {
                 setIsHeaderAiMenuOpen((prev) => {
                   const next = !prev;
@@ -9903,7 +10222,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 justifyContent: 'center',
                 cursor: 'pointer',
                 borderRadius: 4,
-                transition: 'all 0.15s ease',
+                transition: 'background-color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                 background: isHeaderAiMenuOpen ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)') : 'transparent',
               }}
               onMouseEnter={(e) => {
@@ -9922,7 +10241,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               }}
               title="Escolher IA e modelo · fixe com o alfinete para acompanhar o uso"
             >
-              <ChevronDown size={14} color={themeTokens.textSecondary} style={{ transform: isHeaderAiMenuOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }} />
+              <ChevronDown size={14} className="df-chevron" color={themeTokens.textSecondary} style={{ transform: isHeaderAiMenuOpen ? 'rotate(180deg)' : 'none' }} />
             </div>
 
             {/* Header AI Dropdown Menu */}
@@ -9950,7 +10269,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   }}
                 />
                 <div
-                  className="df-dropdown-menu"
+                  className="df-dropdown-menu df-popover-right"
                   ref={clampPopupToViewport}
                 style={{
                   position: 'absolute',
@@ -10074,11 +10393,6 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           {renderAiIcon(p.id, 16, undefined, !!aiUpdatesAvailable[p.id]?.hasUpdate)}
                         </div>
                         <span style={{ color: isSelected ? accentColor : themeTokens.textPrimary }}>{p.name}</span>
-                        {isSelected && currentModelName && (
-                          <span style={{ fontSize: 11, color: themeTokens.textSecondary, opacity: 0.75, maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            • {currentModelName}
-                          </span>
-                        )}
                       </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
@@ -10099,7 +10413,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   background: accentColor,
                                   border: 'none',
                                   boxShadow: 'none',
-                                  color: '#ffffff',
+                                  color: getContrastTextColor(accentColor),
                                   display: 'flex',
                                   alignItems: 'center',
                                   gap: 4,
@@ -10143,7 +10457,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               borderRadius: 4,
                               background: accentColor,
                               border: 'none',
-                              color: '#fff',
+                              color: getContrastTextColor(accentColor),
                               display: 'flex',
                               alignItems: 'center',
                               gap: 4,
@@ -10192,332 +10506,26 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   const currentLabel = activeModels[targetProvider.id]?.currentModel;
 
                   if (targetProvider.id === 'antigravity') {
-                    // Agrupa os modelos do Antigravity por modelo base (ex: Gemini 3.8 Flash, Gemini 3.7 Flash, etc.)
-                    const groups: {
-                      baseName: string;
-                      badge?: string;
-                      versions: {
-                        id: string;
-                        versionLabel: string;
-                        rawLabel: string;
-                        tag?: string;
-                        originalItem: { id: string; label: string; tag?: string };
-                      }[];
-                    }[] = [];
-
-                    for (const m of modelList) {
-                      let versionLabel = 'Padrão';
-                      let baseName = m.label;
-
-                      if (m.id.endsWith('-high') || m.label.toLowerCase().includes('(high)')) {
-                        versionLabel = 'High';
-                        baseName = m.label.replace(/\s*\(high\)/i, '').trim();
-                      } else if (m.id.endsWith('-medium') || m.label.toLowerCase().includes('(medium)')) {
-                        versionLabel = 'Medium';
-                        baseName = m.label.replace(/\s*\(medium\)/i, '').trim();
-                      } else if (m.id.endsWith('-low') || m.label.toLowerCase().includes('(low)')) {
-                        versionLabel = 'Low';
-                        baseName = m.label.replace(/\s*\(low\)/i, '').trim();
-                      } else if (m.id.includes('thinking') || m.label.toLowerCase().includes('(thinking)')) {
-                        versionLabel = 'Thinking';
-                        baseName = m.label.replace(/\s*\(thinking\)/i, '').trim();
-                      }
-
-                      let existing = groups.find((g) => g.baseName.toLowerCase() === baseName.toLowerCase());
-                      if (!existing) {
-                        existing = {
-                          baseName,
-                          badge: baseName.toLowerCase().includes('flash') ? 'Fast' : undefined,
-                          versions: [],
-                        };
-                        groups.push(existing);
-                      }
-
-                      existing.versions.push({
-                        id: m.id,
-                        versionLabel,
-                        rawLabel: m.label,
-                        tag: m.tag,
-                        originalItem: m,
-                      });
-                    }
-
-                    // Ordena versões: High -> Medium -> Low -> Thinking
-                    const versionOrder: Record<string, number> = { High: 1, Medium: 2, Low: 3, Thinking: 4 };
-                    for (const g of groups) {
-                      g.versions.sort((a, b) => (versionOrder[a.versionLabel] || 99) - (versionOrder[b.versionLabel] || 99));
-                    }
-
-                    const activeVersionGroup = groups.find((g) => g.baseName === headerAiVersionMenuModel);
-
                     return (
-                      <div
-                        style={{
-                          position: 'absolute',
-                          right: 'calc(100% + 4px)',
-                          top: 0,
-                          zIndex: 1000000,
-                        }}
-                        onMouseLeave={() => setHeaderAiVersionMenuModel(null)}
-                      >
-                        {/* 3º Popup: Mostra APENAS as versões (High, Medium, Low) do modelo selecionado pela seta */}
-                        {activeVersionGroup && activeVersionGroup.versions.length > 0 && (
-                          <div
-                            className="df-dropdown-menu"
-                            style={{
-                              position: 'absolute',
-                              right: 'calc(100% + 4px)',
-                              top: Math.min(headerAiVersionMenuTop, 220),
-                              background: fieldTokens.dropdownMenuBg,
-                              borderRadius: 10,
-                              border: fieldTokens.dropdownBorder,
-                              boxShadow: 'none',
-                              padding: 6,
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: 2,
-                              zIndex: 1000002,
-                              minWidth: 110,
-                              userSelect: 'none',
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {/* Ponte invisível que conecta o popup de versões ao submenu de modelos */}
-                            <div
-                              style={{
-                                position: 'absolute',
-                                top: -10,
-                                bottom: -10,
-                                right: -14,
-                                width: 20,
-                                background: 'transparent',
-                                pointerEvents: 'auto',
-                              }}
-                            />
-                            {activeVersionGroup.versions.map((v) => {
-                              const isCurrent =
-                                targetProvider.id === selectedAiProvider &&
-                                (currentId === v.id ||
-                                  currentLabel === v.rawLabel ||
-                                  selectedModel === v.id ||
-                                  selectedModel === v.rawLabel);
-
-                              return (
-                                <div
-                                  key={v.id}
-                                  onClick={() => {
-                                    handleSelectModel(v.originalItem, targetProvider.id);
-                                    setIsHeaderAiMenuOpen(false);
-                                    setHeaderAiSubmenuProvider(null);
-                                    setHeaderAiVersionMenuModel(null);
-                                  }}
-                                  style={{
-                                    padding: '6px 12px',
-                                    borderRadius: 6,
-                                    cursor: 'pointer',
-                                    background: isCurrent ? hexToRgba(accentColor, 0.16) : 'transparent',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    gap: 12,
-                                    transition: 'background 0.12s ease',
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                  onMouseEnter={(e) => {
-                                    if (!isCurrent) {
-                                      e.currentTarget.style.background = isEffectiveDark
-                                        ? 'rgba(255, 255, 255, 0.06)'
-                                        : 'rgba(0, 0, 0, 0.05)';
-                                    }
-                                  }}
-                                  onMouseLeave={(e) => {
-                                    if (!isCurrent) e.currentTarget.style.background = 'transparent';
-                                  }}
-                                >
-                                  <span
-                                    style={{
-                                      fontSize: 12,
-                                      fontFamily: 'Poppins, sans-serif',
-                                      fontWeight: isCurrent ? 600 : 400,
-                                      color: isCurrent ? accentColor : themeTokens.textPrimary,
-                                    }}
-                                  >
-                                    {v.versionLabel}
-                                  </span>
-                                  {isCurrent && <Check size={12} color={accentColor} style={{ flexShrink: 0 }} />}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        {/* 2º Popup: Lista de Modelos Antigravity com Seta e Versão */}
-                        <div
-                          style={{
-                            background: fieldTokens.dropdownMenuBg,
-                            borderRadius: 10,
-                            border: fieldTokens.dropdownBorder,
-                            boxShadow: 'none',
-                            padding: 6,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 2,
-                            minWidth: 265,
-                            maxWidth: 320,
-                            maxHeight: 'min(420px, calc(100vh - 60px))',
-                            overflowY: 'auto',
-                            userSelect: 'none',
+                      <div style={{ position: 'absolute', right: 'calc(100% + 4px)', top: 0, zIndex: 1000000 }}>
+                        <GroupedModelMenu
+                          providerName={targetProvider.name}
+                          models={modelList}
+                          isCurrent={(m) => targetProvider.id === selectedAiProvider && (currentId === m.id || currentLabel === m.label || selectedModel === m.id || selectedModel === m.label)}
+                          onSelect={(m) => {
+                            handleSelectModel(m, targetProvider.id);
+                            setIsHeaderAiMenuOpen(false);
+                            setHeaderAiSubmenuProvider(null);
                           }}
-                          className="no-scrollbar"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {/* Ponte invisível que conecta o submenu de modelos ao menu pai */}
-                          <div
-                            style={{
-                              position: 'absolute',
-                              top: -10,
-                              bottom: -10,
-                              right: -14,
-                              width: 20,
-                              background: 'transparent',
-                              pointerEvents: 'auto',
-                            }}
-                          />
-                          <div
-                            style={{
-                              padding: '3px 8px 5px',
-                              fontSize: 10,
-                              fontWeight: 600,
-                              color: themeTokens.textSecondary,
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.5px',
-                              borderBottom: `1px solid ${themeTokens.border}`,
-                              marginBottom: 3,
-                            }}
-                          >
-                            Modelos {targetProvider.name}
-                          </div>
-                          {groups.map((group) => {
-                            const isGroupCurrent =
-                              targetProvider.id === selectedAiProvider &&
-                              group.versions.some(
-                                (v) =>
-                                  currentId === v.id ||
-                                  currentLabel === v.rawLabel ||
-                                  selectedModel === v.id ||
-                                  selectedModel === v.rawLabel
-                              );
-
-                            const activeVersionInGroup = group.versions.find(
-                              (v) =>
-                                currentId === v.id ||
-                                currentLabel === v.rawLabel ||
-                                selectedModel === v.id ||
-                                selectedModel === v.rawLabel
-                            );
-
-                            const displayedVersion =
-                              activeVersionInGroup?.versionLabel ||
-                              (group.baseName.includes('3.1 Pro')
-                                ? 'Low'
-                                : group.versions.find((v) => v.versionLabel === 'Medium')?.versionLabel ||
-                                  group.versions[0]?.versionLabel);
-
-                            const isVersionMenuOpen = headerAiVersionMenuModel === group.baseName;
-
-                            return (
-                              <div
-                                key={group.baseName}
-                                onMouseEnter={(e) => {
-                                  setHeaderAiVersionMenuModel(group.baseName);
-                                  const rect = e.currentTarget.getBoundingClientRect();
-                                  const parent = e.currentTarget.parentElement?.getBoundingClientRect();
-                                  if (parent) {
-                                    setHeaderAiVersionMenuTop(Math.max(0, rect.top - parent.top));
-                                  }
-                                }}
-                                onClick={() => {
-                                  setHeaderAiVersionMenuModel(group.baseName);
-                                }}
-                                style={{
-                                  padding: '7px 10px',
-                                  borderRadius: 6,
-                                  cursor: 'pointer',
-                                  background: isGroupCurrent
-                                    ? hexToRgba(accentColor, 0.16)
-                                    : isVersionMenuOpen
-                                    ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)')
-                                    : 'transparent',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'space-between',
-                                  gap: 12,
-                                  transition: 'background 0.12s ease',
-                                  whiteSpace: 'nowrap',
-                                }}
-                                onMouseLeave={(e) => {
-                                  if (!isGroupCurrent && !isVersionMenuOpen) {
-                                    e.currentTarget.style.background = 'transparent';
-                                  }
-                                }}
-                              >
-                                <span
-                                  style={{
-                                    fontSize: 12,
-                                    fontFamily: 'Poppins, sans-serif',
-                                    fontWeight: isGroupCurrent ? 600 : 400,
-                                    color: isGroupCurrent ? accentColor : themeTokens.textPrimary,
-                                  }}
-                                >
-                                  {group.baseName}
-                                </span>
-
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                                  <span
-                                    style={{
-                                      fontSize: 11,
-                                      fontFamily: 'Poppins, sans-serif',
-                                      color: isGroupCurrent ? accentColor : themeTokens.textSecondary,
-                                      opacity: isGroupCurrent ? 0.9 : 0.7,
-                                    }}
-                                  >
-                                    {displayedVersion}
-                                  </span>
-
-                                  {group.badge && (
-                                    <div
-                                      style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: 3,
-                                        padding: '1px 5px',
-                                        borderRadius: 8,
-                                        background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
-                                        color: themeTokens.textSecondary,
-                                        fontSize: 9.5,
-                                        fontFamily: 'Poppins, sans-serif',
-                                      }}
-                                      title="Modelo otimizado para baixa latência"
-                                    >
-                                      <span>{group.badge}</span>
-                                      <Info size={9.5} style={{ opacity: 0.65 }} />
-                                    </div>
-                                  )}
-
-                                  <ChevronRight
-                                    size={13}
-                                    color={isVersionMenuOpen ? themeTokens.textPrimary : themeTokens.textSecondary}
-                                    style={{
-                                      opacity: 0.7,
-                                      transform: isVersionMenuOpen ? 'translateX(2px)' : 'none',
-                                      transition: 'transform 0.15s ease',
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
+                          accentColor={accentColor}
+                          isDark={isEffectiveDark}
+                          textPrimary={themeTokens.textPrimary}
+                          textSecondary={themeTokens.textSecondary}
+                          border={themeTokens.border}
+                          menuBg={fieldTokens.dropdownMenuBg}
+                          menuBorder={fieldTokens.dropdownBorder}
+                          hexToRgba={hexToRgba}
+                        />
                       </div>
                     );
                   }
@@ -10618,6 +10626,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
         {/* Settings Gear Button & Dropdown Menu */}
           <div data-tour="header-settings-btn" style={{ position: 'relative' }} ref={settingsMenuRef}>
               <div
+                className="df-pressable"
                 onClick={() => setIsSettingsMenuOpen((prev) => !prev)}
                 style={{
                   width: 24,
@@ -10628,7 +10637,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   color: isSettingsMenuOpen ? accentColor : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
                   cursor: 'pointer',
                   borderRadius: 4,
-                  transition: 'all 0.15s ease',
+                  transition: 'color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.color = isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)}
                 onMouseLeave={(e) => (e.currentTarget.style.color = isSettingsMenuOpen ? accentColor : (isEffectiveDark ? '#858585' : themeTokens.textSecondary))}
@@ -10658,7 +10667,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     }}
                   />
                   <div
-                    className="df-dropdown-menu"
+                    className="df-dropdown-menu df-popover-right"
                     ref={clampPopupToViewport}
                   style={{
                     position: 'absolute',
@@ -10673,7 +10682,6 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     padding: '4px 0',
                     display: 'flex',
                     flexDirection: 'column',
-                    animation: 'fadeIn 0.12s ease-out',
                     userSelect: 'none',
                   }}
                 >
@@ -10795,7 +10803,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           borderRadius: '50%',
                           background: '#ffffff',
                           transition: 'left 0.15s ease',
-                          boxShadow: '0 1px 2px rgba(0, 0, 0, 0.4)',
+                          boxShadow: 'none',
                         }}
                       />
                     </div>
@@ -11158,15 +11166,16 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
           {/* Notificações (abre a sidebar com a lista e o histórico) */}
           <div
+            className="df-pressable"
             onClick={() => setIsNotifOpen((v) => !v)}
-            style={{ position: 'relative', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: isNotifOpen ? accentColor : (isEffectiveDark ? '#858585' : themeTokens.textSecondary), cursor: 'pointer', borderRadius: 4, transition: 'all 0.15s ease' }}
+            style={{ position: 'relative', width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', color: isNotifOpen ? accentColor : (isEffectiveDark ? '#858585' : themeTokens.textSecondary), cursor: 'pointer', borderRadius: 4, transition: 'color 150ms var(--ease-out), transform 140ms var(--ease-out)' }}
             onMouseEnter={(e) => (e.currentTarget.style.color = isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)}
             onMouseLeave={(e) => (e.currentTarget.style.color = isNotifOpen ? accentColor : (isEffectiveDark ? '#858585' : themeTokens.textSecondary))}
             title={notifCenter.unread > 0 ? `Notificações (${notifCenter.unread} novas)` : 'Notificações'}
           >
             <Bell size={18} />
             {notifCenter.unread > 0 && (
-              <span style={{ position: 'absolute', top: -5, right: -6, minWidth: 15, height: 15, borderRadius: 8, background: accentColor, color: accentTextColor, fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', boxSizing: 'border-box' }}>
+              <span style={{ position: 'absolute', top: -5, right: -6, minWidth: 15, height: 15, borderRadius: 8, background: accentColor, color: accentTextColor, fontSize: 9, fontWeight: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', boxSizing: 'border-box' }}>
                 {notifCenter.unread > 99 ? '99+' : notifCenter.unread}
               </span>
             )}
@@ -11178,6 +11187,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           {/* Profile: GitHub name / nick + avatar */}
           <div style={{ position: 'relative' }}>
           <div
+            className="df-pressable"
             onClick={() => setIsProfileMenuOpen((v) => !v)}
             style={{ justifyContent: 'flex-start', alignItems: 'center', gap: 12, display: 'flex', whiteSpace: 'nowrap', cursor: 'pointer' }}
           >
@@ -11185,7 +11195,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               <div style={{ color: isEffectiveDark ? '#ffffff' : themeTokens.textPrimary, fontSize: 13, fontFamily: 'Poppins', fontWeight: '400', lineHeight: '14px', whiteSpace: 'nowrap' }}>
                 {githubUser?.name || githubUser?.login || 'Usuário'}
               </div>
-              <div style={{ textAlign: 'right', color: isEffectiveDark ? '#727272' : themeTokens.textSecondary, fontSize: 11, fontFamily: 'Poppins', fontWeight: '500', lineHeight: '15px', whiteSpace: 'nowrap' }}>
+              <div style={{ textAlign: 'right', color: isEffectiveDark ? '#727272' : themeTokens.textSecondary, fontSize: 11, fontFamily: 'Poppins', fontWeight: '400', lineHeight: '15px', whiteSpace: 'nowrap' }}>
                 {githubUser?.login ? `@${githubUser.login}` : ''}
               </div>
             </div>
@@ -11228,9 +11238,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           {isProfileMenuOpen && (
             <>
               <div onClick={() => setIsProfileMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 99998 }} />
-              <div className="df-dropdown-menu" style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, minWidth: 170, padding: 6, borderRadius: 10, background: fieldTokens.dropdownMenuBg, border: fieldTokens.dropdownBorder, boxShadow: 'none', zIndex: 99999, fontFamily: 'Poppins, sans-serif' }}>
+              <div className="df-dropdown-menu df-popover-right" style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, minWidth: 170, padding: 6, borderRadius: 10, background: fieldTokens.dropdownMenuBg, border: fieldTokens.dropdownBorder, boxShadow: 'none', zIndex: 99999, fontFamily: 'Poppins, sans-serif' }}>
                 <button
                   type="button"
+                  className="df-row-interactive"
                   onClick={() => {
                     setIsProfileMenuOpen(false);
                     if (githubUser) {
@@ -11251,6 +11262,12 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             </>
           )}
           </div>
+          <AppUpdateButton
+            isDark={isEffectiveDark}
+            accentColor={accentColor}
+            accentTextColor={accentTextColor}
+            onNotify={(title, body) => notifCenter.add({ kind: 'info', title, body, read: false })}
+          />
         </div>
       </div>
 
@@ -11259,6 +11276,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
       {/* ============================================================ */}
       {/* 2.1 IDE Container (Mantido montado para preservar editores, terminais e chat) */}
       <div
+        className={activeTab === 'ide' ? 'df-ide-surface df-opacity-enter' : 'df-ide-surface'}
         style={{
           alignSelf: 'stretch',
           flex: '1 1 0',
@@ -11296,6 +11314,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               >
                 {/* 1. Files / Explorer */}
                 <div
+                  className="df-pressable"
                   style={{
                     width: 38,
                     height: 38,
@@ -11311,7 +11330,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     color: (showExplorer && activeActivityTab === 'explorer')
                       ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
                       : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
-                    transition: 'all 0.15s ease',
+                    transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                   }}
                   title="Explorador de Arquivos (⌘⇧E)"
                   onClick={() => {
@@ -11335,11 +11354,15 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     }
                   }}
                 >
+                  {showExplorer && activeActivityTab === 'explorer' && (
+                    <span className="df-activity-indicator" style={{ background: accentColor }} />
+                  )}
                   <CodiconFiles size={22} />
                 </div>
 
                 {/* 2. Global Search & Replace */}
                 <div
+                  className="df-pressable"
                   style={{
                     width: 38,
                     height: 38,
@@ -11355,7 +11378,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     color: (showExplorer && activeActivityTab === 'search')
                       ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
                       : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
-                    transition: 'all 0.15s ease',
+                    transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                   }}
                   title="Buscar em Arquivos (⌘⇧F)"
                   onClick={() => {
@@ -11379,11 +11402,15 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     }
                   }}
                 >
+                  {showExplorer && activeActivityTab === 'search' && (
+                    <span className="df-activity-indicator" style={{ background: accentColor }} />
+                  )}
                   <CodiconSearch size={20} />
                 </div>
 
                 {/* 3. Source Control / Git */}
                 <div
+                  className="df-pressable"
                   style={{
                     width: 38,
                     height: 38,
@@ -11399,7 +11426,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     color: (showExplorer && activeActivityTab === 'git')
                       ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
                       : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
-                    transition: 'all 0.15s ease',
+                    transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                   }}
                   title="Controle de Versão / Git (⌃⇧G)"
                   onClick={() => {
@@ -11423,6 +11450,9 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     }
                   }}
                 >
+                  {showExplorer && activeActivityTab === 'git' && (
+                    <span className="df-activity-indicator" style={{ background: accentColor }} />
+                  )}
                   <CodiconSourceControl size={22} />
                   {gitModifiedCount > 0 && (
                     <span
@@ -11437,12 +11467,12 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         background: accentColor,
                         color: accentTextColor,
                         fontSize: 9.5,
-                        fontWeight: 700,
+                        fontWeight: 400,
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         lineHeight: 1,
-                        boxShadow: '0 1px 3px rgba(0,0,0,0.5)',
+                        boxShadow: 'none',
                         pointerEvents: 'none',
                       }}
                     >
@@ -11451,8 +11481,96 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   )}
                 </div>
 
+                {/* Pull requests e reviews pendentes do repositório */}
+                <div
+                  className="df-pressable"
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 6,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    position: 'relative',
+                    cursor: 'pointer',
+                    background: showExplorer && activeActivityTab === 'reviews' ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)') : 'transparent',
+                    color: showExplorer && activeActivityTab === 'reviews' ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary) : isEffectiveDark ? '#858585' : themeTokens.textSecondary,
+                    transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
+                  }}
+                  title="Pull requests e reviews"
+                  onClick={() => {
+                    if (showExplorer && activeActivityTab === 'reviews') setShowExplorer(false);
+                    else {
+                      setActiveActivityTab('reviews');
+                      setShowExplorer(true);
+                    }
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'reviews')) {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+                      e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : themeTokens.textPrimary;
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'reviews')) {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = isEffectiveDark ? '#858585' : themeTokens.textSecondary;
+                    }
+                  }}
+                >
+                  {showExplorer && activeActivityTab === 'reviews' && <span className="df-activity-indicator" style={{ background: accentColor }} />}
+                  <GitPullRequestArrow size={21} />
+                  {openPrCount > 0 && (
+                    <span style={{ position: 'absolute', bottom: 4, right: 4, minWidth: 15, height: 15, padding: '0 3.5px', borderRadius: 8, background: accentColor, color: accentTextColor, fontSize: 9.5, fontWeight: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, pointerEvents: 'none' }}>
+                      {openPrCount > 99 ? '99+' : openPrCount}
+                    </span>
+                  )}
+                </div>
+
+                {/* GitHub Actions: workflows e execuções do repositório */}
+                <div
+                  className="df-pressable"
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 6,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    position: 'relative',
+                    cursor: 'pointer',
+                    background: showExplorer && activeActivityTab === 'actions' ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)') : 'transparent',
+                    color: showExplorer && activeActivityTab === 'actions' ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary) : isEffectiveDark ? '#858585' : themeTokens.textSecondary,
+                    transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
+                  }}
+                  title="Actions"
+                  onClick={() => {
+                    if (showExplorer && activeActivityTab === 'actions') setShowExplorer(false);
+                    else {
+                      setActiveActivityTab('actions');
+                      setShowExplorer(true);
+                    }
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'actions')) {
+                      e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+                      e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : themeTokens.textPrimary;
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!(showExplorer && activeActivityTab === 'actions')) {
+                      e.currentTarget.style.background = 'transparent';
+                      e.currentTarget.style.color = isEffectiveDark ? '#858585' : themeTokens.textSecondary;
+                    }
+                  }}
+                >
+                  {showExplorer && activeActivityTab === 'actions' && <span className="df-activity-indicator" style={{ background: accentColor }} />}
+                  <PlayCircle size={21} />
+                </div>
+
                 {/* 4. Run and Debug */}
                 <div
+                  className="df-pressable"
                   style={{
                     width: 38,
                     height: 38,
@@ -11468,7 +11586,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     color: (showExplorer && activeActivityTab === 'debug')
                       ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
                       : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
-                    transition: 'all 0.15s ease',
+                    transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                   }}
                   title="Executar e Depurar (⌘⇧D)"
                   onClick={() => {
@@ -11492,11 +11610,15 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     }
                   }}
                 >
+                  {showExplorer && activeActivityTab === 'debug' && (
+                    <span className="df-activity-indicator" style={{ background: accentColor }} />
+                  )}
                   <CodiconDebugAlt size={22} />
                 </div>
 
                 {/* 5. Web Preview & Ports / Remote Explorer */}
                 <div
+                  className="df-pressable"
                   style={{
                     width: 38,
                     height: 38,
@@ -11512,7 +11634,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     color: (showExplorer && activeActivityTab === 'preview')
                       ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
                       : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
-                    transition: 'all 0.15s ease',
+                    transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                   }}
                   title="Web Preview, Portas & Remote Explorer"
                   onClick={() => {
@@ -11536,11 +11658,15 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     }
                   }}
                 >
+                  {showExplorer && activeActivityTab === 'preview' && (
+                    <span className="df-activity-indicator" style={{ background: accentColor }} />
+                  )}
                   <CodiconRemoteExplorer size={22} />
                 </div>
 
                 {/* 7. Testing (VS Code & Antigravity Beaker) */}
                 <div
+                  className="df-pressable"
                   style={{
                     width: 38,
                     height: 38,
@@ -11556,7 +11682,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     color: (showExplorer && activeActivityTab === 'testing')
                       ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
                       : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
-                    transition: 'all 0.15s ease',
+                    transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                   }}
                   title="Testes & Validação (Test Explorer)"
                   onClick={() => {
@@ -11580,12 +11706,16 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     }
                   }}
                 >
+                  {showExplorer && activeActivityTab === 'testing' && (
+                    <span className="df-activity-indicator" style={{ background: accentColor }} />
+                  )}
                   <CodiconBeaker size={20} />
                 </div>
 
                 {/* Design Bridge Activity Bar Button (Telas da aba Design na esquerda da IDE) */}
                 <div
                   id="df-ide-activity-design-btn"
+                  className="df-pressable"
                   style={{
                     width: 38,
                     height: 38,
@@ -11601,7 +11731,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     color: (showExplorer && activeActivityTab === 'design')
                       ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary)
                       : (isEffectiveDark ? '#858585' : themeTokens.textSecondary),
-                    transition: 'all 0.15s ease',
+                    transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                   }}
                   title="Telas do Design"
                   onClick={() => {
@@ -11628,6 +11758,9 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     }
                   }}
                 >
+                  {showExplorer && activeActivityTab === 'design' && (
+                    <span className="df-activity-indicator" style={{ background: accentColor }} />
+                  )}
                   <Layers size={19} />
                   {(designBridgeManifest?.screens?.length ?? 0) > 0 && (
                     <span
@@ -11640,7 +11773,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         padding: '0 3px',
                         borderRadius: 999,
                         background: accentColor,
-                        color: '#ffffff',
+                        color: getContrastTextColor(accentColor),
                         fontSize: 8.5,
                         fontWeight: 400,
                         display: 'inline-flex',
@@ -11656,6 +11789,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                 {/* Settings Gear (Pinned to Bottom) */}
                 <div
+                  className="df-pressable"
                   style={{
                     width: 38,
                     height: 38,
@@ -11667,7 +11801,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     cursor: 'pointer',
                     color: isEffectiveDark ? '#858585' : themeTokens.textSecondary,
                     marginTop: 'auto',
-                    transition: 'all 0.15s ease',
+                    transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                   }}
                   title="Configurações (⌘,)"
                   onClick={() => setIsSettingsModalOpen(true)}
@@ -11692,25 +11826,50 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           {/* ---------------------------------------------------- */}
           {/* Explorer Column (DRAGGABLE RESIZABLE WIDTH)          */}
           {/* ---------------------------------------------------- */}
-          {showExplorer && !isZenMode && (
+          {explorerP.mounted && !isZenMode && (
             <>
               <div
                 data-tour="ide-explorer-panel"
                 style={{
                   alignSelf: 'stretch',
-                  width: explorerWidth,
+                  width: explorerP.shown ? explorerWidth : 0,
+                  opacity: explorerP.shown ? 1 : 0,
                   flexDirection: 'column',
                   justifyContent: 'center',
                   alignItems: 'flex-start',
                   gap: 5,
                   display: 'inline-flex',
                   flexShrink: 0,
-                  transition: isDraggingExplorer ? 'none' : 'width 0.1s ease',
+                  transition: isDraggingExplorer ? 'none' : 'width 0.22s var(--ease-out), opacity 0.18s var(--ease-out)',
                   overflow: 'hidden',
                   order: sidebarPosition === 'right' ? 5 : 2,
                 }}
               >
-                {activeActivityTab !== 'explorer' ? (
+                {activeActivityTab === 'actions' ? (
+                  <ActionsSidebar
+                    isActive={activeTab === 'ide' && showExplorer}
+                    repoFullName={activeHeaderProject?.fullName}
+                    workflowId={actionsWf}
+                    onSelect={(id) => {
+                      setActionsWf(id);
+                      setActionsRun(null);
+                    }}
+                    isEffectiveDark={isEffectiveDark}
+                    accentColor={accentColor}
+                    background={themeTokens.bgCard}
+                  />
+                ) : activeActivityTab === 'reviews' ? (
+                  <PullRequestsList
+                    isActive={activeTab === 'ide' && showExplorer}
+                    repoFullName={activeHeaderProject?.fullName}
+                    selected={reviewTarget}
+                    onSelect={setReviewTarget}
+                    isEffectiveDark={isEffectiveDark}
+                    accentColor={accentColor}
+                    accentContrastText={accentTextColor}
+                    background={themeTokens.bgCard}
+                  />
+                ) : activeActivityTab !== 'explorer' ? (
                   <SidebarPanels
                     previewUrl={previewTabUrl}
                     projects={headerProjectsList}
@@ -11788,13 +11947,14 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   <>
                     {/* Top Explorer Card */}
                     <div
+                  className="df-view-enter"
                   style={{
                     width: '100%',
                     flex: '1 1 0',
                     padding: 10,
                     background: themeTokens.bgCard,
                     borderRadius: 10,
-                    border: '1px solid ' + themeTokens.border,
+                    border: 'none',
                     flexDirection: 'column',
                     justifyContent: 'flex-start',
                     alignItems: 'flex-start',
@@ -11807,7 +11967,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 >
                   {/* Explorer Title + More */}
                   <div style={{ alignSelf: 'stretch', justifyContent: 'space-between', alignItems: 'center', display: 'inline-flex', whiteSpace: 'nowrap' }}>
-                    <div style={{ color: themeTokens.textPrimary, fontSize: 12, fontFamily: 'Poppins', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div style={{ color: themeTokens.textPrimary, fontSize: 12, fontFamily: 'Poppins', fontWeight: 400, display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span>Explorer</span>
                       <span style={{ color: themeTokens.textMuted, fontSize: 11, fontWeight: 400 }}>
                         ({workspacePath.split('/').pop() || 'Workspace'})
@@ -11815,6 +11975,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     </div>
                     <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                       <div
+                        className="df-pressable"
                         onClick={() => setExplorerMenuOpen(!explorerMenuOpen)}
                         title="Opções do Explorador (Abrir pasta/arquivo...)"
                         style={{ color: explorerMenuOpen ? accentColor : themeTokens.textSecondary, cursor: 'pointer', padding: 2, borderRadius: 3, display: 'flex', alignItems: 'center' }}
@@ -11825,7 +11986,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       {/* 3 Dots Popup Menu */}
                       {explorerMenuOpen && (
                         <div
-                          className="df-dropdown-menu"
+                          className="df-dropdown-menu df-popover-right"
                           ref={(el) => {
                             explorerMenuRef.current = el;
                             clampPopupToViewport(el);
@@ -11846,6 +12007,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       }}
                     >
                       <div
+                        className="df-row-interactive"
                         onClick={handleOpenFolderDialog}
                         style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
                         onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
@@ -11855,6 +12017,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         <span>Abrir Pasta...</span>
                       </div>
                       <div
+                        className="df-row-interactive"
                         onClick={handleOpenFileDialog}
                         style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textPrimary }}
                         onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
@@ -11865,6 +12028,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       </div>
                       <div style={{ height: 1, background: themeTokens.border, margin: '4px 0' }} />
                       <div
+                        className="df-row-interactive"
                         onClick={handleCreateNewFile}
                         style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textSecondary }}
                         onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
@@ -11874,6 +12038,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         <span>Novo Arquivo</span>
                       </div>
                       <div
+                        className="df-row-interactive"
                         onClick={handleCreateNewFolder}
                         style={{ padding: '7px 12px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', color: themeTokens.textSecondary }}
                         onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
@@ -11884,6 +12049,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       </div>
                       <div style={{ height: 1, background: themeTokens.border, margin: '4px 0' }} />
                       <div
+                        className="df-row-interactive"
                         onClick={() => {
                           setExplorerMenuOpen(false);
                           loadWorkspaceTree(workspacePath);
@@ -11913,6 +12079,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         return (
                           <div key={item.path} style={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
                             <div
+                              className="df-row-interactive"
                               draggable={true}
                               onDragStart={(e) => {
                                 const dragData = {
@@ -11951,7 +12118,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                 cursor: 'pointer',
                                 whiteSpace: 'nowrap',
                                 userSelect: 'none',
-                                transition: 'background 0.1s ease',
+                                transition: 'background-color 140ms var(--ease-out), transform 140ms var(--ease-out)',
                               }}
                               onMouseEnter={(e) => {
                                 if (!isFileActive && !isCtxTarget) e.currentTarget.style.background = themeTokens.hoverBg;
@@ -11963,7 +12130,12 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               {isDir ? (
                                 <>
                                   <div style={{ width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', color: themeTokens.textSecondary, flexShrink: 0 }}>
-                                    {isExpanded ? <ChevronDown size={13} color={accentColor} /> : <ChevronRight size={13} color={themeTokens.textSecondary} />}
+                                    <ChevronRight
+                                      size={13}
+                                      className="df-chevron"
+                                      color={isExpanded ? accentColor : themeTokens.textSecondary}
+                                      style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                                    />
                                   </div>
                                   <FolderIcon folderName={item.name} isOpen={isExpanded} size={15} />
                                   <span style={{ color: isExpanded ? themeTokens.textPrimary : themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: 400 }}>
@@ -11980,7 +12152,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                       color: isFileActive ? themeTokens.textPrimary : themeTokens.textSecondary,
                                       fontSize: 12,
                                       fontFamily: 'Poppins',
-                                      fontWeight: isFileActive ? 500 : 400,
+                                      fontWeight: 400,
                                     }}
                                   >
                                     {item.name}
@@ -11989,21 +12161,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               )}
                             </div>
 
-                            {isDir && isExpanded && item.children && item.children.length > 0 && (
-                              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-                                <div
-                                  style={{
-                                    position: 'absolute',
-                                    left: depth * 12 + 9,
-                                    top: 0,
-                                    bottom: 0,
-                                    width: 1,
-                                    background: isEffectiveDark ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.09)',
-                                    pointerEvents: 'none',
-                                  }}
-                                />
+                            {isDir && item.children && item.children.length > 0 && (
+                              <TreeCollapse open={isExpanded} depth={depth} accentColor={accentColor}>
                                 {item.children.map((child) => renderTreeItem(child, depth + 1))}
-                              </div>
+                              </TreeCollapse>
                             )}
                           </div>
                         );
@@ -12080,7 +12241,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                   {/* Collapsible Content */}
                   {isOutlineOpen && (
-                    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div className="df-subtle-enter" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
                       {/* Search Filter Input */}
                       {documentSymbols.length > 3 && (
                         <div
@@ -12141,6 +12302,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           filteredSymbols.map((sym, idx) => (
                             <div
                               key={`${sym.name}-${sym.line}-${idx}`}
+                              className="df-row-interactive"
                               onClick={() => handleSelectOutlineSymbol(sym)}
                               style={{
                                 display: 'flex',
@@ -12151,7 +12313,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                 cursor: 'pointer',
                                 fontSize: 11.5,
                                 color: themeTokens.textPrimary,
-                                transition: 'background 0.1s ease',
+                                transition: 'background-color 140ms var(--ease-out), transform 140ms var(--ease-out)',
                               }}
                               onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
                               onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
@@ -12270,20 +12432,21 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                   {/* Collapsible Content */}
                   {isTimelineOpen && (
-                    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div className="df-subtle-enter" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
                       {/* Action Bar */}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '0 2px' }}>
                         <span style={{ fontSize: 10.5, color: themeTokens.textSecondary }}>
                           Histórico local
                         </span>
                         <button
+                          className="df-pressable"
                           onClick={handleTakeTimelineSnapshot}
                           style={{
                             background: 'transparent',
                             border: 'none',
                             color: accentColor,
                             fontSize: 10.5,
-                            fontWeight: 500,
+                            fontWeight: 400,
                             cursor: 'pointer',
                             display: 'flex',
                             alignItems: 'center',
@@ -12316,6 +12479,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         {activeTimelineEntries.map((item) => (
                           <div
                             key={item.id}
+                            className="df-row-interactive"
                             onClick={() => {
                               setToastMessage(`${item.label} (${item.time})`);
                             }}
@@ -12326,7 +12490,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               padding: '5px 6px',
                               borderRadius: 6,
                               cursor: 'pointer',
-                              transition: 'background 0.1s ease',
+                              transition: 'background-color 140ms var(--ease-out), transform 140ms var(--ease-out)',
                             }}
                             onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
                             onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
@@ -12369,7 +12533,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 onMouseDown={startResizeExplorer}
                 onDoubleClick={() => setExplorerWidth(340)}
                 title="Arraste para redimensionar o Explorer (Duplo clique para restaurar)"
-                style={{ order: sidebarPosition === 'right' ? 4 : 3 }}
+                style={{ order: sidebarPosition === 'right' ? 4 : 3, opacity: explorerP.shown ? 1 : 0, pointerEvents: explorerP.shown ? 'auto' : 'none', transition: 'opacity 0.18s var(--ease-out)' }}
               />
             </>
           )}
@@ -12399,7 +12563,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   padding: '4px 5px',
                   background: themeTokens.bgCard,
                   borderRadius: 10,
-                  border: '1px solid ' + themeTokens.border,
+                  border: 'none',
                   justifyContent: 'flex-start',
                   alignItems: 'center',
                   gap: 5,
@@ -12581,7 +12745,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   padding: '4px 8px',
                   background: themeTokens.bgCard,
                   borderRadius: 10,
-                  border: '1px solid ' + themeTokens.border,
+                  border: 'none',
                   justifyContent: 'center',
                   alignItems: 'center',
                   gap: 8,
@@ -12593,6 +12757,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               >
                 {activeFile?.isDirty && (
                   <div
+                    className="df-pressable"
                     onClick={handleSaveActiveFile}
                     title="Salvar Arquivo (Cmd+S)"
                     style={{
@@ -12607,7 +12772,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       cursor: 'pointer',
                       fontSize: 11,
                       color: accentTextColor,
-                      fontWeight: 600,
+                      fontWeight: 400,
                     }}
                   >
                     <Save size={13} color={accentTextColor} />
@@ -12617,6 +12782,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 {/* 0. Markdown Preview (only for .md/.markdown/.mdx files) */}
                 {activeFile && isMarkdownFile(activeFile.name) && (
                   <div
+                    className="df-pressable"
                     onClick={() => setShowMarkdownPreview((prev) => !prev)}
                     style={{
                       width: 26,
@@ -12627,7 +12793,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       cursor: 'pointer',
                       borderRadius: 4,
                       background: showMarkdownPreview ? hexToRgba(accentColor, 0.2) : 'transparent',
-                      transition: 'background 0.15s ease',
+                      transition: 'background 0.15s ease, transform 140ms var(--ease-out)',
                     }}
                     title={showMarkdownPreview ? 'Fechar Pré-visualização' : 'Abrir Pré-visualização ao Lado'}
                   >
@@ -12637,6 +12803,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                 {/* 1. Split Editor Right / Vertical */}
                 <div
+                  className="df-pressable"
                   onClick={() => {
                     if (isEditorSplit && editorSplitOrientation === 'vertical') {
                       setIsEditorSplit(false);
@@ -12658,7 +12825,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     cursor: 'pointer',
                     borderRadius: 4,
                     background: isEditorSplit && editorSplitOrientation === 'vertical' ? hexToRgba(accentColor, 0.2) : 'transparent',
-                    transition: 'background 0.15s ease',
+                    transition: 'background 0.15s ease, transform 140ms var(--ease-out)',
                   }}
                   title={isEditorSplit && editorSplitOrientation === 'vertical' ? 'Fechar Divisão do Editor' : 'Dividir Editor à Direita (Lado a Lado)'}
                 >
@@ -12667,6 +12834,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                 {/* 2. Split Editor Down / Horizontal */}
                 <div
+                  className="df-pressable"
                   onClick={() => {
                     if (isEditorSplit && editorSplitOrientation === 'horizontal') {
                       setIsEditorSplit(false);
@@ -12688,7 +12856,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     cursor: 'pointer',
                     borderRadius: 4,
                     background: isEditorSplit && editorSplitOrientation === 'horizontal' ? hexToRgba(accentColor, 0.2) : 'transparent',
-                    transition: 'background 0.15s ease',
+                    transition: 'background 0.15s ease, transform 140ms var(--ease-out)',
                   }}
                   title={isEditorSplit && editorSplitOrientation === 'horizontal' ? 'Fechar Divisão do Editor' : 'Dividir Editor Abaixo (Horizontal)'}
                 >
@@ -12698,6 +12866,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 {/* 3. More Actions Dropdown */}
                 <div style={{ position: 'relative' }} ref={editorMoreMenuRef}>
                   <div
+                    className="df-pressable"
                     onClick={() => setEditorMoreMenuOpen(!editorMoreMenuOpen)}
                     style={{
                       width: 26,
@@ -12708,7 +12877,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       cursor: 'pointer',
                       borderRadius: 4,
                       background: editorMoreMenuOpen ? hexToRgba(accentColor, 0.2) : 'transparent',
-                      transition: 'background 0.15s ease',
+                      transition: 'background 0.15s ease, transform 140ms var(--ease-out)',
                     }}
                     title="Mais Ações do Editor"
                   >
@@ -12717,7 +12886,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                   {editorMoreMenuOpen && (
                     <div
-                      className="df-dropdown-menu"
+                      className="df-dropdown-menu df-popover-right"
                       ref={clampPopupToViewport}
                       style={{
                         position: 'absolute',
@@ -12733,10 +12902,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         fontSize: 12,
                         fontFamily: 'Poppins, sans-serif',
                         color: themeTokens.textPrimary,
-                        animation: 'fadeIn 0.12s ease-out',
                       }}
                     >
                       <div
+                        className="df-row-interactive"
                         onClick={handleCloseAllFiles}
                         style={{ padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
                         onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')}
@@ -12746,6 +12915,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         <span>Fechar Todos os Editores</span>
                       </div>
                       <div
+                        className="df-row-interactive"
                         onClick={handleCloseOtherFiles}
                         style={{ padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
                         onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')}
@@ -12755,6 +12925,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         <span>Fechar Outros</span>
                       </div>
                       <div
+                        className="df-row-interactive"
                         onClick={handleCloseSavedFiles}
                         style={{ padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
                         onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')}
@@ -12764,6 +12935,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         <span>Fechar Salvos</span>
                       </div>
                       <div
+                        className={recentlyClosedFiles.length > 0 ? 'df-row-interactive' : undefined}
                         onClick={handleReopenClosedFile}
                         style={{
                           padding: '6px 14px',
@@ -12785,6 +12957,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       <div style={{ height: 1, background: isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', margin: '4px 0' }} />
 
                       <div
+                        className="df-row-interactive"
                         onClick={handleCopyPath}
                         style={{ padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
                         onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')}
@@ -12794,6 +12967,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         <span>Copiar Caminho Absoluto</span>
                       </div>
                       <div
+                        className="df-row-interactive"
                         onClick={handleCopyRelativePath}
                         style={{ padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
                         onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)')}
@@ -12895,7 +13069,33 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 transition: 'max-width 0.2s ease, background 0.2s ease',
               }}
             >
-              {selectedDesignScreen ? (
+              {activeActivityTab === 'reviews' && showExplorer && reviewTarget ? (
+                <PullRequestDetail
+                  target={reviewTarget}
+                  isEffectiveDark={isEffectiveDark}
+                  accentColor={accentColor}
+                  aiProvider={(() => {
+                    const prov = AI_PROVIDERS.find((p) => p.id === selectedAiProvider) || AI_PROVIDERS[0];
+                    return { id: prov.id, name: prov.name, cliCommand: prov.cliCommand, model: activeModels[prov.id]?.currentModelId, cwd: workspacePath };
+                  })()}
+                  onToast={(msg) => setToastMessage(msg)}
+                  onResolveWithAi={sendPromptToAi}
+                />
+              ) : activeActivityTab === 'actions' && showExplorer ? (
+                <ActionsView
+                  isActive={activeTab === 'ide'}
+                  repoFullName={activeHeaderProject?.fullName}
+                  workflowId={actionsWf}
+                  runId={actionsRun}
+                  onOpenRun={setActionsRun}
+                  isEffectiveDark={isEffectiveDark}
+                  accentColor={accentColor}
+                  accentContrastText={accentTextColor}
+                  aiProviderId={selectedAiProvider}
+                  onToast={(msg) => setToastMessage(msg)}
+                  onResolveWithAi={sendPromptToAi}
+                />
+              ) : selectedDesignScreen ? (
                 <div
                   style={{
                     width: '100%',
@@ -13011,7 +13211,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           borderRadius: 6,
                           border: 'none',
                           background: accentColor,
-                          color: '#ffffff',
+                          color: getContrastTextColor(accentColor),
                           fontSize: 11.5,
                           fontWeight: 400,
                           fontFamily: 'Poppins, sans-serif',
@@ -13090,22 +13290,22 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   {/* Review Toolbar */}
                   <div
                     style={{
-                      height: 40,
+                      height: 44,
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      padding: '0 10px',
-                      background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
-                      borderRadius: 6,
+                      padding: '0 7px 0 12px',
+                      background: isEffectiveDark ? '#161616' : 'rgba(0, 0, 0, 0.04)',
+                      borderRadius: 10,
                       marginBottom: 8,
-                      gap: 8,
+                      gap: 10,
                       flexShrink: 0,
                     }}
                   >
                     {/* Left: Info */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                       <Eye size={15} color={accentColor} />
-                      <span style={{ fontSize: 12.5, fontWeight: 600, color: themeTokens.textPrimary }}>
+                      <span style={{ fontSize: 12.5, fontWeight: 400, color: themeTokens.textPrimary }}>
                         Revisão de Código
                       </span>
                       <div
@@ -13114,19 +13314,20 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           alignItems: 'center',
                           gap: 6,
                           background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
-                          padding: '2px 8px',
-                          borderRadius: 4,
+                          height: 28,
+                          padding: '0 10px',
+                          borderRadius: 6,
                           fontSize: 12,
                         }}
                       >
                         {renderFileIcon(activeReview.files[activeReview.currentIndex]?.name || '')}
-                        <span style={{ fontWeight: 600, color: themeTokens.textPrimary }}>
+                        <span style={{ fontWeight: 400, color: themeTokens.textPrimary }}>
                           {activeReview.files[activeReview.currentIndex]?.name}
                         </span>
-                        <span style={{ color: '#22c55e', fontSize: 11, fontWeight: 600 }}>
+                        <span style={{ color: '#22c55e', fontSize: 11, fontWeight: 400 }}>
                           +{activeReview.files[activeReview.currentIndex]?.additions || 0}
                         </span>
-                        <span style={{ color: '#ef4444', fontSize: 11, fontWeight: 600 }}>
+                        <span style={{ color: '#ef4444', fontSize: 11, fontWeight: 400 }}>
                           -{activeReview.files[activeReview.currentIndex]?.deletions || 0}
                         </span>
                       </div>
@@ -13140,9 +13341,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         style={{
                           display: 'flex',
                           alignItems: 'center',
-                          gap: 4,
-                          padding: '3px 7px',
-                          borderRadius: 4,
+                          gap: 6,
+                          height: 30,
+                          padding: '0 10px',
+                          borderRadius: 6,
                           background: 'transparent',
                           border: 'none',
                           cursor: activeReview.currentIndex > 0 ? 'pointer' : 'default',
@@ -13155,7 +13357,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         <ArrowLeft size={13} />
                         <span>Ant</span>
                       </button>
-                      <span style={{ fontSize: 11.5, color: themeTokens.textSecondary, fontWeight: 500 }}>
+                      <span style={{ fontSize: 11.5, color: themeTokens.textSecondary, fontWeight: 400 }}>
                         {activeReview.currentIndex + 1} de {activeReview.files.length}
                       </span>
                       <button
@@ -13164,9 +13366,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         style={{
                           display: 'flex',
                           alignItems: 'center',
-                          gap: 4,
-                          padding: '3px 7px',
-                          borderRadius: 4,
+                          gap: 6,
+                          height: 30,
+                          padding: '0 10px',
+                          borderRadius: 6,
                           background: 'transparent',
                           border: 'none',
                           cursor: activeReview.currentIndex < activeReview.files.length - 1 ? 'pointer' : 'default',
@@ -13188,9 +13391,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         style={{
                           display: 'flex',
                           alignItems: 'center',
-                          gap: 4,
-                          padding: '3px 8px',
-                          borderRadius: 4,
+                          gap: 6,
+                          height: 30,
+                          padding: '0 12px',
+                          borderRadius: 6,
                           background: isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.07)',
                           border: 'none',
                           color: themeTokens.textPrimary,
@@ -13208,14 +13412,15 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         style={{
                           display: 'flex',
                           alignItems: 'center',
-                          gap: 4,
-                          padding: '3px 9px',
-                          borderRadius: 4,
+                          gap: 6,
+                          height: 30,
+                          padding: '0 12px',
+                          borderRadius: 6,
                           background: 'rgba(239, 68, 68, 0.15)',
                           border: 'none',
                           color: '#ef4444',
                           fontSize: 11.5,
-                          fontWeight: 500,
+                          fontWeight: 400,
                           cursor: 'pointer',
                         }}
                         title="Descartar alterações deste arquivo"
@@ -13229,14 +13434,15 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         style={{
                           display: 'flex',
                           alignItems: 'center',
-                          gap: 4,
-                          padding: '3px 10px',
-                          borderRadius: 4,
-                          background: 'rgba(34, 197, 94, 0.2)',
+                          gap: 6,
+                          height: 30,
+                          padding: '0 12px',
+                          borderRadius: 6,
+                          background: 'rgba(34, 197, 94, 0.16)',
                           border: 'none',
                           color: '#22c55e',
                           fontSize: 11.5,
-                          fontWeight: 600,
+                          fontWeight: 400,
                           cursor: 'pointer',
                         }}
                         title="Aceitar alterações e avançar"
@@ -13250,8 +13456,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         style={{
                           display: 'flex',
                           alignItems: 'center',
-                          padding: '4px',
-                          borderRadius: 4,
+                          width: 30,
+                          height: 30,
+                          justifyContent: 'center',
+                          borderRadius: 6,
                           background: 'transparent',
                           border: 'none',
                           color: themeTokens.textSecondary,
@@ -13273,6 +13481,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       modified={activeReview.modifiedContent}
                       language={getFileLanguage(activeReview.files[activeReview.currentIndex]?.name || '')}
                       theme={isEffectiveDark ? 'aura-dev-dark' : 'light'}
+                      beforeMount={(monaco) => defineAuraDarkTheme(monaco, 'aura-dev-dark', accentColor)}
                       options={{
                         fontSize: editorFontSize,
                         fontFamily: `"${editorFontFamily}", Menlo, monospace`,
@@ -13286,6 +13495,8 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         cursorBlinking: editorCursorBlinking,
                         guides: { indentation: editorGuides },
                         scrollBeyondLastLine: false,
+                        renderOverviewRuler: false,
+                        padding: { top: 8, bottom: 8 },
                       }}
                     />
                   </div>
@@ -13308,6 +13519,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         onChange={handleEditorChange}
                         onMount={handleEditorMount}
                         options={{
+                          ...AUTOCOMPLETE_OPTIONS,
                           fontSize: editorFontSize,
                           fontFamily: `"${editorFontFamily}", Menlo, monospace`,
                           tabSize: editorTabSize,
@@ -13370,6 +13582,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                 }
                               }}
                               options={{
+                          ...AUTOCOMPLETE_OPTIONS,
                                 fontSize: editorFontSize,
                                 fontFamily: `"${editorFontFamily}", Menlo, monospace`,
                                 tabSize: editorTabSize,
@@ -13408,6 +13621,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       onChange={handleEditorChange}
                       onMount={handleEditorMount}
                       options={{
+                          ...AUTOCOMPLETE_OPTIONS,
                         fontSize: editorFontSize,
                         fontFamily: `"${editorFontFamily}", Menlo, monospace`,
                         tabSize: editorTabSize,
@@ -13460,6 +13674,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   onChange={handleEditorChange}
                   onMount={handleEditorMount}
                   options={{
+                          ...AUTOCOMPLETE_OPTIONS,
                     fontSize: editorFontSize,
                     fontFamily: `"${editorFontFamily}", Menlo, monospace`,
                     tabSize: editorTabSize,
@@ -13516,8 +13731,9 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             {/* ======================================================= */}
             {/* BOTTOM TERMINAL PANEL (RESIZER + TABS + CONTENT PANES)  */}
             {/* ======================================================= */}
-            {!isTerminalCollapsed && (
-              <>
+            {termP.mounted && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', minWidth: 0, gridTemplateRows: termP.shown ? '1fr' : '0fr', opacity: termP.shown ? 1 : 0, alignSelf: 'stretch', flexShrink: 0, transition: 'grid-template-rows 0.22s var(--ease-out), opacity 0.18s var(--ease-out)' }}>
+              <div style={{ minHeight: 0, minWidth: 0, overflow: termP.shown ? 'visible' : 'hidden', display: 'flex', flexDirection: 'column' }}>
                 {/* VS Code Style Horizontal Resizer for Terminal Panel */}
                 <div
                   className={`resizer-row ${isDraggingTerminal ? 'dragging' : ''}`}
@@ -13536,7 +13752,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     flexDirection: 'column',
                     gap: 5,
                     flexShrink: 0,
-                    transition: 'all 0.2s ease',
+                    transition: 'width 0.2s ease',
                   }}
                 >
                   {/* ======================================================= */}
@@ -13564,7 +13780,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         padding: '4px 5px',
                         background: themeTokens.bgCard,
                         borderRadius: 10,
-                        border: '1px solid ' + themeTokens.border,
+                        border: 'none',
                         justifyContent: 'flex-start',
                         alignItems: 'center',
                         gap: 3,
@@ -13600,6 +13816,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         return (
                           <div
                             key={st.id}
+                            className="df-pressable"
                             onClick={() => {
                               setActiveTermTab(st.id as any);
                               setIsTerminalCollapsed(false);
@@ -13618,7 +13835,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               cursor: 'pointer',
                               whiteSpace: 'nowrap',
                               flexShrink: 0,
-                              transition: 'all 0.15s ease',
+                              transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                             }}
                           >
                             <div
@@ -13626,7 +13843,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                 color: isActive ? themeTokens.textPrimary : themeTokens.textSecondary,
                                 fontSize: 12,
                                 fontFamily: 'Poppins',
-                                fontWeight: isActive ? '500' : '400',
+                                fontWeight: '400',
                                 lineHeight: '12px',
                                 whiteSpace: 'nowrap',
                               }}
@@ -13638,7 +13855,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                 style={{
                                   fontSize: 10,
                                   fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, sans-serif',
-                                  fontWeight: '600',
+                                  fontWeight: '400',
                                   padding: '0.5px 5.5px',
                                   borderRadius: 10,
                                   lineHeight: '13px',
@@ -13650,7 +13867,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                     ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.18)' : 'rgba(0, 0, 0, 0.12)')
                                     : (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'),
                                   color: isActive ? themeTokens.textPrimary : themeTokens.textSecondary,
-                                  transition: 'all 0.15s ease',
+                                  transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out)',
                                 }}
                               >
                                 {st.count}
@@ -13668,7 +13885,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         padding: '4px 6px',
                         background: themeTokens.bgCard,
                         borderRadius: 10,
-                        border: '1px solid ' + themeTokens.border,
+                        border: 'none',
                         justifyContent: 'flex-end',
                         alignItems: 'center',
                         gap: 2,
@@ -13682,7 +13899,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     >
                       {/* Shell selector dropdown button */}
                       <div
-                        className="df-dropdown-trigger"
+                        className="df-dropdown-trigger df-pressable"
                         onClick={() => setShellDropdownOpen(!shellDropdownOpen)}
                         style={{
                           height: 28,
@@ -13699,7 +13916,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           cursor: 'pointer',
                           whiteSpace: 'nowrap',
                           flexShrink: 0,
-                          transition: 'background 0.15s ease, border-color 0.15s ease',
+                          transition: 'background-color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                           boxSizing: 'border-box',
                         }}
                         title="Selecionar Shell"
@@ -13708,13 +13925,14 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         <div style={{ color: themeTokens.textPrimary, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400', lineHeight: '12px', whiteSpace: 'nowrap' }}>
                           {terminalShell}
                         </div>
-                        <ChevronDown size={12} color={themeTokens.textSecondary} />
+                        <ChevronDown size={12} className="df-chevron" color={themeTokens.textSecondary} style={{ transform: shellDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)' }} />
                       </div>
 
                       {/* Shell Dropdown Menu */}
                       {shellDropdownOpen && (
                         <div
                           className="df-dropdown-menu"
+                          data-placement="top"
                           ref={clampPopupToViewport}
                           style={{
                             position: 'absolute',
@@ -13739,6 +13957,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           ].map((sh) => (
                             <div
                               key={sh.value}
+                              className="df-row-interactive"
                               onClick={() => {
                                 setTerminalShell(sh.value);
                                 setShellDropdownOpen(false);
@@ -13769,6 +13988,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                       {/* New Terminal Session (+) */}
                       <div
+                        className="df-pressable"
                         onClick={() => handleNewTerminalSession()}
                         style={{
                           width: 26,
@@ -13779,7 +13999,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           justifyContent: 'center',
                           color: themeTokens.textSecondary,
                           cursor: 'pointer',
-                          transition: 'all 0.15s ease',
+                          transition: 'color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                         }}
                         onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary)}
                         onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary)}
@@ -13790,6 +14010,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                       {/* Minimize Terminal (-) */}
                       <div
+                        className="df-pressable"
                         onClick={() => setIsTerminalCollapsed(!isTerminalCollapsed)}
                         style={{
                           width: 26,
@@ -13801,7 +14022,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           color: isEffectiveDark ? themeTokens.textSecondary : '#1f2937',
                           background: isEffectiveDark ? 'transparent' : 'rgba(0, 0, 0, 0.04)',
                           cursor: 'pointer',
-                          transition: 'all 0.15s ease',
+                          transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                         }}
                         onMouseEnter={(e) => {
                           (e.currentTarget as HTMLElement).style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)';
@@ -13822,6 +14043,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         const isCurrentSplit = !!activeSession?.splitWithId;
                         return (
                           <div
+                            className="df-pressable"
                             onClick={handleToggleSplitActiveSession}
                             style={{
                               width: 26,
@@ -13832,7 +14054,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               justifyContent: 'center',
                               color: isCurrentSplit ? accentColor : themeTokens.textSecondary,
                               cursor: 'pointer',
-                              transition: 'all 0.15s ease',
+                              transition: 'color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                             }}
                             onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = isCurrentSplit ? accentColor : themeTokens.textPrimary)}
                             onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = isCurrentSplit ? accentColor : themeTokens.textSecondary)}
@@ -13845,6 +14067,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                       {/* Clear Output (Trash) */}
                       <div
+                        className="df-pressable"
                         onClick={handleClearTerminal}
                         style={{
                           width: 26,
@@ -13855,7 +14078,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           justifyContent: 'center',
                           color: themeTokens.textSecondary,
                           cursor: 'pointer',
-                          transition: 'all 0.15s ease',
+                          transition: 'color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                         }}
                         onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary)}
                         onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textSecondary)}
@@ -13866,6 +14089,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                       {/* Maximize Terminal */}
                       <div
+                        className="df-pressable"
                         onClick={() => {
                           setIsTerminalMaximized(!isTerminalMaximized);
                           setIsTerminalCollapsed(false);
@@ -13879,7 +14103,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           justifyContent: 'center',
                           color: isTerminalMaximized ? accentColor : themeTokens.textSecondary,
                           cursor: 'pointer',
-                          transition: 'all 0.15s ease',
+                          transition: 'color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                         }}
                         onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = isTerminalMaximized ? accentColor : themeTokens.textPrimary)}
                         onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = isTerminalMaximized ? accentColor : themeTokens.textSecondary)}
@@ -13890,6 +14114,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                       {/* More Options (...) */}
                       <div
+                        className="df-pressable"
                         onClick={() => setMoreOptionsOpen(!moreOptionsOpen)}
                         style={{
                           width: 26,
@@ -13900,7 +14125,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           justifyContent: 'center',
                           color: moreOptionsOpen ? themeTokens.textPrimary : themeTokens.textSecondary,
                           cursor: 'pointer',
-                          transition: 'all 0.15s ease',
+                          transition: 'color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                         }}
                         onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary)}
                         onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = moreOptionsOpen ? themeTokens.textPrimary : themeTokens.textSecondary)}
@@ -13913,6 +14138,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       {moreOptionsOpen && (
                         <div
                           className="df-dropdown-menu"
+                          data-placement="top"
                           ref={clampPopupToViewport}
                           style={{
                             position: 'absolute',
@@ -13936,6 +14162,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           ].map((opt, idx) => (
                             <div
                               key={idx}
+                              className="df-row-interactive"
                               onClick={() => {
                                 opt.action();
                                 setMoreOptionsOpen(false);
@@ -13963,6 +14190,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                       {/* Close Panel (X) */}
                       <div
+                        className="df-pressable"
                         onClick={() => setIsTerminalCollapsed(true)}
                         style={{
                           width: 26,
@@ -13974,7 +14202,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           color: isEffectiveDark ? themeTokens.textSecondary : '#1f2937',
                           background: isEffectiveDark ? 'transparent' : 'rgba(0, 0, 0, 0.04)',
                           cursor: 'pointer',
-                          transition: 'all 0.15s ease',
+                          transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                         }}
                         onMouseEnter={(e) => {
                           (e.currentTarget as HTMLElement).style.background = 'rgba(255, 95, 86, 0.15)';
@@ -14499,14 +14727,15 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 {['problems', 'output', 'debug', 'ports', 'tasks'].includes(activeTermTab) && renderIdeDockTab(activeTermTab)}
               </div>
                 </div>
-            </>
-          )}
+              </div>
+              </div>
+            )}
         </div>
 
           {/* ---------------------------------------------------- */}
           {/* Right AI Assistant Panel (DRAGGABLE RESIZABLE WIDTH) */}
           {/* ---------------------------------------------------- */}
-          {showAiPanel && !isZenMode && (
+          {aiP.mounted && !isZenMode && (
             <>
               {/* VS Code Style Vertical Resizer for AI Panel */}
               <div
@@ -14514,15 +14743,16 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 onMouseDown={startResizeAiPanel}
                 onDoubleClick={() => setAiPanelWidth(340)}
                 title="Arraste para redimensionar o Painel de IA (Duplo clique para restaurar)"
-                style={{ order: sidebarPosition === 'right' ? 2 : 5 }}
+                style={{ order: sidebarPosition === 'right' ? 2 : 5, opacity: aiP.shown ? 1 : 0, pointerEvents: aiP.shown ? 'auto' : 'none', transition: 'opacity 0.18s var(--ease-out)' }}
               />
 
               <div
                 data-tour="ide-ai-panel"
                 style={{
-                  width: aiPanelWidth,
+                  width: aiP.shown ? aiPanelWidth : 0,
+                  opacity: aiP.shown ? 1 : 0,
                   alignSelf: 'stretch',
-                  padding: 12,
+                  padding: aiP.shown ? 12 : 0,
                   background: isEffectiveDark
                     ? `radial-gradient(ellipse 120.00% 159.98% at 5.85% 100.00%, ${hexToRgba(chatAccentColor, 0.20)} 0%, #101010 100%)`
                     : `radial-gradient(ellipse 120.00% 159.98% at 5.85% 100.00%, ${hexToRgba(chatAccentColor, 0.22)} 0%, #ffffff 100%)`,
@@ -14535,8 +14765,8 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   display: 'flex',
                   position: 'relative',
                   flexShrink: 0,
-                  transition: isDraggingAi ? 'none' : 'width 0.18s ease, background 0.2s ease',
-                  overflow: 'visible',
+                  transition: isDraggingAi ? 'none' : 'width 0.22s var(--ease-out), padding 0.22s var(--ease-out), opacity 0.18s var(--ease-out), background 0.2s ease',
+                  overflow: aiP.shown ? 'visible' : 'hidden',
                   zIndex: 40,
                   order: sidebarPosition === 'right' ? 3 : 6,
                 }}
@@ -14580,13 +14810,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                     height: 19,
                                     borderRadius: '50%',
                                     background: '#1c1c1c',
-                                    border: '1.5px solid #101010',
+                                    border: 'none',
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'center',
                                     marginLeft: idx === 0 ? 0 : -7,
                                     zIndex: 10 - idx,
-                                    boxShadow: '0 1px 3px rgba(0,0,0,0.5)',
+                                    boxShadow: 'none',
                                     overflow: 'hidden',
                                   }}
                                   title={`${p.name} (Ativo no Orquestrador / Histórico)`}
@@ -14618,7 +14848,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     {/* Active AI Logo, Name & Model Badge */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       {renderAiIcon(selectedAiProvider, 17)}
-                      <div style={{ color: themeTokens.textPrimary, fontSize: 13, fontFamily: 'Poppins, sans-serif', fontWeight: '500' }}>
+                      <div style={{ color: themeTokens.textPrimary, fontSize: 13, fontFamily: 'Poppins, sans-serif', fontWeight: '400' }}>
                         {AI_PROVIDERS.find((p) => p.id === selectedAiProvider)?.name || 'Claude'}
                       </div>
                       {(() => {
@@ -14658,6 +14888,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 2 }} ref={chatActionsMenuRef}>
                     {/* Back / Forward through recent chat sessions */}
                     <button
+                      className="df-pressable"
                       onClick={handleChatSessionBack}
                       disabled={activeChatSessionNavIndex < 0 || activeChatSessionNavIndex >= orderedChatSessions.length - 1}
                       title="Conversa Anterior"
@@ -14672,7 +14903,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        transition: 'all 0.15s ease',
+                        transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                       }}
                       onMouseEnter={(e) => {
                         (e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary;
@@ -14686,6 +14917,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       <ArrowLeft size={13} />
                     </button>
                     <button
+                      className="df-pressable"
                       onClick={handleChatSessionForward}
                       disabled={activeChatSessionNavIndex <= 0}
                       title="Próxima Conversa"
@@ -14700,7 +14932,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        transition: 'all 0.15s ease',
+                        transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                       }}
                       onMouseEnter={(e) => {
                         (e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary;
@@ -14715,6 +14947,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     </button>
 
                     <button
+                      className="df-pressable"
                       onClick={() => setChatActionsMenuOpen((prev) => !prev)}
                       title="Mais opções"
                       style={{
@@ -14729,7 +14962,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        transition: 'all 0.15s ease',
+                        transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                       }}
                       onMouseEnter={(e) => {
                         (e.currentTarget as HTMLElement).style.color = themeTokens.textPrimary;
@@ -14747,7 +14980,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                     {chatActionsMenuOpen && (
                       <div
-                        className="df-dropdown-menu"
+                        className="df-dropdown-menu df-popover-right"
                         ref={clampPopupToViewport}
                         style={{
                           position: 'absolute',
@@ -14766,6 +14999,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         }}
                       >
                         <div
+                          className="df-row-interactive"
                           onClick={() => {
                             setChatActionsMenuOpen(false);
                             handleOpenChatHistoryModal();
@@ -14781,7 +15015,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             alignItems: 'center',
                             justifyContent: 'space-between',
                             gap: 8,
-                            transition: 'background 0.15s ease',
+                            transition: 'background-color 150ms var(--ease-out), transform 150ms var(--ease-out)',
                           }}
                           onMouseEnter={(e) => {
                             e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
@@ -14798,6 +15032,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         </div>
 
                         <div
+                          className="df-row-interactive"
                           onClick={() => {
                             setChatActionsMenuOpen(false);
                             handleSaveCurrentChatLocally();
@@ -14812,7 +15047,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             display: 'flex',
                             alignItems: 'center',
                             gap: 8,
-                            transition: 'background 0.15s ease',
+                            transition: 'background-color 150ms var(--ease-out), transform 150ms var(--ease-out)',
                           }}
                           onMouseEnter={(e) => {
                             e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
@@ -14826,6 +15061,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         </div>
 
                         <div
+                          className="df-row-interactive"
                           onClick={() => {
                             setChatActionsMenuOpen(false);
                             handleExportChat(undefined, 'markdown');
@@ -14840,7 +15076,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             display: 'flex',
                             alignItems: 'center',
                             gap: 8,
-                            transition: 'background 0.15s ease',
+                            transition: 'background-color 150ms var(--ease-out), transform 150ms var(--ease-out)',
                           }}
                           onMouseEnter={(e) => {
                             e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
@@ -14854,6 +15090,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         </div>
 
                         <div
+                          className="df-row-interactive"
                           onClick={() => {
                             setChatActionsMenuOpen(false);
                             handleExportChat(undefined, 'json');
@@ -14868,7 +15105,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             display: 'flex',
                             alignItems: 'center',
                             gap: 8,
-                            transition: 'background 0.15s ease',
+                            transition: 'background-color 150ms var(--ease-out), transform 150ms var(--ease-out)',
                           }}
                           onMouseEnter={(e) => {
                             e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
@@ -14882,6 +15119,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         </div>
 
                         <div
+                          className="df-row-interactive"
                           onClick={() => {
                             setChatActionsMenuOpen(false);
                             setIsPermissionsModalOpen(true);
@@ -14896,7 +15134,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             display: 'flex',
                             alignItems: 'center',
                             gap: 8,
-                            transition: 'background 0.15s ease',
+                            transition: 'background-color 150ms var(--ease-out), transform 150ms var(--ease-out)',
                           }}
                           onMouseEnter={(e) => {
                             e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
@@ -14910,6 +15148,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         </div>
 
                         <div
+                          className="df-row-interactive"
                           onClick={() => {
                             setChatActionsMenuOpen(false);
                             setClearHistoryConfirmOpen(true);
@@ -14924,7 +15163,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             display: 'flex',
                             alignItems: 'center',
                             gap: 8,
-                            transition: 'background 0.15s ease',
+                            transition: 'background-color 150ms var(--ease-out), transform 150ms var(--ease-out)',
                           }}
                           onMouseEnter={(e) => {
                             e.currentTarget.style.background = isEffectiveDark ? 'rgba(239, 68, 68, 0.12)' : 'rgba(239, 68, 68, 0.08)';
@@ -15203,33 +15442,32 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         {/* Botao para abrir restante do historico no modal */}
                         <button
                           type="button"
+                          className="df-pressable"
                           onClick={() => handleOpenChatHistoryModal()}
                           title="Abrir modal com histórico completo e detalhes das conversas"
                           style={{
                             background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
-                            border: `1px dashed ${themeTokens.border}`,
+                            border: 'none',
                             color: themeTokens.textSecondary,
                             borderRadius: 5,
                             padding: '6px 10px',
                             fontSize: 11,
                             fontFamily: 'Poppins, sans-serif',
-                            fontWeight: '500',
+                            fontWeight: '400',
                             cursor: 'pointer',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
                             gap: 6,
                             marginTop: 3,
-                            transition: 'all 0.15s ease',
+                            transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                           }}
                           onMouseEnter={(e) => {
                             e.currentTarget.style.color = themeTokens.textPrimary;
-                            e.currentTarget.style.borderColor = accentColor;
                             e.currentTarget.style.background = hexToRgba(accentColor, 0.08);
                           }}
                           onMouseLeave={(e) => {
                             e.currentTarget.style.color = themeTokens.textSecondary;
-                            e.currentTarget.style.borderColor = themeTokens.border;
                             e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)';
                           }}
                         >
@@ -15266,6 +15504,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 {/* Missing CLI installation alert banner */}
                 {aiNotInstalledAlert && (
                   <div
+                    className="df-subtle-enter"
                     style={{
                       padding: '8px 12px',
                       background: isEffectiveDark ? 'rgba(255, 75, 75, 0.12)' : 'rgba(255, 75, 75, 0.08)',
@@ -15277,7 +15516,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#ff4b4b', fontSize: 11.5, fontWeight: '600' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#ff4b4b', fontSize: 11.5, fontWeight: '400' }}>
                         <AlertTriangle size={13} />
                         <span>CLI não detectada</span>
                       </div>
@@ -15293,6 +15532,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
                       <button
+                        className="df-pressable"
                         onClick={() => {
                           const prov = AI_PROVIDERS.find((p) => p.cliCommand === aiNotInstalledAlert.command || p.name === aiNotInstalledAlert.modelName) || AI_PROVIDERS[0];
                           handleInstallCliInTerminal(prov);
@@ -15304,14 +15544,14 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           borderRadius: 4,
                           color: accentTextColor,
                           fontSize: 11,
-                          fontWeight: '500',
+                          fontWeight: '400',
                           fontFamily: 'Poppins, sans-serif',
                           padding: '5px 12px',
                           cursor: 'pointer',
                           display: 'flex',
                           alignItems: 'center',
                           gap: 5,
-                          boxShadow: `0 2px 6px ${hexToRgba(accentColor, 0.3)}`,
+                          boxShadow: 'none',
                         }}
                       >
                         <SquareTerminal size={12} />
@@ -15422,6 +15662,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       return (
                         <div
                           key={idx}
+                          className="df-subtle-enter"
                           onMouseEnter={() => setHoveredChatMsgIdx(idx)}
                           onMouseLeave={() => setHoveredChatMsgIdx(null)}
                           style={{
@@ -15456,6 +15697,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             {/* Attached Task Tag/Chip on top of user message */}
                             {item.attachedTask && (
                               <div
+                                className="df-pressable"
                                 onClick={() => handleOpenIssueSidesheet(item.attachedTask!.number)}
                                 title={`Ver detalhes da Tarefa #${item.attachedTask.number}: ${item.attachedTask.title}`}
                                 style={{
@@ -15464,7 +15706,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   alignSelf: 'flex-start',
                                   gap: 6,
                                   background: isEffectiveDark ? 'rgba(56, 189, 248, 0.16)' : 'rgba(14, 165, 233, 0.14)',
-                                  border: `1px solid ${isEffectiveDark ? 'rgba(56, 189, 248, 0.28)' : 'rgba(14, 165, 233, 0.25)'}`,
+                                  border: 'none',
                                   borderRadius: 6,
                                   padding: '3px 8px',
                                   fontSize: 11.5,
@@ -15474,7 +15716,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   width: 'fit-content',
                                   maxWidth: '100%',
                                   cursor: 'pointer',
-                                  transition: 'all 0.15s ease',
+                                  transition: 'background-color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                                   marginBottom: 2,
                                 }}
                                 onMouseEnter={(e) => {
@@ -15484,14 +15726,14 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   e.currentTarget.style.background = isEffectiveDark ? 'rgba(56, 189, 248, 0.16)' : 'rgba(14, 165, 233, 0.14)';
                                 }}
                               >
-                                <span style={{ fontWeight: 700, fontSize: 11, flexShrink: 0 }}>#{item.attachedTask.number}</span>
+                                <span style={{ fontWeight: 400, fontSize: 11, flexShrink: 0 }}>#{item.attachedTask.number}</span>
                                 <span
                                   style={{
                                     maxWidth: 240,
                                     overflow: 'hidden',
                                     textOverflow: 'ellipsis',
                                     whiteSpace: 'nowrap',
-                                    fontWeight: 500,
+                                    fontWeight: 400,
                                   }}
                                 >
                                   {item.attachedTask.title}
@@ -15507,13 +15749,16 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                     key={imgIdx}
                                     src={img.dataUrl}
                                     alt={img.name}
+                                    title="Ver em tela cheia"
+                                    onClick={() => setZoomImage(img.dataUrl)}
                                     style={{
+                                      cursor: 'zoom-in',
                                       maxWidth: 180,
                                       maxHeight: 140,
                                       borderRadius: 6,
                                       objectFit: 'cover',
-                                      border: '1px solid rgba(255, 255, 255, 0.15)',
-                                      boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+                                      border: 'none',
+                                      boxShadow: 'none',
                                     }}
                                   />
                                 ))}
@@ -15938,6 +16183,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                               {/* 3. Copy Command */}
                               <button
+                                className="df-pressable"
                                 onClick={() => {
                                   navigator.clipboard.writeText(authCmd);
                                   setToastMessage(`"${authCmd}" copiado!`);
@@ -15956,7 +16202,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   alignItems: 'center',
                                   gap: 4,
                                   marginLeft: 'auto',
-                                  transition: 'all 0.15s ease',
+                                  transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                                 }}
                                 onMouseEnter={(e) => {
                                   e.currentTarget.style.color = themeTokens.textPrimary;
@@ -15979,6 +16225,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       return (
                         <div
                           key={idx}
+                          className="df-subtle-enter"
                           style={{
                             color: themeTokens.textSecondary,
                             fontSize: 11,
@@ -16039,6 +16286,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       return (
                         <div
                           key={idx}
+                          className="df-subtle-enter"
                           style={{
                             alignSelf: 'flex-start',
                             display: 'flex',
@@ -16182,6 +16430,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   }}
                                 >
                                   <div
+                                    className="df-pressable"
                                     onClick={() => setCollapsedDiffMap((prev) => ({ ...prev, [idx]: !isDiffCollapsed }))}
                                     style={{
                                       display: 'flex',
@@ -16191,23 +16440,27 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                       userSelect: 'none',
                                     }}
                                   >
-                                    {isDiffCollapsed ? (
-                                      <ChevronRight size={14} style={{ color: '#9ca3af' }} />
-                                    ) : (
-                                      <ChevronDown size={14} style={{ color: '#9ca3af' }} />
-                                    )}
-                                    <span style={{ fontSize: 12.5, fontWeight: 500, color: themeTokens.textPrimary }}>
+                                    <ChevronRight
+                                      size={14}
+                                      className="df-chevron"
+                                      style={{
+                                        color: '#9ca3af',
+                                        transform: isDiffCollapsed ? 'rotate(0deg)' : 'rotate(90deg)',
+                                      }}
+                                    />
+                                    <span style={{ fontSize: 12.5, fontWeight: 400, color: themeTokens.textPrimary }}>
                                       {totalFiles} {totalFiles === 1 ? 'file changed' : 'files changed'}
                                     </span>
-                                    <span style={{ fontSize: 12, fontWeight: 600, color: '#22c55e', marginLeft: 4 }}>
+                                    <span style={{ fontSize: 12, fontWeight: 400, color: '#22c55e', marginLeft: 4 }}>
                                       +{totalAdditions}
                                     </span>
-                                    <span style={{ fontSize: 12, fontWeight: 600, color: '#ef4444' }}>
+                                    <span style={{ fontSize: 12, fontWeight: 400, color: '#ef4444' }}>
                                       -{totalDeletions}
                                     </span>
                                   </div>
 
                                   <button
+                                    className="df-pressable"
                                     onClick={() => {
                                       handleStartReview(changedFiles, 0);
                                     }}
@@ -16220,10 +16473,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                       borderRadius: 6,
                                       padding: '4px 10px',
                                       fontSize: 11.5,
-                                      fontWeight: 500,
+                                      fontWeight: 400,
                                       color: themeTokens.textPrimary,
                                       cursor: 'pointer',
-                                      transition: 'background 0.15s ease',
+                                      transition: 'background-color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                                     }}
                                     onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(0, 0, 0, 0.14)')}
                                     onMouseLeave={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)')}
@@ -16234,10 +16487,11 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                                 {/* Changed Files Rows */}
                                 {!isDiffCollapsed && (
-                                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                  <div className="df-subtle-enter" style={{ display: 'flex', flexDirection: 'column' }}>
                                     {changedFiles.map((file, fIdx) => (
                                       <div
                                         key={fIdx}
+                                        className="df-row-interactive"
                                         onClick={() => handleStartReview(changedFiles, fIdx)}
                                         style={{
                                           display: 'flex',
@@ -16246,7 +16500,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                           padding: '6px 12px',
                                           fontSize: 12,
                                           cursor: 'pointer',
-                                          transition: 'background 0.15s ease',
+                                          transition: 'background-color 140ms var(--ease-out), transform 140ms var(--ease-out)',
                                           borderTop: fIdx > 0 ? `1px solid ${isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)'}` : 'none',
                                         }}
                                         onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)')}
@@ -16385,6 +16639,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   >
                                     <button
                                       type="button"
+                                      className="df-pressable"
                                       disabled={isAiExecuting || isFinalizingIssue}
                                       onClick={() => handleReviewIssue(targetIssueNumber, targetIssueTitle)}
                                       title="Solicitar à IA revisão de hardcoded, falhas de segurança e mocks"
@@ -16401,7 +16656,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                         fontWeight: 400,
                                         cursor: isAiExecuting || isFinalizingIssue ? 'not-allowed' : 'pointer',
                                         opacity: isAiExecuting || isFinalizingIssue ? 0.5 : 1,
-                                        transition: 'all 0.15s ease',
+                                        transition: 'background-color 150ms var(--ease-out), transform 140ms var(--ease-out), opacity 150ms var(--ease-out)',
                                       }}
                                       onMouseEnter={(e) => {
                                         if (!isAiExecuting && !isFinalizingIssue) {
@@ -16420,6 +16675,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                                     <button
                                       type="button"
+                                      className="df-pressable"
                                       disabled={isAiExecuting || isFinalizingIssue}
                                       onClick={() => handleAcceptAndFinalizeIssue(targetIssueNumber, targetIssueTitle, item.text)}
                                       title="Finalizar tarefa no GitHub, fazer commit vinculado e marcar como concluída na Daily"
@@ -16436,7 +16692,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                         fontWeight: 400,
                                         cursor: isAiExecuting || isFinalizingIssue ? 'not-allowed' : 'pointer',
                                         opacity: isAiExecuting || isFinalizingIssue ? 0.7 : 1,
-                                        transition: 'all 0.15s ease',
+                                        transition: 'background-color 150ms var(--ease-out), transform 140ms var(--ease-out), opacity 150ms var(--ease-out)',
                                       }}
                                       onMouseEnter={(e) => {
                                         if (!isAiExecuting && !isFinalizingIssue) {
@@ -16481,6 +16737,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               <span>{formattedTime}</span>
                               <button
                                 type="button"
+                                className="df-pressable"
                                 onClick={() => handleCopyMessage(item.text, idx)}
                                 title="Copiar resposta"
                                 style={{
@@ -16494,15 +16751,22 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   transition: 'color 0.15s ease',
                                 }}
                               >
-                                {copiedMsgIdx === idx ? <Check size={13} /> : <Copy size={13} />}
+                                {copiedMsgIdx === idx ? <Check size={13} className="df-check-pop" /> : <Copy size={13} />}
                               </button>
 
                               <div style={{ position: 'relative', display: 'inline-flex' }}>
                                 <button
                                   type="button"
+                                  className="df-pressable"
                                   onClick={() => handleOpenUndoModal(idx)}
-                                  onMouseEnter={() => setHoveredUndoIdx(idx)}
-                                  onMouseLeave={() => setHoveredUndoIdx(null)}
+                                  onMouseEnter={(e) => {
+                                    setHoveredUndoIdx(idx);
+                                    e.currentTarget.style.color = themeTokens.textPrimary;
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    setHoveredUndoIdx(null);
+                                    e.currentTarget.style.color = '#9ca3af';
+                                  }}
                                   title="Undo changes up to this point"
                                   style={{
                                     background: 'none',
@@ -16514,8 +16778,6 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                     alignItems: 'center',
                                     transition: 'color 0.15s ease',
                                   }}
-                                  onMouseEnter={(e) => (e.currentTarget.style.color = themeTokens.textPrimary)}
-                                  onMouseLeave={(e) => (e.currentTarget.style.color = '#9ca3af')}
                                 >
                                   <Undo2 size={13} />
                                 </button>
@@ -16534,7 +16796,8 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                       fontFamily: 'Poppins, sans-serif',
                                       fontWeight: 400,
                                       whiteSpace: 'nowrap',
-                                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.45)',
+                                      boxShadow: 'none',
+                                      border: 'none',
                                       zIndex: 100,
                                       pointerEvents: 'none',
                                     }}
@@ -16566,6 +16829,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   {/* AI Thinking Indicator (3 jumping / bouncing dots) - only while waiting for AI response without flashing for fast responses */}
                   {showThinkingDots && isAiExecuting && aiHistory[aiHistory.length - 1]?.type === 'user' && (
                     <div
+                      className="df-subtle-enter"
                       style={{
                         alignSelf: 'flex-start',
                         display: 'flex',
@@ -16808,13 +17072,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         }}
                         style={{
                           alignSelf: 'stretch',
-                          background: fieldTokens.fieldBg,
+                          background: isPromptDragOver
+                            ? (isEffectiveDark ? 'rgba(59, 130, 246, 0.12)' : 'rgba(59, 130, 246, 0.08)')
+                            : fieldTokens.fieldBg,
                           backdropFilter: 'blur(12px)',
                           WebkitBackdropFilter: 'blur(12px)',
                           borderRadius: 10,
-                          border: isPromptDragOver
-                            ? '1px solid #3b82f6'
-                            : fieldTokens.fieldBorder,
+                          border: 'none',
                           outline: 'none',
                           boxShadow: 'none',
                           flexDirection: 'column',
@@ -16825,12 +17089,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           position: 'relative',
                           flexShrink: 0,
                           zIndex: 50,
-                          transition: 'all 0.2s ease',
+                          transition: 'background-color 200ms var(--ease-out)',
                         }}
                       >
                       {/* Image limit warning banner */}
                       {imageLimitWarning && (
                         <div
+                          className="df-subtle-enter"
                           style={{
                             display: 'flex',
                             alignItems: 'center',
@@ -16839,11 +17104,11 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             margin: '8px 14px 0 14px',
                             borderRadius: 6,
                             background: 'rgba(239, 68, 68, 0.15)',
-                            border: '1px solid rgba(239, 68, 68, 0.35)',
+                            border: 'none',
                             color: '#f87171',
                             fontSize: 11.5,
                             fontFamily: 'Poppins, sans-serif',
-                            fontWeight: 500,
+                            fontWeight: 400,
                           }}
                         >
                           <AlertTriangle size={13} />
@@ -16854,6 +17119,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       {/* Attached Images Preview Row (Antigravity Style) */}
                       {attachedImages.length > 0 && (
                         <div
+                          className="df-subtle-enter"
                           style={{
                             display: 'flex',
                             alignItems: 'center',
@@ -16881,19 +17147,22 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   height: 38,
                                   borderRadius: 6,
                                   overflow: 'hidden',
-                                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                                  border: 'none',
                                   background: '#111',
                                   flexShrink: 0,
-                                  boxShadow: '0 2px 6px rgba(0, 0, 0, 0.4)',
+                                  boxShadow: 'none',
                                 }}
                               >
                                 <img
                                   src={img.dataUrl}
                                   alt={img.name}
-                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                  title="Ver em tela cheia"
+                                  onClick={() => setZoomImage(img.dataUrl)}
+                                  style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'zoom-in' }}
                                 />
                                 <button
                                   type="button"
+                                  className="df-pressable"
                                   onClick={() => setAttachedImages((prev) => prev.filter((i) => i.id !== img.id))}
                                   title="Remover imagem"
                                   style={{
@@ -16922,7 +17191,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                           <span
                             style={{
                               fontSize: 11,
-                              fontWeight: 500,
+                              fontWeight: 400,
                               fontFamily: 'Poppins, sans-serif',
                               color: attachedImages.length >= MAX_ATTACHED_IMAGES ? '#f59e0b' : themeTokens.textSecondary,
                               whiteSpace: 'nowrap',
@@ -16930,7 +17199,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               padding: '2px 7px',
                               borderRadius: 4,
                               background: attachedImages.length >= MAX_ATTACHED_IMAGES ? 'rgba(245, 158, 11, 0.14)' : 'rgba(255, 255, 255, 0.05)',
-                              border: attachedImages.length >= MAX_ATTACHED_IMAGES ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(255, 255, 255, 0.08)',
+                              border: 'none',
                               flexShrink: 0,
                             }}
                           >
@@ -16943,6 +17212,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       {isSlashActive && (
                         <div
                           className="df-dropdown-menu"
+                          data-placement="top"
                           style={{
                             position: 'absolute',
                             bottom: 'calc(100% + 8px)',
@@ -16967,6 +17237,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               return (
                                 <div
                                   key={cmd.command}
+                                  className="df-row-interactive"
                                   onClick={() => handleSelectSlashCommand(cmd)}
                                   onMouseEnter={() => setSelectedSlashIndex(idx)}
                                   style={{
@@ -16979,7 +17250,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                     background: isSelected
                                       ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)')
                                       : 'transparent',
-                                    transition: 'background 0.15s ease',
+                                    transition: 'background-color 140ms var(--ease-out), transform 140ms var(--ease-out)',
                                   }}
                                 >
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
@@ -17283,6 +17554,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       {/* Orchestrator Toggle Button (Icon only with hover tooltip) */}
                       <div style={{ position: 'relative', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
                         <div
+                          className="df-pressable"
                           onClick={() => setIsOrchestratorActive(!isOrchestratorActive)}
                           onMouseEnter={() => setOrchestratorTooltipOpen(true)}
                           onMouseLeave={() => setOrchestratorTooltipOpen(false)}
@@ -17292,12 +17564,12 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             borderRadius: 5,
                             background: isOrchestratorActive ? accentColor : (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'),
                             color: isOrchestratorActive ? accentTextColor : themeTokens.textSecondary,
-                            boxShadow: isOrchestratorActive ? `0 0 10px ${hexToRgba(accentColor, 0.4)}` : 'none',
+                            boxShadow: 'none',
                             justifyContent: 'center',
                             alignItems: 'center',
                             display: 'flex',
                             cursor: 'pointer',
-                            transition: 'all 0.15s ease',
+                            transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                             flexShrink: 0,
                             userSelect: 'none',
                           }}
@@ -17308,13 +17580,15 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         {/* Hover Tooltip */}
                         {orchestratorTooltipOpen && (
                           <div
+                            className="df-popover"
+                            data-placement="top"
                             ref={clampPopupToViewport}
                             style={{
                               position: 'absolute',
                               bottom: 'calc(100% + 8px)',
                               left: 0,
                               background: themeTokens.bgCardSecondary,
-                              border: `1px solid ${themeTokens.border}`,
+                              border: 'none',
                               borderRadius: 6,
                               padding: '5px 9px',
                               color: themeTokens.textPrimary,
@@ -17322,14 +17596,14 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               fontFamily: 'Poppins, sans-serif',
                               whiteSpace: 'nowrap',
                               zIndex: 10000,
-                              boxShadow: '0 4px 16px rgba(0, 0, 0, 0.5)',
+                              boxShadow: 'none',
                               pointerEvents: 'none',
                               display: 'flex',
                               alignItems: 'center',
                               gap: 6,
                             }}
                           >
-                            <span style={{ color: isOrchestratorActive ? accentColor : themeTokens.textPrimary, fontWeight: 500 }}>
+                            <span style={{ color: isOrchestratorActive ? accentColor : themeTokens.textPrimary, fontWeight: 400 }}>
                               {isOrchestratorActive ? 'Orquestrador Ativo' : 'Orquestrador'}
                             </span>
                             <span style={{ color: themeTokens.textSecondary, fontSize: 10 }}>
@@ -17342,6 +17616,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       {/* Select AI (Provider) Button with Logo */}
                       <div style={{ position: 'relative', flexShrink: 1, minWidth: 0 }} ref={providerDropdownRef}>
                         <div
+                          className="df-dropdown-trigger df-pressable"
                           onClick={() => {
                             const willOpen = !providerDropdown;
                             setProviderDropdown(willOpen);
@@ -17377,7 +17652,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             display: 'flex',
                             cursor: 'pointer',
                             whiteSpace: 'nowrap',
-                            transition: 'background 0.15s ease, border-color 0.15s ease',
+                            transition: 'background-color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                             maxWidth: 190,
                             minWidth: 0,
                             overflow: 'hidden',
@@ -17420,13 +17695,14 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               {formatModelDisplayName(selectedModel) || selectedModel}
                             </div>
                           )}
-                          <ChevronDown size={10} color={themeTokens.textSecondary} style={{ flexShrink: 0 }} />
+                          <ChevronDown size={10} className="df-chevron" color={themeTokens.textSecondary} style={{ flexShrink: 0, transform: providerDropdown ? 'rotate(180deg)' : 'rotate(0deg)' }} />
                         </div>
 
                         {/* AI Providers Dropdown Menu */}
                         {providerDropdown && (
                           <div
                             className="df-dropdown-menu"
+                            data-placement="top"
                             ref={clampPopupToViewport}
                             style={{
                               position: 'absolute',
@@ -17461,6 +17737,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               return (
                                 <div
                                   key={p.id}
+                                  className="df-row-interactive"
                                   onClick={() => {
                                     if (!isInstalled) {
                                       // If CLI not installed, clicking row opens installer in terminal
@@ -17491,7 +17768,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                     color: themeTokens.textPrimary,
                                     fontSize: 12,
                                     fontFamily: 'Poppins, sans-serif',
-                                    fontWeight: isSelected ? '600' : '400',
+                                    fontWeight: '400',
                                     cursor: 'pointer',
                                     borderRadius: 6,
                                     whiteSpace: 'nowrap',
@@ -17505,7 +17782,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                     justifyContent: 'space-between',
                                     gap: 8,
                                     opacity: isInstalled ? 1 : 0.7,
-                                    transition: 'background 0.15s ease, opacity 0.15s ease',
+                                    transition: 'background-color 150ms var(--ease-out), opacity 150ms var(--ease-out), transform 150ms var(--ease-out)',
                                   }}
                                   onMouseEnter={(e) => {
                                     if (!isSelected && !isOpen) {
@@ -17527,6 +17804,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                     {isInstalled && aiUpdatesAvailable[p.id]?.hasUpdate && (
                                       <button
                                         type="button"
+                                        className="df-pressable"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           handleUpdateCliInTerminal(p.id);
@@ -17539,13 +17817,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                           background: accentColor,
                                           border: 'none',
                                           boxShadow: 'none',
-                                          color: '#fff',
+                                          color: getContrastTextColor(accentColor),
                                           display: 'flex',
                                           alignItems: 'center',
                                           gap: 4,
                                           cursor: 'pointer',
                                           fontWeight: 400,
-                                          transition: 'opacity 0.15s ease',
+                                          transition: 'opacity 150ms var(--ease-out), transform 140ms var(--ease-out)',
                                         }}
                                         onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.85')}
                                         onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
@@ -17573,6 +17851,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                     {!isInstalled && (
                                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                                         <button
+                                          className="df-pressable"
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             handleInstallCliInTerminal(p);
@@ -17584,20 +17863,22 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                             borderRadius: 4,
                                             background: accentColor,
                                             border: 'none',
-                                            color: '#fff',
+                                            color: getContrastTextColor(accentColor),
                                             display: 'flex',
                                             alignItems: 'center',
                                             gap: 4,
-                                            fontWeight: 500,
+                                            fontWeight: 400,
                                             fontFamily: 'Poppins, sans-serif',
                                             cursor: 'pointer',
-                                            boxShadow: `0 2px 6px ${hexToRgba(accentColor, 0.3)}`,
+                                            boxShadow: 'none',
+                                            transition: 'opacity 150ms var(--ease-out), transform 140ms var(--ease-out)',
                                           }}
                                         >
                                           <SquareTerminal size={10} />
                                           <span>Instalar</span>
                                         </button>
                                         <button
+                                          className="df-pressable"
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             handleOpenExternalLink(p.installUrl);
@@ -17609,10 +17890,12 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                             borderRadius: 4,
                                             background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
                                             border: 'none',
+                                            boxShadow: 'none',
                                             color: themeTokens.textSecondary,
                                             display: 'flex',
                                             alignItems: 'center',
                                             cursor: 'pointer',
+                                            transition: 'background-color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                                           }}
                                         >
                                           <ExternalLink size={10} />
@@ -17638,6 +17921,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                     {/* Arrow to toggle models submenu on click - only if installed */}
                                     {isInstalled && modelList.length > 0 && (
                                       <div
+                                        className="df-pressable"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           if (providerDropdownRef.current) {
@@ -17656,7 +17940,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                           justifyContent: 'center',
                                           background: isOpen ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)') : 'transparent',
                                           cursor: 'pointer',
-                                          transition: 'all 0.15s ease',
+                                          transition: 'background-color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                                         }}
                                       >
                                         <ChevronRight
@@ -17665,7 +17949,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                           style={{
                                             opacity: isOpen ? 1 : 0.6,
                                             transform: isOpen ? 'rotate(90deg)' : (submenuOpenOnLeft ? 'rotate(180deg)' : 'none'),
-                                            transition: 'transform 0.15s ease',
+                                            transition: 'transform 160ms var(--ease-out), opacity 150ms var(--ease-out)',
                                           }}
                                         />
                                       </div>
@@ -17677,8 +17961,9 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
                             {pinnedAis.length > 0 && (
                               <div
+                                className="df-pressable"
                                 onClick={() => setShowAllAiProviders((v) => !v)}
-                                style={{ padding: '6px 8px', fontSize: 11, color: themeTokens.textSecondary, cursor: 'pointer', transition: 'color 0.12s ease' }}
+                                style={{ padding: '6px 8px', fontSize: 11, color: themeTokens.textSecondary, cursor: 'pointer', transition: 'color 150ms var(--ease-out), transform 140ms var(--ease-out)' }}
                                 onMouseEnter={(e) => (e.currentTarget.style.color = themeTokens.textPrimary)}
                                 onMouseLeave={(e) => (e.currentTarget.style.color = themeTokens.textSecondary)}
                                 title="A lista segue as IAs fixadas em Configurações → IA & Agentes"
@@ -17703,8 +17988,34 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               const modelList = dynamicList.length > 0 ? dynamicList : fallbackList;
                               if (modelList.length === 0) return null;
 
+                              if (targetProvider.id === 'antigravity') {
+                                return (
+                                  <div style={{ position: 'absolute', left: submenuOpenOnLeft ? 'auto' : 'calc(100% + 4px)', right: submenuOpenOnLeft ? 'calc(100% + 4px)' : 'auto', bottom: 0, zIndex: 100002 }}>
+                                    <GroupedModelMenu
+                                      providerName={targetProvider.name}
+                                      models={modelList}
+                                      isCurrent={(m) => {
+                                        const cur = activeModels[targetProvider.id];
+                                        return targetProvider.id === selectedAiProvider && (cur?.currentModelId === m.id || cur?.currentModel === m.label || selectedModel === m.id || selectedModel === m.label);
+                                      }}
+                                      onSelect={(m) => handleSelectModel(m, targetProvider.id)}
+                                      accentColor={accentColor}
+                                      isDark={isEffectiveDark}
+                                      textPrimary={themeTokens.textPrimary}
+                                      textSecondary={themeTokens.textSecondary}
+                                      border={themeTokens.border}
+                                      menuBg={fieldTokens.dropdownMenuBg}
+                                      menuBorder={fieldTokens.dropdownBorder}
+                                      hexToRgba={hexToRgba}
+                                    />
+                                  </div>
+                                );
+                              }
+
                               return (
                                 <div
+                                  className="df-dropdown-menu"
+                                  data-placement="top"
                                   ref={(el) => {
                                     if (el && !submenuOpenOnLeft) {
                                       const rect = el.getBoundingClientRect();
@@ -17735,7 +18046,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   }}
                                   onClick={(e) => e.stopPropagation()}
                                 >
-                                  <div style={{ padding: '3px 8px 5px', fontSize: 10, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                  <div style={{ padding: '3px 8px 5px', fontSize: 10, fontWeight: 400, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                                     Modelos {targetProvider.name}
                                   </div>
                                   {modelList.map((m) => {
@@ -17746,6 +18057,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                     return (
                                       <div
                                         key={m.id}
+                                        className="df-row-interactive"
                                         onClick={() => {
                                           handleSelectModel(m, targetProvider.id);
                                         }}
@@ -17757,7 +18069,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                           display: 'flex',
                                           alignItems: 'center',
                                           gap: 8,
-                                          transition: 'background 0.15s ease',
+                                          transition: 'background-color 150ms var(--ease-out), transform 150ms var(--ease-out)',
                                           whiteSpace: 'nowrap',
                                         }}
                                         onMouseEnter={(e) => {
@@ -17767,12 +18079,12 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                           if (!isCurrent) e.currentTarget.style.background = 'transparent';
                                         }}
                                       >
-                                        {isCurrent ? <Check size={12} color={accentColor} style={{ flexShrink: 0 }} /> : <div style={{ width: 12, flexShrink: 0 }} />}
+                                        {isCurrent ? <Check size={12} color={accentColor} className="df-check-pop" style={{ flexShrink: 0 }} /> : <div style={{ width: 12, flexShrink: 0 }} />}
                                         <span
                                           style={{
                                             fontSize: 12,
                                             fontFamily: 'Poppins, sans-serif',
-                                            fontWeight: isCurrent ? 500 : 400,
+                                            fontWeight: 400,
                                             color: isCurrent ? accentColor : themeTokens.textPrimary,
                                             whiteSpace: 'nowrap',
                                           }}
@@ -17792,7 +18104,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       {/* Select AI Mode (Auto, Plan, Agent, Ask) Pill & Dropdown */}
                       <div style={{ position: 'relative', flexShrink: 0 }} ref={aiModeDropdownRef}>
                         <div
-                          className="df-dropdown-trigger"
+                          className="df-dropdown-trigger df-pressable"
                           onClick={() => setAiModeDropdown(!aiModeDropdown)}
                           title="Alternar Modo da IA (Auto Mode, Planejamento, Agente, Perguntar)"
                           style={{
@@ -17814,7 +18126,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             display: 'flex',
                             cursor: 'pointer',
                             whiteSpace: 'nowrap',
-                            transition: 'all 0.15s ease',
+                            transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                             boxSizing: 'border-box',
                           }}
                         >
@@ -17822,16 +18134,16 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             style={{
                               fontSize: 11,
                               fontFamily: 'Poppins, sans-serif',
-                              fontWeight: 500,
+                              fontWeight: 400,
                             }}
                           >
                             {AI_MODES.find((m) => m.id === aiMode)?.shortName || 'Auto'}
                           </span>
                           <ChevronUp
                             size={10}
+                            className="df-chevron"
                             style={{
                               transform: aiModeDropdown ? 'rotate(0deg)' : 'rotate(180deg)',
-                              transition: 'transform 0.15s ease',
                               opacity: 0.7,
                             }}
                           />
@@ -17841,6 +18153,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         {aiModeDropdown && (
                           <div
                             className="df-dropdown-menu"
+                            data-placement="top"
                             ref={clampPopupToViewport}
                             style={{
                               position: 'absolute',
@@ -17858,7 +18171,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               gap: 4,
                             }}
                           >
-                            <div style={{ padding: '3px 8px', fontSize: 10, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            <div style={{ padding: '3px 8px', fontSize: 10, fontWeight: 400, color: themeTokens.textSecondary, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                               Modo de execução
                             </div>
                             {AI_MODES.map((m) => {
@@ -17866,6 +18179,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               return (
                                 <div
                                   key={m.id}
+                                  className="df-row-interactive"
                                   onClick={() => {
                                     setAiMode(m.id);
                                     setAiModeDropdown(false);
@@ -17879,7 +18193,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                     display: 'flex',
                                     flexDirection: 'column',
                                     gap: 2,
-                                    transition: 'background 0.15s ease',
+                                    transition: 'background-color 140ms var(--ease-out), transform 140ms var(--ease-out)',
                                   }}
                                   onMouseEnter={(e) => {
                                     if (!isSelected) e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)';
@@ -17889,7 +18203,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                   }}
                                 >
                                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                    <span style={{ fontSize: 12, fontWeight: 500, color: themeTokens.textPrimary }}>
+                                    <span style={{ fontSize: 12, fontWeight: 400, color: themeTokens.textPrimary }}>
                                       {m.name}
                                     </span>
                                     {isSelected && <Check size={12} color={accentColor} />}
@@ -17937,7 +18251,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               <span
                                 style={{
                                   fontSize: 8,
-                                  fontWeight: 700,
+                                  fontWeight: 400,
                                   color: accentColor,
                                   fontFamily: 'Poppins, -apple-system, sans-serif',
                                 }}
@@ -17948,7 +18262,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               <span
                                 style={{
                                   fontSize: 9.5,
-                                  fontWeight: 700,
+                                  fontWeight: 400,
                                   color: currentQuota.dailyPercent === 0 ? '#ef4444' : currentQuota.dailyPercent <= 15 ? '#f97316' : themeTokens.textPrimary,
                                   fontFamily: 'Poppins, -apple-system, sans-serif',
                                   letterSpacing: '-0.02em',
@@ -17961,7 +18275,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               <span
                                 style={{
                                   fontSize: 8,
-                                  fontWeight: 700,
+                                  fontWeight: 400,
                                   color: accentColor,
                                   fontFamily: 'Poppins, -apple-system, sans-serif',
                                 }}
@@ -17972,7 +18286,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               <span
                                 style={{
                                   fontSize: 9.5,
-                                  fontWeight: 700,
+                                  fontWeight: 400,
                                   color: currentQuota.weeklyPercent === 0 ? '#ef4444' : currentQuota.weeklyPercent <= 15 ? '#f97316' : themeTokens.textPrimary,
                                   fontFamily: 'Poppins, -apple-system, sans-serif',
                                   letterSpacing: '-0.02em',
@@ -17985,14 +18299,16 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                             {/* Hover / Click Popup: fundo adaptativo do sistema, sem bordas, sombra suave */}
                             {quotaTooltipOpen && (
                               <div
+                                className="df-popover df-popover-right"
+                                data-placement="top"
                                 onClick={(e) => e.stopPropagation()}
                                 style={{
                                   position: 'absolute',
                                   bottom: 34,
                                   right: 0,
                                   background: themeTokens.bgCardSecondary,
-                                  border: `1px solid ${themeTokens.border}`,
-                                  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
+                                  border: 'none',
+                                  boxShadow: 'none',
                                   borderRadius: 10,
                                   padding: '12px 14px',
                                   display: 'flex',
@@ -18138,6 +18454,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               type="button"
                               onClick={handleCancelAiExecution}
                               title="Interromper geração (Ctrl+C / Esc)"
+                              className="df-pressable"
                               style={{
                                 width: 24,
                                 height: 24,
@@ -18150,7 +18467,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                                 justifyContent: 'center',
                                 cursor: 'pointer',
                                 flexShrink: 0,
-                                transition: 'all 0.15s ease',
+                                transition: 'background-color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                                 boxShadow: 'none',
                               }}
                               onMouseEnter={(e) => {
@@ -18183,6 +18500,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                         return (
                           <button
                             type="submit"
+                            className={isSendActive ? 'df-pressable' : undefined}
                             disabled={!canSubmit}
                             title="Enviar mensagem"
                             style={{
@@ -18198,7 +18516,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                               color: isSendActive ? getContrastTextColor(chatAccentColor) : (isEffectiveDark ? '#666666' : '#94a3b8'),
                               cursor: isSendActive ? 'pointer' : 'default',
                               flexShrink: 0,
-                              transition: 'all 0.15s ease',
+                              transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                             }}
                           >
                             <ArrowRight size={13} strokeWidth={2.5} color={isSendActive ? getContrastTextColor(chatAccentColor) : (isEffectiveDark ? '#666666' : '#94a3b8')} />
@@ -18218,6 +18536,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
       {/* 2.2 Projetos Container (Pré-carregado e mantido vivo na memória para abertura instantânea) */}
       <div
+        className={activeTab === 'projetos' ? 'df-opacity-enter' : undefined}
         style={{
           alignSelf: 'stretch',
           width: '100%',
@@ -18266,6 +18585,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           selectedAiProvider={selectedAiProvider}
           selectedModel={selectedModel}
           installedClis={installedClis}
+          pinnedAis={pinnedAis}
           activeModels={activeModels}
           onSelectAiProvider={handleSwitchAiProvider}
           onSelectModel={handleSelectModel}
@@ -18280,6 +18600,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
       {/* 2.4 Daily Container (mantido vivo na memória para não perder o chat de IA ao trocar de aba) */}
       <div
+        className={activeTab === 'daily' ? 'df-opacity-enter' : undefined}
         style={{
           alignSelf: 'stretch',
           width: '100%',
@@ -18381,6 +18702,35 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
         />
       )}
 
+      {/* 2.55 Sites: modelos à esquerda, preview no centro e chat da IA à direita; fica montado para a IA continuar gerando em outra tela */}
+      {siteMounted && (
+        <SitesStudioView
+          isActive={activeTab === 'site'}
+          chatAccentColor={chatAccentColor}
+          projectName={activeHeaderProject?.name}
+          selectedAiProvider={selectedAiProvider}
+          selectedModel={selectedModel}
+          themeTokens={themeTokens as any}
+          accentColor={accentColor}
+          isEffectiveDark={isEffectiveDark}
+          aiProviders={AI_PROVIDERS.map((p) => ({ id: p.id, name: p.name }))}
+          aiModelsByProvider={Object.fromEntries(
+            AI_PROVIDERS.map((p) => [p.id, (activeModels[p.id]?.models || []).map((m) => ({ id: m.id, label: m.label }))])
+          )}
+          onChangeAiProvider={handleSwitchAiProvider}
+          onChangeAiModel={(modelId) => {
+            const list = activeModels[selectedAiProvider]?.models || [];
+            const found = list.find((m) => m.id === modelId);
+            if (found) handleSelectModel(found, selectedAiProvider);
+          }}
+          onAiTaskDone={(r) => handleDesignAiDone(r, 'site')}
+          showToast={(m) => {
+            setToastMessage(m);
+            setTimeout(() => setToastMessage(null), 3000);
+          }}
+        />
+      )}
+
       {/* 2.6 CLI Terminal Workspace (Navegação de arquivos + Terminal com abas) */}
       {activeTab === 'cli' && (
         <CliTerminalView
@@ -18457,6 +18807,14 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             setIsBranchModalOpen(true);
           }}
           onOpenIssueDetails={handleOpenIssueSidesheet}
+          openPullCount={openPrCount}
+          onSendPromptToAi={sendPromptToAi}
+          reviewRequest={cliReviewRequest}
+          repoFullName={activeHeaderProject?.fullName}
+          reviewAiProvider={(() => {
+            const prov = AI_PROVIDERS.find((p) => p.id === selectedAiProvider) || AI_PROVIDERS[0];
+            return { id: prov.id, name: prov.name, cliCommand: prov.cliCommand, model: activeModels[prov.id]?.currentModelId, cwd: workspacePath };
+          })()}
           onOpenIssuesModal={() => {
             refreshGitHubIssues();
             setIsIssuesModalOpen(true);
@@ -18476,7 +18834,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
       )}
 
       {/* 2.7 Container vazio para outras abas */}
-      {activeTab !== 'ide' && activeTab !== 'projetos' && activeTab !== 'orchestration' && activeTab !== 'daily' && activeTab !== 'design' && activeTab !== 'cli' && (
+      {activeTab !== 'ide' && activeTab !== 'projetos' && activeTab !== 'orchestration' && activeTab !== 'daily' && activeTab !== 'design' && activeTab !== 'site' && activeTab !== 'cli' && (
         <div style={{ alignSelf: 'stretch', flex: '1 1 0', background: 'black', borderRadius: 10, border: 'none' }} />
       )}
 
@@ -18485,7 +18843,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
       {/* ============================================================ */}
       {showStatusBar && !isZenMode && (activeTab === 'ide' || activeTab === 'cli') && (
         <div
-          className={cliSkinned ? 'cli-skin skin-bar skin-statusbar' : undefined}
+          className={cliSkinned ? 'cli-skin skin-bar skin-statusbar df-ide-surface' : 'df-ide-surface'}
           data-skin={cliSkinned ? terminalSkin : undefined}
           style={{
             letterSpacing: cliSkinned ? 'var(--sk-ls, 0)' : undefined,
@@ -18504,6 +18862,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           <div style={{ justifyContent: 'flex-start', alignItems: 'flex-start', display: 'flex', flexShrink: 0 }}>
             {/* Accent Left Indicator Block (Toggles Terminal) */}
             <div
+              className="df-pressable"
               onClick={() => {
                 if (terminalHeight === 0) {
                   setTerminalHeight(260);
@@ -18524,7 +18883,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 display: 'flex',
                 flexShrink: 0,
                 cursor: 'pointer',
-                transition: 'opacity 0.15s ease',
+                transition: 'opacity 150ms var(--ease-out), transform 140ms var(--ease-out)',
               }}
               onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.opacity = '0.9')}
               onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.opacity = '1')}
@@ -18550,6 +18909,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               }}
             >
               <div
+                className="df-pressable"
                 onClick={() => {
                   refreshGitBranches();
                   setIsBranchModalOpen(true);
@@ -18569,7 +18929,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   whiteSpace: 'nowrap',
                   flexShrink: 0,
                   cursor: 'pointer',
-                  transition: 'background 0.15s ease',
+                  transition: 'background-color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)')}
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
@@ -18578,10 +18938,11 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 <div style={{ color: themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {gitRepoName.split('/').pop() || 'aura-dev'}
                 </div>
-                <div style={{ color: accentColor, fontSize: 12, fontFamily: 'Poppins', fontWeight: '500', whiteSpace: 'nowrap', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <div style={{ color: accentColor, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {currentBranch || 'main'}
                 </div>
                 <div
+                  className="df-icon-btn"
                   onClick={(e) => {
                     e.stopPropagation();
                     handleSyncGit();
@@ -18608,6 +18969,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               <div style={{ width: 1, height: 16, background: themeTokens.border, flexShrink: 0 }} />
 
               <div
+                className="df-pressable"
                 onClick={() => {
                   if (terminalHeight === 0) setTerminalHeight(260);
                   setActiveTermTab('output');
@@ -18627,17 +18989,17 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   whiteSpace: 'nowrap',
                   flexShrink: 0,
                   cursor: 'pointer',
-                  transition: 'background 0.15s ease',
+                  transition: 'background-color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)')}
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
               >
                 <XCircle size={13} color={editorErrors > 0 ? '#ef4444' : themeTokens.textSecondary} />
-                <div style={{ color: editorErrors > 0 ? '#ef4444' : themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: editorErrors > 0 ? '500' : '400' }}>
+                <div style={{ color: editorErrors > 0 ? '#ef4444' : themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400' }}>
                   {editorErrors}
                 </div>
                 <AlertTriangle size={12} color={editorWarnings > 0 ? '#f59e0b' : themeTokens.textSecondary} />
-                <span style={{ color: editorWarnings > 0 ? '#f59e0b' : themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: editorWarnings > 0 ? '500' : '400' }}>
+                <span style={{ color: editorWarnings > 0 ? '#f59e0b' : themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400' }}>
                   {editorWarnings}
                 </span>
               </div>
@@ -18650,7 +19012,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               padding: 5,
               background: barCardBg,
               borderRadius: 10,
-              border: `1px solid ${themeTokens.border}`,
+              border: 'none',
               justifyContent: 'center',
               alignItems: 'center',
               gap: 5,
@@ -18677,12 +19039,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 }}
               >
                 <div style={{ color: themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap' }}>{workspaceGitInfo?.sprintTitle || 'Sprint 2'} -</div>
-                <div style={{ color: accentColor, fontSize: 12, fontFamily: 'Poppins', fontWeight: '500', whiteSpace: 'nowrap' }}>{workspaceGitInfo?.sprintRemaining || '7 days'}</div>
+                <div style={{ color: accentColor, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap' }}>{workspaceGitInfo?.sprintRemaining || '7 days'}</div>
               </div>
 
               <div style={{ width: 1, height: 16, background: themeTokens.border, flexShrink: 0 }} />
 
               <div
+                className="df-pressable"
                 onClick={() => {
                   refreshGitHubIssues();
                   setIsIssuesModalOpen(true);
@@ -18702,13 +19065,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   whiteSpace: 'nowrap',
                   flexShrink: 0,
                   cursor: 'pointer',
-                  transition: 'background 0.15s ease',
+                  transition: 'background-color 150ms var(--ease-out), transform 140ms var(--ease-out)',
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)')}
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
               >
                 <div style={{ color: themeTokens.textSecondary, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap' }}>Issues</div>
-                <div style={{ color: accentColor, fontSize: 12, fontFamily: 'Poppins', fontWeight: '500', whiteSpace: 'nowrap' }}>
+                <div style={{ color: accentColor, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap' }}>
                   {(() => {
                     const openCount = gitIssues.filter((i) => (i.state || 'open').toLowerCase() === 'open').length;
                     if (workspaceGitInfo?.issuesCount !== undefined && workspaceGitInfo.issuesCount > 0) {
@@ -18726,9 +19089,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
         <div
           style={{
             background: barCardBg,
+            alignSelf: 'stretch',
             overflow: 'hidden',
             borderRadius: 10,
-            border: `1px solid ${themeTokens.border}`,
+            border: 'none',
             justifyContent: 'center',
             alignItems: 'center',
             display: 'flex',
@@ -18752,7 +19116,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   { text: lang, title: 'Linguagem do arquivo' },
                 ];
               })().map((it) => (
-                <div key={it.title} onClick={it.onClick} title={it.title} style={{ color: isEffectiveDark ? '#888888' : '#666666', fontSize: 11.5, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap', cursor: it.onClick ? 'pointer' : 'default' }}>
+                <div key={it.title} className={it.onClick ? 'df-pressable' : undefined} onClick={it.onClick} title={it.title} style={{ color: isEffectiveDark ? '#888888' : '#666666', fontSize: 11.5, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap', cursor: it.onClick ? 'pointer' : 'default' }}>
                   {it.text}
                 </div>
               ))}
@@ -18778,6 +19142,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           >
             {/* Git Blame / Author */}
             <div
+              className="df-pressable"
               onClick={() => {
                 if (workspaceGitInfo?.activeFileBlame) {
                   navigator.clipboard.writeText(workspaceGitInfo.activeFileBlame);
@@ -18799,6 +19164,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
             {/* Monaco Cursor Position: Ln, Col */}
             <div
+              className="df-pressable"
               onClick={() => {
                 if (editorInstanceRef.current) {
                   editorInstanceRef.current.focus();
@@ -18820,6 +19186,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
             {/* Indentation (Spaces / Tabs) */}
             <div
+              className="df-pressable"
               onClick={() => {
                 const nextSize = indentationSize === 2 ? 4 : indentationSize === 4 ? 8 : 2;
                 setIndentationSize(nextSize);
@@ -18858,6 +19225,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
             {/* Line Ending LF/CRLF */}
             <div
+              className="df-pressable"
               onClick={() => {
                 const nextEol = lineEnding === 'LF' ? 'CRLF' : 'LF';
                 setLineEnding(nextEol);
@@ -18881,6 +19249,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
             {/* Active Language */}
             <div
+              className="df-pressable"
               onClick={() => {
                 if (editorInstanceRef.current) {
                   editorInstanceRef.current.focus();
@@ -18902,36 +19271,20 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           </div>
           )}
 
-          {/* Solid Accent Block "Aura Dev" (Toggles AI Chat & Focuses Input) */}
+          {/* Bloco de destaque: leva direto ao repositório no GitHub (IDE e CLI) */}
           <div
+            className="df-pressable"
             onClick={() => {
-              // no CLI o bloco leva direto ao repositório no GitHub
-              if (activeTab === 'cli') {
-                const repoUrl = activeHeaderProject?.htmlUrl || (gitRepoName.includes('/') ? `https://github.com/${gitRepoName}` : '');
-                if (!repoUrl) {
-                  setToastMessage('Este projeto não está vinculado a um repositório do GitHub.');
-                  return;
-                }
-                logSystemActivity('statusbar', 'abrir_repositorio', gitRepoName || 'Projeto', { url: repoUrl });
-                if (window.electronAPI?.shell?.openExternal) window.electronAPI.shell.openExternal(repoUrl);
-                else window.open(repoUrl, '_blank');
+              const repoUrl = activeHeaderProject?.htmlUrl || (gitRepoName.includes('/') ? `https://github.com/${gitRepoName}` : '');
+              if (!repoUrl) {
+                setToastMessage('Este projeto não está vinculado a um repositório do GitHub.');
                 return;
               }
-              if (activeTab !== 'ide') {
-                setActiveTab('ide');
-              }
-              setShowAiPanel((prev) => {
-                const next = !prev;
-                if (next) {
-                  setTimeout(() => {
-                    promptEditorRef.current?.focus();
-                    inputRef.current?.focus();
-                  }, 80);
-                }
-                return next;
-              });
+              logSystemActivity('statusbar', 'abrir_repositorio', gitRepoName || 'Projeto', { url: repoUrl });
+              if (window.electronAPI?.shell?.openExternal) window.electronAPI.shell.openExternal(repoUrl);
+              else window.open(repoUrl, '_blank');
             }}
-            title={activeTab === 'cli' ? 'Abrir o repositório no GitHub' : 'Abrir Assistente Aura Dev'}
+            title="Abrir o repositório no GitHub"
             style={{
               alignSelf: 'stretch',
               paddingLeft: 14,
@@ -18945,13 +19298,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               cursor: 'pointer',
               whiteSpace: 'nowrap',
               flexShrink: 0,
-              transition: 'opacity 0.15s ease',
+              transition: 'opacity 150ms var(--ease-out), transform 140ms var(--ease-out)',
             }}
             onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.opacity = '0.9')}
             onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.opacity = '1')}
           >
-            <div style={{ color: barAccentText, fontSize: 12, fontFamily: 'Poppins', fontWeight: '600', whiteSpace: 'nowrap' }}>{activeTab === 'cli' ? 'Repositório' : 'Aura Dev'}</div>
-            {activeTab === 'cli' ? <span style={{ display: 'flex', color: barAccentText }}><GithubMarkIcon size={14} /></span> : <TerminalIcon size={14} color={barAccentText} />}
+            <div style={{ color: barAccentText, fontSize: 12, fontFamily: 'Poppins', fontWeight: '400', whiteSpace: 'nowrap' }}>Repositório</div>
+            <span style={{ display: 'flex', color: barAccentText }}><GithubMarkIcon size={14} /></span>
           </div>
         </div>
       </div>
@@ -19019,6 +19372,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
 
           return (
             <div
+              className="df-dropdown-menu"
               ref={(el) => {
                 fileContextMenuRef.current = el;
                 clampPopupToViewport(el);
@@ -19030,10 +19384,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 minWidth: 215,
                 maxWidth: 260,
                 background: themeTokens.bgCardSecondary,
-                border: '1px solid ' + themeTokens.border,
+                border: 'none',
                 borderRadius: 8,
                 padding: '5px 0',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                boxShadow: 'none',
                 zIndex: 999999,
                 display: 'flex',
                 flexDirection: 'column',
@@ -19045,6 +19399,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                 ) : (
                   <div
                     key={idx}
+                    className={entry.disabled ? undefined : 'df-row-interactive'}
                     onClick={() => {
                       if (!entry.disabled) entry.onClick();
                     }}
@@ -19057,6 +19412,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       cursor: entry.disabled ? 'default' : 'pointer',
                       color: entry.disabled ? themeTokens.textMuted : entry.danger ? '#ef4444' : themeTokens.textPrimary,
                       opacity: entry.disabled ? 0.5 : 1,
+                      transition: 'background-color 150ms var(--ease-out), transform 150ms var(--ease-out)',
                     }}
                     onMouseEnter={(e) => {
                       if (!entry.disabled) e.currentTarget.style.background = themeTokens.hoverBg;
@@ -19077,6 +19433,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
         {/* Global Toast Notification (Auto-dismisses & click to dismiss) */}
         {toastMessage && (
           <div
+            className="df-popover df-pressable"
             onClick={() => setToastMessage(null)}
             title="Clique para fechar notificação"
             style={{
@@ -19089,14 +19446,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               borderRadius: 8,
               fontSize: 12,
               fontFamily: 'Poppins, sans-serif',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+              boxShadow: 'none',
               border: 'none',
               zIndex: 99999,
               display: 'flex',
               alignItems: 'center',
               gap: 8,
               cursor: 'pointer',
-              animation: 'fadeIn 0.2s ease',
             }}
           >
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: accentColor, flexShrink: 0 }} />
@@ -19112,19 +19468,6 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           isEffectiveDark={isEffectiveDark}
           accentColor={accentColor}
           accentContrastText={accentTextColor}
-          onToast={(msg) => setToastMessage(msg)}
-        />
-
-        <PullReviewModal
-          isOpen={reviewTarget !== null}
-          target={reviewTarget}
-          onClose={() => setReviewTarget(null)}
-          isEffectiveDark={isEffectiveDark}
-          accentColor={accentColor}
-          aiProvider={(() => {
-            const prov = AI_PROVIDERS.find((p) => p.id === selectedAiProvider) || AI_PROVIDERS[0];
-            return { id: prov.id, name: prov.name, cliCommand: prov.cliCommand, model: selectedModel, cwd: workspacePath };
-          })()}
           onToast={(msg) => setToastMessage(msg)}
         />
 
@@ -19153,7 +19496,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           repoFullName={onboardingTarget?.name.includes('/') ? onboardingTarget.name : undefined}
           aiProvider={(() => {
             const prov = AI_PROVIDERS.find((p) => p.id === selectedAiProvider) || AI_PROVIDERS[0];
-            return { id: prov.id, name: prov.name, cliCommand: prov.cliCommand, model: selectedModel, cwd: workspacePath };
+            return { id: prov.id, name: prov.name, cliCommand: prov.cliCommand, model: activeModels[prov.id]?.currentModelId, cwd: workspacePath };
           })()}
           isEffectiveDark={isEffectiveDark}
           accentColor={accentColor}
@@ -19161,14 +19504,21 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           onToast={(msg) => setToastMessage(msg)}
         />
 
+        {rainbow.on && rainbow.mode === 'wave' && <RainbowWave stops={rainbow.stops} speed={rainbow.speed} />}
+
         <ProjectAiModal
           isOpen={isProjectAiModalOpen}
           onClose={() => setIsProjectAiModalOpen(false)}
           repoFullName={activeHeaderProject?.fullName}
+          workspacePath={workspacePath}
           isEffectiveDark={isEffectiveDark}
           accentColor={accentColor}
           accentContrastText={accentTextColor}
           onToast={(msg) => setToastMessage(msg)}
+          onApplyAi={(providerId, model) => {
+            if (providerId !== selectedAiProvider) handleSwitchAiProvider(providerId);
+            if (model) handleSelectModel({ id: model, label: model }, providerId);
+          }}
         />
 
         {/* Modal de Regras Globais da IA (CLAUDE.md / GEMINI.md / AGENTS.md / rules.md) */}
@@ -19196,6 +19546,12 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             onUpdateAi={handleUpdateCliInTerminal}
             onOpen={(n) => {
               notifCenter.read(n.id);
+              const rv = reviewInfo(n);
+              if (rv) {
+                openReviewsInCli({ repo: rv.repo, number: rv.number });
+                setIsNotifOpen(false);
+                return;
+              }
               if (n.patchNotesUrl) {
                 if (window.electronAPI?.shell?.openExternal) {
                   window.electronAPI.shell.openExternal(n.patchNotesUrl);
@@ -19210,7 +19566,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               }
               if (n.projectPath && n.projectPath.toLowerCase() !== (workspacePathRef.current || '').toLowerCase()) handleSelectWorkspace(n.projectPath, n.projectName);
               if (n.source) {
-                setActiveTab(n.source === 'ide' ? 'ide' : n.source === 'cli' ? 'cli' : 'design');
+                setActiveTab(n.source === 'ide' ? 'ide' : n.source === 'cli' ? 'cli' : n.source === 'site' ? 'site' : 'design');
                 setIsNotifOpen(false);
               }
             }}
@@ -19230,10 +19586,14 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           onReview={(item) => {
             if (item.reviewRepo && item.reviewNumber) {
               logSystemActivity('review', 'abrir_review', `${item.reviewRepo}#${item.reviewNumber}`);
-              setReviewTarget({ repo: item.reviewRepo, number: item.reviewNumber });
+              openReviewsInCli({ repo: item.reviewRepo, number: item.reviewNumber });
             }
           }}
           onNavigateToProject={(projectPath, repoName, source) => {
+            if (source === 'site') {
+              setActiveTab('site');
+              return;
+            }
             if (source === 'design') {
               // volta ao projeto onde a IA gerou e abre o Design
               if (projectPath && projectPath.toLowerCase() !== (workspacePathRef.current || '').toLowerCase()) handleSelectWorkspace(projectPath, repoName);
@@ -19257,6 +19617,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
         {/* Floating Zen Mode Escape Chip */}
         {isZenMode && (
           <div
+            className="df-opacity-enter"
             onClick={() => setIsZenMode(false)}
             title="Sair do Modo Zen (ou pressione Esc)"
             style={{
@@ -19277,7 +19638,13 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
               color: themeTokens.textPrimary,
               fontSize: 12,
               fontFamily: 'Poppins, sans-serif',
-              transition: 'all 0.15s ease',
+              transition: 'background-color 150ms var(--ease-out), opacity 150ms var(--ease-out)',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.opacity = '0.88';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.opacity = '1';
             }}
           >
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: accentColor }} />
@@ -19602,6 +19969,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
         {/* ISSUE DETAIL SIDESHEET (GITHUB-STYLE)                                     */}
         {/* ========================================================================= */}
         <IssueDetailSidesheet
+          aiProviderId={selectedAiProvider}
           isOpen={Boolean(sidesheetIssue)}
           issue={sidesheetIssue}
           repoFullName={gitRepoName ? (gitRepoName.includes('/') ? gitRepoName : `Walancy/${gitRepoName}`) : 'Walancy/aura-dev'}
@@ -19618,6 +19986,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
           accentColor={accentColor}
           accentContrastText={getContrastTextColor(accentColor)}
           currentUser={githubUser ? { login: githubUser.login, avatarUrl: githubUser.avatarUrl || avatarImg } : null}
+          collaborators={sidesheetCollaborators}
           onClose={() => { setSidesheetIssue(null); setSidesheetFromList(false); }}
           onBackToList={sidesheetFromList ? () => { setSidesheetIssue(null); setSidesheetFromList(false); setIsIssuesModalOpen(true); } : undefined}
           onUpdateIssue={async (updatedFields) => {
@@ -19655,6 +20024,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   state: updatedFields.state,
                   labels: updatedFields.rawLabels,
                   milestone: updatedFields.milestoneNumber,
+                  assignees: updatedFields.assignees?.map((x: any) => x.name),
                 });
                 refreshGitHubIssues();
               } catch (err) {
@@ -19689,11 +20059,36 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
         {/* ========================================================================= */}
         {/* DEVFLOW BRAIN MODAL (OBSIDIAN-STYLE GRAPH & AI CONTEXT SYSTEM)            */}
         {/* ========================================================================= */}
+        <ImageLightbox src={zoomImage} onClose={() => setZoomImage(null)} />
+        {whatsNew.length > 0 && (
+          <WhatsNewModal
+            releases={whatsNew}
+            accentColor={accentColor}
+            isDark={isEffectiveDark}
+            themeTokens={themeTokens}
+            onClose={() => {
+              try { localStorage.setItem('aura_last_seen_version', __APP_VERSION__); } catch {}
+              setWhatsNew([]);
+            }}
+          />
+        )}
         <ProjectBrainModal
           isOpen={isBrainModalOpen}
           onClose={() => setIsBrainModalOpen(false)}
-          workspacePath={workspacePath || '/Users/walancy/Documents/codes/devflow-desktop'}
+          workspacePath={workspacePath || ''}
           projectName={gitRepoName}
+          aiProvider={selectedAiProvider}
+          aiModel={selectedModel}
+          aiProviders={AI_PROVIDERS.map((p) => ({ id: p.id, name: p.name }))}
+          aiModelsByProvider={Object.fromEntries(
+            AI_PROVIDERS.map((p) => [p.id, (activeModels[p.id]?.models || []).map((m) => ({ id: m.id, label: m.label }))])
+          )}
+          onChangeAiProvider={handleSwitchAiProvider}
+          onChangeAiModel={(modelId) => {
+            const list = activeModels[selectedAiProvider]?.models || [];
+            const found = list.find((m) => m.id === modelId);
+            if (found) handleSelectModel(found, selectedAiProvider);
+          }}
           accentColor={accentColor}
           themeTokens={themeTokens}
           isEffectiveDark={isEffectiveDark}

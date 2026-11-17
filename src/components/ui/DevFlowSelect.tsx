@@ -51,10 +51,11 @@ export const DevFlowSelect = <T extends string | number>({
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number }>({
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number; placeAbove: boolean }>({
     top: 0,
     left: 0,
     width: 0,
+    placeAbove: false,
   });
 
   const selectedOption = options.find((opt) => opt.value === value);
@@ -70,6 +71,7 @@ export const DevFlowSelect = <T extends string | number>({
       top: placeAbove ? rect.top - dropdownHeight - 4 : rect.bottom + 4,
       left: rect.left,
       width: rect.width,
+      placeAbove,
     });
   };
 
@@ -138,6 +140,7 @@ export const DevFlowSelect = <T extends string | number>({
       <button
         ref={triggerRef}
         type="button"
+        className="df-dropdown-trigger"
         onClick={handleToggle}
         disabled={disabled}
         data-open={isOpen ? 'true' : undefined}
@@ -159,7 +162,7 @@ export const DevFlowSelect = <T extends string | number>({
           justifyContent: 'space-between',
           outline: 'none',
           opacity: disabled ? 0.5 : 1,
-          transition: 'background 0.15s ease, color 0.15s ease',
+          transition: 'background-color 150ms ease, color 150ms ease, transform 140ms var(--ease-out)',
           boxSizing: 'border-box',
         }}
         onMouseEnter={(e) => {
@@ -205,10 +208,11 @@ export const DevFlowSelect = <T extends string | number>({
         <ChevronDown
           size={12}
           color={secondaryColor}
+          className="df-chevron"
           style={{
             flexShrink: 0,
             transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-            transition: 'transform 0.15s ease',
+            transition: 'transform 160ms var(--ease-out)',
           }}
         />
       </button>
@@ -217,6 +221,8 @@ export const DevFlowSelect = <T extends string | number>({
         createPortal(
           <div
             ref={dropdownRef}
+            className="df-dropdown-menu"
+            data-placement={dropdownPos.placeAbove ? 'top' : 'bottom'}
             style={{
               position: 'fixed',
               top: dropdownPos.top,
@@ -234,7 +240,8 @@ export const DevFlowSelect = <T extends string | number>({
               gap: 4,
               zIndex: 9999999,
               boxSizing: 'border-box',
-              animation: 'fadeIn 0.12s ease-out',
+              transformOrigin: dropdownPos.placeAbove ? 'bottom left' : 'top left',
+              animation: `${dropdownPos.placeAbove ? 'dfPopoverInUp' : 'dfPopoverIn'} 160ms var(--ease-out)`,
             }}
           >
             {options.map((opt) => {
@@ -243,6 +250,7 @@ export const DevFlowSelect = <T extends string | number>({
                 <button
                   key={String(opt.value)}
                   type="button"
+                  className="df-pressable"
                   onClick={() => {
                     onChange(opt.value);
                     setIsOpen(false);
@@ -270,7 +278,7 @@ export const DevFlowSelect = <T extends string | number>({
                     outline: 'none',
                     textAlign: 'left',
                     boxSizing: 'border-box',
-                    transition: 'background 0.12s ease',
+                    transition: 'background-color 140ms ease, color 140ms ease, transform 130ms var(--ease-out)',
                   }}
                   onMouseEnter={(e) => {
                     onOptionHover?.(opt.value);

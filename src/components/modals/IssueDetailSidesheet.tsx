@@ -28,6 +28,7 @@ import {
   List,
   Heading,
   Loader2,
+  Bot,
   Lock,
   Globe,
   Send,
@@ -63,6 +64,10 @@ import { hexToRgba } from '../../utils/color';
 import { getFieldTokens } from '../../utils/fieldTokens';
 import type { GithubIssueDetails, GithubProjectFieldDef, GithubProjectItemDetails } from '../../electron.d';
 import { ConfirmDeleteModal } from './ConfirmDeleteModal';
+import { ghSettings } from '../settings/settingsUi';
+import { IssueLabelsManager, type RepoLabel } from './IssueLabelsManager';
+import { renderAiIcon } from '../icons/AiProviderIcons';
+import { logSystemActivity } from '../../utils/brainService';
 
 const GITHUB_NAMED_COLORS: Record<string, string> = {
   GRAY: '#8b949e',
@@ -123,6 +128,8 @@ export interface IssueDetailSidesheetProps {
   onDeleteIssue?: (issue: ProjectIssue) => void;
   onCreateBranchForIssue?: (issue: ProjectIssue) => void;
   onAskAiAboutIssue?: (issue: ProjectIssue) => void;
+  /** IA selecionada: os botões "com IA" usam o ícone dela */
+  aiProviderId?: string;
   /** aberta a partir da lista de issues: mostra o botão Voltar à esquerda do título para retornar a ela */
   onBackToList?: () => void;
   // Notifica o pai quando dados do Projects V2 (sprint/iteration, status, estimate) mudam no GitHub,
@@ -287,6 +294,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   onDeleteIssue,
   onCreateBranchForIssue,
   onAskAiAboutIssue,
+  aiProviderId,
   onBackToList,
   onIssuePatched,
   showToast = (msg: string) => console.log(msg),
@@ -398,36 +406,6 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
 
   // Permite que quando o scroll de um componente interno chegar ao fim ou topo,
   // o scroll do componente externo (contentScrollRef) role suavemente.
-  const handleInternalScrollWheel = useCallback((e: React.WheelEvent<HTMLElement>) => {
-    const el = e.currentTarget;
-    const parent = contentScrollRef.current;
-    if (!el || !parent) return;
-
-    const deltaY = e.deltaY;
-    if (deltaY === 0) return;
-
-    if (deltaY > 0) {
-      // Rolando para baixo
-      const maxScrollTop = el.scrollHeight - el.clientHeight;
-      const remainingInnerScroll = Math.max(0, maxScrollTop - el.scrollTop);
-      if (remainingInnerScroll <= 1) {
-        parent.scrollTop += deltaY;
-      } else if (deltaY > remainingInnerScroll) {
-        el.scrollTop = maxScrollTop;
-        parent.scrollTop += (deltaY - remainingInnerScroll);
-      }
-    } else if (deltaY < 0) {
-      // Rolando para cima
-      if (el.scrollTop <= 1) {
-        parent.scrollTop += deltaY;
-      } else if (Math.abs(deltaY) > el.scrollTop) {
-        const excess = Math.abs(deltaY) - el.scrollTop;
-        el.scrollTop = 0;
-        parent.scrollTop -= excess;
-      }
-    }
-  }, []);
-
   // Split button dropdown popup states
   const [isSubIssueSplitOpen, setIsSubIssueSplitOpen] = useState(false);
   const subIssueSplitRef = useRef<HTMLDivElement | null>(null);
@@ -549,6 +527,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   const [isPriorityDropdownOpen, setIsPriorityDropdownOpen] = useState(false);
   const [isStatusDropdownOpen, setIsStatusDropdownOpen] = useState(false);
   const [isSubscribed, setIsSubscribed] = useState(true);
+  const [subscription, setSubscription] = useState<'SUBSCRIBED' | 'UNSUBSCRIBED' | 'IGNORED'>('SUBSCRIBED');
 
   // Dados "frescos" da issue direto da API do GitHub (GraphQL), buscados sempre que o painel abre.
   const [details, setDetails] = useState<GithubIssueDetails | null>(null);
@@ -559,11 +538,88 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   const [savingFieldKey, setSavingFieldKey] = useState<string | null>(null);
   const detailsRequestRef = useRef(0);
   const [repoOwner, repoName] = (repoFullName || '').split('/');
+  const [labelsEditMode, setLabelsEditMode] = useState(false);
+  const [repoLabels, setRepoLabels] = useState<RepoLabel[] | null>(null);
+  const loadRepoLabels = useCallback(() => {
+    if (!repoOwner || !repoName) return;
+    ghSettings<RepoLabel[]>('listLabels', { owner: repoOwner, repo: repoName }).then(setRepoLabels).catch(() => setRepoLabels((prev) => prev ?? []));
+  }, [repoOwner, repoName]);
+
+  // Relationships (pai, bloqueada por, bloqueando) e PRs do repositório, direto da API do GitHub
+  type RelItem = { number: number; title: string; state: string; id: number; repo: string };
+  type RelKind = 'parent' | 'blockedBy' | 'blocking' | 'relates';
+  const [relations, setRelations] = useState<{ parent: RelItem[]; blockedBy: RelItem[]; blocking: RelItem[] }>({ parent: [], blockedBy: [], blocking: [] });
+  const [relMode, setRelMode] = useState<RelKind | null>(null);
+  const [relSearch, setRelSearch] = useState('');
+  const [isSavingRelation, setIsSavingRelation] = useState(false);
+  const [repoPulls, setRepoPulls] = useState<Array<{ number: number; title: string; state: string; draft: boolean; author?: string; body: string }>>([]);
+  const [isLinkingPr, setIsLinkingPr] = useState<number | null>(null);
+  const reloadRelations = useCallback(async () => {
+    if (!repoOwner || !repoName || !issue?.githubNumber) return;
+    try {
+      setRelations(await ghSettings('issueRelations', { owner: repoOwner, repo: repoName, number: issue.githubNumber }));
+    } catch {
+      setRelations({ parent: [], blockedBy: [], blocking: [] });
+    }
+  }, [repoOwner, repoName, issue?.githubNumber]);
+  useEffect(() => {
+    reloadRelations();
+  }, [reloadRelations]);
+  useEffect(() => {
+    if (activeSidebarPopup !== 'development' || !repoOwner || !repoName) return;
+    ghSettings<typeof repoPulls>('listPulls', { owner: repoOwner, repo: repoName }).then(setRepoPulls).catch(() => setRepoPulls([]));
+  }, [activeSidebarPopup, repoOwner, repoName]);
+  useEffect(() => {
+    if (activeSidebarPopup !== 'relationships') {
+      setRelMode(null);
+      setRelSearch('');
+    }
+  }, [activeSidebarPopup]);
+  const addRelation = async (kind: RelKind, target: number) => {
+    if (!repoOwner || !repoName || !issue?.githubNumber) return;
+    setIsSavingRelation(true);
+    try {
+      await ghSettings('addIssueRelation', { owner: repoOwner, repo: repoName, number: issue.githubNumber, target, kind });
+      showToast(kind === 'relates' ? `Relação com #${target} registrada em um comentário.` : 'Relação adicionada.');
+      logSystemActivity('tarefas', 'adicionar_relacao_issue', `${repoFullName}#${issue.githubNumber}`, { kind, target });
+      setActiveSidebarPopup(null);
+      await reloadRelations();
+    } catch (err: any) {
+      showToast(err?.message || 'Não foi possível adicionar a relação.');
+    } finally {
+      setIsSavingRelation(false);
+    }
+  };
+  const removeRelation = async (kind: Exclude<RelKind, 'relates'>, item: RelItem) => {
+    if (!repoOwner || !repoName || !issue?.githubNumber) return;
+    try {
+      await ghSettings('removeIssueRelation', { owner: repoOwner, repo: repoName, number: issue.githubNumber, kind, targetNumber: item.number, targetId: item.id });
+      logSystemActivity('tarefas', 'remover_relacao_issue', `${repoFullName}#${issue.githubNumber}`, { kind, target: item.number });
+      await reloadRelations();
+    } catch (err: any) {
+      showToast(err?.message || 'Não foi possível remover a relação.');
+    }
+  };
+  const linkPull = async (prNumber: number) => {
+    if (!repoOwner || !repoName || !issue?.githubNumber) return;
+    setIsLinkingPr(prNumber);
+    try {
+      await ghSettings('linkPullToIssue', { owner: repoOwner, repo: repoName, number: prNumber, issueNumber: issue.githubNumber });
+      showToast(`PR #${prNumber} vinculado: "Closes #${issue.githubNumber}" no corpo do PR.`);
+      logSystemActivity('tarefas', 'vincular_pr_issue', `${repoFullName}#${issue.githubNumber}`, { pr: prNumber });
+      setActiveSidebarPopup(null);
+    } catch (err: any) {
+      showToast(err?.message || 'Não foi possível vincular o PR.');
+    } finally {
+      setIsLinkingPr(null);
+    }
+  };
 
   const selectedType = details?.issue.issueType?.name || 'No type';
   const selectedTypeColor = details?.issue.issueType?.color ? githubColorToHex(details.issue.issueType.color) : undefined;
   const [isConversationLocked, setIsConversationLocked] = useState(false);
   const [isPinned, setIsPinned] = useState(false);
+  const [isIssuePinned, setIsIssuePinned] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
 
   // Status saving state
@@ -644,10 +700,11 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
   const handleTogglePinIssue = async () => {
     if (!issue) return;
     setIsTogglingPin(true);
-    const nextPinned = !isPinned;
+    const nextPinned = !isIssuePinned;
     try {
-      if (issue.nodeId && window.electronAPI?.github?.pinIssue) {
-        const res = await window.electronAPI.github.pinIssue(issue.nodeId, nextPinned);
+      const nodeId = details?.issue.id || issue.nodeId;
+      if (nodeId && window.electronAPI?.github?.pinIssue) {
+        const res = await window.electronAPI.github.pinIssue(nodeId, nextPinned);
         if (!res?.success) throw new Error(res?.error || 'Falha ao alterar fixação.');
       }
       try {
@@ -655,7 +712,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
         if (nextPinned) localStorage.setItem(key, 'true');
         else localStorage.removeItem(key);
       } catch {}
-      setIsPinned(nextPinned);
+      setIsIssuePinned(nextPinned);
       showToast(nextPinned ? 'Issue fixada no topo!' : 'Issue desafixada.');
     } catch (err: any) {
       showToast(err?.message || 'Erro ao fixar issue no GitHub.');
@@ -665,17 +722,22 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
     }
   };
 
-  const handleToggleSubscription = async (forcedSubscribed?: boolean) => {
+  const handleToggleSubscription = async (forced?: 'SUBSCRIBED' | 'UNSUBSCRIBED' | 'IGNORED') => {
     if (!issue) return;
     setIsTogglingSubscription(true);
-    const nextSub = forcedSubscribed !== undefined ? forcedSubscribed : !isSubscribed;
+    const next = forced ?? (isSubscribed ? 'UNSUBSCRIBED' : 'SUBSCRIBED');
     try {
       if (issue.githubNumber && repoOwner && repoName && window.electronAPI?.github?.setIssueSubscription) {
-        const res = await window.electronAPI.github.setIssueSubscription(repoOwner, repoName, issue.githubNumber, nextSub);
+        const res = await window.electronAPI.github.setIssueSubscription(repoOwner, repoName, issue.githubNumber, next);
         if (!res?.success) throw new Error(res?.error || 'Falha ao alterar notificações.');
+        const applied = (res.subscription as typeof next) || next;
+        setSubscription(applied);
+        setIsSubscribed(applied === 'SUBSCRIBED');
+      } else {
+        setSubscription(next);
+        setIsSubscribed(next === 'SUBSCRIBED');
       }
-      setIsSubscribed(nextSub);
-      showToast(nextSub ? 'Notificações ativadas no GitHub!' : 'Notificações desativadas.');
+      showToast(next === 'SUBSCRIBED' ? 'Notificações ativadas no GitHub!' : next === 'IGNORED' ? 'Notificações ignoradas.' : 'Notificações desativadas.');
     } catch (err: any) {
       showToast(err?.message || 'Erro ao alterar inscrições no GitHub.');
     } finally {
@@ -725,6 +787,15 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
         if (reqId !== detailsRequestRef.current) return null;
         if (!res?.success || !res.details) throw new Error(res?.error || 'Falha ao carregar a issue do GitHub.');
         setDetails(res.details);
+        setIsConversationLocked(Boolean(res.details?.issue?.locked));
+        setIsIssuePinned(Boolean(res.details?.issue?.isPinned));
+        {
+          const sub = res.details?.issue?.viewerSubscription;
+          if (sub) {
+            setSubscription(sub);
+            setIsSubscribed(sub === 'SUBSCRIBED');
+          }
+        }
         return res.details;
       } catch (err: any) {
         if (reqId === detailsRequestRef.current) setDetailsError(err?.message || 'Falha ao carregar a issue do GitHub.');
@@ -2468,22 +2539,25 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           top: 'calc(100% + 6px)',
                           right: 0,
                           zIndex: 110,
-                          minWidth: 330,
-                          background: sysPopupBg,
+                          minWidth: 360,
+                          background: isEffectiveDark ? '#2a2a2a' : '#ffffff',
                           border: 'none',
                           borderRadius: 10,
-                          boxShadow: sysPopupShadow,
-                          padding: '12px 14px',
+                          boxShadow: 'none',
+                          padding: 12,
                           display: 'flex',
                           flexDirection: 'column',
+                          gap: 12,
                         }}
+                        className="df-subtle-enter"
                       >
                         <div
                           style={{
                             fontSize: 13,
-                            fontWeight: 600,
-                            color: sysTextPrimary,
-                            marginBottom: 12,
+                            fontWeight: 400,
+                            color: isEffectiveDark ? '#f2f2f2' : '#171717',
+                            paddingBottom: 12,
+                            borderBottom: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
                           }}
                         >
                           Edited 1 time
@@ -2494,15 +2568,15 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           style={{
                             display: 'flex',
                             alignItems: 'center',
-                            gap: 10,
-                            padding: '6px 6px',
+                            gap: 12,
+                            padding: 0,
                             borderRadius: 6,
                           }}
                         >
                           <div
                             style={{
-                              width: 20,
-                              height: 20,
+                              width: 24,
+                              height: 24,
                               borderRadius: '50%',
                               background: accentColor,
                               color: accentContrastText,
@@ -2528,16 +2602,17 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           <span
                             style={{
                               fontSize: 13,
-                              fontWeight: 600,
-                              color: sysTextPrimary,
+                              fontWeight: 400,
+                              color: isEffectiveDark ? '#f2f2f2' : '#171717',
                             }}
                           >
                             {issue.author || 'Walancy'}
                           </span>
                           <span
                             style={{
-                              fontSize: 13,
-                              color: sysTextSecondary,
+                              fontSize: 12,
+                              color: isEffectiveDark ? '#a3a3a3' : '#737373',
+                              whiteSpace: 'nowrap',
                             }}
                           >
                             {formatGitHubTimeAgoFull((issue as any).updatedAtIso || issue.createdAtIso)}
@@ -2546,11 +2621,11 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             style={{
                               marginLeft: 'auto',
                               padding: '2px 8px',
-                              borderRadius: 12,
-                              border: `1px solid ${hexToRgba(accentColor, 0.3)}`,
-                              background: hexToRgba(accentColor, 0.08),
+                              borderRadius: 6,
+                              border: 'none',
+                              background: hexToRgba(accentColor, 0.16),
                               fontSize: 11,
-                              fontWeight: 500,
+                              fontWeight: 400,
                               color: accentColor,
                               whiteSpace: 'nowrap',
                             }}
@@ -2564,15 +2639,15 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           style={{
                             display: 'flex',
                             alignItems: 'center',
-                            gap: 10,
-                            padding: '6px 6px',
+                            gap: 12,
+                            padding: 0,
                             borderRadius: 6,
                           }}
                         >
                           <div
                             style={{
-                              width: 20,
-                              height: 20,
+                              width: 24,
+                              height: 24,
                               borderRadius: '50%',
                               background: accentColor,
                               color: accentContrastText,
@@ -2872,7 +2947,6 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       rows={12}
                       value={editedDescription}
                       onChange={(e) => setEditedDescription(e.target.value)}
-                      onWheel={handleInternalScrollWheel}
                       placeholder="Descreva esta tarefa detalhadamente usando Markdown..."
                       style={{
                         width: '100%',
@@ -2890,20 +2964,19 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                         outline: 'none',
                         resize: 'vertical',
                         minHeight: 260,
-                        overscrollBehavior: 'auto',
+                        overscrollBehavior: 'contain',
                         scrollbarWidth: 'thin',
                         scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
                       }}
                     />
                   ) : (
                     <div
-                      onWheel={handleInternalScrollWheel}
                       style={{
                         padding: '8px 4px',
                         minHeight: 260,
                         maxHeight: 480,
                         overflowY: 'auto',
-                        overscrollBehavior: 'auto',
+                        overscrollBehavior: 'contain',
                         fontSize: 12.5,
                         fontWeight: 400,
                         scrollbarWidth: 'thin',
@@ -2966,7 +3039,6 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   {/* Container de descrição com rolagem vertical dedicada e estilizada (mínimo 8 linhas) */}
                   <div
                     className="issue-description-body-scrollable"
-                    onWheel={handleInternalScrollWheel}
                     style={{
                       width: '100%',
                       minHeight: 180,
@@ -2975,7 +3047,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       overflowX: 'hidden',
                       paddingRight: 8,
                       paddingBottom: 6,
-                      overscrollBehavior: 'auto',
+                      overscrollBehavior: 'contain',
                       boxSizing: 'border-box',
                     }}
                   >
@@ -3401,13 +3473,12 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
               {!isSubIssuesCollapsed && (
                 <div
                   className="issue-description-scrollable"
-                  onWheel={handleInternalScrollWheel}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
                     maxHeight: 380,
                     overflowY: 'auto',
-                    overscrollBehavior: 'auto',
+                    overscrollBehavior: 'contain',
                     scrollbarWidth: 'thin',
                     scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
                   }}
@@ -3971,7 +4042,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                                 if (onAskAiAboutIssue) {
                                   onAskAiAboutIssue(issue);
                                 } else {
-                                  showToast('Abrindo assistente de IA para sugerir sub-tarefas...');
+                                  showToast('Assistente de IA indisponível nesta tela.');
                                 }
                               }}
                               style={{
@@ -3992,8 +4063,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                               onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                             >
                               <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                                <Sparkles size={15} color={accentColor} />
-                                <span>Draft with Copilot</span>
+                                {aiProviderId ? renderAiIcon(aiProviderId, 15) : <Bot size={15} color={accentColor} />}
+                                <span>Sugerir sub-tarefas com IA</span>
                               </div>
                               <ArrowUpRight size={14} color={sysTextSecondary} />
                             </button>
@@ -4174,13 +4245,12 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             }
                             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSaveCommentEdit(c.id);
                           }}
-                          onWheel={handleInternalScrollWheel}
                           style={{
                             width: '100%',
                             minHeight: 140,
                             maxHeight: 340,
                             overflowY: 'auto',
-                            overscrollBehavior: 'auto',
+                            overscrollBehavior: 'contain',
                             scrollbarWidth: 'thin',
                             scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
                             resize: 'vertical',
@@ -4227,7 +4297,6 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     ) : (
                       <div
                         className="issue-description-scrollable"
-                        onWheel={handleInternalScrollWheel}
                         style={{
                           padding: '16px 18px',
                           fontSize: 12.5,
@@ -4237,7 +4306,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           minHeight: 100,
                           maxHeight: 360,
                           overflowY: 'auto',
-                          overscrollBehavior: 'auto',
+                          overscrollBehavior: 'contain',
                           scrollbarWidth: 'thin',
                           scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
                         }}
@@ -4637,7 +4706,6 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           rows={7}
                           value={newCommentText}
                           onChange={(e) => setNewCommentText(e.target.value)}
-                          onWheel={handleInternalScrollWheel}
                           placeholder="Use Markdown to format your comment"
                           style={{
                             width: '100%',
@@ -4655,7 +4723,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                             minHeight: 170,
                             maxHeight: 400,
                             overflowY: 'auto',
-                            overscrollBehavior: 'auto',
+                            overscrollBehavior: 'contain',
                             scrollbarWidth: 'thin',
                             scrollbarColor: isEffectiveDark ? 'rgba(255, 255, 255, 0.2) transparent' : 'rgba(0, 0, 0, 0.2) transparent',
                           }}
@@ -4677,7 +4745,6 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       </div>
                     ) : (
                       <div
-                        onWheel={handleInternalScrollWheel}
                         style={{
                           borderRadius: 6,
                           border: 'none',
@@ -4686,7 +4753,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                           minHeight: 170,
                           maxHeight: 400,
                           overflowY: 'auto',
-                          overscrollBehavior: 'auto',
+                          overscrollBehavior: 'contain',
                           fontSize: 12.5,
                           fontWeight: 400,
                           scrollbarWidth: 'thin',
@@ -5263,6 +5330,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
           {/* COLUNA DIREITA: METADADOS DA SIDEBAR (Sem fundo com linhas divisórias)  */}
           {/* ======================================================================= */}
           <div
+            className="issue-sidebar"
             style={{
               width: 290,
               flexShrink: 0,
@@ -5285,6 +5353,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 flexDirection: 'column',
                 gap: 8,
                 position: 'relative',
+                zIndex: activeSidebarPopup === 'assignees' ? 20 : 1,
                 padding: '12px 0',
                 borderBottom: `1px solid ${sysBorder}`,
               }}
@@ -5437,7 +5506,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   <div style={{ borderBottom: `1px solid ${sysBorder}` }} />
 
                   {/* Lista de Colaboradores */}
-                  <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                  <div style={{ maxHeight: 220, overflowY: 'auto', overscrollBehavior: 'contain' }}>
                     {(() => {
                       const list: Array<{ login: string; name?: string; avatarUrl?: string }> = [];
                       if (currentUser?.login) {
@@ -5577,6 +5646,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 flexDirection: 'column',
                 gap: 8,
                 position: 'relative',
+                zIndex: activeSidebarPopup === 'labels' ? 20 : 1,
                 padding: '12px 0',
                 borderBottom: `1px solid ${sysBorder}`,
               }}
@@ -5586,6 +5656,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 onClick={() => {
                   setActiveSidebarPopup((prev) => (prev === 'labels' ? null : 'labels'));
                   setLabelSearch('');
+                  setLabelsEditMode(false);
+                  loadRepoLabels();
                 }}
                 style={{
                   display: 'flex',
@@ -5655,6 +5727,25 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     overflow: 'hidden',
                   }}
                 >
+                  {labelsEditMode ? (
+                    <IssueLabelsManager
+                      owner={repoOwner}
+                      repo={repoName}
+                      labels={repoLabels}
+                      onChanged={loadRepoLabels}
+                      onBack={() => setLabelsEditMode(false)}
+                      showToast={showToast}
+                      isDark={isEffectiveDark}
+                      accentColor={accentColor}
+                      accentContrastText={accentContrastText}
+                      textPrimary={sysTextPrimary}
+                      textSecondary={sysTextSecondary}
+                      fieldBg={sysInputBg}
+                      hoverBg={sysHoverBg}
+                      divider={sysBorder}
+                    />
+                  ) : (
+                    <>
                   <div style={{ padding: '12px 14px 8px 14px', fontSize: 13.5, fontWeight: 600, color: sysTextPrimary }}>
                     Apply labels to this issue
                   </div>
@@ -5703,18 +5794,13 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   </div>
                   <div style={{ borderBottom: `1px solid ${sysBorder}` }} />
 
-                  <div style={{ maxHeight: 250, overflowY: 'auto' }}>
+                  <div style={{ maxHeight: 250, overflowY: 'auto', overscrollBehavior: 'contain' }}>
                     {(() => {
-                      const standardLabels: Array<{ name: string; description: string; color: string; recent?: boolean }> = [
-                        { name: 'mobile', description: 'Tarefas do app mobile', color: '#388bfd' },
-                        { name: 'prioridade: alta', description: 'Prioridade alta', color: '#f85149' },
-                        { name: 'prioridade: média', description: 'Prioridade média', color: '#d29922', recent: true },
-                        { name: 'prioridade: baixa', description: 'Prioridade baixa', color: '#238636', recent: true },
-                        { name: 'bug', description: 'Algo não está funcionando como esperado', color: '#f85149' },
-                        { name: 'feature', description: 'Nova funcionalidade ou melhoria', color: '#a371f7' },
-                        { name: 'documentation', description: 'Melhorias na documentação', color: '#0075ca' },
-                        { name: 'ui/ux', description: 'Design e experiência de usuário', color: '#e36209' },
-                      ];
+                      const standardLabels: Array<{ name: string; description: string; color: string; recent?: boolean }> = (repoLabels || []).map((l) => ({
+                        name: l.name,
+                        description: l.description || '',
+                        color: `#${l.color.replace('#', '')}`,
+                      }));
 
                       // Garantir que labels existentes na issue também apareçam
                       currentLabels.forEach((cl) => {
@@ -5903,10 +5989,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
 
                   {/* Footer Edit labels */}
                   <div
-                    onClick={() => {
-                      showToast('Editor avançado de labels aberto.');
-                      setActiveSidebarPopup(null);
-                    }}
+                    onClick={() => setLabelsEditMode(true)}
                     style={{
                       padding: '9px 12px',
                       textAlign: 'center',
@@ -5923,6 +6006,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   >
                     Edit labels
                   </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -5934,6 +6019,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 flexDirection: 'column',
                 gap: 8,
                 position: 'relative',
+                zIndex: activeSidebarPopup === 'type' ? 20 : 1,
                 padding: '12px 0',
                 borderBottom: `1px solid ${sysBorder}`,
               }}
@@ -6134,6 +6220,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 flexDirection: 'column',
                 gap: 8,
                 position: 'relative',
+                zIndex: activeSidebarPopup === 'priority' ? 20 : 1,
                 padding: '12px 0',
                 borderBottom: `1px solid ${sysBorder}`,
               }}
@@ -6352,6 +6439,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 flexDirection: 'column',
                 gap: 8,
                 position: 'relative',
+                zIndex: activeSidebarPopup === 'projects' ? 20 : 1,
                 padding: '12px 0',
                 borderBottom: `1px solid ${sysBorder}`,
               }}
@@ -6452,7 +6540,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   </div>
                   <div style={{ borderBottom: `1px solid ${sysBorder}` }} />
 
-                  <div style={{ maxHeight: 250, overflowY: 'auto' }}>
+                  <div style={{ maxHeight: 250, overflowY: 'auto', overscrollBehavior: 'contain' }}>
                     {(() => {
                       if (!details) {
                         return (
@@ -6713,9 +6801,10 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   padding: 4,
                   boxShadow: 'none',
                   zIndex: 100,
-                  minWidth: 180,
+                  minWidth: 200,
                   maxHeight: 260,
                   overflowY: 'auto',
+                  overscrollBehavior: 'contain',
                 };
 
                 return (
@@ -6725,7 +6814,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       borderRadius: 8,
                       border: 'none',
                       background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f6f8fa',
-                      padding: '10px 12px',
+                      padding: 12,
                       display: 'flex',
                       flexDirection: 'column',
                       gap: 8,
@@ -6735,7 +6824,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       <Columns3 size={14} color={theme?.textSecondary || '#8b949e'} />
                       <span
                         onClick={() => item.project.url && window.electronAPI?.shell?.openExternal?.(item.project.url)}
-                        style={{ fontSize: 12.5, fontWeight: 600, color: theme?.textPrimary || '#fff', cursor: item.project.url ? 'pointer' : 'default' }}
+                        style={{ fontSize: 12.5, fontWeight: 400, color: theme?.textPrimary || '#fff', cursor: item.project.url ? 'pointer' : 'default' }}
                       >
                         {item.project.title}
                       </span>
@@ -6802,36 +6891,57 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                     </div>
 
                     {!isCollapsed && otherFields.length > 0 && (
-                      <div style={{ paddingTop: 4, display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12 }}>
+                      <div className="df-subtle-enter" style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 12 }}>
                         {otherFields.map((f) => {
                           const key = `${item.itemId}:${f.id}`;
                           const display = renderFieldValue(f);
+                          const selOpt = f.dataType === 'SINGLE_SELECT' ? (f.options || []).find((o) => o.id === item.values[f.id]?.optionId) : null;
+                          const isOpen = openProjectFieldKey === key;
                           return (
-                            <div key={f.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative', gap: 8 }}>
-                              <span style={{ color: theme?.textSecondary || '#8b949e', flexShrink: 0 }}>{f.name}</span>
+                            <div key={f.id} style={{ position: 'relative', zIndex: isOpen ? 30 : 1 }}>
                               <button
                                 type="button"
                                 disabled={savingFieldKey === key}
                                 onClick={() => setOpenProjectFieldKey((prev) => (prev === key ? null : key))}
                                 style={{
-                                  display: 'inline-flex',
+                                  width: '100%',
+                                  height: 30,
+                                  display: 'flex',
                                   alignItems: 'center',
-                                  gap: 4,
-                                  background: 'transparent',
+                                  justifyContent: 'space-between',
+                                  gap: 12,
+                                  padding: '0 8px',
+                                  borderRadius: 6,
+                                  background: isOpen ? sysHoverBg : 'transparent',
                                   border: 'none',
-                                  color: display ? (theme?.textPrimary || '#fff') : (theme?.textSecondary || '#8b949e'),
                                   fontSize: 12,
+                                  fontWeight: 400,
+                                  fontFamily: 'inherit',
                                   cursor: 'pointer',
-                                  maxWidth: 160,
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap',
+                                  transition: 'background-color 150ms ease',
                                 }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = sysHoverBg; }}
+                                onMouseLeave={(e) => { if (!isOpen) e.currentTarget.style.background = 'transparent'; }}
                               >
-                                {savingFieldKey === key && <Loader2 size={11} className="animate-spin" />}
-                                {display || (f.dataType === 'ITERATION' ? 'Choose an iteration' : f.dataType === 'SINGLE_SELECT' ? 'Choose an option' : 'Enter value…')}
+                                <span style={{ color: theme?.textSecondary || '#8b949e', flexShrink: 0 }}>{f.name}</span>
+                                <span
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                    minWidth: 0,
+                                    color: display ? (theme?.textPrimary || '#fff') : (theme?.textMuted || '#6e7681'),
+                                  }}
+                                >
+                                  {savingFieldKey === key && <Loader2 size={11} className="animate-spin" />}
+                                  {selOpt && <span style={{ width: 8, height: 8, borderRadius: '50%', background: githubColorToHex(selOpt.color), flexShrink: 0 }} />}
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {display || (f.dataType === 'ITERATION' ? 'Select iteration' : f.dataType === 'SINGLE_SELECT' ? 'Select' : f.dataType === 'DATE' ? 'Set date' : 'Set value')}
+                                  </span>
+                                  <ChevronDown size={11} style={{ opacity: 0.5, flexShrink: 0 }} />
+                                </span>
                               </button>
-                              {openProjectFieldKey === key && <div style={dropdownStyle}>{renderFieldEditor(f)}</div>}
+                              {isOpen && <div className="df-subtle-enter" style={{ ...dropdownStyle, background: isEffectiveDark ? '#2a2a2a' : '#ffffff', zIndex: 40 }}>{renderFieldEditor(f)}</div>}
                             </div>
                           );
                         })}
@@ -6849,6 +6959,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 flexDirection: 'column',
                 gap: 8,
                 position: 'relative',
+                zIndex: activeSidebarPopup === 'milestone' ? 20 : 1,
                 padding: '12px 0',
                 borderBottom: `1px solid ${sysBorder}`,
               }}
@@ -6968,7 +7079,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   </div>
                   <div style={{ borderBottom: `1px solid ${sysBorder}` }} />
 
-                  <div style={{ maxHeight: 250, overflowY: 'auto' }}>
+                  <div style={{ maxHeight: 250, overflowY: 'auto', overscrollBehavior: 'contain' }}>
                     {(() => {
                       // Só milestones reais do repositório. Sprints do Projects V2 (iterations) são
                       // outro campo e ficam no card do Project acima.
@@ -7097,6 +7208,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 flexDirection: 'column',
                 gap: 8,
                 position: 'relative',
+                zIndex: activeSidebarPopup === 'relationships' ? 20 : 1,
                 padding: '12px 0',
                 borderBottom: `1px solid ${sysBorder}`,
               }}
@@ -7128,91 +7240,115 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 <span style={{ fontSize: 12, fontWeight: 600, color: isEffectiveDark ? '#c9d1d9' : '#24292f' }}>Relationships</span>
                 <Settings size={14} color={isEffectiveDark ? '#8b949e' : '#57606a'} />
               </div>
-              <div style={{ fontSize: 12, color: theme?.textSecondary || '#8b949e', padding: '0 6px' }}>None yet</div>
+              {(['parent', 'blockedBy', 'blocking'] as const).every((k) => relations[k].length === 0) ? (
+                <div style={{ fontSize: 12, color: theme?.textSecondary || '#8b949e', padding: '0 6px' }}>None yet</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '0 6px' }}>
+                  {([['parent', 'Parent'], ['blockedBy', 'Blocked by'], ['blocking', 'Blocking']] as const).map(([kind, label]) =>
+                    relations[kind].length > 0 ? (
+                      <div key={kind} className="df-subtle-enter" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <span style={{ fontSize: 11, color: sysTextSecondary }}>{label}</span>
+                        {relations[kind].map((r) => (
+                          <div
+                            key={r.id}
+                            className="df-row-interactive"
+                            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 4px', borderRadius: 5, fontSize: 12, color: sysTextPrimary, transition: 'background-color 150ms ease' }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = sysHoverBg)}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                          >
+                            <CircleDot size={12} color={r.state === 'open' ? '#3fb950' : '#a371f7'} style={{ flexShrink: 0 }} />
+                            <span
+                              title={r.title}
+                              onClick={() => window.electronAPI?.shell?.openExternal?.(`https://github.com/${r.repo || repoFullName}/issues/${r.number}`)}
+                              style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                            >
+                              <span style={{ color: sysTextSecondary }}>#{r.number}</span> {r.title}
+                            </span>
+                            <button
+                              type="button"
+                              title="Remover relação"
+                              onClick={() => removeRelation(kind, r)}
+                              style={{ background: 'transparent', border: 'none', color: sysTextSecondary, cursor: 'pointer', display: 'flex', padding: 2, borderRadius: 4, transition: 'color 150ms ease, transform 150ms var(--ease-out)' }}
+                              onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.transform = 'scale(1.15)'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.color = sysTextSecondary; e.currentTarget.style.transform = 'scale(1)'; }}
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null,
+                  )}
+                </div>
+              )}
 
               {/* Popup Relationships */}
               {activeSidebarPopup === 'relationships' && (
                 <div
                   data-sidebar-popup="relationships"
-                  style={{
-                    position: 'absolute',
-                    top: 'calc(100% + 2px)',
-                    left: 0,
-                    right: 0,
-                    background: sysPopupBg,
-                    border: 'none',
-                    borderRadius: 8,
-                    padding: 4,
-                    boxShadow: sysPopupShadow,
-                    zIndex: 1000,
-                    overflow: 'hidden',
-                  }}
+                  className="df-dropdown-menu"
+                  style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, right: 0, background: sysPopupBg, border: 'none', borderRadius: 8, padding: 4, boxShadow: sysPopupShadow, zIndex: 1000, overflow: 'hidden' }}
                 >
-                  {[
-                    { label: 'Add parent', shortcut: '⌥ ⇧ P' },
-                    { label: 'Mark as blocked by', shortcuts: ['B', 'B'] },
-                    { label: 'Mark as blocking', shortcuts: ['B', 'X'] },
-                    { label: 'Add relates to', shortcuts: ['B', 'R'] },
-                    { label: 'Add security alert' },
-                  ].map((item, idx) => (
-                    <div
-                      key={idx}
-                      onClick={() => {
-                        showToast(`Ação "${item.label}" executada.`);
-                        setActiveSidebarPopup(null);
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '8px 12px',
-                        borderRadius: 6,
-                        cursor: 'pointer',
-                        fontSize: 13,
-                        color: sysTextPrimary,
-                        transition: 'background 0.1s ease',
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = sysHoverBg; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                    >
-                      <span>{item.label}</span>
-                      {item.shortcut && (
-                        <kbd
-                          style={{
-                            background: sysInputBg,
-                            border: 'none',
-                            borderRadius: 4,
-                            padding: '1px 5px',
-                            fontSize: 11,
-                            color: sysTextSecondary,
-                            fontFamily: 'inherit',
-                          }}
-                        >
-                          {item.shortcut}
-                        </kbd>
-                      )}
-                      {item.shortcuts && (
-                        <div style={{ display: 'flex', gap: 3 }}>
-                          {item.shortcuts.map((sc, sIdx) => (
-                            <kbd
-                              key={sIdx}
-                              style={{
-                                background: sysInputBg,
-                                border: 'none',
-                                borderRadius: 4,
-                                padding: '1px 5px',
-                                fontSize: 11,
-                                color: sysTextSecondary,
-                                fontFamily: 'inherit',
-                              }}
+                  {relMode === null ? (
+                    [
+                      { kind: 'parent' as const, label: 'Add parent' },
+                      { kind: 'blockedBy' as const, label: 'Mark as blocked by' },
+                      { kind: 'blocking' as const, label: 'Mark as blocking' },
+                      { kind: 'relates' as const, label: 'Add relates to' },
+                    ].map((item) => (
+                      <div
+                        key={item.kind}
+                        onClick={() => {
+                          setRelMode(item.kind);
+                          setRelSearch('');
+                        }}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13, color: sysTextPrimary, transition: 'background-color 120ms ease, transform 120ms var(--ease-out)' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = sysHoverBg; e.currentTarget.style.transform = 'translateX(2px)'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.transform = 'translateX(0)'; }}
+                      >
+                        <span>{item.label}</span>
+                        <ChevronRight size={13} color={sysTextSecondary} />
+                      </div>
+                    ))
+                  ) : (
+                    <div className="df-subtle-enter" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: sysInputBg, borderRadius: 6, padding: '5px 8px', margin: 4 }}>
+                        <button type="button" onClick={() => setRelMode(null)} title="Voltar" style={{ background: 'transparent', border: 'none', color: sysTextSecondary, cursor: 'pointer', display: 'flex', padding: 0 }}>
+                          <ArrowLeft size={14} />
+                        </button>
+                        <input
+                          autoFocus
+                          value={relSearch}
+                          onChange={(e) => setRelSearch(e.target.value)}
+                          placeholder="Buscar issue por número ou título"
+                          style={{ background: 'transparent', border: 'none', outline: 'none', color: sysTextPrimary, fontSize: 13, width: '100%' }}
+                        />
+                      </div>
+                      <div style={{ maxHeight: 220, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+                        {(() => {
+                          const q = relSearch.trim().toLowerCase().replace('#', '');
+                          const taken = new Set([...relations.parent, ...relations.blockedBy, ...relations.blocking].map((r) => r.number));
+                          const list = (allProjectIssues || [])
+                            .filter((o) => o.githubNumber && o.githubNumber !== issue?.githubNumber && !taken.has(o.githubNumber))
+                            .filter((o) => !q || String(o.githubNumber).includes(q) || (o.title || '').toLowerCase().includes(q))
+                            .slice(0, 40);
+                          if (list.length === 0) return <div style={{ padding: '14px 12px', fontSize: 12.5, color: sysTextSecondary, textAlign: 'center' }}>Nenhuma issue encontrada</div>;
+                          return list.map((o) => (
+                            <div
+                              key={o.githubNumber}
+                              onClick={() => !isSavingRelation && addRelation(relMode, o.githubNumber!)}
+                              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px', borderRadius: 6, cursor: isSavingRelation ? 'wait' : 'pointer', fontSize: 13, color: sysTextPrimary, opacity: isSavingRelation ? 0.6 : 1, transition: 'background-color 120ms ease, opacity 150ms ease' }}
+                              onMouseEnter={(e) => (e.currentTarget.style.background = sysHoverBg)}
+                              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                             >
-                              {sc}
-                            </kbd>
-                          ))}
-                        </div>
-                      )}
+                              <span style={{ color: sysTextSecondary, flexShrink: 0 }}>#{o.githubNumber}</span>
+                              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.title}</span>
+                            </div>
+                          ));
+                        })()}
+                      </div>
                     </div>
-                  ))}
+                  )}
                 </div>
               )}
             </div>
@@ -7224,6 +7360,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 flexDirection: 'column',
                 gap: 8,
                 position: 'relative',
+                zIndex: activeSidebarPopup === 'development' ? 20 : 1,
                 padding: '12px 0',
                 borderBottom: `1px solid ${sysBorder}`,
               }}
@@ -7309,7 +7446,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       <ArrowLeft size={14} />
                     </button>
                     <span style={{ fontSize: 13, fontWeight: 700, color: sysTextPrimary }}>
-                      {repoFullName || 'appmoove/estancia-bahia-mobile'}
+                      {repoFullName || 'Repositório'}
                     </span>
                   </div>
 
@@ -7374,76 +7511,39 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   <div style={{ borderBottom: `1px solid ${sysBorder}` }} />
 
                   {/* Pull Request / Branch Items */}
-                  <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+                  <div style={{ maxHeight: 220, overflowY: 'auto', overscrollBehavior: 'contain' }}>
                     {(() => {
-                      const prTitle = issue.pullRequest?.title || 'Issue 18 eb360 requisitos';
-                      const prNum = issue.pullRequest?.number || 61;
-                      const repoName = repoFullName || 'appmoove/estancia-bahia-mobile';
-
-                      if (prSearch && !prTitle.toLowerCase().includes(prSearch.toLowerCase())) {
+                      const q = prSearch.trim().toLowerCase().replace('#', '');
+                      const list = repoPulls.filter((x) => !q || String(x.number).includes(q) || x.title.toLowerCase().includes(q));
+                      if (list.length === 0) {
                         return (
                           <div style={{ padding: '14px 12px', fontSize: 12.5, color: sysTextSecondary, textAlign: 'center' }}>
-                            Nenhum pull request encontrado
+                            {repoPulls.length === 0 ? 'Carregando pull requests...' : 'Nenhum pull request encontrado'}
                           </div>
                         );
                       }
-
-                      return (
-                        <div
-                          onClick={() => {
-                            showToast(`PR #${prNum} vinculado à issue!`);
-                            setActiveSidebarPopup(null);
-                          }}
-                          style={{
-                            position: 'relative',
-                            display: 'flex',
-                            alignItems: 'flex-start',
-                            gap: 10,
-                            padding: '10px 14px',
-                            cursor: 'pointer',
-                            background: hexToRgba(accentColor, 0.08),
-                            borderBottom: `1px solid ${sysBorder}`,
-                            transition: 'background 0.1s ease',
-                          }}
-                          onMouseEnter={(e) => { e.currentTarget.style.background = sysHoverBg; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.background = hexToRgba(accentColor, 0.08); }}
-                        >
+                      const stateColor = (st: string) => (st === 'merged' ? '#a371f7' : st === 'open' ? '#3fb950' : '#f85149');
+                      return list.map((x) => {
+                        const linked = new RegExp(`(close[sd]?|fix(e[sd])?|resolve[sd]?)\\s+#${issue?.githubNumber}\\b`, 'i').test(x.body || '') || issue?.pullRequest?.number === x.number;
+                        return (
                           <div
-                            style={{
-                              position: 'absolute',
-                              left: 0,
-                              top: 0,
-                              bottom: 0,
-                              width: 3,
-                              background: accentColor,
-                              borderRadius: '0 2px 2px 0',
-                            }}
-                          />
-
-                          <div
-                            style={{
-                              width: 16,
-                              height: 16,
-                              borderRadius: 3,
-                              background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.07)',
-                              border: 'none',
-                              flexShrink: 0,
-                              marginTop: 2,
-                            }}
-                          />
-
-                          <GitPullRequest size={15} color={accentColor} style={{ marginTop: 2, flexShrink: 0 }} />
-
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: sysTextPrimary }}>
-                              {prTitle}
-                            </div>
-                            <div style={{ fontSize: 11.5, color: sysTextSecondary, marginTop: 2 }}>
-                              {repoName}#{prNum}
+                            key={x.number}
+                            onClick={() => isLinkingPr === null && !linked && linkPull(x.number)}
+                            style={{ position: 'relative', display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 14px', cursor: linked ? 'default' : isLinkingPr !== null ? 'wait' : 'pointer', background: linked ? hexToRgba(accentColor, 0.08) : 'transparent', borderBottom: `1px solid ${sysBorder}`, opacity: isLinkingPr !== null && isLinkingPr !== x.number ? 0.55 : 1, transition: 'background-color 120ms ease, opacity 150ms ease' }}
+                            onMouseEnter={(e) => { if (!linked) e.currentTarget.style.background = sysHoverBg; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = linked ? hexToRgba(accentColor, 0.08) : 'transparent'; }}
+                          >
+                            {linked && <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: accentColor, borderRadius: '0 2px 2px 0' }} />}
+                            {isLinkingPr === x.number ? <Loader2 size={15} className="spin-animate" color={accentColor} style={{ marginTop: 2, flexShrink: 0 }} /> : <GitPullRequest size={15} color={stateColor(x.state)} style={{ marginTop: 2, flexShrink: 0 }} />}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 400, color: sysTextPrimary }}>{x.title}</div>
+                              <div style={{ fontSize: 11.5, color: sysTextSecondary, marginTop: 2 }}>
+                                {repoFullName}#{x.number}{linked ? ' · vinculado' : x.draft ? ' · rascunho' : ''}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      );
+                        );
+                      });
                     })()}
                   </div>
                 </div>
@@ -7488,7 +7588,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                   >
                     <button
                       type="button"
-                      onClick={() => handleToggleSubscription(true)}
+                      onClick={() => handleToggleSubscription('SUBSCRIBED')}
                       style={{
                         padding: '6px 8px',
                         fontSize: 11.5,
@@ -7502,11 +7602,11 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)')}
                       onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                     >
-                      ✓ Toda Atividade (All)
+                      {subscription === 'SUBSCRIBED' ? '✓ ' : ''}Toda atividade (All)
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleToggleSubscription(true)}
+                      onClick={() => handleToggleSubscription('UNSUBSCRIBED')}
                       style={{
                         padding: '6px 8px',
                         fontSize: 11.5,
@@ -7520,11 +7620,11 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)')}
                       onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                     >
-                      Menções e participação
+                      {subscription === 'UNSUBSCRIBED' ? '✓ ' : ''}Menções e participação
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleToggleSubscription(false)}
+                      onClick={() => handleToggleSubscription('IGNORED')}
                       style={{
                         padding: '6px 8px',
                         fontSize: 11.5,
@@ -7538,7 +7638,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                       onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)')}
                       onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                     >
-                      Ignorar notificações
+                      {subscription === 'IGNORED' ? '✓ ' : ''}Ignorar notificações
                     </button>
                   </div>
                 )}
@@ -7661,8 +7761,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)')}
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
               >
-                <Sparkles size={14} color={accentColor} />
-                <span>Open in GitHub Copilot app</span>
+                {aiProviderId ? renderAiIcon(aiProviderId, 14) : <Bot size={14} color={accentColor} />}
+                <span>Resolver com IA</span>
               </button>
 
               {/* Transfer issue */}
@@ -7670,7 +7770,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 type="button"
                 onClick={() => {
                   setTransferTargetRepo('');
-                  setIsTransferModalOpen(true);
+                  setIsTransferModalOpen((prev) => !prev);
                 }}
                 style={{
                   display: 'flex',
@@ -7693,6 +7793,39 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 <ArrowRight size={14} color={theme?.textSecondary || '#8b949e'} />
                 <span>Transfer issue</span>
               </button>
+              {isTransferModalOpen && (
+                <div className="df-subtle-enter" style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '0 8px 6px 32px' }}>
+                  <input
+                    autoFocus
+                    value={transferTargetRepo}
+                    onChange={(e) => setTransferTargetRepo(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && transferTargetRepo.trim() && !isTransferringIssue) handleExecuteTransferIssue();
+                      if (e.key === 'Escape') setIsTransferModalOpen(false);
+                    }}
+                    placeholder="owner/repo de destino"
+                    style={{ height: 30, background: ft.fieldBg, border: 'none', outline: 'none', borderRadius: 6, padding: '0 8px', fontSize: 12, fontWeight: 400, color: sysTextPrimary, fontFamily: 'inherit', minWidth: 0 }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                    <button
+                      type="button"
+                      disabled={isTransferringIssue}
+                      onClick={() => setIsTransferModalOpen(false)}
+                      style={{ height: 30, padding: '0 12px', border: 'none', borderRadius: 6, background: ft.fieldBg, color: sysTextSecondary, fontSize: 12, fontWeight: 400, cursor: 'pointer' }}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isTransferringIssue || !transferTargetRepo.trim()}
+                      onClick={handleExecuteTransferIssue}
+                      style={{ height: 30, padding: '0 12px', border: 'none', borderRadius: 6, background: accentColor, color: accentContrastText, fontSize: 12, fontWeight: 400, cursor: isTransferringIssue || !transferTargetRepo.trim() ? 'default' : 'pointer', opacity: isTransferringIssue || !transferTargetRepo.trim() ? 0.5 : 1 }}
+                    >
+                      {isTransferringIssue ? 'Transferindo…' : 'Transferir'}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Clone issue */}
               <button
@@ -7774,8 +7907,8 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
                 onMouseEnter={(e) => (e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)')}
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
               >
-                <Pin size={14} color={isPinned ? accentColor : (theme?.textSecondary || '#8b949e')} />
-                <span>{isTogglingPin ? 'Salvando...' : isPinned ? 'Unpin issue' : 'Pin issue'}</span>
+                <Pin size={14} color={isIssuePinned ? accentColor : (theme?.textSecondary || '#8b949e')} />
+                <span>{isTogglingPin ? 'Salvando...' : isIssuePinned ? 'Unpin issue' : 'Pin issue'}</span>
               </button>
 
               {/* Delete issue (abre ConfirmDeleteModal obrigatoriamente) */}
@@ -7810,7 +7943,7 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  window.electronAPI?.shell?.openExternal?.('https://github.com/feedback') || showToast('Obrigado pelo seu feedback!');
+                  window.electronAPI?.shell?.openExternal?.('https://github.com/Walancy/aura-dev/issues/new');
                 }}
                 style={{
                   display: 'flex',
@@ -7870,131 +8003,6 @@ const IssueDetailSidesheetInner: React.FC<IssueDetailSidesheetProps> = ({
         onClose={() => setCommentToDelete(null)}
       />
 
-      {isTransferModalOpen && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0, 0, 0, 0.65)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 99999,
-            padding: 16,
-          }}
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !isTransferringIssue) setIsTransferModalOpen(false);
-          }}
-        >
-          <div
-            style={{
-              width: '100%',
-              maxWidth: 440,
-              background: isEffectiveDark ? '#1e1e1e' : '#ffffff',
-              border: 'none',
-              borderRadius: 12,
-              boxShadow: 'none',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 16,
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div
-                style={{
-                  width: 34,
-                  height: 34,
-                  borderRadius: 8,
-                  background: 'rgba(56, 139, 253, 0.15)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#58a6ff',
-                }}
-              >
-                <ArrowRight size={18} />
-              </div>
-              <div>
-                <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: sysTextPrimary }}>
-                  Transferir Issue
-                </h3>
-                <p style={{ margin: 0, fontSize: 12, color: sysTextSecondary, marginTop: 2 }}>
-                  Mova a issue #{issue?.githubNumber} para outro repositório
-                </p>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label style={{ fontSize: 12, fontWeight: 500, color: sysTextPrimary }}>
-                Repositório de Destino (owner/repo)
-              </label>
-              <input
-                className="df-field"
-                type="text"
-                autoFocus
-                placeholder="ex: organizacao/meu-outro-repo"
-                value={transferTargetRepo}
-                onChange={(e) => setTransferTargetRepo(e.target.value)}
-                style={{
-                  padding: '8px 12px',
-                  borderRadius: 6,
-                  border: ft.fieldBorder,
-                  background: ft.fieldBg,
-                  boxShadow: 'none',
-                  color: sysTextPrimary,
-                  fontSize: 13,
-                  fontWeight: 400,
-                  outline: 'none',
-                }}
-              />
-              <span style={{ fontSize: 11, color: sysTextSecondary }}>
-                A issue será transferida mantendo comentários e histórico.
-              </span>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
-              <button
-                type="button"
-                disabled={isTransferringIssue}
-                onClick={() => setIsTransferModalOpen(false)}
-                style={{
-                  padding: '7px 14px',
-                  borderRadius: 6,
-                  border: 'none',
-                  background: isEffectiveDark ? '#2a2a2a' : '#f0f0f0',
-                  color: sysTextPrimary,
-                  fontSize: 12,
-                  fontWeight: 500,
-                  cursor: isTransferringIssue ? 'not-allowed' : 'pointer',
-                }}
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                disabled={isTransferringIssue || !transferTargetRepo.trim()}
-                onClick={handleExecuteTransferIssue}
-                style={{
-                  padding: '7px 16px',
-                  borderRadius: 6,
-                  border: 'none',
-                  background: accentColor || '#238636',
-                  color: accentContrastText || '#fff',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor: isTransferringIssue || !transferTargetRepo.trim() ? 'not-allowed' : 'pointer',
-                  opacity: isTransferringIssue || !transferTargetRepo.trim() ? 0.6 : 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
-              >
-                {isTransferringIssue ? 'Transferindo...' : 'Confirmar Transferência'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

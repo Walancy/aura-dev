@@ -25,8 +25,8 @@ export interface ThemePopupProps {
   setUseAiSystemAccent: (value: boolean) => void;
   selectedAiProvider: string;
   /** destaque rainbow: troca a cor de destaque em loop entre os pontos de cor */
-  rainbow: { on: boolean; stops: string[]; speed: number };
-  setRainbow: (value: { on: boolean; stops: string[]; speed: number }) => void;
+  rainbow: { on: boolean; stops: string[]; speed: number; mode: 'loop' | 'wave' };
+  setRainbow: (value: { on: boolean; stops: string[]; speed: number; mode: 'loop' | 'wave' }) => void;
 }
 
 export const ThemePopup: React.FC<ThemePopupProps> = ({
@@ -55,6 +55,7 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
   const barGradient = `linear-gradient(90deg, ${[...rainbow.stops, rainbow.stops[0]].join(', ')})`;
   return (
     <div
+      className="df-popover"
       style={{
         position: 'fixed',
         left: themePopupPos.x,
@@ -78,13 +79,16 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
       {/* Draggable Header */}
       <div
         data-tour="theme-popup-header"
+        data-no-motion="true"
         onMouseDown={onMouseDown}
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '10px 12px',
+          border: 'none',
           borderBottom: 'none',
+          boxShadow: 'none',
           background: themeTokens.bgCardSecondary,
           cursor: isDraggingThemePopup ? 'grabbing' : 'grab',
           userSelect: 'none',
@@ -94,7 +98,7 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
           <GripHorizontal size={14} color={themeTokens.textSecondary} style={{ opacity: 0.8 }} />
           <Palette size={14} color={accentColor} />
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: themeTokens.textPrimary }}>
+          <span style={{ fontSize: 12.5, fontWeight: 400, color: themeTokens.textPrimary }}>
             Tema & Aparência
           </span>
         </div>
@@ -111,11 +115,13 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
           />
           <button
             type="button"
+            className="df-pressable"
             onClick={() => setAccentColor('#FF6A00')}
             title="Restaurar cor padrão (Laranja DevFlow)"
             style={{
               background: 'transparent',
               border: 'none',
+              boxShadow: 'none',
               color: themeTokens.textSecondary,
               cursor: 'pointer',
               padding: 3,
@@ -130,11 +136,13 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
           </button>
           <button
             type="button"
+            className="df-pressable"
             onClick={onClose}
             title="Fechar (Esc)"
             style={{
               background: 'transparent',
               border: 'none',
+              boxShadow: 'none',
               color: themeTokens.textSecondary,
               cursor: 'pointer',
               padding: 3,
@@ -168,6 +176,7 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
                 <button
                   key={m.id}
                   type="button"
+                  className="df-pressable"
                   onClick={() => setThemeMode(m.id as any)}
                   style={{
                     display: 'flex',
@@ -178,14 +187,15 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
                     borderRadius: 6,
                     cursor: 'pointer',
                     fontSize: 11.5,
-                    fontWeight: isSelected ? 600 : 400,
+                    fontWeight: 400,
                     border: 'none',
+                    boxShadow: 'none',
                     background: isSelected ? hexToRgba(accentColor, 0.18) : (isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)'),
                     color: isSelected ? (isEffectiveDark ? '#ffffff' : accentColor) : themeTokens.textPrimary,
-                    transition: 'all 0.15s ease',
+                    transition: 'transform 140ms var(--ease-out), background-color 150ms ease, color 150ms ease, opacity 150ms ease',
                   }}
                 >
-                  <span style={{ color: isSelected ? accentColor : themeTokens.textSecondary }}>{m.icon}</span>
+                  <span style={{ color: isSelected ? accentColor : themeTokens.textSecondary, display: 'flex' }}>{m.icon}</span>
                   <span>{m.label}</span>
                 </button>
               );
@@ -250,7 +260,7 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
                     justifyContent: 'center',
                     padding: 0,
                     transform: isSelected ? 'scale(1.12)' : 'scale(1)',
-                    transition: 'transform 0.15s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.15s ease',
+                    transition: 'transform 150ms var(--ease-out), opacity 150ms ease',
                   }}
                   onMouseEnter={(e) => {
                     if (!isSelected) (e.currentTarget as HTMLElement).style.transform = 'scale(1.15)';
@@ -262,6 +272,7 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
                   {isSelected && (
                     <Check
                       size={13}
+                      className="df-check-pop"
                       color={getContrastTextColor(c.color)}
                       strokeWidth={3}
                     />
@@ -285,12 +296,24 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
         </div>}
 
         {/* Rainbow: destaque que troca de cor em loop */}
-        <div style={{ padding: '9px 10px', borderRadius: 8, background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f8fafc', display: 'flex', flexDirection: 'column', gap: 9 }}>
+        <div className="df-row-interactive" style={{ padding: '9px 10px', borderRadius: 8, border: 'none', boxShadow: 'none', background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f8fafc', display: 'flex', flexDirection: 'column', gap: 9 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: themeTokens.textPrimary }}>Rainbow (efeito RGB)</span>
+            <span style={{ fontSize: 11, fontWeight: 400, color: themeTokens.textPrimary }}>Rainbow (efeito RGB)</span>
             <MiniSwitch checked={rainbow.on} onChange={() => setRainbow({ ...rainbow, on: !rainbow.on })} accentColor={accentColor} />
           </div>
-          {rainbow.on && <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+          {rainbow.on && <div className="df-subtle-enter" style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+            <div style={{ display: 'flex', gap: 5 }}>
+              {([['loop', 'Atual'], ['wave', 'Onda']] as const).map(([m, label]) => (
+                <button
+                  key={m}
+                  type="button"
+                  className="df-pressable"
+                  onClick={() => setRainbow({ ...rainbow, mode: m })}
+                  title={m === 'loop' ? 'O destaque do app inteiro troca de cor ao mesmo tempo, em ciclo' : 'Uma onda de cor atravessa a tela da esquerda para a direita (também afeta outras cores vivas, como status e sintaxe)'}
+                  style={{ flex: 1, height: 26, borderRadius: 6, border: 'none', boxShadow: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 400, background: rainbow.mode === m ? hexToRgba(accentColor, 0.18) : isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)', color: rainbow.mode === m ? accentColor : themeTokens.textSecondary, transition: 'background-color 150ms ease, color 150ms ease' }}
+                >{label}</button>
+              ))}
+            </div>
             <div style={{ height: 12, borderRadius: 6, background: barGradient }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               {rainbow.stops.map((c, i) => (
@@ -299,21 +322,23 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
                   type="button"
                   onClick={() => setSelStop(i)}
                   title={`Ponto ${i + 1}`}
-                  style={{ width: 22, height: 22, borderRadius: '50%', background: c, cursor: 'pointer', padding: 0, border: 'none', boxShadow: 'none', transform: i === stopIdx ? 'scale(1.16)' : 'scale(1)', transition: 'transform 0.15s ease' }}
+                  style={{ width: 22, height: 22, borderRadius: '50%', background: c, cursor: 'pointer', padding: 0, border: 'none', boxShadow: 'none', transform: i === stopIdx ? 'scale(1.16)' : 'scale(1)', transition: 'transform 150ms var(--ease-out), opacity 150ms ease' }}
                 />
               ))}
               <button
                 type="button"
+                className="df-pressable"
                 onClick={() => { setRainbow({ ...rainbow, stops: [...rainbow.stops, rainbow.stops[stopIdx]] }); setSelStop(rainbow.stops.length); }}
                 title="Adicionar ponto de cor"
-                style={{ width: 22, height: 22, borderRadius: '50%', border: 'none', background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)', color: themeTokens.textSecondary, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}
+                style={{ width: 22, height: 22, borderRadius: '50%', border: 'none', boxShadow: 'none', background: isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)', color: themeTokens.textSecondary, cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: 0 }}
               >+</button>
               {rainbow.stops.length > 2 && (
                 <button
                   type="button"
+                  className="df-pressable"
                   onClick={() => { setRainbow({ ...rainbow, stops: rainbow.stops.filter((_, k) => k !== stopIdx) }); setSelStop(0); }}
                   title="Remover ponto selecionado"
-                  style={{ marginLeft: 'auto', fontSize: 10.5, background: 'transparent', border: 'none', color: themeTokens.textSecondary, cursor: 'pointer' }}
+                  style={{ marginLeft: 'auto', fontSize: 10.5, fontWeight: 400, background: 'transparent', border: 'none', boxShadow: 'none', color: themeTokens.textSecondary, cursor: 'pointer' }}
                 >Remover ponto</button>
               )}
             </div>
@@ -338,6 +363,7 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
         {/* Section 4: Sincronizar Cor do Chat com a IA */}
         <div data-tour="theme-ai-sync" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div
+          className="df-row-interactive"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -346,11 +372,12 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
             borderRadius: 8,
             background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f8fafc',
             border: 'none',
+            boxShadow: 'none',
           }}
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 11, fontWeight: 600, color: themeTokens.textPrimary }}>
+              <span style={{ fontSize: 11, fontWeight: 400, color: themeTokens.textPrimary }}>
                 Cor da IA no Chat
               </span>
               <span
@@ -359,7 +386,7 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
                   height: 8,
                   borderRadius: '50%',
                   background: AI_BRAND_COLORS[selectedAiProvider] || accentColor,
-                  boxShadow: `0 0 6px ${AI_BRAND_COLORS[selectedAiProvider] || accentColor}`,
+                  boxShadow: 'none',
                 }}
                 title={`Cor ativa da IA: ${AI_BRAND_COLORS[selectedAiProvider] || accentColor}`}
               />
@@ -374,6 +401,7 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
 
         {/* Cor da IA selecionada como destaque de todo o sistema */}
         <div
+          className="df-row-interactive"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -382,12 +410,13 @@ export const ThemePopup: React.FC<ThemePopupProps> = ({
             borderRadius: 8,
             background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : '#f8fafc',
             border: 'none',
+            boxShadow: 'none',
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: themeTokens.textPrimary }}>Cor da IA como destaque</span>
+            <span style={{ fontSize: 11, fontWeight: 400, color: themeTokens.textPrimary }}>Cor da IA como destaque</span>
             <span
-              style={{ width: 8, height: 8, borderRadius: '50%', background: AI_BRAND_COLORS[selectedAiProvider] || accentColor, boxShadow: `0 0 6px ${AI_BRAND_COLORS[selectedAiProvider] || accentColor}` }}
+              style={{ width: 8, height: 8, borderRadius: '50%', background: AI_BRAND_COLORS[selectedAiProvider] || accentColor, boxShadow: 'none' }}
               title="A cor de destaque do sistema acompanha a IA selecionada no cabeçalho"
             />
           </div>

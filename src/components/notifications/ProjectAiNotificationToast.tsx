@@ -17,14 +17,16 @@ export interface ProjectAiNotificationItem {
   /** kind 'review': PR em que o usuário foi pedido como revisor */
   reviewRepo?: string;
   reviewNumber?: number;
+  /** kind 'review': foto de quem pediu a review */
+  reviewAvatar?: string;
   /** Onde a IA estava trabalhando: chat da IDE ou terminal da tela CLI */
-  source?: 'ide' | 'cli' | 'design';
+  source?: 'ide' | 'cli' | 'design' | 'site';
 }
 
 interface ProjectAiNotificationToastProps {
   notifications: ProjectAiNotificationItem[];
   onDismiss: (id: string) => void;
-  onNavigateToProject: (projectPath: string, repoName?: string, source?: 'ide' | 'cli' | 'design') => void;
+  onNavigateToProject: (projectPath: string, repoName?: string, source?: 'ide' | 'cli' | 'design' | 'site') => void;
   onNewContext?: (item: ProjectAiNotificationItem) => void;
   onReview?: (item: ProjectAiNotificationItem) => void;
   accentColor?: string;
@@ -168,7 +170,7 @@ export const ProjectAiNotificationToast: React.FC<ProjectAiNotificationToastProp
                   flexShrink: 0,
                 }}
               >
-                {item.kind === 'review' ? <GitPullRequest size={16} color={accentColor} /> : renderAiIcon(item.provider, 16)}
+                {item.kind === 'review' ? (item.reviewAvatar ? <img src={item.reviewAvatar} alt="" style={{ width: 26, height: 26, borderRadius: 6, objectFit: 'cover' }} /> : <GitPullRequest size={16} color={accentColor} />) : renderAiIcon(item.provider, 16)}
               </div>
               <div style={{ minWidth: 0 }}>
                 <div

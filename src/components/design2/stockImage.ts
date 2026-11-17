@@ -21,12 +21,12 @@ export function isPersonQuery(q: string): boolean {
 
 const used = new Map<string, number>();
 /** Foto como data URL (Unsplash com chave; picsum sem chave). Consultas repetidas variam o resultado (rostos/fotos diferentes). */
-export async function fetchStockImage(query: string, width: number, height: number, opts: { person?: boolean } = {}): Promise<{ dataUrl: string; credit?: string } | null> {
+export async function fetchStockImage(query: string, width: number, height: number, opts: { person?: boolean; maxSide?: number } = {}): Promise<{ dataUrl: string; credit?: string } | null> {
   const api = (window as any).electronAPI?.fs;
   if (!api?.stockImage) return null;
   const n = used.get(query) || 0;
   used.set(query, n + 1);
   const people = opts.person ?? isPersonQuery(query);
-  const r = await api.stockImage({ query, width, height, key: getUnsplashKey() || undefined, index: n, people, pexelsKey: people ? getPexelsKey() || undefined : undefined });
+  const r = await api.stockImage({ query, width, height, key: getUnsplashKey() || undefined, index: n, people, maxSide: opts.maxSide, pexelsKey: people ? getPexelsKey() || undefined : undefined });
   return r?.dataUrl ? { dataUrl: r.dataUrl, credit: r.source === 'unsplash' || r.source === 'pexels' ? r.credit : undefined } : null;
 }

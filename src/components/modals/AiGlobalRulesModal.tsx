@@ -3,6 +3,7 @@ import {
   BookOpen,
   Check,
   Code2,
+  Copy,
   ExternalLink,
   FileCode,
   FileText,
@@ -190,14 +191,11 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
   useRegisterTutorialOverlay('modal_ai_rules', isOpen);
   const [activeProviderId, setActiveProviderId] = useState<string>(selectedAiProvider || 'antigravity');
   const [homeDir, setHomeDir] = useState<string>('');
-  const [fileContent, setFileContent] = useState<string>('');
-  const [originalContent, setOriginalContent] = useState<string>('');
+  // rascunho de todas as IAs ao mesmo tempo: trocar de IA não perde edição e "Salvar" grava todas
+  const [files, setFiles] = useState<Record<string, { content: string; original: string; exists: boolean }>>({});
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
-  const [fileExists, setFileExists] = useState<boolean>(false);
-  const [resolvedPath, setResolvedPath] = useState<string>('');
   const [showPresets, setShowPresets] = useState<boolean>(false);
-  const [isAiDropdownOpen, setIsAiDropdownOpen] = useState<boolean>(false);
 
   // Sync active tab with selected provider when opened
   useEffect(() => {
@@ -252,66 +250,108 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
     return `${homeDir}/${activeProvider.relativeDir}/${activeProvider.fileName}`;
   }, [homeDir, activeProvider]);
 
-  // Load file content whenever active provider or homeDir changes
-  const loadRules = useCallback(async () => {
-    if (!fullFilePath || !isOpen) return;
+  const pathOf = useCallback((p: AiGlobalRuleProvider) => `${homeDir}/${p.relativeDir}/${p.fileName}`, [homeDir]);
+
+  // Carrega o arquivo de regras de todas as IAs (Antigravity e Gemini compartilham o mesmo arquivo)
+  const loadAll = useCallback(async () => {
+    if (!isOpen || !homeDir) return;
     setIsLoading(true);
-
-    try {
-      if (window.electronAPI?.fs?.readFile) {
-        const res = await window.electronAPI.fs.readFile(fullFilePath);
-        if (res && res.content !== null && res.content !== undefined && !res.error) {
-          setFileContent(res.content);
-          setOriginalContent(res.content);
-          setFileExists(true);
-          setResolvedPath(fullFilePath);
-          setIsLoading(false);
-          return;
-        }
-      }
-
-      // If file does not exist, use default template
-      setFileContent(activeProvider.template);
-      setOriginalContent('');
-      setFileExists(false);
-      setResolvedPath(fullFilePath);
-    } catch {
-      setFileContent(activeProvider.template);
-      setOriginalContent('');
-      setFileExists(false);
-      setResolvedPath(fullFilePath);
-    } finally {
-      setIsLoading(false);
+    const byPath = new Map<string, { content: string; original: string; exists: boolean }>();
+    for (const p of GLOBAL_PROVIDERS) {
+      const path = pathOf(p);
+      if (byPath.has(path)) continue;
+      let res: any = null;
+      try {
+        res = await window.electronAPI?.fs?.readFile(path);
+      } catch {}
+      const ok = res && res.content !== null && res.content !== undefined && !res.error;
+      byPath.set(path, ok ? { content: res.content, original: res.content, exists: true } : { content: p.template, original: '', exists: false });
     }
-  }, [fullFilePath, isOpen, activeProvider]);
+    const next: Record<string, { content: string; original: string; exists: boolean }> = {};
+    GLOBAL_PROVIDERS.forEach((p) => (next[p.id] = byPath.get(pathOf(p))!));
+    setFiles(next);
+    setIsLoading(false);
+  }, [isOpen, homeDir, pathOf]);
 
   useEffect(() => {
-    if (isOpen && homeDir) {
-      loadRules();
-    }
-  }, [isOpen, homeDir, activeProviderId, loadRules]);
+    loadAll();
+  }, [loadAll]);
 
-  // Save rules to file
+  const cur = files[activeProviderId];
+  const fileContent = cur?.content ?? '';
+  const originalContent = cur?.original ?? '';
+  const fileExists = cur?.exists ?? false;
+
+  // editar uma IA atualiza também as que usam o mesmo arquivo
+  const setProviderContent = (providerId: string, text: string) =>
+    setFiles((prev) => {
+      const target = GLOBAL_PROVIDERS.find((p) => p.id === providerId);
+      if (!target) return prev;
+      const path = pathOf(target);
+      const next = { ...prev };
+      GLOBAL_PROVIDERS.forEach((p) => {
+        if (pathOf(p) === path && next[p.id]) next[p.id] = { ...next[p.id], content: text };
+      });
+      return next;
+    });
+  const setFileContent = (text: string) => setProviderContent(activeProviderId, text);
+
+  // Provedores com alteração a gravar (um por arquivo; arquivo novo só entra se foi editado ou é o da IA aberta)
+  const pending = useMemo(() => {
+    const seen = new Set<string>();
+    return GLOBAL_PROVIDERS.filter((p) => {
+      const f = files[p.id];
+      const path = pathOf(p);
+      if (!f || seen.has(path)) return false;
+      const changed = f.content !== f.original;
+      const untouchedTemplate = !f.exists && f.content === p.template && p.id !== activeProviderId;
+      if (!changed || untouchedTemplate) return false;
+      seen.add(path);
+      return true;
+    });
+  }, [files, pathOf, activeProviderId]);
+
+  // Replica as regras da IA aberta para todas as outras (só no rascunho; grava ao clicar em Salvar)
+  const handleReplicate = () => {
+    const source = fileContent;
+    const others = GLOBAL_PROVIDERS.filter((p) => pathOf(p) !== fullFilePath);
+    others.forEach((p) => setProviderContent(p.id, source));
+    onToast(`Regras de ${activeProvider.name} replicadas para ${others.map((p) => p.name).join(', ')}. Clique em Salvar para gravar.`);
+    logSystemActivity('ai_rules', 'replicate_global_rules', activeProvider.name, { destinos: others.map((p) => p.id) });
+  };
+
+  // Salva as regras de todas as IAs
   const handleSave = async () => {
-    if (!fullFilePath || isSaving) return;
+    if (isSaving) return;
+    if (!window.electronAPI?.fs?.writeFile) {
+      onToast('API de arquivos não disponível');
+      return;
+    }
+    if (pending.length === 0) {
+      onToast('Nenhuma regra modificada para salvar');
+      return;
+    }
     setIsSaving(true);
-
+    const saved: string[] = [];
     try {
-      if (window.electronAPI?.fs?.writeFile) {
-        await window.electronAPI.fs.writeFile(fullFilePath, fileContent);
-        setOriginalContent(fileContent);
-        setFileExists(true);
-        onToast(`Regras de ${activeProvider.name} salvas com sucesso`);
-        onFileSaved?.(fullFilePath, fileContent);
-        logSystemActivity('ai_rules', 'save_global_rules', activeProvider.name, {
-          path: fullFilePath,
-          size: fileContent.length,
+      for (const p of pending) {
+        const path = pathOf(p);
+        const content = files[p.id].content;
+        await window.electronAPI.fs.writeFile(path, content);
+        saved.push(p.name);
+        setFiles((prev) => {
+          const next = { ...prev };
+          GLOBAL_PROVIDERS.forEach((q) => {
+            if (pathOf(q) === path) next[q.id] = { content, original: content, exists: true };
+          });
+          return next;
         });
-      } else {
-        onToast('API de arquivos não disponível');
+        onFileSaved?.(path, content);
+        logSystemActivity('ai_rules', 'save_global_rules', p.name, { path, size: content.length });
       }
+      onToast(saved.length === 1 ? `Regras de ${saved[0]} salvas com sucesso` : `Regras salvas: ${saved.join(', ')}`);
     } catch (err: any) {
-      onToast(`Erro ao salvar regras: ${err?.message || 'Falha de gravação'}`);
+      onToast(`Erro ao salvar regras${saved.length ? ` (salvos antes do erro: ${saved.join(', ')})` : ''}: ${err?.message || 'Falha de gravação'}`);
     } finally {
       setIsSaving(false);
     }
@@ -326,15 +366,13 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
 
   // Insert a snippet at cursor / end
   const handleInsertSnippet = (snippet: string) => {
-    setFileContent((prev) => {
-      const cleanPrev = prev.trimEnd();
-      return `${cleanPrev}\n${snippet}`;
-    });
+    setFileContent(`${fileContent.trimEnd()}\n${snippet}`);
     setShowPresets(false);
     onToast('Diretriz inserida nas regras');
   };
 
   const isDirty = fileContent !== originalContent;
+  const otherPending = pending.filter((p) => pathOf(p) !== fullFilePath).length;
 
   const isMouseDownOnBackdrop = useRef(false);
   const ft = getFieldTokens(isEffectiveDark);
@@ -393,124 +431,52 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
             flexShrink: 0,
           }}
         >
-          {/* AI Selector Dropdown on the Left */}
-          <div data-tour="ai-rules-provider-selector" style={{ position: 'relative' }}>
-            <button
-              type="button"
-              onClick={() => setIsAiDropdownOpen((v) => !v)}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                height: 28,
-                padding: '0 10px',
-                borderRadius: 6,
-                border: isAiDropdownOpen ? ft.fieldBorderFocus : ft.fieldBorder,
-                boxShadow: 'none',
-                background: isAiDropdownOpen ? ft.fieldBgHover : ft.fieldBg,
-                color: isEffectiveDark ? '#ffffff' : '#18181b',
-                cursor: 'pointer',
-                fontSize: 12,
-                fontWeight: 400,
-                transition: 'background 0.15s ease, border-color 0.15s ease',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = ft.fieldBgHover;
-                e.currentTarget.style.borderColor = ft.fieldBorderFocusColor;
-              }}
-              onMouseLeave={(e) => {
-                if (!isAiDropdownOpen) {
-                  e.currentTarget.style.background = ft.fieldBg;
-                  e.currentTarget.style.borderColor = ft.fieldBorderColor;
-                }
-              }}
-              title="Selecionar Inteligência Artificial"
-            >
-              {renderAiIcon(activeProvider.id, 15)}
-              <span>{activeProvider.name}</span>
-              <ChevronDown
-                size={13}
-                style={{
-                  opacity: 0.6,
-                  transform: isAiDropdownOpen ? 'rotate(180deg)' : 'none',
-                  transition: 'transform 0.15s ease',
-                }}
-              />
-            </button>
-
-            {isAiDropdownOpen && (
-              <>
-                <div
-                  style={{ position: 'fixed', inset: 0, zIndex: 100000 }}
-                  onClick={() => setIsAiDropdownOpen(false)}
-                />
-                <div
+          {/* Abas das IAs (à esquerda): o ponto marca a IA com alteração ainda não salva */}
+          <div data-tour="ai-rules-provider-selector" style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, overflowX: 'auto' }}>
+            {GLOBAL_PROVIDERS.map((provider) => {
+              const isSelected = provider.id === activeProviderId;
+              const f = files[provider.id];
+              const changed = Boolean(f && f.content !== f.original);
+              return (
+                <button
+                  key={provider.id}
+                  type="button"
+                  className="df-pressable"
+                  onClick={() => {
+                    logSystemActivity('regras_globais', 'selecionar_provedor', provider.name, { provider: provider.id });
+                    setActiveProviderId(provider.id);
+                  }}
+                  title={`${provider.name} · ${provider.fileName}`}
                   style={{
-                    position: 'absolute',
-                    top: 'calc(100% + 4px)',
-                    left: 0,
-                    zIndex: 100001,
-                    minWidth: 220,
-                    background: ft.dropdownMenuBg,
-                    borderRadius: 8,
-                    border: ft.dropdownBorder,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 7,
+                    height: 28,
+                    padding: '0 10px',
+                    borderRadius: 6,
+                    border: 'none',
                     boxShadow: 'none',
-                    padding: 4,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 4,
+                    flexShrink: 0,
+                    background: isSelected ? ft.fieldBg : 'transparent',
+                    color: isSelected ? (isEffectiveDark ? '#ffffff' : '#18181b') : isEffectiveDark ? '#a1a1aa' : '#71717a',
+                    cursor: 'pointer',
+                    fontSize: 12,
+                    fontWeight: 400,
+                    transition: 'background-color 150ms ease, color 150ms ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isSelected) e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isSelected) e.currentTarget.style.background = 'transparent';
                   }}
                 >
-                  {GLOBAL_PROVIDERS.map((provider) => {
-                    const isSelected = provider.id === activeProviderId;
-                    return (
-                      <div
-                        key={provider.id}
-                        onClick={() => {
-                          logSystemActivity('regras_globais', 'selecionar_provedor', provider.name, { provider: provider.id });
-                          setActiveProviderId(provider.id);
-                          setIsAiDropdownOpen(false);
-                        }}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          padding: '6px 10px',
-                          borderRadius: 6,
-                          cursor: 'pointer',
-                          fontSize: 12,
-                          fontWeight: isSelected ? 500 : 400,
-                          color: isSelected ? accentColor : isEffectiveDark ? '#e4e4e7' : '#27272a',
-                          background: isSelected
-                            ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)')
-                            : 'transparent',
-                          transition: 'background 0.12s ease',
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!isSelected) {
-                            e.currentTarget.style.background = isEffectiveDark
-                              ? 'rgba(255, 255, 255, 0.05)'
-                              : 'rgba(0, 0, 0, 0.04)';
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (!isSelected) {
-                            e.currentTarget.style.background = 'transparent';
-                          }
-                        }}
-                      >
-                        {renderAiIcon(provider.id, 15)}
-                        <span style={{ flex: 1 }}>{provider.name}</span>
-                        <span style={{ fontSize: 10, color: isEffectiveDark ? '#71717a' : '#a1a1aa', fontFamily: 'monospace' }}>
-                          {provider.fileName}
-                        </span>
-                        {isSelected && <Check size={12} color={accentColor} />}
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
+                  {renderAiIcon(provider.id, 15)}
+                  <span>{provider.name}</span>
+                  {changed && <span style={{ width: 6, height: 6, borderRadius: '50%', background: accentColor, flexShrink: 0 }} />}
+                </button>
+              );
+            })}
           </div>
 
           {/* Action Buttons on the Right */}
@@ -524,6 +490,19 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
               height={28}
               contextName="Regras Globais de IA"
             />
+            {/* Replicar as regras desta IA para todas as outras */}
+            <button
+              type="button"
+              onClick={handleReplicate}
+              className="df-pressable"
+              style={{ height: 28, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 10px', borderRadius: 6, border: 'none', boxShadow: 'none', background: ft.fieldBg, color: isEffectiveDark ? '#d4d4d8' : '#3f3f46', cursor: 'pointer', fontSize: 11.5, fontWeight: 400, transition: 'background-color 150ms ease, color 150ms ease' }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = ft.fieldBgHover)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = ft.fieldBg)}
+              title={`Copia as regras de ${activeProvider.name} para todas as outras IAs (grava ao clicar em Salvar)`}
+            >
+              <Copy size={13} />
+              <span>Replicar para todas as IAs</span>
+            </button>
             {/* Diretrizes Button (Icon only, no color, with tooltip) */}
             <div style={{ position: 'relative' }}>
               <button
@@ -769,6 +748,12 @@ export const AiGlobalRulesModal: React.FC<Props> = ({
               <>
                 <span style={{ opacity: 0.5 }}>•</span>
                 <span style={{ color: '#ef4444', fontSize: 10.5 }}>Modificado</span>
+              </>
+            )}
+            {otherPending > 0 && (
+              <>
+                <span style={{ opacity: 0.5 }}>•</span>
+                <span style={{ color: '#f59e0b', fontSize: 10.5 }}>+{otherPending} {otherPending === 1 ? 'outra IA modificada' : 'outras IAs modificadas'}</span>
               </>
             )}
           </div>

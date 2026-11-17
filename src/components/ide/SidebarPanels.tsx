@@ -3,10 +3,7 @@ import { GitGraphSection } from './GitGraphSection';
 import { getFieldTokens } from '../../utils/fieldTokens';
 import {
   Search,
-  GitBranch,
   Play,
-  Monitor,
-  Blocks,
   RefreshCw,
   XCircle,
   Check,
@@ -20,15 +17,11 @@ import {
   Plus,
   Minus,
   Eye,
-  Download,
-  Star,
   X,
   MoreHorizontal,
   ChevronDown,
   Sparkles,
-  Layers,
   AtSign,
-  ArrowRight,
   LayoutGrid,
 } from 'lucide-react';
 import { FileIcon } from '../FileIcon';
@@ -256,6 +249,66 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
   const [gitRepos, setGitRepos] = useState<RepoGitEntry[]>([]);
   const [isGitLoading, setIsGitLoading] = useState(false);
   const [changesGroupCollapsed, setChangesGroupCollapsed] = useState(false);
+  const [graphOpen, setGraphOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('devflow_git_graph_open') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [graphSplitRatio, setGraphSplitRatio] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem('devflow_git_graph_ratio'));
+      return Number.isFinite(saved) && saved >= 0.12 && saved <= 0.85 ? saved : 0.5;
+    } catch {
+      return 0.5;
+    }
+  });
+  const [isDraggingGraph, setIsDraggingGraph] = useState(false);
+  const gitPanelRef = useRef<HTMLDivElement>(null);
+  const graphSplitRatioRef = useRef(graphSplitRatio);
+  graphSplitRatioRef.current = graphSplitRatio;
+
+  const handleToggleGraph = useCallback(() => {
+    setGraphOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('devflow_git_graph_open', next ? '1' : '0');
+      } catch {}
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!isDraggingGraph) return;
+    document.body.classList.add('resizing-row');
+    const onMove = (e: MouseEvent) => {
+      const el = gitPanelRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (rect.height <= 0) return;
+      const available = Math.max(1, rect.height - 5);
+      const rawBottomHeight = rect.bottom - e.clientY - 2.5;
+      const minPx = Math.min(84, available * 0.25);
+      const maxPx = Math.max(minPx, available - minPx);
+      const clampedPx = Math.max(minPx, Math.min(maxPx, rawBottomHeight));
+      setGraphSplitRatio(clampedPx / available);
+    };
+    const onUp = () => {
+      setIsDraggingGraph(false);
+      document.body.classList.remove('resizing-row');
+      try {
+        localStorage.setItem('devflow_git_graph_ratio', String(graphSplitRatioRef.current));
+      } catch {}
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      document.body.classList.remove('resizing-row');
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [isDraggingGraph]);
 
   const updateRepo = useCallback(
     (dir: string, patch: Partial<RepoGitEntry> | ((r: RepoGitEntry) => Partial<RepoGitEntry>)) => {
@@ -542,6 +595,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
 
   return (
     <div
+      className="df-ide-surface"
       style={{
         width: '100%',
         flex: '1 1 0',
@@ -557,6 +611,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
       {/* -------------------------------------------------- */}
       {activeTab === 'search' && (
         <div
+          className="df-view-enter"
           style={{
             width: '100%',
             flex: '1 1 0',
@@ -564,6 +619,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
             background: themeTokens.bgCard,
             borderRadius: 10,
             border: 'none',
+            boxShadow: 'none',
             flexDirection: 'column',
             justifyContent: 'flex-start',
             alignItems: 'flex-start',
@@ -613,18 +669,21 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%' }}>
               <div
+                className="df-pressable"
                 onClick={() => setIsSearchReplaceOpen(!isSearchReplaceOpen)}
                 style={{
                   cursor: 'pointer',
                   color: themeTokens.textSecondary,
-                  transform: isSearchReplaceOpen ? 'rotate(90deg)' : 'rotate(0deg)',
-                  transition: 'transform 0.15s ease',
                   display: 'flex',
                   alignItems: 'center',
                 }}
                 title="Alternar Substituição"
               >
-                <ChevronRight size={14} />
+                <ChevronRight
+                  size={14}
+                  className="df-chevron"
+                  style={{ transform: isSearchReplaceOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                />
               </div>
               <div
                 className="df-search-box"
@@ -634,7 +693,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                   alignItems: 'center',
                   background: getFieldTokens(isEffectiveDark).fieldBg,
                   borderRadius: 6,
-                  border: getFieldTokens(isEffectiveDark).fieldBorder,
+                  border: 'none',
                   boxShadow: 'none',
                   padding: '5px 8px',
                   gap: 6,
@@ -712,7 +771,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
             </div>
 
             {isSearchReplaceOpen && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%', paddingLeft: 18 }}>
+              <div className="df-subtle-enter" style={{ display: 'flex', alignItems: 'center', gap: 4, width: '100%', paddingLeft: 18 }}>
                 <div
                   className="df-search-box"
                   style={{
@@ -721,7 +780,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                     alignItems: 'center',
                     background: getFieldTokens(isEffectiveDark).fieldBg,
                     borderRadius: 6,
-                    border: getFieldTokens(isEffectiveDark).fieldBorder,
+                    border: 'none',
                     boxShadow: 'none',
                     padding: '5px 8px',
                     boxSizing: 'border-box',
@@ -758,7 +817,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                     alignItems: 'center',
                     gap: 3,
                     fontSize: 10.5,
-                    fontWeight: 500,
+                    fontWeight: 400,
                   }}
                 >
                   <CheckCheck size={12} />
@@ -804,6 +863,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                   }}
                 >
                   <div
+                    className="df-row-interactive"
                     onClick={() => onJumpToLine(file, matches[0]?.line || 1)}
                     style={{
                       display: 'flex',
@@ -819,7 +879,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                       <span
                         style={{
                           fontSize: 11,
-                          fontWeight: 600,
+                          fontWeight: 400,
                           color: themeTokens.textPrimary,
                           whiteSpace: 'nowrap',
                           overflow: 'hidden',
@@ -837,17 +897,18 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                         borderRadius: 8,
                         background: hexToRgba(accentColor, 0.15),
                         color: accentColor,
-                        fontWeight: 600,
+                        fontWeight: 400,
                       }}
                     >
                       {matches.length}
                     </span>
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <div className="df-subtle-enter" style={{ display: 'flex', flexDirection: 'column' }}>
                     {matches.slice(0, 30).map((m, idx) => (
                       <div
                         key={idx}
+                        className="df-row-interactive"
                         onClick={() => onJumpToLine(file, m.line)}
                         style={{
                           display: 'flex',
@@ -889,16 +950,29 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
       {/* 2. Git / Source Control Panel (Border-free)        */}
       {/* -------------------------------------------------- */}
       {activeTab === 'git' && (
-        <div style={{ width: '100%', flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
         <div
+          ref={gitPanelRef}
+          className="df-view-enter"
           style={{
             width: '100%',
             flex: '1 1 0',
             minHeight: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: graphOpen && !changesGroupCollapsed ? 0 : 5,
+          }}
+        >
+        <div
+          style={{
+            width: '100%',
+            flex: changesGroupCollapsed && graphOpen ? '0 0 auto' : graphOpen ? `${1 - graphSplitRatio} 1 0` : '1 1 0',
+            flexShrink: changesGroupCollapsed && graphOpen ? 0 : 1,
+            minHeight: 0,
             padding: '8px 10px',
-            background: themeTokens.bgCard,
-            borderRadius: 10,
+            background: graphSkinned ? 'transparent' : themeTokens.bgCard,
+            borderRadius: graphSkinned ? 'var(--sk-r, 0px)' : 10,
             border: 'none',
+            boxShadow: 'none',
             flexDirection: 'column',
             justifyContent: 'flex-start',
             alignItems: 'flex-start',
@@ -918,9 +992,10 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
               <ChevronRight
                 size={12}
                 color={themeTokens.textSecondary}
-                style={{ transform: changesGroupCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 0.15s ease' }}
+                className="df-chevron"
+                style={{ transform: changesGroupCollapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}
               />
-              <span style={{ fontSize: 10.5, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase' }}>
+              <span style={{ fontSize: 10.5, fontWeight: 400, color: themeTokens.textSecondary, textTransform: 'uppercase' }}>
                 Alterações
               </span>
               <div style={{ flex: 1 }} />
@@ -943,7 +1018,8 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
             </div>
 
             {!changesGroupCollapsed && (
-              gitRepos.length === 0 ? (
+              <div className="df-subtle-enter" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {gitRepos.length === 0 ? (
                 <div style={{ padding: '20px 0', textAlign: 'center', color: themeTokens.textMuted, fontSize: 11 }}>
                   {isGitLoading ? 'Verificando repositórios...' : 'Nenhum repositório Git encontrado'}
                 </div>
@@ -960,7 +1036,8 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                         >
                           <ChevronRight
                             size={13}
-                            style={{ transform: repo.collapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 0.15s ease' }}
+                            className="df-chevron"
+                            style={{ transform: repo.collapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}
                           />
                         </div>
                         <span
@@ -1020,7 +1097,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                       </div>
 
                       {!repo.collapsed && (
-                        <>
+                        <div className="df-subtle-enter" style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
                           {/* Commit Box */}
                           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6, paddingLeft: 19, boxSizing: 'border-box' }}>
                             <div style={{ position: 'relative', width: '100%' }}>
@@ -1038,10 +1115,10 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                                 style={{
                                   width: '100%',
                                   background: getFieldTokens(isEffectiveDark).fieldBg,
-                                  border: getFieldTokens(isEffectiveDark).fieldBorder,
+                                  border: 'none',
                                   boxShadow: 'none',
                                   borderRadius: 6,
-                                  padding: '7px 9px',
+                                  padding: 10,
                                   color: themeTokens.textPrimary,
                                   fontSize: 11,
                                   fontWeight: 400,
@@ -1058,15 +1135,16 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                                   title="Gerar mensagem de commit com a IA selecionada no chat"
                                   style={{
                                     position: 'absolute',
-                                    right: 6,
-                                    bottom: 6,
+                                    right: 10,
+                                    bottom: 10,
                                     background: hexToRgba(accentColor, 0.18),
                                     border: 'none',
                                     color: accentColor,
-                                    borderRadius: 5,
-                                    padding: '3px 7px',
+                                    borderRadius: 6,
+                                    height: 26,
+                                    padding: '0 10px',
                                     fontSize: 10,
-                                    fontWeight: 600,
+                                    fontWeight: 400,
                                     display: 'flex',
                                     alignItems: 'center',
                                     gap: 4,
@@ -1080,7 +1158,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                               )}
                             </div>
 
-                            <div style={{ display: 'flex', width: '100%' }}>
+                            <div style={{ display: 'flex', width: '100%', gap: 1 }}>
                               <button
                                 onClick={() => handleGitCommit(repo.dir)}
                                 disabled={repo.isLoading || !repo.commitMsg.trim()}
@@ -1094,12 +1172,11 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                                   cursor: repo.isLoading || !repo.commitMsg.trim() ? 'not-allowed' : 'pointer',
                                   opacity: repo.isLoading || !repo.commitMsg.trim() ? 0.6 : 1,
                                   fontSize: 11,
-                                  fontWeight: 600,
+                                  fontWeight: 400,
                                   display: 'flex',
                                   alignItems: 'center',
                                   justifyContent: 'center',
                                   gap: 6,
-                                  transition: 'opacity 0.15s ease',
                                 }}
                               >
                                 <Check size={13} strokeWidth={2.5} />
@@ -1113,7 +1190,6 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                                   background: accentColor,
                                   color: accentTextColor,
                                   border: 'none',
-                                  borderLeft: `1px solid ${hexToRgba('#000000', 0.18)}`,
                                   borderRadius: '0 6px 6px 0',
                                   padding: '6px 8px',
                                   cursor: repo.isLoading || !repo.commitMsg.trim() ? 'not-allowed' : 'pointer',
@@ -1136,7 +1212,8 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                               <ChevronRight
                                 size={11}
                                 color={themeTokens.textSecondary}
-                                style={{ transform: repo.changesCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', transition: 'transform 0.15s ease' }}
+                                className="df-chevron"
+                                style={{ transform: repo.changesCollapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}
                               />
                               <span style={{ fontSize: 10.5, fontWeight: 600, color: themeTokens.textSecondary, textTransform: 'uppercase', flex: 1 }}>
                                 Alterações
@@ -1178,7 +1255,8 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                             </div>
 
                             {!repo.changesCollapsed && (
-                              repo.changes.length === 0 ? (
+                              <div className="df-subtle-enter" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                              {repo.changes.length === 0 ? (
                                 <div style={{ padding: '8px 0', color: themeTokens.textMuted, fontSize: 10.5 }}>
                                   Nenhuma alteração pendente
                                 </div>
@@ -1199,7 +1277,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                                   return (
                                     <div
                                       key={idx}
-                                      className="skin-tab"
+                                      className="skin-tab df-row-interactive"
                                       style={{
                                         textTransform: 'none',
                                         letterSpacing: 'normal',
@@ -1210,7 +1288,6 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                                         borderRadius: 5,
                                         border: 'none',
                                         cursor: 'pointer',
-                                        transition: 'background 0.1s ease',
                                       }}
                                       onMouseEnter={(e) => (e.currentTarget.style.background = themeTokens.hoverBg)}
                                       onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
@@ -1218,19 +1295,24 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                                       <div
                                         onClick={() => {
                                           if (onStartReview) {
-                                            onStartReview([
-                                              {
-                                                path: fullPath,
-                                                name: fileName,
-                                                status: change.status === 'M' ? 'modified' : change.status === 'A' ? 'added' : 'deleted',
-                                              },
-                                            ]);
+                                            const reviewList = repo.changes.map((c) => {
+                                              const fn = c.path.split('/').pop() || c.path;
+                                              const fp = c.path.startsWith('/') ? c.path : `${repo.dir}/${c.path}`;
+                                              return {
+                                                path: fp,
+                                                name: fn,
+                                                repoDir: repo.dir,
+                                                relPath: c.path,
+                                                status: c.status === 'M' ? 'modified' : c.status === 'A' ? 'added' : 'deleted',
+                                              };
+                                            });
+                                            onStartReview(reviewList, idx);
                                           } else {
                                             onOpenFile(fullPath, fileName);
                                           }
                                         }}
                                         style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1 }}
-                                        title={`${change.path} (Clique para comparar)`}
+                                        title={`${change.path} (Clique para comparar alterações)`}
                                       >
                                         <FileIcon fileName={fileName} size={14} />
                                         <span
@@ -1263,17 +1345,32 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                                         <button
                                           onClick={(e) => {
                                             e.stopPropagation();
+                                            onOpenFile(fullPath, fileName);
+                                          }}
+                                          title="Abrir arquivo"
+                                          style={iconBtnStyle}
+                                        >
+                                          <FileText size={11} />
+                                        </button>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
                                             if (onStartReview) {
-                                              onStartReview([
-                                                {
-                                                  path: fullPath,
-                                                  name: fileName,
-                                                  status: change.status === 'M' ? 'modified' : change.status === 'A' ? 'added' : 'deleted',
-                                                },
-                                              ]);
+                                              const reviewList = repo.changes.map((c) => {
+                                                const fn = c.path.split('/').pop() || c.path;
+                                                const fp = c.path.startsWith('/') ? c.path : `${repo.dir}/${c.path}`;
+                                                return {
+                                                  path: fp,
+                                                  name: fn,
+                                                  repoDir: repo.dir,
+                                                  relPath: c.path,
+                                                  status: c.status === 'M' ? 'modified' : c.status === 'A' ? 'added' : 'deleted',
+                                                };
+                                              });
+                                              onStartReview(reviewList, idx);
                                             }
                                           }}
-                                          title="Comparar com HEAD (Diff Review)"
+                                          title="Comparar alterações (Diff)"
                                           style={iconBtnStyle}
                                         >
                                           <Eye size={11} />
@@ -1305,22 +1402,77 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                                     </div>
                                   );
                                 })
-                              )
+                              )}
+                              </div>
                             )}
                           </div>
-                        </>
+                        </div>
                       )}
                     </div>
                   );
                 })
-              )
+              )}
+              </div>
             )}
           </div>
         </div>
 
+        {graphOpen && !changesGroupCollapsed ? (
+          <div
+            className={`resizer-row ${isDraggingGraph ? 'dragging' : ''}`}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              setIsDraggingGraph(true);
+            }}
+            onDoubleClick={() => {
+              setGraphSplitRatio(0.5);
+              try {
+                localStorage.setItem('devflow_git_graph_ratio', '0.5');
+              } catch {}
+            }}
+            title="Arraste para ajustar a altura do Graph (Duplo clique para restaurar)"
+          />
+        ) : graphSkinned ? (
+          <div
+            aria-hidden
+            style={{
+              height: 1,
+              width: '100%',
+              background: 'var(--skin-line-h, rgba(255, 255, 255, 0.06))',
+              flexShrink: 0,
+            }}
+          />
+        ) : null}
+
         {/* Graph: card separado, como Outline e Timeline */}
-        <div style={{ width: '100%', flex: '1 1 0', minHeight: 0, padding: '8px 10px', background: themeTokens.bgCard, borderRadius: 10, display: 'flex', flexDirection: 'column', overflowY: 'auto', overflowX: 'hidden', boxSizing: 'border-box' }}>
-          <GitGraphSection dir={gitRepos[0]?.dir || workspacePath} themeTokens={themeTokens} isEffectiveDark={isEffectiveDark} accentColor={accentColor} refreshSignal={isGitLoading} onToast={onToast} skinned={graphSkinned} />
+        <div
+          style={{
+            width: '100%',
+            flex: graphOpen ? (changesGroupCollapsed ? '1 1 0' : `${graphSplitRatio} 1 0`) : '0 0 auto',
+            flexShrink: graphOpen ? 1 : 0,
+            minHeight: 0,
+            padding: '8px 10px',
+            background: graphSkinned ? 'transparent' : themeTokens.bgCard,
+            borderRadius: graphSkinned ? 'var(--sk-r, 0px)' : 10,
+            border: 'none',
+            boxShadow: 'none',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'visible',
+            boxSizing: 'border-box',
+          }}
+        >
+          <GitGraphSection
+            dir={gitRepos[0]?.dir || workspacePath}
+            themeTokens={themeTokens}
+            isEffectiveDark={isEffectiveDark}
+            accentColor={accentColor}
+            refreshSignal={isGitLoading}
+            onToast={onToast}
+            skinned={graphSkinned}
+            open={graphOpen}
+            onToggleOpen={handleToggleGraph}
+          />
         </div>
         </div>
       )}
@@ -1330,6 +1482,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
       {/* -------------------------------------------------- */}
       {activeTab === 'debug' && (
         <div
+          className="df-view-enter"
           style={{
             width: '100%',
             flex: '1 1 0',
@@ -1337,6 +1490,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
             background: themeTokens.bgCard,
             borderRadius: 10,
             border: 'none',
+            boxShadow: 'none',
             flexDirection: 'column',
             justifyContent: 'flex-start',
             alignItems: 'flex-start',
@@ -1449,6 +1603,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                 Object.entries(packageScripts).map(([sName, sCmd]) => (
                   <div
                     key={sName}
+                    className="df-row-interactive"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -1457,10 +1612,11 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                       background: isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)',
                       borderRadius: 6,
                       border: 'none',
+                      boxShadow: 'none',
                     }}
                   >
                     <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1, marginRight: 6 }}>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: themeTokens.textPrimary }}>{sName}</span>
+                      <span style={{ fontSize: 11, fontWeight: 400, color: themeTokens.textPrimary }}>{sName}</span>
                       <span
                         style={{
                           fontSize: 9.5,
@@ -1488,7 +1644,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                         alignItems: 'center',
                         gap: 4,
                         fontSize: 10.5,
-                        fontWeight: 600,
+                        fontWeight: 400,
                         flexShrink: 0,
                       }}
                     >
@@ -1508,6 +1664,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
       {/* -------------------------------------------------- */}
       {activeTab === 'preview' && (
         <div
+          className="df-opacity-enter"
           style={{
             width: '100%',
             flex: '1 1 0',
@@ -1515,6 +1672,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
             background: themeTokens.bgCard,
             borderRadius: 10,
             border: 'none',
+            boxShadow: 'none',
             flexDirection: 'column',
             justifyContent: 'flex-start',
             alignItems: 'flex-start',
@@ -1570,6 +1728,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                   return (
                     <div
                       key={p.port}
+                      className="df-row-interactive"
                       onClick={() => {
                         onOpenPreview(`http://localhost:${p.port}`);
                       }}
@@ -1585,6 +1744,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                           ? 'rgba(255,255,255,0.06)'
                           : 'rgba(0,0,0,0.06)',
                         border: 'none',
+                        boxShadow: 'none',
                         cursor: 'pointer',
                       }}
                     >
@@ -1608,14 +1768,18 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                           flexShrink: 0,
                           borderRadius: 4,
                           cursor: 'pointer',
-                          border: `1px solid ${selectedPorts.has(p.port) ? accentColor : isEffectiveDark ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.25)'}`,
+                          border: 'none',
+                          boxShadow: 'none',
                           background: selectedPorts.has(p.port)
                             ? `${accentColor} url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-6.5' fill='none' stroke='${accentTextColor === '#000000' ? '%23000' : '%23fff'}' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/10px no-repeat`
-                            : 'transparent',
+                            : isEffectiveDark
+                            ? 'rgba(255,255,255,0.12)'
+                            : 'rgba(0,0,0,0.12)',
+                          transition: 'background-color 150ms ease, transform 140ms var(--ease-out)',
                         }}
                       />
                       <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981' }} />
-                      <span style={{ fontSize: 11, fontWeight: 600, color: themeTokens.textPrimary }}>:{p.port}</span>
+                      <span style={{ fontSize: 11, fontWeight: 400, color: themeTokens.textPrimary }}>:{p.port}</span>
                       <span style={{ fontSize: 10.5, color: themeTokens.textSecondary, marginLeft: 'auto', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{projectLabel(p)}</span>
                       <button
                         title="Fechar porta"
@@ -1634,14 +1798,16 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
       )}
       {closeConfirm && (
         <div
+          className="df-modal-backdrop"
           onClick={() => !isClosingPorts && setCloseConfirm(null)}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
         >
           <div
+            className="df-modal-content"
             onClick={(e) => e.stopPropagation()}
-            style={{ width: 340, maxHeight: '70vh', display: 'flex', flexDirection: 'column', gap: 10, padding: 16, borderRadius: 12, background: themeTokens.bgCard, border: '1px solid ' + themeTokens.border, color: themeTokens.textPrimary }}
+            style={{ width: 340, maxHeight: '70vh', display: 'flex', flexDirection: 'column', gap: 10, padding: 16, borderRadius: 12, background: themeTokens.bgCard, border: 'none', boxShadow: 'none', color: themeTokens.textPrimary }}
           >
-            <div style={{ fontSize: 13, fontWeight: 600 }}>
+            <div style={{ fontSize: 13, fontWeight: 400 }}>
               Fechar {closeConfirm.length === 1 ? `a porta :${closeConfirm[0].port}` : `${closeConfirm.length} portas`}?
             </div>
             <div style={{ fontSize: 11, color: themeTokens.textSecondary }}>
@@ -1650,7 +1816,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
             <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 3 }}>
               {closeConfirm.map((p) => (
                 <div key={p.port} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-                  <span style={{ fontWeight: 600 }}>:{p.port}</span>
+                  <span style={{ fontWeight: 400 }}>:{p.port}</span>
                   <span style={{ color: themeTokens.textSecondary }}>{projectLabel(p)}</span>
                 </div>
               ))}
@@ -1659,14 +1825,14 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
               <button
                 disabled={isClosingPorts}
                 onClick={() => setCloseConfirm(null)}
-                style={{ background: 'transparent', color: themeTokens.textSecondary, border: 'none', padding: '5px 10px', fontSize: 11, cursor: 'pointer' }}
+                style={{ background: 'transparent', color: themeTokens.textSecondary, border: 'none', padding: '5px 10px', fontSize: 11, fontWeight: 400, cursor: 'pointer' }}
               >
                 Cancelar
               </button>
               <button
                 disabled={isClosingPorts}
                 onClick={() => closePorts(closeConfirm)}
-                style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}
+                style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 12px', fontSize: 11, fontWeight: 400, cursor: 'pointer' }}
               >
                 {isClosingPorts ? 'Fechando...' : 'Fechar'}
               </button>
@@ -1679,6 +1845,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
       {/* -------------------------------------------------- */}
       {activeTab === 'testing' && (
         <div
+          className="df-view-enter"
           style={{
             width: '100%',
             flex: '1 1 0',
@@ -1686,6 +1853,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
             background: themeTokens.bgCard,
             borderRadius: 8,
             border: 'none',
+            boxShadow: 'none',
             flexDirection: 'column',
             justifyContent: 'flex-start',
             alignItems: 'flex-start',
@@ -1709,7 +1877,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                   borderRadius: 4,
                   padding: '3px 8px',
                   fontSize: 10,
-                  fontWeight: 600,
+                  fontWeight: 400,
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
@@ -1726,6 +1894,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
           {/* Quick Runner Cards */}
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div
+              className="df-row-interactive"
               style={{
                 padding: '8px 10px',
                 borderRadius: 6,
@@ -1738,13 +1907,14 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
               onClick={() => onRunTerminalCommand('npm test', 'npm test')}
             >
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: themeTokens.textPrimary }}>npm test</div>
+                <div style={{ fontSize: 12, fontWeight: 400, color: themeTokens.textPrimary }}>npm test</div>
                 <div style={{ fontSize: 10, color: themeTokens.textSecondary }}>Executa o test runner padrão do projeto</div>
               </div>
               <Play size={12} style={{ color: accentColor }} />
             </div>
 
             <div
+              className="df-row-interactive"
               style={{
                 padding: '8px 10px',
                 borderRadius: 6,
@@ -1757,13 +1927,14 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
               onClick={() => onRunTerminalCommand('Vitest Watch', 'npx vitest')}
             >
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: themeTokens.textPrimary }}>Vitest (Watch)</div>
+                <div style={{ fontSize: 12, fontWeight: 400, color: themeTokens.textPrimary }}>Vitest (Watch)</div>
                 <div style={{ fontSize: 10, color: themeTokens.textSecondary }}>Execução interativa contínua</div>
               </div>
               <Play size={12} style={{ color: accentColor }} />
             </div>
 
             <div
+              className="df-row-interactive"
               style={{
                 padding: '8px 10px',
                 borderRadius: 6,
@@ -1776,7 +1947,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
               onClick={() => onRunTerminalCommand('TypeCheck', 'npx tsc --noEmit')}
             >
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: themeTokens.textPrimary }}>TypeScript Check</div>
+                <div style={{ fontSize: 12, fontWeight: 400, color: themeTokens.textPrimary }}>TypeScript Check</div>
                 <div style={{ fontSize: 10, color: themeTokens.textSecondary }}>Validação estática de tipos</div>
               </div>
               <Play size={12} style={{ color: accentColor }} />
@@ -1790,6 +1961,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
       {/* ------------------------------------------------------------------- */}
       {activeTab === 'design' && (
         <div
+          className="df-view-enter"
           style={{
             width: '100%',
             flex: '1 1 0',
@@ -1815,7 +1987,7 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                 height: 28,
                 borderRadius: 6,
                 background: getFieldTokens(isEffectiveDark).fieldBg,
-                border: getFieldTokens(isEffectiveDark).fieldBorder,
+                border: 'none',
                 boxShadow: 'none',
                 display: 'flex',
                 alignItems: 'center',
@@ -1859,7 +2031,6 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                transition: 'background 0.15s ease',
               }}
             >
               <RefreshCw size={12} />
@@ -1973,30 +2144,33 @@ export const SidebarPanels: React.FC<SidebarPanelsProps> = ({
                     scr.pageName.toLowerCase().includes(q)
                   );
                 })
-                .map((scr) => {
+                .map((scr, idx) => {
                   const isSelected = selectedDesignScreenId === scr.id;
                   const thumbUrl = resolvedDesignThumbs[scr.id] || scr.previewDataUrl || buildScreenSvgFallbackDataUrl(scr);
                   return (
                     <div
                       key={scr.id}
+                      className="df-card-subtle df-stagger-item"
                       onClick={() => onSelectDesignScreen?.(scr)}
                       title={`Clique para abrir o preview de "${scr.name}" na área central`}
-                      style={{
-                        padding: 8,
-                        borderRadius: 6,
-                        background: isSelected
-                          ? hexToRgba(accentColor, isEffectiveDark ? 0.18 : 0.12)
-                          : isEffectiveDark
-                          ? 'rgba(255, 255, 255, 0.04)'
-                          : 'rgba(0, 0, 0, 0.03)',
-                        border: 'none',
-                        boxShadow: 'none',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 8,
-                        cursor: 'pointer',
-                        transition: 'background 0.15s ease',
-                      }}
+                      style={
+                        {
+                          '--stagger-idx': idx,
+                          padding: 8,
+                          borderRadius: 6,
+                          background: isSelected
+                            ? hexToRgba(accentColor, isEffectiveDark ? 0.18 : 0.12)
+                            : isEffectiveDark
+                            ? 'rgba(255, 255, 255, 0.04)'
+                            : 'rgba(0, 0, 0, 0.03)',
+                          border: 'none',
+                          boxShadow: 'none',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 8,
+                          cursor: 'pointer',
+                        } as React.CSSProperties
+                      }
                       onMouseEnter={(e) => {
                         if (!isSelected) {
                           e.currentTarget.style.background = isEffectiveDark

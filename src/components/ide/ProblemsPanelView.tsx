@@ -6,17 +6,16 @@ import {
   CheckCircle2,
   Search,
   RefreshCw,
-  ChevronDown,
   ChevronRight,
   ExternalLink,
   Copy,
   Sparkles,
   Filter,
-  Code2,
   FileText,
   Clock,
 } from 'lucide-react';
 import { getFieldTokens } from '../../utils/fieldTokens';
+import { renderAiIcon } from '../icons/AiProviderIcons';
 
 export interface IdeProblem {
   id: string;
@@ -54,6 +53,10 @@ export interface ProblemsPanelViewProps {
   accentColor: string;
   isEffectiveDark: boolean;
   onAskAiAboutProblem?: (problem: IdeProblem) => void;
+  /** pede à IA para corrigir os problemas listados (respeita busca, escopo e filtro de severidade) */
+  onResolveWithAi?: (problems: IdeProblem[]) => void;
+  /** IA selecionada na header (logo do botão Resolver com IA) */
+  aiProviderId?: string;
 }
 
 export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
@@ -69,6 +72,8 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
   accentColor,
   isEffectiveDark,
   onAskAiAboutProblem,
+  onResolveWithAi,
+  aiProviderId,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterSeverity, setFilterSeverity] = useState<'all' | 'error' | 'warning' | 'info'>('all');
@@ -141,7 +146,13 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
     return Array.from(map.values()).sort((a, b) => b.items.length - a.items.length);
   }, [filteredProblems]);
 
-  const toggleFileCollapse = (fileKey: string) => {
+  // Shift + clique: contrai ou expande todos os arquivos de uma vez (segue o novo estado do arquivo clicado)
+  const toggleFileCollapse = (fileKey: string, all = false) => {
+    if (all) {
+      const next = !collapsedFiles[fileKey];
+      setCollapsedFiles(Object.fromEntries(groupedByFile.map((g) => [g.filePath || g.fileName, next])));
+      return;
+    }
     setCollapsedFiles((prev) => ({ ...prev, [fileKey]: !prev[fileKey] }));
   };
 
@@ -168,12 +179,14 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
 
   return (
     <div
+      className="df-ide-surface df-view-enter"
       style={{
         flex: '1 1 0',
         alignSelf: 'stretch',
         background: themeTokens.bgCard,
         borderRadius: 10,
-        border: '1px solid ' + themeTokens.border,
+        border: 'none',
+        boxShadow: 'none',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
@@ -188,8 +201,8 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '8px 12px',
-          borderBottom: '1px solid ' + themeTokens.border,
+          padding: 12,
+          borderBottom: '1px solid ' + (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'),
           background: isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
           gap: 12,
           flexWrap: 'wrap',
@@ -206,10 +219,10 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
               alignItems: 'center',
               flex: 1,
               maxWidth: 340,
-              height: 28,
+              height: 30,
               background: getFieldTokens(isEffectiveDark).fieldBg,
               borderRadius: 6,
-              border: getFieldTokens(isEffectiveDark).fieldBorder,
+              border: 'none',
               boxShadow: 'none',
               padding: '0 8px',
               boxSizing: 'border-box',
@@ -228,11 +241,13 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
                 outline: 'none',
                 color: themeTokens.textPrimary,
                 fontSize: 11.5,
+                fontWeight: 400,
                 padding: '5px 0',
               }}
             />
             {searchQuery && (
               <span
+                className="df-pressable"
                 onClick={() => setSearchQuery('')}
                 style={{ cursor: 'pointer', fontSize: 13, color: themeTokens.textSecondary, marginLeft: 4 }}
                 title="Limpar busca"
@@ -246,24 +261,30 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
           <div
             style={{
               display: 'flex',
-              background: isEffectiveDark ? '#141417' : '#f1f3f5',
+              alignItems: 'center',
+              height: 30,
+              boxSizing: 'border-box',
+              background: isEffectiveDark ? '#0c0c0e' : '#e4e6ea',
               borderRadius: 6,
               padding: 2,
-              border: '1px solid ' + themeTokens.border,
+              border: 'none',
+              boxShadow: 'none',
             }}
           >
             <button
               onClick={() => setScope('all')}
               style={{
-                background: scope === 'all' ? (isEffectiveDark ? '#23252b' : '#ffffff') : 'transparent',
+                background: scope === 'all' ? (isEffectiveDark ? '#2c2e35' : '#ffffff') : 'transparent',
                 border: 'none',
                 borderRadius: 4,
-                padding: '3px 8px',
-                fontSize: 11,
+                height: 26,
+                padding: '0 10px',
+                fontSize: 11.5,
                 cursor: 'pointer',
+                transition: 'background-color 150ms ease, color 150ms ease',
                 color: scope === 'all' ? themeTokens.textPrimary : themeTokens.textSecondary,
-                fontWeight: scope === 'all' ? 500 : 400,
-                boxShadow: scope === 'all' ? '0 1px 3px rgba(0,0,0,0.15)' : 'none',
+                fontWeight: 400,
+                boxShadow: 'none',
               }}
             >
               Projeto Todo ({problems.length})
@@ -271,15 +292,17 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
             <button
               onClick={() => setScope('active')}
               style={{
-                background: scope === 'active' ? (isEffectiveDark ? '#23252b' : '#ffffff') : 'transparent',
+                background: scope === 'active' ? (isEffectiveDark ? '#2c2e35' : '#ffffff') : 'transparent',
                 border: 'none',
                 borderRadius: 4,
-                padding: '3px 8px',
-                fontSize: 11,
+                height: 26,
+                padding: '0 10px',
+                fontSize: 11.5,
                 cursor: 'pointer',
+                transition: 'background-color 150ms ease, color 150ms ease',
                 color: scope === 'active' ? themeTokens.textPrimary : themeTokens.textSecondary,
-                fontWeight: scope === 'active' ? 500 : 400,
-                boxShadow: scope === 'active' ? '0 1px 3px rgba(0,0,0,0.15)' : 'none',
+                fontWeight: 400,
+                boxShadow: 'none',
               }}
             >
               Arquivo Atual {activeFile ? `(${problems.filter((p) => p.fileName === activeFile.name || p.filePath === activeFile.path).length})` : ''}
@@ -288,98 +311,86 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
         </div>
 
         {/* Right: Counters / Filters & Actions */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-          {/* Filter Pills */}
-          <button
-            onClick={() => setFilterSeverity(filterSeverity === 'error' ? 'all' : 'error')}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          {/* Filtro de severidade: mesmo visual das abas de escopo */}
+          <div
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: 4,
-              background: filterSeverity === 'error' ? 'rgba(239, 68, 68, 0.18)' : (isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)'),
-              border: 'none',
-              borderRadius: 5,
-              padding: '3px 8px',
-              fontSize: 11,
-              color: '#ef4444',
-              cursor: 'pointer',
-              fontWeight: 400,
+              height: 30,
+              boxSizing: 'border-box',
+              background: isEffectiveDark ? '#0c0c0e' : '#e4e6ea',
+              borderRadius: 6,
+              padding: 2,
+              gap: 2,
             }}
-            title="Filtrar apenas erros"
           >
-            <XCircle size={13} />
-            <span>{stats.errors} Erros</span>
-          </button>
-
-          <button
-            onClick={() => setFilterSeverity(filterSeverity === 'warning' ? 'all' : 'warning')}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-              background: filterSeverity === 'warning' ? 'rgba(245, 158, 11, 0.18)' : (isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)'),
-              border: 'none',
-              borderRadius: 5,
-              padding: '3px 8px',
-              fontSize: 11,
-              color: '#f59e0b',
-              cursor: 'pointer',
-              fontWeight: 400,
-            }}
-            title="Filtrar apenas avisos"
-          >
-            <AlertTriangle size={13} />
-            <span>{stats.warnings} Avisos</span>
-          </button>
-
-          {stats.infos > 0 && (
+            {(
+              [
+                { key: 'error', label: `${stats.errors} Erros`, color: '#ef4444', Icon: XCircle, title: 'Filtrar apenas erros', show: true },
+                { key: 'warning', label: `${stats.warnings} Avisos`, color: '#f59e0b', Icon: AlertTriangle, title: 'Filtrar apenas avisos', show: true },
+                { key: 'info', label: `${stats.infos} Infos`, color: '#3b82f6', Icon: Info, title: 'Filtrar apenas informações', show: stats.infos > 0 },
+              ] as const
+            )
+              .filter((t) => t.show)
+              .map((t) => {
+                const active = filterSeverity === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    onClick={() => setFilterSeverity(active ? 'all' : t.key)}
+                    title={t.title}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      background: active ? (isEffectiveDark ? '#2c2e35' : '#ffffff') : 'transparent',
+                      border: 'none',
+                      borderRadius: 4,
+                      height: 26,
+                      padding: '0 10px',
+                      fontSize: 11.5,
+                      cursor: 'pointer',
+                      color: active ? themeTokens.textPrimary : themeTokens.textSecondary,
+                      fontWeight: 400,
+                      transition: 'background-color 150ms ease, color 150ms ease',
+                    }}
+                  >
+                    <t.Icon size={13} color={t.color} />
+                    <span>{t.label}</span>
+                  </button>
+                );
+              })}
+          </div>
+          {/* Resolver com IA: manda os problemas exibidos para a IA corrigir */}
+          {onResolveWithAi && (
             <button
-              onClick={() => setFilterSeverity(filterSeverity === 'info' ? 'all' : 'info')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 4,
-                background: filterSeverity === 'info' ? 'rgba(59, 130, 246, 0.18)' : (isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)'),
-                border: 'none',
-                borderRadius: 5,
-                padding: '3px 8px',
-                fontSize: 11,
-                color: '#3b82f6',
-                cursor: 'pointer',
-                fontWeight: 400,
-              }}
-              title="Filtrar apenas informações"
-            >
-              <Info size={13} />
-              <span>{stats.infos} Infos</span>
-            </button>
-          )}
-
-          {/* Run tsc project check button */}
-          {onRunProjectCheck && (
-            <button
-              onClick={onRunProjectCheck}
-              disabled={isCheckingProject}
+              onClick={() => onResolveWithAi(filteredProblems)}
+              disabled={filteredProblems.length === 0}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 5,
-                background: isCheckingProject ? 'rgba(255,255,255,0.05)' : (isEffectiveDark ? '#1f2228' : '#e5e7eb'),
+                background: getFieldTokens(isEffectiveDark).fieldBg,
                 border: 'none',
-                borderRadius: 5,
-                padding: '4px 10px',
-                fontSize: 11,
-                color: accentColor,
-                cursor: isCheckingProject ? 'not-allowed' : 'pointer',
+                borderRadius: 6,
+                height: 30,
+                padding: '0 12px',
+                fontSize: 11.5,
+                color: themeTokens.textPrimary,
+                cursor: filteredProblems.length === 0 ? 'not-allowed' : 'pointer',
+                opacity: filteredProblems.length === 0 ? 0.5 : 1,
                 fontWeight: 400,
-                marginLeft: 4,
+                marginLeft: 8,
+                transition: 'opacity 150ms ease, background-color 150ms ease',
               }}
-              title="Executar checagem estática de tipos do TypeScript em todo o projeto"
+              title="Pedir à IA para corrigir os problemas exibidos"
             >
-              <RefreshCw size={12} className={isCheckingProject ? 'animate-spin' : ''} style={{ animation: isCheckingProject ? 'spin 1s linear infinite' : 'none' }} />
-              <span>{isCheckingProject ? 'Verificando...' : 'Verificar Projeto'}</span>
+              {aiProviderId ? renderAiIcon(aiProviderId, 14) : <Sparkles size={13} />}
+              <span>Resolver com IA</span>
             </button>
           )}
+
         </div>
       </div>
 
@@ -396,10 +407,11 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
         {/* Loading overlay / indicator */}
         {isCheckingProject && (
           <div
+            className="df-subtle-enter"
             style={{
               padding: '8px 16px',
               background: 'rgba(59, 130, 246, 0.08)',
-              borderBottom: '1px solid rgba(59, 130, 246, 0.2)',
+              borderBottom: '1px solid rgba(59, 130, 246, 0.14)',
               display: 'flex',
               alignItems: 'center',
               gap: 8,
@@ -490,10 +502,12 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
                   style={{
                     marginTop: 6,
                     background: isEffectiveDark ? '#23252b' : '#e5e7eb',
-                    border: '1px solid ' + themeTokens.border,
+                    border: 'none',
+                    boxShadow: 'none',
                     borderRadius: 5,
                     padding: '4px 10px',
                     fontSize: 11,
+                    fontWeight: 400,
                     color: themeTokens.textPrimary,
                     cursor: 'pointer',
                   }}
@@ -513,10 +527,12 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
               const fileWarnings = group.items.filter((i) => i.severity === 'warning').length;
 
               return (
-                <div key={fileKey} style={{ borderBottom: '1px solid ' + themeTokens.border }}>
+                <div key={fileKey} style={{ borderBottom: '1px solid ' + (isEffectiveDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)') }}>
                   {/* File Header */}
                   <div
-                    onClick={() => toggleFileCollapse(fileKey)}
+                    className="df-row-interactive"
+                    onClick={(e) => toggleFileCollapse(fileKey, e.shiftKey)}
+                    title="Shift + clique: contrair ou expandir todos"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -525,13 +541,18 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
                       background: isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
                       cursor: 'pointer',
                       fontSize: 12,
-                      fontWeight: 500,
+                      fontWeight: 400,
                     }}
                     onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)')}
                     onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)')}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                      {isCollapsed ? <ChevronRight size={13} color={themeTokens.textSecondary} /> : <ChevronDown size={13} color={themeTokens.textSecondary} />}
+                      <ChevronRight
+                        size={13}
+                        color={themeTokens.textSecondary}
+                        className="df-chevron"
+                        style={{ transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)', flexShrink: 0 }}
+                      />
                       <FileText size={14} color={accentColor} />
                       <span style={{ color: themeTokens.textPrimary }}>{group.fileName}</span>
                       <span
@@ -557,7 +578,7 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
                             borderRadius: 10,
                             padding: '1px 6px',
                             fontSize: 10.5,
-                            fontWeight: 600,
+                            fontWeight: 400,
                           }}
                         >
                           {fileErrors} {fileErrors === 1 ? 'erro' : 'erros'}
@@ -571,7 +592,7 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
                             borderRadius: 10,
                             padding: '1px 6px',
                             fontSize: 10.5,
-                            fontWeight: 600,
+                            fontWeight: 400,
                           }}
                         >
                           {fileWarnings} {fileWarnings === 1 ? 'aviso' : 'avisos'}
@@ -585,39 +606,39 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
 
                   {/* File Problem Items */}
                   {!isCollapsed && (
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <div className="df-subtle-enter" style={{ display: 'flex', flexDirection: 'column' }}>
                       {group.items.map((p) => {
                         const isError = p.severity === 'error';
                         const isWarning = p.severity === 'warning';
-                        const sevColor = isError ? '#ef4444' : isWarning ? '#f59e0b' : '#3b82f6';
 
                         return (
                           <div
                             key={p.id}
+                            className="df-row-interactive pp-row"
                             data-problem-row="true"
                             data-line={p.line}
                             data-col={p.column}
                             onClick={() => handleRowClick(p)}
                             style={{
                               display: 'flex',
-                              alignItems: 'flex-start',
+                              alignItems: 'center',
                               justifyContent: 'space-between',
-                              padding: '6px 12px 6px 32px',
+                              padding: '8px 12px 8px 32px',
                               cursor: 'pointer',
-                              borderBottom: '1px solid ' + (isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.03)'),
+                              borderBottom: '1px solid ' + (isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)'),
                               gap: 12,
-                              transition: 'background 0.15s ease',
+                              transition: 'background-color 120ms ease',
                             }}
                             onMouseEnter={(e) => {
-                              (e.currentTarget as HTMLElement).style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.03)';
+                              (e.currentTarget as HTMLElement).style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.045)' : 'rgba(0, 0, 0, 0.04)';
                             }}
                             onMouseLeave={(e) => {
                               (e.currentTarget as HTMLElement).style.background = 'transparent';
                             }}
                           >
                             {/* Problem Body */}
-                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flex: 1, minWidth: 0 }}>
-                              <div style={{ marginTop: 2, flexShrink: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+                              <div style={{ display: 'flex', flexShrink: 0 }}>
                                 {isError ? (
                                   <XCircle size={13} color="#ef4444" />
                                 ) : isWarning ? (
@@ -633,7 +654,8 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
                                     style={{
                                       color: themeTokens.textPrimary,
                                       fontSize: 12,
-                                      lineHeight: 1.4,
+                                      fontWeight: 400,
+                                      lineHeight: 1.45,
                                       wordBreak: 'break-word',
                                     }}
                                   >
@@ -643,13 +665,14 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
                                   {p.code && (
                                     <span
                                       style={{
-                                        background: isEffectiveDark ? '#1a1c22' : '#eef0f2',
+                                        background: isEffectiveDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.06)',
                                         color: themeTokens.textSecondary,
-                                        borderRadius: 3,
-                                        padding: '0 4px',
-                                        fontSize: 10,
+                                        borderRadius: 4,
+                                        padding: '1px 6px',
+                                        fontSize: 10.5,
                                         fontFamily: 'JetBrains Mono, Menlo, monospace',
-                                        border: '1px solid ' + themeTokens.border,
+                                        border: 'none',
+                                        boxShadow: 'none',
                                       }}
                                     >
                                       {p.code}
@@ -660,8 +683,8 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
                                     <span
                                       style={{
                                         color: themeTokens.textMuted || themeTokens.textSecondary,
-                                        fontSize: 10,
-                                        opacity: 0.8,
+                                        fontSize: 10.5,
+                                        opacity: 0.9,
                                       }}
                                     >
                                       [{p.source}]
@@ -672,15 +695,17 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
                             </div>
 
                             {/* Position & Action Buttons */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                            <div className="pp-actions" style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                               <span
                                 style={{
+                                  marginRight: 8,
                                   fontSize: 11,
                                   fontFamily: 'JetBrains Mono, Menlo, monospace',
                                   color: themeTokens.textSecondary,
-                                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
+                                  background: isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
                                   borderRadius: 4,
-                                  padding: '1px 5px',
+                                  padding: '2px 6px',
+                                  whiteSpace: 'nowrap',
                                 }}
                               >
                                 Ln {p.line}, Col {p.column}
@@ -689,6 +714,7 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
                               {/* Ask AI button */}
                               {onAskAiAboutProblem && (
                                 <button
+                                  className="pp-act"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     onAskAiAboutProblem(p);
@@ -697,52 +723,59 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
                                     background: 'transparent',
                                     border: 'none',
                                     cursor: 'pointer',
-                                    padding: 3,
-                                    borderRadius: 4,
-                                    color: accentColor,
+                                    width: 26,
+                                    height: 26,
+                                    borderRadius: 6,
                                     display: 'flex',
                                     alignItems: 'center',
+                                    justifyContent: 'center',
                                   }}
-                                  title="Perguntar / Pedir correção à IA"
+                                  title="Pedir correção à IA"
                                 >
-                                  <Sparkles size={12} />
+                                  {aiProviderId ? renderAiIcon(aiProviderId, 14) : <Sparkles size={13} color={accentColor} />}
                                 </button>
                               )}
 
                               {/* Copy details button */}
                               <button
+                                className="pp-act"
                                 onClick={(e) => handleCopyProblem(e, p)}
                                 style={{
                                   background: 'transparent',
                                   border: 'none',
                                   cursor: 'pointer',
-                                  padding: 3,
-                                  borderRadius: 4,
+                                  width: 26,
+                                  height: 26,
+                                  justifyContent: 'center',
+                                  borderRadius: 6,
                                   color: copiedId === p.id ? '#10b981' : themeTokens.textSecondary,
                                   display: 'flex',
                                   alignItems: 'center',
                                 }}
                                 title={copiedId === p.id ? 'Copiado!' : 'Copiar detalhes do problema'}
                               >
-                                {copiedId === p.id ? <CheckCircle2 size={12} /> : <Copy size={12} />}
+                                {copiedId === p.id ? <CheckCircle2 size={13} /> : <Copy size={13} />}
                               </button>
 
                               {/* Go to line button */}
                               <button
+                                className="pp-act"
                                 onClick={() => handleRowClick(p)}
                                 style={{
                                   background: 'transparent',
                                   border: 'none',
                                   cursor: 'pointer',
-                                  padding: 3,
-                                  borderRadius: 4,
+                                  width: 26,
+                                  height: 26,
+                                  justifyContent: 'center',
+                                  borderRadius: 6,
                                   color: themeTokens.textSecondary,
                                   display: 'flex',
                                   alignItems: 'center',
                                 }}
                                 title="Ir para a linha"
                               >
-                                <ExternalLink size={12} />
+                                <ExternalLink size={13} />
                               </button>
                             </div>
                           </div>
@@ -764,7 +797,7 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '6px 12px',
-          borderTop: '1px solid ' + themeTokens.border,
+          borderTop: '1px solid ' + (isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)'),
           background: isEffectiveDark ? 'rgba(255, 255, 255, 0.01)' : 'rgba(0, 0, 0, 0.01)',
           fontSize: 11,
           color: themeTokens.textSecondary,
@@ -775,14 +808,20 @@ export const ProblemsPanelView: React.FC<ProblemsPanelViewProps> = ({
           <span>
             Exibindo <strong>{filteredProblems.length}</strong> de <strong>{problems.length}</strong> problemas
           </span>
+          {isCheckingProject && (
+            <span className="df-subtle-enter" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <RefreshCw size={11} style={{ animation: 'spin 1s linear infinite' }} /> Verificando…
+            </span>
+          )}
           {scope === 'active' && activeFile && <span>• Apenas {activeFile.name}</span>}
         </div>
 
         {checkResults && checkResults.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', minWidth: 0 }}>
             {checkResults.map((r) => (
-              <span key={r.label} title={r.error || `${r.count} problema(s)`} style={{ color: r.ok ? undefined : '#f97316', whiteSpace: 'nowrap', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {r.ok ? `✓ ${r.label}: ${r.count}` : `⚠ ${r.label}: ${r.error}`}
+              <span key={r.label} title={r.error || `${r.count} problema(s)`} style={{ color: r.ok ? undefined : '#f97316', display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {r.ok ? <CheckCircle2 size={11} /> : <AlertTriangle size={11} />}
+                <span>{r.ok ? `${r.label}: ${r.count}` : `${r.label}: ${r.error}`}</span>
               </span>
             ))}
           </div>

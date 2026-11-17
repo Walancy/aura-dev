@@ -107,22 +107,25 @@ export const BranchModal: React.FC<BranchModalProps> = ({ isEffectiveDark, theme
 
   return (
     <div
+      className="df-modal-backdrop"
       data-tour="branch-header"
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.45)', animation: 'fadeIn 0.12s ease-out', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 9999, padding: '12vh 20px 20px' }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.45)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 9999, padding: '12vh 20px 20px' }}
       onClick={onClose}
     >
       <div
-        style={{ width: 640, maxWidth: '94vw', maxHeight: '70vh', background: isEffectiveDark ? '#1a1a1c' : '#ffffff', borderRadius: 10, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 6, gap: 6, animation: 'fadeIn 0.12s ease-out', fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}
+        className="df-ide-surface df-modal-content"
+        style={{ width: 640, maxWidth: '94vw', maxHeight: '70vh', background: isEffectiveDark ? '#1a1a1c' : '#ffffff', borderRadius: 10, border: 'none', boxShadow: 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 6, gap: 6, fontFamily: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}
         onClick={(e) => e.stopPropagation()}
       >
         <input
+          className="df-field"
           ref={inputRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
           placeholder={placeholder}
           spellCheck={false}
-          style={{ height: 36, padding: '0 12px', borderRadius: 6, border: 'none', outline: `1px solid ${hexToRgba(accentColor, 0.6)}`, background: ft.fieldBg, color: themeTokens.textPrimary, fontSize: 13, fontFamily: 'inherit', fontWeight: 400, flexShrink: 0 }}
+          style={{ height: 36, padding: '0 12px', borderRadius: 6, border: 'none', outline: 'none', boxShadow: 'none', background: ft.fieldBg, color: themeTokens.textPrimary, fontSize: 13, fontFamily: 'inherit', fontWeight: 400, flexShrink: 0 }}
         />
 
         <div style={{ height: 1, margin: '0 -6px', background: isEffectiveDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', flexShrink: 0 }} />
@@ -145,10 +148,11 @@ export const BranchModal: React.FC<BranchModalProps> = ({ isEffectiveDark, theme
               <React.Fragment key={r.key}>
                 {separator && <div style={{ height: 1, margin: '4px 0', flexShrink: 0, background: isEffectiveDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)' }} />}
                 <div
+                  className="df-row-interactive"
                   data-row={i}
                   onClick={r.run}
                   onMouseEnter={() => setIndex(i)}
-                  style={{ display: 'flex', alignItems: ref ? 'flex-start' : 'center', gap: 10, padding: ref ? '7px 12px' : '0 12px', minHeight: ref ? undefined : 30, borderRadius: 6, cursor: 'pointer', background: active ? hl : 'transparent', transition: 'background 0.08s ease' }}
+                  style={{ display: 'flex', alignItems: ref ? 'flex-start' : 'center', gap: 10, padding: ref ? '7px 12px' : '0 12px', minHeight: ref ? undefined : 30, borderRadius: 6, cursor: 'pointer', background: active ? hl : 'transparent', transition: 'background-color 120ms var(--ease-out), transform 140ms var(--ease-out)' }}
                 >
                   {r.icon && <span style={{ display: 'flex', color: themeTokens.textPrimary, paddingTop: 0 }}>{r.icon}</span>}
                   {ref ? (
