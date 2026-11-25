@@ -18,7 +18,7 @@ mac:
   category: public.app-category.developer-tools
   icon: build/icon.icns
   target: [dmg, zip]
-  artifactName: Aura-Dev-${version}-mac-${arch}.${ext}
+  artifactName: Aura-Dev-${version}-mac-apple-silicon.${ext}
 dmg:
   title: Aura Dev ${version}
   icon: build/icon.icns
@@ -36,7 +36,7 @@ win:
   artifactName: Aura-Dev-${version}-windows-setup.${ext}
 linux:
   icon: build/icon.png
-  target: [AppImage, deb]
+  target: AppImage
   category: Development
   artifactName: Aura-Dev-${version}-linux-${arch}.${ext}
 nsis:
