@@ -138,7 +138,7 @@ function parsePatch(patch: string): DiffRow[] {
 }
 
 // Revisão gerada pela IA fica salva neste computador por PR, mesmo sem ter sido enviada ao GitHub
-interface SavedAiReview {
+export interface SavedAiReview {
   text: string;
   providerId: string;
   providerName: string;
@@ -158,7 +158,7 @@ const readSavedReview = (repo: string, n: number): SavedAiReview | null => {
     return null;
   }
 };
-const writeSavedReview = (repo: string, n: number, r: SavedAiReview | null) => {
+export const writeSavedReview = (repo: string, n: number, r: SavedAiReview | null) => {
   try {
     if (r) localStorage.setItem(REVIEW_KEY(repo, n), JSON.stringify(r));
     else localStorage.removeItem(REVIEW_KEY(repo, n));
@@ -182,7 +182,7 @@ const normalizeDetail = (d: PullData): PullData => {
   }
   return full;
 };
-const loadDetail = async (owner: string, repo: string, number: number) => {
+export const loadDetail = async (owner: string, repo: string, number: number) => {
   let d = await ghSettings<PullData>('getPullDetail', { owner, repo, number });
   if (d.merge?.status === 'UNKNOWN' || (d.pr.state === 'open' && !d.merge && (d.pr.mergeable == null || d.pr.mergeableState === 'unknown'))) {
     await new Promise((r) => setTimeout(r, 1800));
@@ -201,10 +201,10 @@ const REVIEW_EVENTS = [
 
 const STATE_LABEL: Record<string, string> = { APPROVED: 'aprovou', CHANGES_REQUESTED: 'pediu alterações', COMMENTED: 'comentou', DISMISSED: 'teve a review descartada' };
 
-interface OtherPr { number: number; title: string; head: string; files: { filename: string; patch: string }[] }
-const OTHERS_KEY = 'aura_pr_ai_others_v1';
+export interface OtherPr { number: number; title: string; head: string; files: { filename: string; patch: string }[] }
+export const OTHERS_KEY = 'aura_pr_ai_others_v1';
 
-const buildAiPrompt = (data: PullData, others: OtherPr[] = []) => {
+export const buildAiPrompt = (data: PullData, others: OtherPr[] = []) => {
   let budget = 50000;
   const diffs = data.files
     .map((f) => {

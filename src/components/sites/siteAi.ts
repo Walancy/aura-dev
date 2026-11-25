@@ -8,7 +8,7 @@ import type { SiteSelection } from './siteInspector';
 
 export interface SiteReference {
   /** páginas capturadas (pasta _reference/ do site): host, capturas e se há CSS */
-  pages: Array<{ host: string; url: string; shots: string[]; hasCss: boolean; three?: boolean }>;
+  pages: Array<{ host: string; url: string; shots: string[]; hasCss: boolean; three?: boolean; rebuild?: { paths: string[]; media: number } }>;
   /** imagens anexadas pelo usuário, já copiadas para _reference/ */
   images: string[];
 }
@@ -19,8 +19,54 @@ export const wantsAttachedImage = (request: string): boolean =>
   /(usar?|use|usa|coloc\w*|p[õo]e|ponha|insir\w*|adicion\w*|inclu\w*|aplic\w*|troque?|substitu\w*)\b[^.\n]{0,70}\b(essa|esta|a|minha|nossa|dessa|desta)\s+(imagem|foto|logo|logotipo)/i.test(request) ||
   /(minha|nossa)\s+(foto|imagem|logo|logotipo)/i.test(request);
 
+/** Recriação completa: o conteúdo (textos, dados, mídias) vem do site de referência; o visual é novo. */
+export function rebuildBlock(ref?: SiteReference): string {
+  const p = ref?.pages.find((x) => x.rebuild);
+  if (!p?.rebuild) return '';
+  const paths = p.rebuild.paths;
+  return `RECRIAÇÃO COMPLETA DE ${p.url} (pasta _reference/ dentro do site; leia ANTES de escrever):
+- content.md: o conteúdo real extraído de ${paths.length} ${paths.length === 1 ? 'página' : 'páginas'} (${paths.join(', ')}), na ordem em que aparece: títulos, textos, listas, tabelas, links, botões, formulários, contatos, redes sociais e dados estruturados. Leia o arquivo inteiro.
+- media-N.ext: ${p.rebuild.media} imagens baixadas do site (a lista com descrição, página de origem e endereço original está no fim do content.md). Abra as principais para saber o que mostram.
+- shot-N.png e page-*.png: capturas do site atual, SÓ para você entender o negócio, a marca (logo, cores da marca) e o que existe hoje. Não são o modelo do visual novo. page.html e styles.css são o código original, para consultar detalhes de conteúdo.
+
+O QUE FAZER
+1. CONTEÚDO: reaproveite TODO o conteúdo útil do site original: nome da empresa, textos (pode revisar e melhorar a redação e o tom, sem mudar o sentido), serviços, produtos, preços, números, depoimentos, equipe, endereço, horários, telefones, e-mails, redes, links externos, perguntas frequentes, formulários e SEO (título, descrição, idioma). NUNCA invente dados que não estão no content.md (preço, telefone, endereço, cliente, número, depoimento); se faltar algo importante, deixe de fora ou use um texto genérico sem fatos e avise no resumo.
+2. MÍDIAS: reaproveite as imagens do site: <img data-asset="media-N.ext" alt="..." width="..." height="..."> (o app embute o arquivo; não use base64 nem o endereço original quando houver o arquivo). Vídeos ficam com o endereço original no src. Logo: use o arquivo baixado se houver; se for SVG inline que não veio, recrie em texto/SVG simples com o nome da marca. Só use <img data-photo> (foto de banco) onde o site original não tem imagem para aquele espaço. Imagens pequenas ou de baixa resolução: não as use grandes em sangria (use em cartões, galerias ou miniaturas).
+3. DESIGN TOTALMENTE NOVO E COM CONCEITO: antes do código, escreva no PLANO o conceito visual nascido do negócio, as 3 assinaturas e o que o site evita (regra ANTI-GENÉRICO). Use as fotos do próprio site como protagonistas (grandes, com recortes e enquadramentos ousados). Ignore o layout, a grade, a tipografia, as animações e a composição do site original. Crie uma identidade visual atual e moderna, com conceito próprio, tipografia de impacto, hierarquia clara, layouts diferentes em cada seção e animações ricas, como um site premiado de 2026. Mantenha só a essência da marca: o nome, o logo e a cor principal da marca (que pode virar a cor de destaque numa paleta renovada, ou ser reinterpretada se for datada ou sem contraste). O resultado não pode parecer o site antigo com outra cor.
+4. ESTRUTURA E PÁGINAS: o arquivo é um único index.html. Cada página do site original vira uma visão dentro dele: com poucas páginas curtas, seções em rolagem única com âncoras; com várias páginas, use roteamento por hash (#/servicos, #/contato) com <section data-page="..."> mostrando só a ativa, com transição entre elas, título do documento atualizado, botão voltar do navegador funcionando e o menu marcando a página atual. Preserve a hierarquia de navegação (menu, rodapé, CTAs) do site original, reorganizando só se melhorar. Nada de links quebrados: todo link interno aponta para uma seção ou visão que existe; links externos mantêm o endereço original.
+5. PRECEDÊNCIA: o conteúdo do site original manda sobre qualquer plano de seções, número de seções ou sequência sugerida no modelo; as regras de design e de arquivo continuam valendo. Reorganize e melhore a ordem das seções para converter melhor (prova social perto do CTA, serviços antes de preços), mantendo todo o conteúdo relevante. Remova só o que é lixo (banners de cookies, avisos do construtor de sites, menus duplicados, textos de "carregando").
+6. Não copie código, CSS nem scripts do site original: escreva tudo novo. Textos e imagens são do dono do site; se o conteúdo parecer de terceiros (loja de outra marca, notícias, material protegido), diga isso no resumo.
+7. Na resposta final, liste em até 4 linhas: páginas recriadas, o que foi reaproveitado, o que foi decidido mudar e o que faltou (dados ausentes).`;
+}
+
+/** Skills de design lidas pela IA nas gerações de site (preenchido pelo app antes de cada execução). */
+export interface SiteSkill { id: string; name: string; path: string }
+let siteSkills: SiteSkill[] = [];
+export const setSiteSkills = (list: SiteSkill[]) => {
+  siteSkills = list;
+};
+
+const SKILL_USE: Record<string, string> = {
+  'design-taste-frontend': 'TASTE: direção de arte anti-genérica (conceito, composição, tipografia, paleta, fotos). Aplique-a ao escolher o conceito e o layout e rode o laço de olhar e corrigir.',
+  'web-design-guidelines': 'WEB DESIGN GUIDELINES: confira o resultado contra as diretrizes de interface, acessibilidade e UX (contraste, foco, alvos de toque, semântica, responsivo).',
+  'awesome-design-md': 'AWESOME DESIGN MD: coleção de DESIGN.md de marcas reais; escolha 1 ou 2 que combinem com o conceito e inspire-se na forma de documentar tokens, tipografia, espaçamento e componentes, sem copiar a marca.',
+  'playwright-cli': 'PLAYWRIGHT CLI: ao terminar, abra o index.html no navegador com o playwright-cli, tire capturas em 1440, 768 e 390 de largura, olhe as imagens e corrija o que estiver quebrado (se o comando não existir, pule este passo).',
+};
+
+/** Bloco que manda a IA ler e seguir as skills de design antes de escrever e conferir depois. */
+export function skillsBlock(compact = false): string {
+  const list = siteSkills.filter((s) => SKILL_USE[s.id]);
+  if (!list.length) return '';
+  const lines = list.map((s) => `- ${SKILL_USE[s.id]} Instruções: ${s.path}`).join('\n');
+  return `SKILLS DE DESIGN (obrigatório${compact ? ' se o pedido mexer no visual' : ''}): ${compact ? 'leia o SKILL.md de cada uma antes de editar o visual' : 'ANTES de escrever qualquer código, leia o SKILL.md de cada uma abaixo e siga o que ele manda'}:
+${lines}
+Em conflito, valem as REGRAS DO ARQUIVO e o pedido do usuário (um único index.html, fonte e UI definidos nas regras); as skills decidem o resto do design.
+`;
+}
+
 export function referenceBlock(ref?: SiteReference, assetMode = false): string {
   if (!ref || (!ref.pages.length && !ref.images.length)) return '';
+  if (ref.pages.some((p) => p.rebuild)) return rebuildBlock(ref);
   const lines: string[] = ['REFERÊNCIA VISUAL (pasta _reference/ dentro do site; abra as imagens e leia os arquivos antes de escrever):'];
   if (ref.pages.length) {
     lines.push(`- ${ref.pages[0].url}: shot-N.png são capturas da página de cima para baixo, page.html é o HTML renderizado${ref.pages[0].hasCss ? ' e styles.css o CSS dela' : ''}. Extraia dali a estrutura de seções, o layout, a grade, a tipografia, a paleta, os espaçamentos e as animações/interações.`);
@@ -65,6 +111,7 @@ ${sel}
 MODELO
 ${o.brief.trim()}
 
+${skillsBlock()}
 ${referenceBlock(o.reference, wantsAttachedImage(o.description))}
 ${fontBlock(o.reference, o.description)}${threeBlock(o.description, o.reference)}
 ${SITE_RULES}
@@ -92,6 +139,7 @@ ${o.request.trim()}
 
 ${sel}${patch}${fx}
 
+${skillsBlock(!o.blank)}
 ${referenceBlock(o.reference, wantsAttachedImage(o.request))}
 ${fontBlock(o.reference, o.request)}${threeBlock(o.request, o.reference)}
 ${SITE_RULES}${o.blank || /foto|imagem|pessoa|recort|sem fundo|fundo transparente|png|produto|hero|banner|equipe|retrato|modelo/i.test(o.request) ? `\n\n${BG_REMOVAL_KIT}` : ''}
@@ -100,7 +148,7 @@ ${OUTPUT_RULE}`;
 }
 
 /** Roda a CLI na pasta do site. `onText` recebe a resposta conforme chega; `ctl.abort` interrompe. */
-export function runSiteAi(o: { prompt: string; provider: string; model?: string; cwd: string; effort?: 'low' | 'medium' | 'high'; onText: (t: string) => void; ctl: { abort?: (why?: string) => void } }): Promise<string> {
+export function runSiteAi(o: { prompt: string; provider: string; model?: string; cwd: string; effort?: 'low' | 'medium' | 'high'; onText: (t: string) => void; ctl: { abort?: (why?: string) => void; onActivity?: (text: string) => void } }): Promise<string> {
   const model = resolveCliModel(o.provider, o.model);
   // o mesmo objeto `ctl` recebe o `abort` de dentro da chamada (uma cópia não receberia)
   const ctl = o.ctl as { abort?: (why?: string) => void; effort?: 'low' | 'medium' | 'high' };
@@ -147,7 +195,7 @@ export function withBrief(description: string, brief: string): string {
 export const needsReviewPass = (provider: string) => (provider || 'claude').toLowerCase() !== 'claude';
 
 /** Segunda passada: revisão como diretor de arte + correção dos problemas detectados na checagem estática. */
-export function buildPolishPrompt(o: { siteName: string; request: string; issues: string[]; full: boolean; reference?: SiteReference; checkShots?: string[] }): string {
+export function buildPolishPrompt(o: { siteName: string; request: string; issues: string[]; full: boolean; reference?: SiteReference; checkShots?: string[]; rebuild?: SiteReference }): string {
   const shotsNote = o.checkShots?.length ? `CAPTURAS DO SITE RENDERIZADO (pasta _check/: ${o.checkShots.join(', ')}; w1440 = desktop, w768 = tablet, w390 = celular, em ordem de rolagem). ABRA as imagens e confira com os próprios olhos: sobreposições, texto cortado, alinhamentos, espaçamentos irregulares, imagens vazias, o celular parecendo o desktop encolhido, contraste. Corrija o que vir, além da lista de problemas medidos.\n\n` : '';
   const found = shotsNote + (o.issues.length ? `PROBLEMAS DETECTADOS AUTOMATICAMENTE (corrija todos):\n${o.issues.map((i) => `- ${i}`).join('\n')}\n\n` : '');
   const hasRef = !!o.reference && (o.reference.pages.length > 0 || o.reference.images.length > 0);
@@ -165,9 +213,21 @@ COMPARAÇÃO COM A REFERÊNCIA (obrigatória): abra a imagem de referência e o 
 
 `
     : '';
-  const review = hasRef ? refReview : o.full
+  const rebuildReview = o.rebuild
+    ? `${rebuildBlock(o.rebuild)}
+
+CONFERÊNCIA DA RECRIAÇÃO (obrigatória, antes de editar): leia o content.md e o index.html e corrija:
+1. Conteúdo que existia e sumiu (serviços, preços, textos, contatos, links, formulários, FAQ): traga de volta. Dados inventados que não estão no content.md: remova.
+2. Imagens do site original que não foram usadas ou ficaram quebradas (data-asset com nome errado): use os arquivos media-N.
+3. Páginas do site original sem visão correspondente, links internos quebrados, rota por hash sem funcionar, menu sem marcar a página atual.
+4. Visual: se ainda parece o site antigo, ou genérico (hero centralizado, três cartões iguais), refaça com identidade nova, tipografia de impacto, layouts diferentes entre seções e animações.
+5. Texto cortado, contraste ruim, mobile quebrado.
+
+`
+    : '';
+  const review = o.rebuild ? rebuildReview : hasRef ? refReview : o.full
     ? `REVISÃO CRÍTICA (faça antes de editar): abra o index.html inteiro e avalie como um diretor de arte exigente, comparando com sites premiados do Awwwards. Liste mentalmente os 9 defeitos mais visíveis e corrija TODOS:
-1. Cara de genérico: hero centralizado, seções repetidas e a sequência hero, três cartões, etapas em três caixas e faixa de CTA. Dê a cada seção principal um layout próprio e um conceito visual forte.
+1. Cara de genérico: hero centralizado, seções repetidas e a sequência hero, três cartões, etapas em três caixas e faixa de CTA. Faça o TESTE DO NOME (a regra ANTI-GENÉRICO do arquivo): trocando o nome da marca o site serviria para outro negócio? Então refaça o conceito, as 3 assinaturas e os títulos com detalhes concretos do negócio. Dê a cada seção principal um layout próprio.
 2. Tipografia: escala dramática no hero (clamp até ~10vw), contraste de tamanhos, line-height apertado nos títulos.
 3. Movimento: o site precisa de revelação de textos, microinteração no hover, transições diferentes entre as seções e um efeito de hero com assinatura própria (conforme o plano de movimento do pedido, se houver). Se faltar, escreva o código; não troque por um kit genérico.
 4. Imagens: foto real via data-photo para pessoas e produtos (nada de objetos desenhados em SVG/CSS, que ficam bizarros: troque por <img data-photo="...">); nada quebrado ou vazio; toda <img> com fallback (onerror e fundo em gradiente); sujeitos (pessoa, produto) sobrepostos ao design com data-cutout na <img> para o app remover o fundo; nenhum efeito, canvas ou véu por cima das fotos; o hero com 100% de opacidade.
@@ -182,7 +242,7 @@ COMPARAÇÃO COM A REFERÊNCIA (obrigatória): abra a imagem de referência e o 
   return `Você está na pasta do site "${o.siteName}". O index.html já existe e é a primeira versão, criada a partir deste pedido do usuário:
 "${o.request.trim().slice(0, 600)}"
 
-${found}${review}Edite o index.html existente (reescreva por completo se for preciso) para entregar a versão final, mantendo a identidade, a paleta e as fontes já escolhidas e tudo o que o pedido exigia. Nunca encurte nem apague conteúdo bom. O arquivo final precisa ser completo e terminar em </html>.
+${found}${review}${skillsBlock()}\nEdite o index.html existente (reescreva por completo se for preciso) para entregar a versão final, mantendo a identidade, a paleta e as fontes já escolhidas e tudo o que o pedido exigia. Nunca encurte nem apague conteúdo bom. O arquivo final precisa ser completo e terminar em </html>.
 
 ${SITE_RULES}
 

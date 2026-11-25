@@ -1107,7 +1107,7 @@ export async function requestAiScreenRaw(
   additionalDirs?: string[],
   stallMs = 0,
   /** `abort` é preenchido com a função que interrompe só esta chamada (vigia de tempo) */
-  ctl?: { abort?: (why?: string) => void; /** esforço de raciocínio da CLI (Antigravity): padrão "low", que responde em ~1/3 do tempo */ effort?: 'low' | 'medium' | 'high' }
+  ctl?: { abort?: (why?: string) => void; /** o que a CLI está fazendo (buscas e páginas abertas), quando não há texto */ onActivity?: (text: string) => void; /** esforço de raciocínio da CLI (Antigravity): padrão "low", que responde em ~1/3 do tempo */ effort?: 'low' | 'medium' | 'high' }
 ): Promise<string> {
   const api = (window as any).electronAPI?.ai;
   if (!api?.runCli) throw new Error('CLI de IA indisponível');
@@ -1139,6 +1139,11 @@ export async function requestAiScreenRaw(
   });
   const off = onText && api.onOrchestratorEvent
     ? api.onOrchestratorEvent((e: any) => {
+        if (e?.kind === 'progress' && e.message === 'activity' && typeof e.payload?.text === 'string' && e.provider === cliCmd && e.payload.streamId === streamId) {
+          lastText = Date.now();
+          ctl?.onActivity?.(e.payload.text);
+          return;
+        }
         if (e?.kind === 'progress' && e.message === 'stdout' && typeof e.payload?.text === 'string' && e.provider === cliCmd && (e.payload.streamId === undefined || e.payload.streamId === streamId)) {
           lastText = Date.now();
           onText(e.payload.text);

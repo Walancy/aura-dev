@@ -91,7 +91,9 @@ export interface ElectronAPI {
     getHomeDir?: () => Promise<string>;
     getTree: (dirPath: string, depth?: number) => Promise<{ tree: any }>;
     auditSite?: (dir: string) => Promise<{ error?: string; issues?: string[]; shots?: string[] }>;
-    captureSiteReference?: (url: string, dir: string) => Promise<{ error?: string; title?: string; host?: string; shots?: string[]; hasCss?: boolean; three?: { detected: boolean; notes?: string; motion?: string[] } }>;
+    ensureSiteSkills?: () => Promise<Array<{ id: string; name: string; path: string }>>;
+    analyzeLead?: (url: string, niche?: string) => Promise<{ name: string; url: string; whatsapp: string; niche?: string; problems: string[] } | null>;
+    captureSiteReference?: (url: string, dir: string, rebuild?: boolean) => Promise<{ error?: string; title?: string; host?: string; shots?: string[]; hasCss?: boolean; three?: { detected: boolean; notes?: string; motion?: string[] }; rebuild?: { pages: Array<{ path: string; title: string; shot?: string }>; media: number } }>;
     readFile: (filePath: string) => Promise<{ content: string; error?: string }>;
     writeFile: (filePath: string, content: string) => Promise<{ success: boolean }>;
     getCapabilities?: () => Promise<{ designAi: number; stockImage: boolean; tempImages: boolean; exportPdf: boolean }>;
@@ -199,6 +201,12 @@ export interface ElectronAPI {
     install: () => Promise<{ success: boolean; manual?: boolean; version?: string; error?: string }>;
     openReleasePage: (url?: string) => Promise<{ success: boolean }>;
     onProgress: (callback: (p: { stage: 'download' | 'install'; percent: number }) => void) => () => void;
+  };
+  latex?: {
+    engine: () => Promise<string | null>;
+    compile: (payload: { content: string; filePath?: string }) => Promise<{ pdfBase64?: string; pdfPath?: string; error?: string }>;
+    savePdf: (payload: { pdfPath: string; defaultName: string }) => Promise<{ path?: string; canceled?: boolean; error?: string }>;
+    printPdf: (payload: { defaultName: string }) => Promise<{ path?: string; canceled?: boolean; error?: string }>;
   };
   shell: {
     exec: (command: string, cwd?: string) => Promise<{ stdout: string; stderr: string; error: string | null; exitCode: number; newCwd?: string | null }>;

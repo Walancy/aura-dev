@@ -1,10 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowDownToLine, ArrowRight, Check, CheckCircle2, ChevronDown, CircleDashed, GitMerge, XCircle, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, Loader2, MessageSquare, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react';
+import { AlertTriangle, ArrowDownToLine, ArrowRight, Check, CheckCircle2, ChevronDown, CircleDashed, GitMerge, XCircle, GitPullRequest, GitPullRequestClosed, GitPullRequestDraft, Loader2, MessageSquare, RefreshCw, Search, SlidersHorizontal, Sparkles, X } from 'lucide-react';
 import { relativeTime } from '../team/teamTypes';
 import { getCachedPulls, refreshPulls, subscribePulls, type PullListData } from './pullListStore';
 import { getFieldTokens } from '../../utils/fieldTokens';
 import { hexToRgba } from '../../utils/color';
 import type { PullReviewTarget } from './PullRequestDetail';
+import type { TeamAiProvider } from '../team/TeamAiPanel';
+import { renderAiIcon } from '../icons/AiProviderIcons';
+import { BulkReviewModal, type BulkMode } from './BulkReviewModal';
 
 export interface PullListItem {
   number: number;
@@ -42,6 +45,8 @@ interface Props {
   accentContrastText: string;
   /** fundo do painel (o mesmo dos outros painéis laterais) */
   background?: string;
+  /** IA usada na revisão em massa */
+  aiProvider?: TeamAiProvider;
 }
 
 const STATE_ICON = {
@@ -58,7 +63,7 @@ const DECISION_LABEL: Record<string, { label: string; color: string }> = {
 };
 
 // Painel lateral de pull requests e reviews do repositório do projeto; o detalhe do selecionado abre na área central
-export const PullRequestsList: React.FC<Props> = ({ isActive, repoFullName = '', selected, onSelect, isEffectiveDark, accentColor, accentContrastText, background }) => {
+export const PullRequestsList: React.FC<Props> = ({ isActive, repoFullName = '', selected, onSelect, isEffectiveDark, accentColor, accentContrastText, background, aiProvider }) => {
   const [owner, repo] = repoFullName.split('/');
   const [data, setData] = useState<PullListData | null>(() => getCachedPulls(repoFullName)?.data ?? null);
   const [error, setError] = useState<string | null>(null);
@@ -71,6 +76,8 @@ export const PullRequestsList: React.FC<Props> = ({ isActive, repoFullName = '',
   const [order, setOrder] = useState<'newest' | 'oldest'>('newest');
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
+  const [checked, setChecked] = useState<Set<number>>(new Set());
+  const [bulk, setBulk] = useState<BulkMode | null>(null);
 
   const ft = getFieldTokens(isEffectiveDark);
   const c = useMemo(
@@ -132,6 +139,7 @@ export const PullRequestsList: React.FC<Props> = ({ isActive, repoFullName = '',
     setError(null);
     setLoading(false);
     setExpanded(new Set());
+    setChecked(new Set());
     setTab('open');
     setQuery('');
     setAuthor('all');
@@ -164,6 +172,17 @@ export const PullRequestsList: React.FC<Props> = ({ isActive, repoFullName = '',
     out.sort((a, b) => (order === 'newest' ? 1 : -1) * (new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
     return out;
   }, [data, tab, query, author, review, order]);
+
+  // só PRs abertos entram na seleção; o que sumiu da lista (filtro, merge) sai dela
+  const selectable = useMemo(() => (tab === 'open' ? list.map((i) => i.number) : []), [list, tab]);
+  const picked = useMemo(() => (data?.items || []).filter((i) => checked.has(i.number) && (i.state === 'open' || i.state === 'draft')), [data, checked]);
+  const allChecked = selectable.length > 0 && selectable.every((n) => checked.has(n));
+  const toggleChecked = (n: number) => setChecked((cur) => { const x = new Set(cur); if (!x.delete(n)) x.add(n); return x; });
+  const box = (on: boolean, title: string, onClick: () => void) => (
+    <button type="button" title={title} aria-label={title} aria-checked={on} role="checkbox" className="df-pressable" onClick={(e) => { e.stopPropagation(); onClick(); }} style={{ width: 16, height: 16, flexShrink: 0, padding: 0, border: 'none', borderRadius: 4, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: on ? accentColor : ft.fieldBg, color: accentContrastText, transition: 'background-color 150ms ease, transform 140ms var(--ease-out)' }}>
+      {on && <Check size={11} />}
+    </button>
+  );
 
   const activeFiltersCount = (author !== 'all' ? 1 : 0) + (review !== 'all' ? 1 : 0) + (order !== 'newest' ? 1 : 0);
 
@@ -564,6 +583,13 @@ export const PullRequestsList: React.FC<Props> = ({ isActive, repoFullName = '',
           </div>
         </div>
         <div style={{ height: 1, background: c.line, flexShrink: 0 }} />
+        {tab === 'open' && selectable.length > 0 && (
+          <div onClick={() => setChecked(allChecked ? new Set() : new Set(selectable))} title="Selecionar todos os pull requests da lista para ações em massa" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px', fontSize: 11.5, color: c.sub, cursor: 'pointer', borderBottom: `1px solid ${c.line}` }}>
+            {box(allChecked, allChecked ? 'Desmarcar todos' : 'Selecionar todos', () => setChecked(allChecked ? new Set() : new Set(selectable)))}
+            <span style={{ flex: 1 }}>{allChecked ? 'Desmarcar todos' : 'Selecionar todos'}</span>
+            <span>{selectable.length}</span>
+          </div>
+        )}
 
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', overscrollBehavior: 'contain' }}>
           {!owner || !repo ? (
@@ -612,6 +638,7 @@ export const PullRequestsList: React.FC<Props> = ({ isActive, repoFullName = '',
                   onMouseLeave={(e) => (e.currentTarget.style.background = isSel ? hexToRgba(accentColor, 0.14) : c.card)}
                 >
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                    {isOpen && box(checked.has(pr.number), checked.has(pr.number) ? 'Desmarcar' : 'Selecionar para ações em massa', () => toggleChecked(pr.number))}
                     <Icon size={16} color={color} style={{ flexShrink: 0, marginTop: 1 }} />
                     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
                       <span style={{ fontSize: 13, fontWeight: 400, color: c.text, lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: isExp ? 4 : 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>{pr.title}</span>
@@ -695,7 +722,38 @@ export const PullRequestsList: React.FC<Props> = ({ isActive, repoFullName = '',
             })
           )}
         </div>
+        {picked.length > 0 && (
+          <div className="df-subtle-enter" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: 8, borderTop: `1px solid ${c.line}` }}>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: c.text, whiteSpace: 'nowrap' }}><span title={`${picked.length} selecionado${picked.length > 1 ? 's' : ''}`}>{picked.length}</span></span>
+            {([
+              { mode: 'APPROVE', label: 'Aprovar', tip: 'Aprovar todos os selecionados', color: '#3fb950', Ic: CheckCircle2 },
+              { mode: 'REQUEST_CHANGES', label: 'Alterar', tip: 'Solicitar alterações em todos os selecionados', color: '#f85149', Ic: XCircle },
+              { mode: 'AI', label: 'IA', tip: 'A IA revisa cada pull request selecionado e decide entre aprovar ou solicitar alterações', color: accentColor, Ic: Sparkles },
+            ] as const).map((a) => (
+              <button key={a.mode} type="button" title={a.tip} disabled={a.mode === 'AI' && !aiProvider} onClick={() => setBulk(a.mode)} className="df-pressable" style={{ height: 28, padding: '0 10px', border: 'none', borderRadius: 6, display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, cursor: 'pointer', background: hexToRgba(a.color, 0.16), color: a.color, transition: 'transform 140ms var(--ease-out), background-color 150ms ease' }}>
+                {a.mode === 'AI' && aiProvider ? renderAiIcon(aiProvider.id, 16) : <a.Ic size={13} />}
+                {a.mode === 'AI' && aiProvider ? aiProvider.name : a.label}
+              </button>
+            ))}
+            <button type="button" title="Limpar seleção" onClick={() => setChecked(new Set())} className="df-pressable" style={{ width: 28, height: 28, border: 'none', borderRadius: 6, background: ft.fieldBg, color: c.sub, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+              <X size={13} />
+            </button>
+          </div>
+        )}
       </div>
+      {bulk && aiProvider && (
+        <BulkReviewModal
+          mode={bulk}
+          repo={repoFullName}
+          prs={picked.map((p) => ({ number: p.number, title: p.title }))}
+          provider={aiProvider}
+          isDark={isEffectiveDark}
+          accentColor={accentColor}
+          accentContrastText={accentContrastText}
+          onClose={() => setBulk(null)}
+          onFinished={() => { setChecked(new Set()); load(true); }}
+        />
+      )}
     </div>
   );
 };

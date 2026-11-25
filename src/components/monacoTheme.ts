@@ -1,7 +1,48 @@
 import type * as Monaco from 'monaco-editor';
 
+let latexRegistered = false;
+/** Realce de sintaxe básico de LaTeX (o Monaco não traz). */
+export function registerLatex(monaco: typeof Monaco) {
+  if (latexRegistered) return;
+  latexRegistered = true;
+  monaco.languages.register({ id: 'latex', extensions: ['.tex', '.sty', '.cls', '.bib'] });
+  monaco.languages.setMonarchTokensProvider('latex', {
+    tokenizer: {
+      root: [
+        [/%.*$/, 'comment'],
+        [/\\(begin|end)(?=\{)/, 'keyword'],
+        [/\\(section|subsection|subsubsection|chapter|part|paragraph|title|author|date|maketitle|documentclass|usepackage|newcommand|renewcommand|input|include)\b/, 'keyword'],
+        [/\\[a-zA-Z@]+\*?/, 'function'],
+        [/\\./, 'string.escape'],
+        [/\$\$/, { token: 'number', next: '@mathDisplay' }],
+        [/\$/, { token: 'number', next: '@mathInline' }],
+        [/[{}\[\]]/, 'delimiter.bracket'],
+      ],
+      mathInline: [
+        [/\$/, { token: 'number', next: '@pop' }],
+        [/\\[a-zA-Z]+/, 'type'],
+        [/[^$\\]+/, 'number'],
+        [/\\./, 'type'],
+      ],
+      mathDisplay: [
+        [/\$\$/, { token: 'number', next: '@pop' }],
+        [/\\[a-zA-Z]+/, 'type'],
+        [/[^$\\]+/, 'number'],
+        [/\\./, 'type'],
+      ],
+    },
+  });
+  monaco.languages.setLanguageConfiguration('latex', {
+    comments: { lineComment: '%' },
+    brackets: [['{', '}'], ['[', ']'], ['(', ')']],
+    autoClosingPairs: [{ open: '{', close: '}' }, { open: '[', close: ']' }, { open: '(', close: ')' }, { open: '$', close: '$' }],
+    surroundingPairs: [{ open: '{', close: '}' }, { open: '$', close: '$' }],
+  });
+}
+
 /** Tema escuro do Monaco (editor e diff), com cores de adição/remoção suaves */
 export function defineAuraDarkTheme(monaco: typeof Monaco, name: string, accentColor?: string) {
+  registerLatex(monaco);
   monaco.editor.defineTheme(name, {
     base: 'vs-dark',
     inherit: true,

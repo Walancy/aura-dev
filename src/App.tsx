@@ -164,7 +164,8 @@ import { MiniSwitch } from './components/ui/MiniSwitch';
 import { detectDevCommand, detectPackageManager, listScripts, otherCommands, scriptCommand, PACKAGE_MANAGERS, type PackageManager } from './utils/devCommand';
 import { computeDailyBudget, parseResetTimestamp, type DailyBudget } from './utils/dailyBudget';
 import { planChecks, parseTscOutput, parseEslintJson, parseOxlintJson, type CheckResult } from './utils/projectCheck';
-import { extractDocumentSymbols, getFileLanguage, isMarkdownFile } from './utils/editor';
+import { extractDocumentSymbols, getFileLanguage, isMarkdownFile, isPreviewableFile, isTexFile } from './utils/editor';
+import { LatexPreview } from './components/ide/LatexPreview';
 import type { DocumentSymbol } from './utils/editor';
 import { NativeXTerm } from './components/NativeXTerm';
 import type { NativeXTermProps } from './components/NativeXTerm';
@@ -2927,6 +2928,7 @@ export const App: React.FC = () => {
   });
   // Markdown "Open Preview to the Side" (VS Code style, per-filetype editor action)
   const [showMarkdownPreview, setShowMarkdownPreview] = useState<boolean>(false);
+  const [texCodeHidden, setTexCodeHidden] = useState<boolean>(false);
   // Split Editor and More Actions menu states
   const [isEditorSplit, setIsEditorSplit] = useState<boolean>(false);
   const [editorSplitOrientation, setEditorSplitOrientation] = useState<'vertical' | 'horizontal'>('vertical');
@@ -11903,6 +11905,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     accentColor={accentColor}
                     accentContrastText={accentTextColor}
                     background={themeTokens.bgCard}
+                    aiProvider={(() => {
+                      const prov = AI_PROVIDERS.find((p) => p.id === selectedAiProvider) || AI_PROVIDERS[0];
+                      return { id: prov.id, name: prov.name, cliCommand: prov.cliCommand, model: activeModels[prov.id]?.currentModelId, cwd: workspacePath };
+                    })()}
                   />
                 ) : activeActivityTab !== 'explorer' ? (
                   <SidebarPanels
@@ -12814,8 +12820,8 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     <span>Salvar</span>
                   </div>
                 )}
-                {/* 0. Markdown Preview (only for .md/.markdown/.mdx files) */}
-                {activeFile && isMarkdownFile(activeFile.name) && (
+                {/* 0. Pré-visualização (Markdown e LaTeX) */}
+                {activeFile && isPreviewableFile(activeFile.name) && (
                   <div
                     className="df-pressable"
                     onClick={() => setShowMarkdownPreview((prev) => !prev)}
@@ -13643,10 +13649,10 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                     })()}
                   </div>
                 </div>
-              ) : activeFile && isMarkdownFile(activeFile.name) && showMarkdownPreview ? (
+              ) : activeFile && isPreviewableFile(activeFile.name) && showMarkdownPreview ? (
                 <div style={{ display: 'flex', height: '100%', width: '100%' }}>
                   {/* Source (left) */}
-                  <div style={{ flex: '0 0 50%', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ flex: '0 0 50%', minWidth: 0, minHeight: 0, display: isTexFile(activeFile.name) && texCodeHidden ? 'none' : 'flex', flexDirection: 'column' }}>
                     <Editor
                       height="100%"
                       path={activeFile.path || activeFile.name}
@@ -13679,9 +13685,20 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                   </div>
 
                   {/* Divider */}
-                  <div style={{ width: 3, background: isEffectiveDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', flexShrink: 0 }} />
+                  <div style={{ width: 3, background: isEffectiveDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', flexShrink: 0, display: isTexFile(activeFile.name) && texCodeHidden ? 'none' : 'block' }} />
 
                   {/* Preview (right) */}
+                  {isTexFile(activeFile.name) ? (
+                    <LatexPreview
+                      content={activeFile.content}
+                      filePath={activeFile.path}
+                      accentColor={accentColor}
+                      isDark={isEffectiveDark}
+                      tokens={{ textPrimary: themeTokens.textPrimary, textSecondary: themeTokens.textSecondary, textMuted: themeTokens.textMuted, bgCard: themeTokens.bgCard }}
+                      codeHidden={texCodeHidden}
+                      onToggleCode={() => setTexCodeHidden((v) => !v)}
+                    />
+                  ) : (
                   <div style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                     <div style={{ height: 26, padding: '0 8px', display: 'flex', alignItems: 'center', gap: 6, background: isEffectiveDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.03)', fontSize: 11, color: themeTokens.textSecondary, flexShrink: 0 }}>
                       <Eye size={11} color={accentColor} />
@@ -13698,6 +13715,7 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
                       })}
                     </div>
                   </div>
+                  )}
                 </div>
               ) : activeFile ? (
                 <Editor

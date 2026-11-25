@@ -122,6 +122,11 @@ export function extractDocumentSymbols(content: string, _language?: string): Doc
 export function getFileLanguage(fileName: string): string {
   const ext = fileName.split('.').pop()?.toLowerCase();
   switch (ext) {
+    case 'tex':
+    case 'sty':
+    case 'cls':
+    case 'bib':
+      return 'latex';
     case 'ts':
     case 'tsx':
       return 'typescript';
@@ -150,6 +155,15 @@ export function getFileLanguage(fileName: string): string {
     default:
       return 'plaintext';
   }
+}
+
+export function isTexFile(fileName: string): boolean {
+  return /\.tex$/i.test(fileName);
+}
+
+/** Arquivos com pré-visualização ao lado (Markdown e LaTeX). */
+export function isPreviewableFile(fileName: string): boolean {
+  return isMarkdownFile(fileName) || isTexFile(fileName);
 }
 
 export function isMarkdownFile(fileName: string): boolean {

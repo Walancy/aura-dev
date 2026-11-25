@@ -11,6 +11,14 @@ Formato de cada versão (a regra completa está em `AGENTS.md`):
 
 ## [Não lançado]
 
+### Novidades
+
+- **Ações em massa nos pull requests**: marque os PRs abertos com a caixa de seleção (ou use "Todos") e aprove, solicite alterações ou peça para a IA revisar todos de uma vez. Na revisão com IA, ela analisa um PR por vez, decide entre aprovar ou solicitar alterações e envia a review ao GitHub com o texto dela, com o andamento de cada PR na tela.
+- **Visualizador de arquivos .tex**: abra um arquivo LaTeX e clique no olho para ver a prévia ao lado em folhas A4 com a aparência de um documento LaTeX (fonte Computer Modern, texto justificado, seções e equações numeradas, número de página), com zoom e contagem de páginas. Apresentações Beamer (`\documentclass{beamer}`) aparecem como slides no formato da classe (4:3 por padrão) e seguem o tema do documento: Madrid, Berlin, Warsaw, CambridgeUS, Metropolis, o tema padrão e os temas de cores, com barra de título, rodapé, número de slide, blocos, colunas e listas. Se o tectonic ou o pdflatex estiver instalado, a aba PDF compila o documento. O editor também ganhou realce de sintaxe para LaTeX. O botão de código na barra da prévia esconde o editor e deixa só o documento na tela. A prévia segue a página, as margens, a fonte, o espaçamento, a numeração e os títulos do próprio documento (classe, `geometry`, `times`, `setspace`, `fancyhdr`, `titlesec`), expande `\newcommand` e mostra folha de rosto e sumário. O botão "Baixar PDF" salva o documento ou os slides em PDF: o PDF exato do LaTeX quando há compilador instalado, ou a própria prévia em folhas A4 ou slides quando não há.
+- **Sites com skills de design**: a IA da aba Sites lê as skills Taste, Web Design Guidelines, Awesome Design MD e Playwright CLI antes de criar ou editar um site, e confere o resultado em capturas. A skill que faltar é instalada sozinha.
+- **Recriar um site inteiro a partir de um link**: nas referências da aba Sites, ative "Recriar o site inteiro". A IA lê as páginas do menu, baixa as imagens e monta um site novo com os mesmos textos, dados e mídias, mas com um design totalmente renovado e moderno.
+- **Captação de clientes na aba Sites**: a nova barra lateral de ícones tem a seção Captação. Com um clique, a IA procura sites antigos ou mal feitos que mostram WhatsApp, lista os resultados com botão para abrir a conversa e permite recriar o site do negócio com um clique.
+
 ## [1.5.0] - 2026-11-25
 
 ### Novidades

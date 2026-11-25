@@ -157,7 +157,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('fs:writeFile', { filePath, content }),
     getCapabilities: () => ipcRenderer.invoke('app:capabilities'),
     auditSite: (dir: string) => ipcRenderer.invoke('sites:audit', { dir }),
-    captureSiteReference: (url: string, dir: string) => ipcRenderer.invoke('sites:captureUrl', { url, dir }),
+    ensureSiteSkills: () => ipcRenderer.invoke('sites:ensureSkills'),
+    analyzeLead: (url: string, niche?: string) => ipcRenderer.invoke('leads:analyze', { url, niche }),
+    captureSiteReference: (url: string, dir: string, rebuild?: boolean) => ipcRenderer.invoke('sites:captureUrl', { url, dir, rebuild }),
     stockImage: (payload: { query: string; width: number; height: number; key?: string; index?: number; people?: boolean; maxSide?: number; pexelsKey?: string }) => ipcRenderer.invoke('unsplash:image', payload),
     exportPdf: (html: string, defaultName: string) => ipcRenderer.invoke('design:exportPdf', { html, defaultName }),
     figmaFetch: (token: string, apiPath: string) => ipcRenderer.invoke('figma:fetch', { token, apiPath }),
@@ -320,6 +322,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // Shell execution
+  latex: {
+    engine: (): Promise<string | null> => ipcRenderer.invoke('latex:engine'),
+    compile: (payload: { content: string; filePath?: string }) => ipcRenderer.invoke('latex:compile', payload),
+    savePdf: (payload: { pdfPath: string; defaultName: string }) => ipcRenderer.invoke('latex:savePdf', payload),
+    printPdf: (payload: { defaultName: string }) => ipcRenderer.invoke('latex:printPdf', payload),
+  },
   shell: {
     exec: (command: string, cwd?: string) =>
       ipcRenderer.invoke('shell:exec', { command, cwd }),

@@ -24,6 +24,7 @@ import {
   Search,
   Smartphone,
   Tablet,
+  Target,
   Trash2,
   Plus,
   Undo2,
@@ -44,11 +45,12 @@ import { GroupedModelMenu } from '../ui/GroupedModelMenu';
 import { SITE_TEMPLATES, FREE_TEMPLATE_ID, freeTemplate, type SiteTemplate } from './siteTemplates';
 import { postInspectorState, wrapForPreview, type SiteSelection } from './siteInspector';
 import { ensureSiteTools, applyCutouts, applyAssets } from './siteTools';
+import { LeadsPanel } from './LeadsPanel';
 import { inspectSiteHtml } from './siteQuality';
 import { applyPhotos } from './siteImages';
 import { SiteSettingsPopup } from './SiteSettingsPopup';
 import { finalizeSiteHtml, type SiteSettings } from './siteSeo';
-import { buildCreatePrompt, buildEditPrompt, runSiteAi, expandSiteBrief, withBrief, BRIEF_MAX_CHARS, buildPolishPrompt, needsReviewPass, wantsAttachedImage, type SiteReference } from './siteAi';
+import { setSiteSkills, buildCreatePrompt, buildEditPrompt, runSiteAi, expandSiteBrief, withBrief, BRIEF_MAX_CHARS, buildPolishPrompt, needsReviewPass, wantsAttachedImage, type SiteReference } from './siteAi';
 import { AiChatMessageQueue } from '../ide/chat/AiChatMessageQueue';
 import { ImageLightbox } from '../ui/ImageLightbox';
 import { templateSampleHtml } from './siteTemplateSample';
@@ -108,7 +110,7 @@ interface QueuedSiteRun {
   id: string;
   text: string;
   siteId: string | null;
-  refs: Array<{ id: string; kind: 'url' | 'image'; label: string; url?: string; dataUrl?: string }>;
+  refs: Array<{ id: string; kind: 'url' | 'image'; label: string; url?: string; dataUrl?: string; rebuild?: boolean }>;
   selection: SiteSelection[];
   ts: number;
 }
@@ -149,7 +151,10 @@ export default function SitesStudioView({
   const frameRef = useRef<HTMLIFrameElement>(null);
 
   // ---- painel esquerdo
-  const [leftTab, setLeftTab] = useState<'models' | 'sites'>('models');
+  const [moreOpen, setMoreOpen] = useState(false);
+  const pcMore = popupColors(isEffectiveDark);
+  const [leadPreview, setLeadPreview] = useState<{ id: string; url: string; name: string } | null>(null);
+  const [leftTab, setLeftTab] = useState<'models' | 'sites' | 'leads'>('models');
   const [search, setSearch] = useState('');
   const [pendingTemplate, setPendingTemplate] = useState<SiteTemplate | null>(null);
   const [customTemplates, setCustomTemplates] = useState<SiteTemplate[]>([]);
@@ -163,8 +168,9 @@ export default function SitesStudioView({
   const editorRef = useRef<PromptEditorRef>(null);
   const [hasText, setHasText] = useState(false);
   const [zoomImg, setZoomImg] = useState<string | null>(null);
-  const [refs, setRefs] = useState<Array<{ id: string; kind: 'url' | 'image'; label: string; url?: string; dataUrl?: string }>>([]);
+  const [refs, setRefs] = useState<Array<{ id: string; kind: 'url' | 'image'; label: string; url?: string; dataUrl?: string; rebuild?: boolean }>>([]);
   const [refOpen, setRefOpen] = useState(false);
+  const [refRebuild, setRefRebuild] = useState(false);
   const [refUrl, setRefUrl] = useState('');
   const refAnchor = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -302,7 +308,7 @@ export default function SitesStudioView({
    * Passada de acabamento depois da criação: a checagem estática acha arquivo cortado/sem animação/sem responsivo e, com CLIs que
    * entregam menos numa passada só (Antigravity etc.), a IA ainda faz uma revisão crítica. Se a versão revisada ficar pior, volta à anterior.
    */
-  const polishPass = async (siteId: string, siteName: string, request: string, workspace: string, reference?: SiteReference) => {
+  const polishPass = async (siteId: string, siteName: string, request: string, workspace: string, reference?: SiteReference, rebuild?: SiteReference) => {
     const before = await readSiteHtml(siteId);
     if (!before) return;
     // auditoria visual: renderiza em desktop/tablet/celular, mede problemas reais e salva capturas em _check/ para a IA ver
@@ -311,11 +317,11 @@ export default function SitesStudioView({
     const issues = [...inspectSiteHtml(before), ...(audit?.issues || [])];
     const checkShots = audit?.shots || [];
     const hasRef = !!reference && (reference.pages.length > 0 || reference.images.length > 0);
-    const full = needsReviewPass(selectedAiProvider) || hasRef;
+    const full = needsReviewPass(selectedAiProvider) || hasRef || !!rebuild;
     if (!issues.length && !full) return;
-    setLive(hasRef ? 'Comparando com a referência...' : issues.length ? 'Corrigindo problemas encontrados...' : 'Revisando o design...');
+    setLive(rebuild ? 'Conferindo o conteúdo e o novo design...' : hasRef ? 'Comparando com a referência...' : issues.length ? 'Corrigindo problemas encontrados...' : 'Revisando o design...');
     try {
-      await runSiteAi({ prompt: buildPolishPrompt({ siteName, request, issues, full, reference, checkShots }), provider: selectedAiProvider, model: selectedModel, cwd: workspace, effort: 'high', ctl: ctlRef.current, onText: () => {} });
+      await runSiteAi({ prompt: buildPolishPrompt({ siteName, request, issues, full, reference, checkShots, rebuild }), provider: selectedAiProvider, model: selectedModel, cwd: workspace, effort: 'high', ctl: ctlRef.current, onText: () => {} });
       const after = await readSiteHtml(siteId);
       const worse = !after || inspectSiteHtml(after).length > issues.length || after.length < before.length * 0.7;
       if (worse) await writeSiteHtml(siteId, before);
@@ -330,13 +336,14 @@ export default function SitesStudioView({
       const raw = (overrideText ?? editorRef.current?.getValue() ?? '').trim();
       const usedRefs = queued ? queued.refs : refs;
       const usedSel = queued ? queued.selection : selection;
-      const text = raw || (usedRefs.length ? 'Recrie o visual da referência para o meu negócio.' : '');
+      const rebuildRef = usedRefs.find((r) => r.kind === 'url' && r.rebuild);
+      const text = raw || (rebuildRef ? `Recrie o site ${rebuildRef.label.replace(/ \(recriar\)$/, '')} inteiro, reaproveitando textos, dados e mídias, com um design totalmente novo e moderno.` : usedRefs.length ? 'Recrie o visual da referência para o meu negócio.' : '');
       if (!text || busy) return;
       let site = current;
       // sem modelo escolhido, a IA cria do zero inspirada no catálogo (com ou sem referência)
       // imagem anexada + "use essa imagem no site": ela vira conteúdo do site (data-asset), não referência de layout
       const assetMode = usedRefs.some((r) => r.kind === 'image') && wantsAttachedImage(text);
-      const asReference = usedRefs.some((r) => r.kind === 'url') || (usedRefs.some((r) => r.kind === 'image') && !assetMode);
+      const asReference = usedRefs.some((r) => r.kind === 'url' && !r.rebuild) || (usedRefs.some((r) => r.kind === 'image') && !assetMode);
       const template = pendingTemplate || (!site ? freeTemplate(asReference) : null);
       const creating = !!template;
       const userMsg: SiteChatMessage = {
@@ -359,6 +366,10 @@ export default function SitesStudioView({
       const started = Date.now();
       let workspace = '';
       try {
+        // skills de design (taste, web-design-guidelines, awesome-design-md, playwright-cli): lidas pela IA em toda geração
+        setLive('Preparando as skills de design...');
+        setSiteSkills((await (window as any).electronAPI?.fs?.ensureSiteSkills?.().catch(() => [])) || []);
+        setLive('');
         let promptText: string;
         let refInfo: SiteReference | undefined;
         if (creating) {
@@ -400,7 +411,7 @@ export default function SitesStudioView({
             setLive(line.length > 90 ? `…${line.slice(-90)}` : line);
           },
         });
-        if (creating || (site!.templateId === 'blank' && messages.length === 0)) await polishPass(site!.id, site!.name, text, workspace, asReference ? refInfo : undefined);
+        if (creating || (site!.templateId === 'blank' && messages.length === 0)) await polishPass(site!.id, site!.name, text, workspace, asReference ? refInfo : undefined, rebuildRef ? refInfo : undefined);
         // imagens anexadas pelo usuário que a IA marcou para uso (data-asset / asset:nome): embute o arquivo de _reference/
         if (/\bdata-asset\s*=|asset:[\w.-]+\.(png|jpe?g|webp|gif|avif)/i.test((await readSiteHtml(site!.id)) || '')) {
           setLive('Inserindo a imagem anexada...');
@@ -458,10 +469,10 @@ export default function SitesStudioView({
     let n = 0;
     for (const r of list) {
       if (r.kind === 'url' && r.url) {
-        setLive(`Capturando ${r.label}...`);
-        const res = await api?.captureSiteReference?.(r.url, workspace);
-        if (!res || res.error) throw new Error(`Não consegui abrir ${r.label}: ${res?.error || 'captura indisponível (reinstale o app).'}`);
-        out.pages.push({ host: res.host || r.label, url: r.url, shots: res.shots || [], hasCss: !!res.hasCss, three: !!res.three?.detected });
+        setLive(r.rebuild ? `Lendo as páginas e baixando as mídias de ${r.label.replace(/ \(recriar\)$/, '')}...` : `Capturando ${r.label}...`);
+        const res = await api?.captureSiteReference?.(r.url, workspace, !!r.rebuild);
+        if (!res || res.error || (r.rebuild && !res.rebuild)) throw new Error(`Não consegui abrir ${r.label}: ${res?.error || 'captura indisponível (reinstale o app).'}`);
+        out.pages.push({ host: res.host || r.label, url: r.url, shots: res.shots || [], hasCss: !!res.hasCss, three: !!res.three?.detected, rebuild: res.rebuild ? { paths: res.rebuild.pages.map((x) => x.path), media: res.rebuild.media } : undefined });
       } else if (r.dataUrl) {
         const m = /^data:image\/(\w+);base64,(.+)$/.exec(r.dataUrl);
         if (!m) continue;
@@ -499,7 +510,7 @@ export default function SitesStudioView({
     if (!/^https?:\/\//i.test(u)) u = `https://${u}`;
     try {
       const host = new URL(u).host;
-      setRefs((prev) => [...prev.filter((r) => r.kind !== 'url'), { id: `u${Date.now()}`, kind: 'url', label: host, url: u }]);
+      setRefs((prev) => [...prev.filter((r) => r.kind !== 'url'), { id: `u${Date.now()}`, kind: 'url', label: refRebuild ? `${host} (recriar)` : host, url: u, rebuild: refRebuild }]);
       setRefUrl('');
       setRefOpen(false);
       editorRef.current?.focus();
@@ -780,18 +791,62 @@ export default function SitesStudioView({
   return (
     <div
       data-tour="sites-studio"
-      style={{ display: isActive ? 'flex' : 'none', flex: '1 1 0', minHeight: 0, minWidth: 0, width: '100%', padding: 5, gap: 5, boxSizing: 'border-box', overflow: 'hidden', background: themeTokens.bgApp, fontFamily: "'Poppins', sans-serif", fontWeight: 400 }}
+      style={{ display: isActive ? 'flex' : 'none', flex: '1 1 0', minHeight: 0, minWidth: 0, width: '100%', padding: 0, gap: 5, boxSizing: 'border-box', overflow: 'hidden', background: themeTokens.bgApp, fontFamily: "'Poppins', sans-serif", fontWeight: 400 }}
     >
+      {/* ---------------------------------------------------------------- trilho de seções (como a barra lateral da IDE) */}
+      <div data-tour="sites-rail" style={{ alignSelf: 'stretch', width: 48, padding: '10px 0', background: themeTokens.bgCard, borderRadius: 10, display: 'inline-flex', flexDirection: 'column', justifyContent: 'flex-start', alignItems: 'center', gap: 6, flexShrink: 0, userSelect: 'none' }}>
+        {([
+          { id: 'models', label: 'Modelos', Icon: LayoutTemplate },
+          { id: 'sites', label: `Meus sites${sites.length ? ` (${sites.length})` : ''}`, Icon: Globe },
+          { id: 'leads', label: 'Captação: encontrar sites antigos com WhatsApp', Icon: Target },
+        ] as const).map(({ id, label, Icon }) => {
+          const on = leftTab === id && leftOpen;
+          const idle = isEffectiveDark ? '#858585' : themeTokens.textSecondary;
+          return (
+            <div
+              key={id}
+              className="df-pressable"
+              title={label}
+              onClick={() => {
+                if (leftTab === id) setLeftOpen((v) => !v);
+                else {
+                  setLeftTab(id);
+                  setLeftOpen(true);
+                }
+              }}
+              style={{ width: 38, height: 38, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', cursor: 'pointer', background: on ? (isEffectiveDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)') : 'transparent', color: on ? (isEffectiveDark ? '#ffffff' : themeTokens.textPrimary) : idle, transition: 'background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 140ms var(--ease-out)' }}
+              onMouseEnter={(e) => {
+                if (!on) {
+                  e.currentTarget.style.background = isEffectiveDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)';
+                  e.currentTarget.style.color = isEffectiveDark ? '#cccccc' : themeTokens.textPrimary;
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!on) {
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.color = idle;
+                }
+              }}
+            >
+              {on && <span className="df-activity-indicator" style={{ background: accentColor }} />}
+              <Icon size={20} strokeWidth={1.5} />
+            </div>
+          );
+        })}
+      </div>
+
       {/* ---------------------------------------------------------------- esquerda: modelos e sites */}
       <div data-tour="sites-left-panel" style={{ ...panel, width: sidebarWidth, flexShrink: 0, padding: 8, gap: 8, ...slide(leftOpen, 'marginLeft', sidebarWidth) }}>
+        {leftTab !== 'leads' && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <button type="button" style={tabBtn(leftTab === 'models')} onClick={() => setLeftTab('models')}>Modelos</button>
-          <button type="button" style={tabBtn(leftTab === 'sites')} onClick={() => setLeftTab('sites')}>Meus sites{sites.length ? ` ${sites.length}` : ''}</button>
+          {(
           <div className="df-search-box" style={{ flex: 1, minWidth: 0, height: 30, display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', borderRadius: 6, background: ft.fieldBg }}>
             <Search size={12} color={themeTokens.textSecondary} />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar" style={{ flex: 1, minWidth: 0, width: '100%', background: 'transparent', border: 'none', outline: 'none', color: themeTokens.textPrimary, fontSize: 12, fontFamily: 'inherit', padding: 0 }} />
           </div>
+          )}
         </div>
+        )}
 
         {leftTab === 'sites' && (
           <button type="button" className="df-pressable" onClick={newBlankSite} disabled={busy} style={{ ...ctrl(), width: '100%', justifyContent: 'center', gap: 6, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.5 : 1 }}>
@@ -800,6 +855,35 @@ export default function SitesStudioView({
           </button>
         )}
 
+        {leftTab === 'leads' ? (
+          <LeadsPanel
+            tokens={themeTokens}
+            fieldBg={ft.fieldBg}
+            hover={subtleHover}
+            divider={divider}
+            accentColor={accentColor}
+            provider={selectedAiProvider}
+            model={selectedModel}
+            getCwd={async () => root || (await sitesRoot())}
+            previewId={leadPreview?.id}
+            onPreview={(l) => setLeadPreview((p) => (p?.id === l.id ? null : { id: l.id, url: l.url, name: l.name }))}
+            onOpen={(u) => (window as any).electronAPI?.shell?.openExternal?.(u)}
+            onToast={showToast}
+            isDark={isEffectiveDark}
+            themeTokens={themeTokens}
+            onAsk={(l, kind) => {
+              const host = new URL(l.url).host;
+              setRefs((prev) => [...prev.filter((r) => r.kind !== 'url'), { id: `u${Date.now()}`, kind: 'url', label: `${host} (recriar)`, url: l.url, rebuild: true }]);
+              editorRef.current?.setValue(
+                kind === 'redesign'
+                  ? `Recrie o site ${l.name} (${host}) inteiro, reaproveitando os textos, dados e mídias, com um design totalmente novo, moderno e bonito.`
+                  : `Modernize o site ${l.name} (${host}): mantenha as mesmas páginas, a ordem das seções e todo o conteúdo e as mídias, mas com um visual totalmente novo, moderno e bonito.`,
+              );
+              setChatOpen(true);
+              editorRef.current?.focus();
+            }}
+          />
+        ) : (
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
           {leftTab === 'models' ? (
             <>
@@ -856,6 +940,7 @@ export default function SitesStudioView({
             })
           )}
         </div>
+        )}
       </div>
 
       {/* ---------------------------------------------------------------- centro: preview */}
@@ -895,28 +980,37 @@ export default function SitesStudioView({
             ))}
           </div>
 
-          <button type="button" title={canUndo ? 'Desfazer a última edição da IA' : 'Nada para desfazer: ainda não há edições da IA neste site'} disabled={!canUndo || busy} onClick={undo} style={{ ...ctrl(false), opacity: canUndo && !busy ? 1 : 0.4 }} {...hoverable}>
-            <Undo2 size={14} />
+          <button ref={settingsAnchor} type="button" title="Mais ações: desfazer, recarregar, abrir no navegador, configurações e baixar" onClick={() => setMoreOpen((v) => !v)} style={ctrl(moreOpen)} {...hoverable}>
+            <MoreHorizontal size={14} />
           </button>
-          <button
-            type="button"
-            title="Recarregar o preview"
-            disabled={!activeHtml}
-            onClick={reloadPreview}
-            style={{ ...ctrl(false), opacity: activeHtml ? 1 : 0.4 }}
-            {...hoverable}
-          >
-            <RefreshCw size={14} />
-          </button>
-          <button type="button" title="Abrir no navegador" disabled={!activeHtml} onClick={openInBrowser} style={{ ...ctrl(false), opacity: activeHtml ? 1 : 0.4 }} {...hoverable}>
-            <ExternalLink size={14} />
-          </button>
-          <button ref={settingsAnchor} type="button" title="Domínio, Google Analytics e Microsoft Clarity" disabled={!current || !!pendingTemplate} onClick={() => setSettingsOpen((v) => !v)} style={{ ...ctrl(settingsOpen), opacity: current && !pendingTemplate ? 1 : 0.4 }} data-on={settingsOpen ? '1' : '0'} {...hoverable}>
-            <Settings2 size={14} />
-          </button>
-          <button type="button" title="Baixar index.html (com domínio, Analytics e Clarity, se configurados)" disabled={!activeHtml} onClick={exportHtml} style={{ ...ctrl(false), opacity: activeHtml ? 1 : 0.4 }} {...hoverable}>
-            <Download size={14} />
-          </button>
+          <PopupPortal anchor={settingsAnchor.current} open={moreOpen} onClose={() => setMoreOpen(false)} width={260} isDark={isEffectiveDark}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {([
+                { Icon: Undo2, label: 'Desfazer a última edição da IA', off: !canUndo || busy, run: undo },
+                { Icon: RefreshCw, label: 'Recarregar o preview', off: !activeHtml, run: reloadPreview },
+                { Icon: ExternalLink, label: 'Abrir no navegador', off: !activeHtml, run: openInBrowser },
+                { Icon: Settings2, label: 'Domínio, Analytics e Clarity', off: !current || !!pendingTemplate, run: () => setSettingsOpen(true) },
+                { Icon: Download, label: 'Baixar index.html', off: !activeHtml, run: exportHtml },
+              ] as Array<{ Icon: React.ComponentType<{ size?: number; color?: string }>; label: string; off: boolean; run: () => void }>).map((o) => (
+                <div
+                  key={o.label}
+                  className="df-pressable"
+                  data-disabled={o.off ? 'true' : undefined}
+                  onClick={() => {
+                    if (o.off) return;
+                    setMoreOpen(false);
+                    o.run();
+                  }}
+                  onMouseEnter={(e) => { if (!o.off) e.currentTarget.style.background = pcMore.hover; }}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 5, cursor: o.off ? 'default' : 'pointer', opacity: o.off ? 0.4 : 1, fontSize: 12, fontFamily: 'Poppins', color: pcMore.text, transition: 'background-color 120ms var(--ease-out)' }}
+                >
+                  <o.Icon size={13} color={pcMore.sub} />
+                  <span>{o.label}</span>
+                </div>
+              ))}
+            </div>
+          </PopupPortal>
           <button type="button" title={chatOpen ? 'Ocultar o chat' : 'Mostrar o chat'} onClick={() => setChatOpen((v) => !v)} style={ctrl(false)} {...hoverable}>
             <PanelRight size={14} color={chatOpen ? accentColor : themeTokens.textSecondary} />
           </button>
@@ -936,7 +1030,14 @@ export default function SitesStudioView({
         )}
 
         <div data-tour="sites-preview" style={{ flex: 1, minHeight: 0, borderRadius: 8, background: isEffectiveDark ? '#000' : '#e4e7eb', display: 'flex', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}>
-          {activePreviewDoc ? (
+          {leftTab === 'leads' && leadPreview ? (
+            <>
+              <iframe key={leadPreview.id} src={leadPreview.url} title={leadPreview.name} style={{ width: DEVICE_WIDTH[device] ?? '100%', maxWidth: '100%', height: '100%', border: 'none', background: '#fff', display: 'block', animation: 'fadeIn 0.2s ease-out' }} />
+              <button type="button" title="Fechar o preview" className="df-pressable" onClick={() => setLeadPreview(null)} style={{ position: 'absolute', top: 8, right: 8, width: 28, height: 28, border: 'none', borderRadius: 6, background: 'rgba(0,0,0,0.6)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}>
+                <X size={14} />
+              </button>
+            </>
+          ) : activePreviewDoc ? (
             <iframe
               key={`${pendingTemplate ? `tpl-${pendingTemplate.id}` : `site-${current?.id || 'none'}`}-${previewKey}`}
               ref={frameRef}
@@ -1478,7 +1579,20 @@ export default function SitesStudioView({
 
             <PopupPortal anchor={refAnchor.current} open={refOpen} onClose={() => setRefOpen(false)} width={300} maxHeight={320} isDark={isEffectiveDark}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 4 }}>
-                <div style={{ fontSize: 12, color: pc.text, lineHeight: 1.5 }}>A IA usa a referência como guia de visual e estrutura, com o conteúdo do seu negócio.</div>
+                <div style={{ fontSize: 12, color: pc.text, lineHeight: 1.5 }}>{refRebuild ? 'A IA lê as páginas do site e recria tudo com um design novo, reaproveitando textos, dados e mídias.' : 'A IA usa a referência como guia de visual e estrutura, com o conteúdo do seu negócio.'}</div>
+                <div
+                  role="switch"
+                  aria-checked={refRebuild}
+                  className="df-pressable"
+                  title="Em vez de copiar só o visual, a IA lê várias páginas do site (textos, dados, imagens) e monta um site novo com esse conteúdo. Use com sites seus ou com permissão."
+                  onClick={() => setRefRebuild((v) => !v)}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, height: 30, padding: '0 8px', borderRadius: 6, background: pc.field, cursor: 'pointer', fontSize: 12, color: pc.text }}
+                >
+                  <span>Recriar o site inteiro</span>
+                  <span style={{ width: 28, height: 16, borderRadius: 8, background: refRebuild ? chatAccent : pc.hover, position: 'relative', transition: 'background-color 160ms var(--ease-out)', flexShrink: 0 }}>
+                    <span style={{ position: 'absolute', top: 2, left: refRebuild ? 14 : 2, width: 12, height: 12, borderRadius: 6, background: refRebuild ? getContrastTextColor(chatAccent) : pc.sub, transition: 'left 160ms var(--ease-out), background-color 160ms var(--ease-out)' }} />
+                  </span>
+                </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 30, padding: '0 8px', borderRadius: 6, background: pc.field }}>
                   <Link2 size={12} color={pc.sub} />
                   <input
@@ -1494,7 +1608,7 @@ export default function SitesStudioView({
                 </div>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <button type="button" style={{ ...ctrl(true), flex: 1, opacity: refUrl.trim() ? 1 : 0.5 }} disabled={!refUrl.trim()} onClick={addUrlRef}>
-                    <Link2 size={13} /> Usar URL
+                    <Link2 size={13} /> {refRebuild ? 'Recriar site' : 'Usar URL'}
                   </button>
                   <button
                     type="button"

@@ -23,6 +23,8 @@ import { orchestratorService } from './orchestrator-service';
 import { StringDecoder } from 'node:string_decoder';
 import { autonomousService } from './autonomous-service';
 import { rolesService } from './roles-service';
+import { extractSiteForRebuild } from './site-rebuild';
+import { analyzeLead } from './leads-service';
 import { flutterService } from './flutter-service';
 import { getAugmentedPath, getCleanEnv, getCustomPaths, isBinaryInstalled, resolveBinaryPath, normalizeClaudeModel, ensureClaudeWorkspaceTrust, SHELL_BIN, shellInvocation, whichCommand, wrapForSpawn } from './env-utils';
 
@@ -702,7 +704,110 @@ function threeNotes(host: string, p: any): string {
   return lines.filter((l) => l !== '').join('\n') + '\n';
 }
 
-ipcMain.handle('sites:captureUrl', async (_event, { url, dir }: { url: string; dir: string }) => {
+// LaTeX: compila o .tex com tectonic ou pdflatex (se instalados) e devolve o PDF
+function findTexEngine(): { name: string; bin: string } | null {
+  const dirs = ['/opt/homebrew/bin', '/usr/local/bin', '/Library/TeX/texbin', '/usr/bin', path.join(os.homedir(), '.cargo/bin'), ...String(process.env.PATH || '').split(':')];
+  for (const name of ['tectonic', 'pdflatex', 'xelatex']) {
+    for (const d of dirs) {
+      const bin = path.join(d, name);
+      if (d && fs.existsSync(bin)) return { name, bin };
+    }
+  }
+  return null;
+}
+async function savePdfDialog(pdf: Buffer | string, defaultName: string) {
+  const safe = String(defaultName || 'documento').replace(/\.pdf$/i, '').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80);
+  const target = await dialog.showSaveDialog(mainWindow!, { defaultPath: `${safe}.pdf`, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+  if (target.canceled || !target.filePath) return { canceled: true };
+  if (typeof pdf === 'string') fs.copyFileSync(pdf, target.filePath);
+  else fs.writeFileSync(target.filePath, pdf);
+  shell.showItemInFolder(target.filePath);
+  return { path: target.filePath };
+}
+// PDF compilado (tectonic/pdflatex): salva onde o usuário escolher
+ipcMain.handle('latex:savePdf', async (_e, { pdfPath, defaultName }: { pdfPath: string; defaultName: string }) => {
+  try {
+    if (!pdfPath || !fs.existsSync(pdfPath)) return { error: 'O PDF compilado não foi encontrado.' };
+    return await savePdfDialog(pdfPath, defaultName);
+  } catch (err: any) {
+    return { error: err?.message || 'Falha ao salvar o PDF' };
+  }
+});
+// Sem compilador: imprime a prévia (a página já mostra só as folhas, via CSS de impressão) e salva como PDF
+ipcMain.handle('latex:printPdf', async (_e, { defaultName }: { defaultName: string }) => {
+  try {
+    const pdf = await mainWindow!.webContents.printToPDF({ printBackground: true, preferCSSPageSize: true, margins: { top: 0, bottom: 0, left: 0, right: 0 } });
+    return await savePdfDialog(pdf, defaultName);
+  } catch (err: any) {
+    return { error: err?.message || 'Falha ao gerar o PDF' };
+  }
+});
+ipcMain.handle('latex:engine', () => findTexEngine()?.name ?? null);
+ipcMain.handle('latex:compile', async (_event, { content, filePath }: { content: string; filePath?: string }) => {
+  const eng = findTexEngine();
+  if (!eng) return { error: 'Nenhum compilador LaTeX encontrado. Instale o tectonic (brew install tectonic) ou o MacTeX.' };
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'aura-tex-'));
+  const srcDir = filePath ? path.dirname(filePath) : work;
+  try {
+    fs.writeFileSync(path.join(work, 'main.tex'), String(content ?? ''));
+    const args = eng.name === 'tectonic' ? ['-X', 'compile', '--outdir', work, '-Z', `search-path=${srcDir}`, 'main.tex'] : ['-interaction=nonstopmode', '-halt-on-error', `-output-directory=${work}`, 'main.tex'];
+    const env = { ...process.env, PATH: `/opt/homebrew/bin:/Library/TeX/texbin:/usr/local/bin:${process.env.PATH || ''}`, TEXINPUTS: `${srcDir}:`, BIBINPUTS: `${srcDir}:` };
+    const out: { code: number | null; text: string } = await new Promise((resolve) => {
+      const child = require('node:child_process').spawn(eng.bin, args, { cwd: work, env });
+      let text = '';
+      const timer = setTimeout(() => child.kill('SIGKILL'), 120000);
+      child.stdout?.on('data', (d: Buffer) => (text += d.toString()));
+      child.stderr?.on('data', (d: Buffer) => (text += d.toString()));
+      child.on('error', (e: Error) => {
+        clearTimeout(timer);
+        resolve({ code: 1, text: e.message });
+      });
+      child.on('close', (code: number | null) => {
+        clearTimeout(timer);
+        resolve({ code, text });
+      });
+    });
+    const pdf = path.join(work, 'main.pdf');
+    if (!fs.existsSync(pdf)) return { error: out.text.slice(-4000) || 'A compilação falhou.' };
+    const final = path.join(work, `${filePath ? path.basename(filePath).replace(/\.tex$/i, '') : 'documento'}.pdf`);
+    fs.copyFileSync(pdf, final);
+    return { pdfBase64: fs.readFileSync(final).toString('base64'), pdfPath: final };
+  } catch (e: any) {
+    return { error: e?.message || 'A compilação falhou.' };
+  }
+});
+
+// Skills de design usadas pela IA da aba Sites (mesmo que não estejam ativas no resto do app); instala a que faltar
+ipcMain.handle('sites:ensureSkills', async () => {
+  const wanted: Array<{ id: string; repo?: string; skillId?: string }> = [
+    { id: 'design-taste-frontend', repo: 'Leonxlnx/taste-skill', skillId: 'design-taste-frontend' },
+    { id: 'web-design-guidelines', repo: 'vercel-labs/agent-skills', skillId: 'web-design-guidelines' },
+    { id: 'awesome-design-md', repo: 'wearescientist/awesome-design-md', skillId: 'awesome-design-md' },
+    { id: 'playwright-cli', repo: 'microsoft/playwright-cli', skillId: 'playwright-cli' },
+  ];
+  const out: Array<{ id: string; name: string; path: string }> = [];
+  for (const w of wanted) {
+    let found = skillsService.listInstalled().find((i) => i.id === w.id);
+    if (!found && w.repo && w.skillId) {
+      try {
+        found = await Promise.race([skillsService.installFromRegistry(w.repo, w.skillId), new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 45000))]);
+      } catch {}
+    }
+    if (found) out.push({ id: found.id, name: found.name, path: path.join(found.dir, 'SKILL.md') });
+  }
+  return out;
+});
+
+// Captação: a IA só indica endereços; a conferência (WhatsApp, nicho e visual antigo) roda aqui, em paralelo e sem gastar tokens
+ipcMain.handle('leads:analyze', async (_event, { url, niche }: { url: string; niche?: string }) => {
+  try {
+    return await analyzeLead(String(url || ''), String(niche || ''), AbortSignal.timeout(25000));
+  } catch {
+    return null;
+  }
+});
+
+ipcMain.handle('sites:captureUrl', async (_event, { url, dir, rebuild }: { url: string; dir: string; rebuild?: boolean }) => {
   let win: BrowserWindow | null = null;
   try {
     const u = new URL(url);
@@ -766,7 +871,12 @@ ipcMain.handle('sites:captureUrl', async (_event, { url, dir }: { url: string; d
       fs.writeFileSync(path.join(refDir, 'three-notes.md'), threeNotes(u.host, probe));
       three = { detected: true, notes: 'three-notes.md', motion };
     }
-    return { title: info.title, host: u.host, shots, hasCss: !!css, three };
+    let rebuildInfo: { pages: Array<{ path: string; title: string; shot?: string }>; media: number } | undefined;
+    if (rebuild) {
+      await wc.executeJavaScript('window.scrollTo(0, 0)');
+      rebuildInfo = await extractSiteForRebuild(win, u, refDir);
+    }
+    return { title: info.title, host: u.host, shots, hasCss: !!css, three, rebuild: rebuildInfo };
   } catch (err: any) {
     return { error: err?.message || 'Não consegui abrir a página.' };
   } finally {
@@ -1758,6 +1868,27 @@ ipcMain.handle('ai:runCli', async (_event, {
         payload: { text, streamId },
         timestamp_ms: Date.now(),
       });
+    // o que a IA está fazendo (buscas e páginas abertas): enquanto ela só usa ferramentas não há texto para mostrar
+    const emitActivity = (text: string) =>
+      mainWindow?.webContents.send('ai:orchestrator-event', {
+        provider: cliCmd,
+        kind: 'progress',
+        message: 'activity',
+        payload: { text, streamId },
+        timestamp_ms: Date.now(),
+      });
+    const describeTool = (b: any): string => {
+      const i = b?.input || {};
+      if (b?.name === 'WebSearch' && i.query) return `Buscando: ${String(i.query).slice(0, 80)}`;
+      if (b?.name === 'WebFetch' && i.url) {
+        try {
+          return `Abrindo ${new URL(i.url).host}`;
+        } catch {
+          return 'Abrindo uma página';
+        }
+      }
+      return '';
+    };
     const jsonStream = (cliCmd === 'claude' || cliCmd === 'agy') && !!streamText;
     let lineBuf = '';
     let finalResult = '';
@@ -1771,6 +1902,12 @@ ipcMain.handle('ai:runCli', async (_event, {
         if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
           stdout += delta.text;
           emitText(delta.text);
+        } else if (evt.type === 'assistant' && Array.isArray(evt.message?.content)) {
+          for (const b of evt.message.content) {
+            if (b?.type !== 'tool_use') continue;
+            const t = describeTool(b);
+            if (t) emitActivity(t);
+          }
         } else if (evt.type === 'result' && typeof evt.result === 'string') {
           finalResult = evt.result;
         } else if (evt.event === 'step_update' && evt.step_update?.step_type === 'agent_response' && typeof evt.step_update.text_delta === 'string') {

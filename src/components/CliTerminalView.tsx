@@ -81,7 +81,8 @@ import Editor, { DiffEditor } from '@monaco-editor/react';
 import { defineAuraDarkTheme } from './monacoTheme';
 import { AUTOCOMPLETE_OPTIONS, setupAutocomplete } from './monacoAutocomplete';
 import { OutlineTimelineCards } from './ide/OutlineTimelineCards';
-import { getFileLanguage, isMarkdownFile } from '../utils/editor';
+import { getFileLanguage, isMarkdownFile, isPreviewableFile, isTexFile } from '../utils/editor';
+import { LatexPreview } from './ide/LatexPreview';
 import { renderMarkdownPreview } from '../utils/markdown';
 import { ConfirmDeleteModal } from './modals/ConfirmDeleteModal';
 import { SidebarPanels } from './ide/SidebarPanels';
@@ -1846,6 +1847,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
   const viewerRef = useRef(viewer);
   viewerRef.current = viewer;
   const cliEditorInstanceRef = useRef<any>(null);
+  const [texCodeHidden, setTexCodeHidden] = useState(false);
   const [viewerCursor, setViewerCursor] = useState({ line: 1, col: 1, tabSize: 2, eol: 'LF' as 'LF' | 'CRLF' });
   const [viewerBlame, setViewerBlame] = useState('');
 
@@ -1935,7 +1937,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
         await handleSaveViewerFile(prev.content, true);
       }
       setPreviewDesignScreen(null);
-      setMdPreview(!opts?.isDiffMode && isMarkdownFile(name));
+      setMdPreview(!opts?.isDiffMode && isPreviewableFile(name));
       setViewer({
         path,
         name,
@@ -4489,6 +4491,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
               accentColor={accentColor}
               accentContrastText={getContrastTextColor(accentColor)}
               background={skinActive ? 'transparent' : skinTk.bgCard}
+              aiProvider={reviewAiProvider}
             />
           )}
 
@@ -6124,11 +6127,11 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                   </>
                 )}
 
-                {!viewer.isDiffMode && isMarkdownFile(viewer.name) && viewer.content !== undefined && (
+                {!viewer.isDiffMode && isPreviewableFile(viewer.name) && viewer.content !== undefined && (
                   <button
                     type="button"
                     onClick={() => setMdPreview((v) => !v)}
-                    title={mdPreview ? 'Fechar visualização' : 'Visualizar Markdown'}
+                    title={mdPreview ? 'Fechar visualização' : isTexFile(viewer.name) ? 'Visualizar LaTeX' : 'Visualizar Markdown'}
                     style={{
                       height: 28,
                       padding: '0 10px',
@@ -6325,7 +6328,7 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                 </div>
               ) : (
                 <div style={{ width: '100%', height: '100%', display: 'flex' }}>
-                  <div style={{ flex: '1 1 0', minWidth: 0, height: '100%' }}>
+                  <div style={{ flex: '1 1 0', minWidth: 0, height: '100%', display: mdPreview && isTexFile(viewer.name) && texCodeHidden ? 'none' : 'block' }}>
                   <Editor
                     height="100%"
                     path={viewer.path}
@@ -6369,6 +6372,19 @@ export const CliTerminalView: React.FC<CliTerminalViewProps> = ({
                     }}
                   />
                   </div>
+                  {mdPreview && isTexFile(viewer.name) && (
+                    <div className="df-panel-enter-right" style={{ flex: '1 1 0', minWidth: 0, height: '100%', display: 'flex', borderLeft: `1px solid ${isEffectiveDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}` }}>
+                      <LatexPreview
+                        content={viewer.content ?? ''}
+                        filePath={viewer.path}
+                        accentColor={accentColor}
+                        isDark={isEffectiveDark}
+                        tokens={{ textPrimary: themeTokens.textPrimary, textSecondary: themeTokens.textSecondary, textMuted: themeTokens.textMuted, bgCard: themeTokens.bgCard }}
+                        codeHidden={texCodeHidden}
+                        onToggleCode={() => setTexCodeHidden((v) => !v)}
+                      />
+                    </div>
+                  )}
                   {mdPreview && isMarkdownFile(viewer.name) && (
                     <div
                       className="df-panel-enter-right"
