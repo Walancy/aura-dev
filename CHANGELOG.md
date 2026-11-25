@@ -11,6 +11,19 @@ Formato de cada versão (a regra completa está em `AGENTS.md`):
 
 ## [Não lançado]
 
+## [1.5.0] - 2026-11-25
+
+### Novidades
+
+- **Versão para Windows**: o app abre e funciona no Windows, com terminal em PowerShell, ícone próprio na barra de tarefas e as IAs instaladas detectadas no sistema.
+- **Botões da janela no Windows**: minimizar, maximizar e fechar ficam na ponta direita da header, ao lado da sua foto, e o canto esquerdo fica livre. No macOS nada muda.
+- **Login da IA no terminal certo**: quando uma IA pede login ou o código de verificação, o app vai para o terminal onde ela foi iniciada, para você colar o código.
+
+### Correções
+
+- **Daily com cards de outra pessoa**: a Daily deixou de mostrar cards de exemplo, e o nome e a foto nos cards são os do usuário logado.
+- **Antigravity pedindo login toda hora**: sem login, o app deixa de chamar a CLI em segundo plano e tenta de novo só depois de alguns minutos.
+
 ## [1.4.0] - 2026-11-17
 
 ### Novidades
