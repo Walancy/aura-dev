@@ -1,6 +1,7 @@
 import { exec } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { isCliSignedIn, NULL_DEVICE, SHELL_BIN, getAugmentedPath, resolveBinaryPath as resolveKnownBinary, whichCommand } from './env-utils';
 
 export interface AiModelItem {
   id: string;
@@ -54,7 +55,7 @@ function runCommandAsync(
       cmd,
       {
         encoding: 'utf8',
-        shell: options.shell || '/bin/zsh',
+        shell: options.shell || SHELL_BIN,
         env: options.env,
         timeout: options.timeout || 6000,
       },
@@ -87,32 +88,20 @@ export class ModelService {
       return this.binaryPathCache[name];
     }
 
-    const userHome = process.env.HOME || '';
-    const candidates = [
-      path.join(userHome, '.local/bin', name),
-      path.join(userHome, '.bun/bin', name),
-      path.join('/opt/homebrew/bin', name),
-      path.join('/usr/local/bin', name),
-    ];
-
-    for (const p of candidates) {
-      if (fs.existsSync(p)) {
-        this.binaryPathCache[name] = p;
-        return p;
-      }
+    const known = resolveKnownBinary(name);
+    if (path.isAbsolute(known) && fs.existsSync(known)) {
+      this.binaryPathCache[name] = known;
+      return known;
     }
 
     try {
       const out = (
-        await runCommandAsync(`which ${name}`, {
-          shell: '/bin/zsh',
-          env: {
-            ...process.env,
-            PATH: `${userHome}/.local/bin:${userHome}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ''}`,
-          },
+        await runCommandAsync(whichCommand(name), {
+          shell: SHELL_BIN,
+          env: { ...process.env, PATH: getAugmentedPath() },
           timeout: 2000,
         })
-      ).trim();
+      ).trim().split(/\r?\n/)[0];
       if (out && fs.existsSync(out)) {
         this.binaryPathCache[name] = out;
         return out;
@@ -156,8 +145,8 @@ export class ModelService {
       if (bin) {
         try {
           const out = (
-            await runCommandAsync(`${bin} -p "/model ${modelId}" < /dev/null`, {
-              shell: '/bin/zsh',
+            await runCommandAsync(`"${bin}" -p "/model ${modelId}" < ${NULL_DEVICE}`, {
+              shell: SHELL_BIN,
               timeout: 5000,
             })
           ).trim();
@@ -204,8 +193,8 @@ export class ModelService {
 
     if (bin) {
       try {
-        const out = await runCommandAsync(`${bin} -p "/model" < /dev/null`, {
-          shell: '/bin/zsh',
+        const out = await runCommandAsync(`"${bin}" -p "/model" < ${NULL_DEVICE}`, {
+          shell: SHELL_BIN,
           timeout: 4000,
         });
 
@@ -287,10 +276,10 @@ export class ModelService {
     let models: AiModelItem[] = [];
     let newestFamily: string | undefined;
 
-    if (bin) {
+    if (bin && (await isCliSignedIn('agy', bin))) {
       try {
-        const out = await runCommandAsync(`${bin} models`, {
-          shell: '/bin/zsh',
+        const out = await runCommandAsync(`"${bin}" models`, {
+          shell: SHELL_BIN,
           timeout: 15000,
         });
 

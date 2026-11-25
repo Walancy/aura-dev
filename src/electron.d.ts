@@ -47,6 +47,11 @@ export interface ElectronAPI {
   windowState?: {
     isFullscreen: () => Promise<boolean>;
     onFullscreenChange: (callback: (isFullscreen: boolean) => void) => () => void;
+    minimize?: () => void;
+    maximize?: () => void;
+    close?: () => void;
+    isMaximized?: () => Promise<boolean>;
+    onMaximizedChange?: (callback: (isMaximized: boolean) => void) => () => void;
     setAlwaysOnTop?: (flag: boolean) => Promise<boolean>;
     isAlwaysOnTop?: () => Promise<boolean>;
   };
@@ -77,6 +82,7 @@ export interface ElectronAPI {
     onSessionBound?: (callback: (payload: { id: string; resumeId: string }) => void) => () => void;
     onContextAlert?: (callback: (payload: { id: string; type: string; cwd: string; projectName: string; left: number }) => void) => () => void;
     onAiCompleted?: (callback: (payload: { id: string; type: string; cwd: string; projectName: string; summary: string; needsInput?: boolean; timestamp: number }) => void) => () => void;
+    onLoginRequired?: (callback: (payload: { id: string; type: string; cwd: string; projectName: string }) => void) => () => void;
     onSessionStatus?: (callback: (payload: { id: string; type: string; cwd: string; isAi: boolean; isRunning: boolean; exited?: boolean; shellRespawned?: boolean }) => void) => () => void;
     onData: (callback: (payload: { id: string; data: string; seq?: number }) => void) => () => void;
     onExit: (callback: (payload: { id: string; exitCode: number }) => void) => () => void;

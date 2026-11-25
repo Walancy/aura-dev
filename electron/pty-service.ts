@@ -7,9 +7,17 @@ import * as https from 'node:https';
 import { execSync, exec } from 'node:child_process';
 import { skillsService } from './skills-service';
 import { listAiSessions } from './ai-sessions-service';
-import { ensureClaudeWorkspaceTrust, normalizeClaudeModel, resolveBinaryPath, stripTerminalControl } from './env-utils';
+import { ensureClaudeWorkspaceTrust, getCustomPaths, normalizeClaudeModel, resolveBinaryPath, stripTerminalControl } from './env-utils';
 
 const pty = require('node-pty');
+
+/** PowerShell 7 (pwsh) quando instalado; senão o Windows PowerShell que vem com o sistema. */
+function resolveWindowsShell(): string {
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (dir && fs.existsSync(path.join(dir, 'pwsh.exe'))) return path.join(dir, 'pwsh.exe');
+  }
+  return path.join(process.env.SystemRoot || 'C:\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+}
 
 const ZSH_SYNTAX_HIGHLIGHTING_VERSION = '0.8.0';
 
@@ -72,7 +80,14 @@ const CONTEXT_REARM_LEFT = 40; // só avisa de novo depois que o contexto voltou
 export const FOOTER_NOISE = /workedfor|done\d|skillsusadas|^projeto:|^#?skills|esctointerrupt|tokens|^\W*$/i;
 const TUI_CHROME = /bypass permissions|esc to interrupt|to manage|shift\+tab|ctrl\+[a-z]|Checking for updates|for shortcuts|auto-update|^\s*[·✻✽✶✳*]\s.*(…|\.\.\.|tokens)|^\s*[▸▶⏵]+\s/i;
 
+/** Frases com que claude, agy, gemini, codex e ollama pedem login ou o código de verificação no terminal. */
+const LOGIN_PROMPT_RE = /paste code here|paste the authorization code|browser didn'?t open|use the url below to sign in|select login method|run \/login|please sign in|sign in to continue|sign in with chatgpt|enter (?:the |your )?(?:authorization|verification|device) code|enter this code|waiting for authentication|please visit the (?:following )?url|oauth error/i;
+const LOGIN_NOTIFY_EVERY_MS = 60_000;
+
 export interface NativePtySession {
+  /** fim da saída recente (sem formatação): a frase de login pode chegar partida entre dois pedaços */
+  loginTail?: string;
+  loginNotifiedAt?: number;
   /** shell reaberto depois da IA encerrar: respostas automáticas do terminal (DA/cursor) vindas da IA que acabou não podem virar texto no prompt */
   dropReportsUntil?: number;
   id: string;
@@ -203,6 +218,26 @@ export class NativePtyService extends EventEmitter {
         }
       } catch {}
     }
+  }
+
+  /** A IA pediu login/código no terminal: traz o app para a frente e manda a interface abrir esse terminal para o usuário colar o código. */
+  private checkLoginPrompt(session: NativePtySession, data: string) {
+    session.loginTail = `${session.loginTail || ''}${this.stripAnsi(data)}`.slice(-400);
+    if (!LOGIN_PROMPT_RE.test(session.loginTail)) return;
+    session.loginTail = '';
+    if (Date.now() - (session.loginNotifiedAt || 0) < LOGIN_NOTIFY_EVERY_MS) return;
+    session.loginNotifiedAt = Date.now();
+    const win = this.mainWindow;
+    if (!win || win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    win.webContents.send('pty:login-required', {
+      id: session.id,
+      type: session.aiProvider || session.type,
+      cwd: session.cwd,
+      projectName: path.basename(session.cwd) || 'Projeto',
+    });
   }
 
   /** Lê o % de contexto restante que o CLI mostra no rodapé e avisa a interface quando está acabando */
@@ -486,32 +521,24 @@ export class NativePtyService extends EventEmitter {
       return session;
     }
 
-    let file = '/bin/zsh';
-    let args: string[] = ['-l'];
-    let title = 'zsh';
+    const isWin = process.platform === 'win32';
+    // Windows: PowerShell no lugar do zsh; "comando" roda dentro do shell (no mac/Linux: zsh -l -c)
+    const shellFile = isWin ? resolveWindowsShell() : '/bin/zsh';
+    const shellCommand = (command: string): string[] => (isWin ? ['-NoLogo', '-Command', command] : ['-l', '-c', command]);
+    let file = shellFile;
+    let args: string[] = isWin ? ['-NoLogo'] : ['-l'];
+    let title = isWin ? 'PowerShell' : 'zsh';
     const resume = this.pendingResume.get(id);
     this.pendingResume.delete(id);
 
-    const userHome = process.env.HOME || '';
-    const customPaths = [
-      path.join(userHome, '.local/bin'),
-      path.join(userHome, '.bun/bin'),
-      path.join(userHome, '.cargo/bin'),
-      '/opt/homebrew/bin',
-      '/opt/homebrew/sbin',
-      '/usr/local/bin',
-      '/usr/local/sbin',
-      '/usr/bin',
-      '/bin',
-      '/usr/sbin',
-      '/sbin',
-    ];
+    const userHome = process.env.HOME || os.homedir();
+    const customPaths = getCustomPaths();
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       LANG: 'en_US.UTF-8',
-      PATH: `${customPaths.join(':')}:${process.env.PATH || ''}`,
+      PATH: `${customPaths.join(path.delimiter)}${path.delimiter}${process.env.PATH || ''}`,
     };
 
     // Terminais da orquestração: URLs abertas por projetos/IA vão para o card de navegador conectado.
@@ -519,7 +546,7 @@ export class NativePtyService extends EventEmitter {
       const shimDir = this.ensureBrowserShims();
       env.DEVFLOW_SHIM_DIR = shimDir;
       env.BROWSER = path.join(shimDir, 'devflow-browser');
-      env.PATH = `${shimDir}:${env.PATH}`;
+      env.PATH = `${shimDir}${path.delimiter}${env.PATH}`;
     }
 
     if (type === 'claude') {
@@ -547,22 +574,25 @@ export class NativePtyService extends EventEmitter {
           args.push('--model', extraOptions.model);
         }
       } else {
-        file = '/bin/zsh';
-        args = ['-l', '-c', 'echo "Antigravity CLI (agy) nao encontrada. Instale a CLI ou ajuste o PATH."; exec zsh -l'];
+        file = shellFile;
+        args = isWin
+          ? ['-NoLogo', '-NoExit', '-Command', 'Write-Host "Antigravity CLI (agy) nao encontrada. Instale a CLI ou ajuste o PATH."']
+          : ['-l', '-c', 'echo "Antigravity CLI (agy) nao encontrada. Instale a CLI ou ajuste o PATH."; exec zsh -l'];
       }
       title = 'Antigravity CLI (agy)';
     } else if (type === 'gemini') {
-      file = '/bin/zsh';
-      args = ['-l', '-c', ['gemini', extraOptions?.model ? `--model ${shq(extraOptions.model)}` : '', resume ? `--resume ${shq(resume)}` : ''].filter(Boolean).join(' ')];
+      file = shellFile;
+      args = shellCommand(['gemini', extraOptions?.model ? `--model ${shq(extraOptions.model)}` : '', resume ? `--resume ${shq(resume)}` : ''].filter(Boolean).join(' '));
       title = 'Gemini CLI';
     } else if (type === 'ollama') {
-      file = '/bin/zsh';
-      args = ['-l', '-c', `ollama run ${shq(extraOptions?.model || 'llama3')}`];
+      file = shellFile;
+      args = shellCommand(`ollama run ${shq(extraOptions?.model || 'llama3')}`);
       title = 'Ollama CLI';
     } else if (type === 'codex') {
       const codexCandidates = [
         path.join(userHome, '.local/bin/codex'),
         path.join(userHome, '.bun/bin/codex'),
+        ...(isWin ? [path.join(userHome, '.local/bin/codex.exe'), path.join(process.env.APPDATA || '', 'npm', 'codex.cmd')] : []),
         '/opt/homebrew/bin/codex',
         '/usr/local/bin/codex',
       ];
@@ -577,17 +607,23 @@ export class NativePtyService extends EventEmitter {
           args.push('-m', extraOptions.model);
         }
       } else {
-        file = '/bin/zsh';
-        args = ['-l', '-c', 'codex'];
+        file = shellFile;
+        args = shellCommand('codex');
       }
       title = 'OpenAI Codex CLI';
     }
 
     // Give plain zsh sessions a colored prompt matching the app's accent color
-    if (file === '/bin/zsh') {
+    if (!isWin && file === '/bin/zsh') {
       env.DEVFLOW_INITIAL_CWD = cleanCwd;
       env.ZDOTDIR = this.ensureColoredZshInit();
       env.DEVFLOW_REAL_HOME = userHome;
+    }
+
+    // node-pty no Windows não executa .cmd/.bat direto (shims do npm): passa pelo cmd.exe
+    if (isWin && /\.(cmd|bat)$/i.test(file)) {
+      args = ['/d', '/s', '/c', file, ...args];
+      file = process.env.ComSpec || 'cmd.exe';
     }
 
     const term = pty.spawn(file, args, {
@@ -632,6 +668,7 @@ export class NativePtyService extends EventEmitter {
       }
       if (session.isAi || session.aiProvider) {
         this.checkContextLeft(session, data);
+        this.checkLoginPrompt(session, data);
         if (!session.isRunning) {
           session.isRunning = true;
           if (this.mainWindow && !this.mainWindow.isDestroyed()) {

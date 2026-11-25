@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { exec } from 'node:child_process';
 import { app } from 'electron';
+import { resolveBinaryPath as resolveKnownBinary, wrapForSpawn } from './env-utils';
 
 const pty = require('node-pty');
 
@@ -50,26 +51,10 @@ export class NativeCommandsService {
   }
 
   public resolveBinaryPath(bin: string): { path: string | null; mtime: number } {
-    const userHome = process.env.HOME || '';
-    const candidates = [
-      path.join(userHome, '.local/bin', bin),
-      path.join(userHome, '.bun/bin', bin),
-      path.join(userHome, '.cargo/bin', bin),
-      `/opt/homebrew/bin/${bin}`,
-      `/usr/local/bin/${bin}`,
-      `/usr/bin/${bin}`,
-      `/bin/${bin}`,
-    ];
-
-    for (const c of candidates) {
-      try {
-        if (fs.existsSync(c)) {
-          const stats = fs.statSync(c);
-          return { path: c, mtime: stats.mtimeMs };
-        }
-      } catch {}
-    }
-
+    const found = resolveKnownBinary(bin);
+    try {
+      if (path.isAbsolute(found) && fs.existsSync(found)) return { path: found, mtime: fs.statSync(found).mtimeMs };
+    } catch {}
     return { path: null, mtime: 0 };
   }
 
@@ -150,7 +135,8 @@ export class NativeCommandsService {
       let fullOutput = '';
       let state = 0;
 
-      const p = pty.spawn(binPath, [], {
+      const launch = wrapForSpawn(binPath, []);
+      const p = pty.spawn(launch.file, launch.args, {
         name: 'xterm-256color',
         cols: 160,
         rows: 80,
@@ -236,7 +222,7 @@ export class NativeCommandsService {
     if (binPath) {
       try {
         const out = await new Promise<string>((resolve) => {
-          exec(`${binPath} -p "/help"`, { encoding: 'utf8', timeout: 3000 }, (_err, stdout) => {
+          exec(`"${binPath}" -p "/help"`, { encoding: 'utf8', timeout: 3000 }, (_err, stdout) => {
             resolve(stdout ? stdout.toString() : '');
           });
         });
@@ -327,7 +313,7 @@ export class NativeCommandsService {
     if (binPath) {
       try {
         const out = await new Promise<string>((resolve) => {
-          exec(`${binPath} --help`, { encoding: 'utf8', timeout: 2000 }, (_err, stdout) => {
+          exec(`"${binPath}" --help`, { encoding: 'utf8', timeout: 2000 }, (_err, stdout) => {
             resolve(stdout ? stdout.toString() : '');
           });
         });
@@ -393,7 +379,7 @@ export class NativeCommandsService {
     if (binPath) {
       try {
         const out = await new Promise<string>((resolve) => {
-          exec(`${binPath} --help`, { encoding: 'utf8', timeout: 2000 }, (_err, stdout) => {
+          exec(`"${binPath}" --help`, { encoding: 'utf8', timeout: 2000 }, (_err, stdout) => {
             resolve(stdout ? stdout.toString() : '');
           });
         });

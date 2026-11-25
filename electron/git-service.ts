@@ -1,4 +1,5 @@
 import { execSync, exec, execFile, execFileSync } from 'node:child_process';
+import { getAugmentedPath, getCustomPaths } from './env-utils';
 import fs from 'node:fs';
 import path from 'node:path';
 import { githubAuthService } from './github-auth-service';
@@ -41,14 +42,8 @@ export class GitService {
     }
     try {
       const userHome = process.env.HOME || '';
-      const customPaths = [
-        path.join(userHome, '.local/bin'),
-        '/opt/homebrew/bin',
-        '/usr/local/bin',
-        '/usr/bin',
-        '/bin',
-      ];
-      const envPath = `${customPaths.join(':')}:${process.env.PATH || ''}`;
+      const customPaths = getCustomPaths();
+      const envPath = getAugmentedPath();
       const token = execSync('gh auth token', {
         encoding: 'utf8',
         timeout: 3000,
@@ -686,16 +681,8 @@ export class GitService {
     }
 
     const userHome = process.env.HOME || process.env.USERPROFILE || '';
-    const customPaths = [
-      path.join(userHome, '.local/bin'),
-      '/opt/homebrew/bin',
-      '/usr/local/bin',
-      '/usr/bin',
-      '/bin',
-      '/usr/sbin',
-      '/sbin',
-    ];
-    const envPath = `${customPaths.join(':')}:${process.env.PATH || ''}`;
+    const customPaths = getCustomPaths();
+    const envPath = getAugmentedPath();
     const token = this.getGitHubToken();
 
     const baseEnv: NodeJS.ProcessEnv = {

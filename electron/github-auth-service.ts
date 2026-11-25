@@ -1,4 +1,5 @@
 import { app, safeStorage } from 'electron';
+import { getAugmentedPath } from './env-utils';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execSync } from 'node:child_process';
@@ -40,7 +41,7 @@ class GithubAuthService {
 
   private getCliToken(): string | null {
     try {
-      const envPath = `/opt/homebrew/bin:/usr/local/bin:${process.env.HOME}/.local/bin:${process.env.PATH || ''}`;
+      const envPath = getAugmentedPath();
       const token = execSync('gh auth token', {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
@@ -313,7 +314,7 @@ class GithubAuthService {
     }
 
     try {
-      const envPath = `/opt/homebrew/bin:/usr/local/bin:${process.env.HOME}/.local/bin:${process.env.PATH || ''}`;
+      const envPath = getAugmentedPath();
       const out = execSync('gh api user', {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
@@ -1179,7 +1180,7 @@ class GithubAuthService {
     }
 
     try {
-      const envPath = `/opt/homebrew/bin:/usr/local/bin:${process.env.HOME}/.local/bin:${process.env.PATH || ''}`;
+      const envPath = getAugmentedPath();
       const out = execSync('gh api user/orgs', {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],

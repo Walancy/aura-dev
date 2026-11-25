@@ -6,6 +6,7 @@ files:
   - dist/**
   - dist-electron/**
   - "!dist-electron/bin/**"
+  - build/icon.ico
 asarUnpack:
   - "**/node_modules/node-pty/**"
 # o orquestrador Rust é executado como processo: fica fora do asar, em resources/bin

@@ -259,6 +259,22 @@ const CARD_THEMES: Record<
   },
 };
 
+/** Cards de demonstração de versões antigas (seed-1...seed-8): apareciam para qualquer usuário. */
+const isDemoSeed = (id: string) => /^seed-\d+$/.test(id);
+
+/** Usuário do GitHub logado agora (o cache é atualizado a cada login). */
+function currentAssignee(): { name: string; initials: string; avatarUrl?: string } {
+  try {
+    const u = JSON.parse(localStorage.getItem('devflow_github_user') || 'null');
+    if (u?.login) {
+      const name: string = u.name || u.login;
+      const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || u.login.slice(0, 2).toUpperCase();
+      return { name, initials, avatarUrl: u.avatarUrl };
+    }
+  } catch {}
+  return { name: 'Usuário', initials: 'US' };
+}
+
 function toIsoDate(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -395,13 +411,6 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
       }
     });
 
-    // Se estiver vazio, popula com projetos padrão conhecidos
-    if (map.size === 0) {
-      ['aura-dev', 'ainaobra', 'ainaobra-api-esocial', 'cooperaagro-app', 'open-midia-api'].forEach((name) => {
-        map.set(name.toLowerCase(), { id: name, name, fullName: `Walancy/${name}`, color: '#38bdf8' });
-      });
-    }
-
     return Array.from(map.values());
   }, [repoName, accentColor]);
 
@@ -427,136 +436,11 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
           }
           return item;
         });
-        return sanitized;
+        return sanitized.filter((item) => !isDemoSeed(item.id));
       }
     } catch {}
 
-    const todayIso = toIsoDate(new Date());
-    return [
-      {
-        id: 'seed-1',
-        title: 'Migração do processamento de OCR do frontend para o backend (#144)',
-        description: 'Endpoint REST concluído com sucesso e validação de schema implementada.',
-        category: 'yesterday',
-        dateIso: todayIso,
-        tag: 'Backend',
-        priority: 'Alta',
-        completed: true,
-        projectId: 'ainaobra',
-        projectName: 'ainaobra',
-        cardTheme: 'cyan',
-        assignee: { name: 'Walancy', initials: 'WA' },
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: 'seed-2',
-        title: 'Incorporação do motor de cálculo MAED com Gemini Flash (#143)',
-        description: 'Integração de leitura de notas e geração de payload tributário.',
-        category: 'yesterday',
-        dateIso: todayIso,
-        tag: 'IA & OCR',
-        priority: 'Alta',
-        completed: true,
-        projectId: 'ainaobra',
-        projectName: 'ainaobra',
-        cardTheme: 'peach',
-        assignee: { name: 'Walancy', initials: 'WA' },
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: 'seed-3',
-        title: 'Code review da PR #42 de Aferição SERO e emissão de CND',
-        description: 'Ajustes solicitados em tratamento de exceções de certificado e-CAC.',
-        category: 'yesterday',
-        dateIso: todayIso,
-        tag: 'Code Review',
-        priority: 'Média',
-        completed: true,
-        projectId: 'aura-dev',
-        projectName: 'aura-dev',
-        cardTheme: 'lavender',
-        assignee: { name: 'Walancy', initials: 'WA' },
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: 'seed-4',
-        title: 'Timeout na API da Receita Federal em homologação para consulta DARF',
-        description: 'Serviço do e-CAC com intermitência no proxy residencial ao consultar pendências.',
-        category: 'blocker',
-        dateIso: todayIso,
-        tag: 'Infra / e-CAC',
-        blockerSeverity: 'Crítico',
-        blockerStatus: 'Bloqueando',
-        projectId: 'ainaobra-api-esocial',
-        projectName: 'ainaobra-api-esocial',
-        cardTheme: 'charcoal',
-        assignee: { name: 'Walancy', initials: 'WA' },
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: 'seed-5',
-        title: 'Certificado digital A1 em homologação aguardando renovação',
-        description: 'Dependência da equipe fiscal para disponibilizar o arquivo .pfx atualizado.',
-        category: 'blocker',
-        dateIso: todayIso,
-        tag: 'Fiscal',
-        blockerSeverity: 'Alto',
-        blockerStatus: 'Em análise',
-        projectId: 'ainaobra',
-        projectName: 'ainaobra',
-        cardTheme: 'charcoal',
-        assignee: { name: 'Walancy', initials: 'WA' },
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: 'seed-6',
-        title: 'Disponibilizar e povoar tabela CUF/TUF no banco de dados (#142)',
-        description: 'Executar migrations no PostgreSQL e seeds de alíquotas estaduais.',
-        category: 'today',
-        dateIso: todayIso,
-        tag: 'Database',
-        priority: 'Alta',
-        estimatedHours: 3,
-        completed: false,
-        projectId: 'cooperaagro-app',
-        projectName: 'cooperaagro-app',
-        cardTheme: 'peach',
-        assignee: { name: 'Walancy', initials: 'WA' },
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: 'seed-7',
-        title: 'Validação do fluxo de Aferição no SERO para emissão da CND',
-        description: 'Testar automação simulada da tela StepAfericao.tsx ponta a ponta.',
-        category: 'today',
-        dateIso: todayIso,
-        tag: 'Automação',
-        priority: 'Alta',
-        estimatedHours: 4,
-        completed: false,
-        projectId: 'aura-dev',
-        projectName: 'aura-dev',
-        cardTheme: 'cyan',
-        assignee: { name: 'Walancy', initials: 'WA' },
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: 'seed-8',
-        title: 'Alinhamento técnico de arquitetura com o time de engenharia às 16h',
-        description: 'Alinhamento das regras de fator de ajuste e parametrização de INSS.',
-        category: 'today',
-        dateIso: todayIso,
-        tag: 'Alinhamento',
-        priority: 'Média',
-        estimatedHours: 1,
-        completed: false,
-        projectId: 'aura-dev',
-        projectName: 'aura-dev',
-        cardTheme: 'lavender',
-        assignee: { name: 'Walancy', initials: 'WA' },
-        createdAt: new Date().toISOString(),
-      },
-    ];
+    return [];
   });
 
   useEffect(() => {
@@ -582,10 +466,10 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
           if (Array.isArray(all) && all.length) {
             // cards removidos pela IA ficam marcados no arquivo: não podem voltar pela cópia do localStorage
             const dead = new Set(all.filter((i) => i.deleted).map((i) => i.id));
-            const fromFile = all.filter((i) => !i.deleted);
+            const fromFile = all.filter((i) => !i.deleted && !isDemoSeed(i.id));
             setItems((prev) => {
               const ids = new Set(all.map((i) => i.id));
-              return [...fromFile, ...prev.filter((i) => !ids.has(i.id) && !dead.has(i.id))];
+              return [...fromFile, ...prev.filter((i) => !ids.has(i.id) && !dead.has(i.id) && !isDemoSeed(i.id))];
             });
           }
         } catch {}
@@ -1061,7 +945,7 @@ export const DailySchedulerView: React.FC<DailySchedulerViewProps> = ({
         projectColor: matchedProject?.color,
         cardTheme: draftCardTheme,
         customColor: draftCustomColor,
-        assignee: { name: 'Walancy', initials: 'WA', avatarUrl: 'https://github.com/Walancy.png' },
+        assignee: currentAssignee(),
         createdAt: new Date().toISOString(),
       };
       setItems((prev) => [newItem, ...prev]);
@@ -2031,7 +1915,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
         projectId: targetProj,
         projectName: targetProj,
         cardTheme: 'cyan',
-        assignee: { name: 'Walancy', initials: 'WA' },
+        assignee: currentAssignee(),
         createdAt: new Date().toISOString(),
       },
       {
@@ -2047,7 +1931,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
         projectId: targetProj,
         projectName: targetProj,
         cardTheme: 'peach',
-        assignee: { name: 'Walancy', initials: 'WA' },
+        assignee: currentAssignee(),
         createdAt: new Date().toISOString(),
       },
     ];
@@ -2467,7 +2351,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                       : itemDraft.category === 'blocker'
                       ? 'rose'
                       : 'peach',
-                  assignee: { name: 'Walancy', initials: 'WA', avatarUrl: 'https://github.com/Walancy.png' },
+                  assignee: currentAssignee(),
                   createdAt: new Date().toISOString(),
                 };
                 setItems((prev) => [newItem, ...prev]);
@@ -2480,7 +2364,7 @@ RETORNE SOMENTE JSON VÁLIDO (sem markdown):
                   weekStartIso: currentWeekStartIso,
                   completed: false,
                   priority: goalDraft.priority || 'Alta',
-                  owner: 'Walancy',
+                  owner: currentAssignee().name,
                 };
                 setWeeklyGoals((prev) => [...prev, newGoal]);
                 onToast?.(`Demanda adicionada à Weekly: ${newGoal.title}`);
@@ -3999,11 +3883,11 @@ const EditableDailyCard: React.FC<EditableDailyCardProps> = ({
               flexShrink: 0,
               boxShadow: 'none',
             }}
-            title="Usuário logado: Walancy"
+            title={`Usuário logado: ${currentAssignee().name}`}
           >
             <img
-              src="https://github.com/Walancy.png"
-              alt="Walancy"
+              src={currentAssignee().avatarUrl}
+              alt={currentAssignee().name}
               style={{ width: '100%', height: '100%', objectFit: 'cover' }}
               onError={(e) => {
                 (e.currentTarget as HTMLElement).style.display = 'none';
@@ -4579,11 +4463,11 @@ const DailyCardItem: React.FC<DailyCardItemProps> = ({
               flexShrink: 0,
               boxShadow: 'none',
             }}
-            title={item.assignee?.name || 'Walancy'}
+            title={item.assignee?.name || currentAssignee().name}
           >
             <img
-              src={item.assignee?.avatarUrl || 'https://github.com/Walancy.png'}
-              alt={item.assignee?.name || 'Walancy'}
+              src={item.assignee?.avatarUrl || currentAssignee().avatarUrl}
+              alt={item.assignee?.name || currentAssignee().name}
               style={{ width: '100%', height: '100%', objectFit: 'cover' }}
               onError={(e) => {
                 (e.currentTarget as HTMLElement).style.display = 'none';

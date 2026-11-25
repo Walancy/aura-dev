@@ -24,7 +24,13 @@ import { StringDecoder } from 'node:string_decoder';
 import { autonomousService } from './autonomous-service';
 import { rolesService } from './roles-service';
 import { flutterService } from './flutter-service';
-import { getCleanEnv, resolveBinaryPath, normalizeClaudeModel, ensureClaudeWorkspaceTrust } from './env-utils';
+import { getAugmentedPath, getCleanEnv, getCustomPaths, isBinaryInstalled, resolveBinaryPath, normalizeClaudeModel, ensureClaudeWorkspaceTrust, SHELL_BIN, shellInvocation, whichCommand, wrapForSpawn } from './env-utils';
+
+// Windows não define HOME: os serviços usam process.env.HOME para achar ~/.claude, ~/.devflow etc.
+if (!process.env.HOME && process.env.USERPROFILE) process.env.HOME = process.env.USERPROFILE;
+
+// Windows: o AppUserModelID tem de ser o appId do instalador, senão a barra de tarefas mostra o ícone do Electron e não agrupa/fixa o app
+if (process.platform === 'win32') app.setAppUserModelId('br.com.appmoove.auradev');
 
 // Set macOS application name
 app.name = 'Aura Dev';
@@ -38,7 +44,15 @@ app.commandLine.appendSwitch(
 );
 
 const getAppIcon = () => {
+  // Windows: .ico multi-resolução (barra de tarefas, Alt+Tab, janela); macOS/Linux seguem com o PNG
   const iconLocations = [
+    ...(process.platform === 'win32'
+      ? [
+          path.join(__dirname, '../build/icon.ico'),
+          path.join(process.cwd(), 'build/icon.ico'),
+          path.join(app.getAppPath(), 'build/icon.ico'),
+        ]
+      : []),
     path.join(__dirname, '../icon-mac.png'),
     path.join(__dirname, 'icon-mac.png'),
     path.join(process.cwd(), 'icon-mac.png'),
@@ -91,8 +105,12 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     backgroundColor: '#000000',
-    titleBarStyle: 'hidden',
-    trafficLightPosition: { x: 14, y: 17 },
+    // macOS: barra oculta com o semáforo nativo; Windows: sem moldura, a header do app tem minimizar/fechar
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 14, y: 17 } }
+      : process.platform === 'win32'
+        ? { frame: false }
+        : { titleBarStyle: 'hidden' as const }),
     icon: appIconImage || undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -182,6 +200,10 @@ function createWindow() {
       mainWindow?.maximize();
     }
   });
+
+  mainWindow.on('maximize', () => mainWindow?.webContents.send('window:maximized-change', true));
+  mainWindow.on('unmaximize', () => mainWindow?.webContents.send('window:maximized-change', false));
+  ipcMain.handle('window:isMaximized', () => !!mainWindow?.isMaximized());
 
   ipcMain.on('window:close', () => {
     mainWindow?.close();
@@ -1110,9 +1132,11 @@ ipcMain.handle('ai:prompt', async (_event, { prompt, model, cwd, provider, timeo
       }
     }, timeoutDuration);
 
-    const child = spawn(binaryPath, args, {
+    const launch = wrapForSpawn(binaryPath, args);
+    const child = spawn(launch.file, launch.args, {
       cwd: targetCwd,
       env,
+      windowsVerbatimArguments: launch.windowsVerbatimArguments,
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -1256,34 +1280,17 @@ ipcMain.handle('ai:prompt', async (_event, { prompt, model, cwd, provider, timeo
 ipcMain.handle('ai:checkClis', async () => {
   const { exec } = require('node:child_process');
   const userHome = process.env.HOME || '';
-  const customPaths = [
-    path.join(userHome, '.local/bin'),
-    path.join(userHome, '.bun/bin'),
-    path.join(userHome, '.cargo/bin'),
-    '/opt/homebrew/bin',
-    '/opt/homebrew/sbin',
-    '/usr/local/bin',
-    '/usr/local/sbin',
-    '/usr/bin',
-    '/bin',
-    '/usr/sbin',
-    '/sbin',
-  ];
-  const envPath = `${customPaths.join(':')}:${process.env.PATH || ''}`;
+  const customPaths = getCustomPaths();
+  const envPath = getAugmentedPath();
 
   const check = (bin: string): Promise<boolean> => {
-    for (const dir of customPaths) {
-      const fullPath = path.join(dir, bin);
-      try {
-        if (fs.existsSync(fullPath)) return Promise.resolve(true);
-      } catch {}
-    }
+    if (isBinaryInstalled(bin)) return Promise.resolve(true);
     return new Promise((resolve) => {
-      exec(`which ${bin}`, {
+      exec(whichCommand(bin), {
         env: { ...process.env, PATH: envPath },
         stdio: 'pipe',
-        timeout: 1000,
-        shell: '/bin/zsh',
+        timeout: 1500,
+        shell: SHELL_BIN,
       }, (err: any) => {
         resolve(!err);
       });
@@ -1312,25 +1319,15 @@ ipcMain.handle('ai:checkClis', async () => {
 const checkCliUpdates = async () => {
   const { exec } = require('node:child_process');
   const userHome = process.env.HOME || '';
-  const customPaths = [
-    path.join(userHome, '.local/bin'),
-    path.join(userHome, '.bun/bin'),
-    path.join(userHome, '.cargo/bin'),
-    '/opt/homebrew/bin',
-    '/opt/homebrew/sbin',
-    '/usr/local/bin',
-    '/usr/local/sbin',
-    '/usr/bin',
-    '/bin',
-  ];
-  const envPath = `${customPaths.join(':')}:${process.env.PATH || ''}`;
+  const customPaths = getCustomPaths();
+  const envPath = getAugmentedPath();
 
   const getCliVersion = (cmd: string): Promise<string> => {
     return new Promise((resolve) => {
       exec(cmd, {
         env: { ...process.env, PATH: envPath },
         timeout: 8000,
-        shell: '/bin/zsh',
+        shell: SHELL_BIN,
       }, (err: any, stdout: string) => {
         if (err || !stdout) resolve('');
         else {
@@ -1612,29 +1609,10 @@ ipcMain.handle('ai:runCli', async (_event, {
   const targetCwd = cwd && fs.existsSync(cwd) ? cwd : (userHome || process.cwd());
   const promptToSend = injectPortlessDirective(prompt, targetCwd);
 
-  const customPaths = [
-    path.join(userHome, '.local/bin'),
-    path.join(userHome, '.bun/bin'),
-    path.join(userHome, '.cargo/bin'),
-    '/opt/homebrew/bin',
-    '/opt/homebrew/sbin',
-    '/usr/local/bin',
-    '/usr/local/sbin',
-    '/usr/bin',
-    '/bin',
-    '/usr/sbin',
-    '/sbin',
-  ];
-  const envPath = `${customPaths.join(':')}:${process.env.PATH || ''}`;
+  const customPaths = getCustomPaths();
+  const envPath = getAugmentedPath();
 
-  let binaryPath = cliCmd;
-  for (const p of customPaths) {
-    const candidate = path.join(p, cliCmd);
-    if (fs.existsSync(candidate)) {
-      binaryPath = candidate;
-      break;
-    }
-  }
+  const binaryPath = resolveBinaryPath(cliCmd);
 
   // Políticas salvas em "Permissões" do chat. Sem política salva, mantém o comportamento legado (sem aprovação).
   const mode = permissions?.executionMode ?? 'always-proceed';
@@ -1749,9 +1727,11 @@ ipcMain.handle('ai:runCli', async (_event, {
     let resolved = false;
 
     let isCancelled = false;
-    const child = spawn(binaryPath, args, {
+    const launch = wrapForSpawn(binaryPath, args);
+    const child = spawn(launch.file, launch.args, {
       cwd: targetCwd,
       env,
+      windowsVerbatimArguments: launch.windowsVerbatimArguments,
       detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -1958,38 +1938,25 @@ ipcMain.handle('dialog:openFolder', async () => {
   return null;
 });
 
-// Real Shell Execution on macOS using Login Shell (/bin/zsh -l)
+// Real Shell Execution using the login shell (zsh -l no macOS/Linux, PowerShell no Windows)
 ipcMain.handle('shell:exec', async (_event, { command, cwd }: { command: string; cwd?: string }) => {
   const { exec } = require('node:child_process');
   const fs = require('node:fs');
   const userHome = process.env.HOME || '';
   const targetCwd = cwd && fs.existsSync(cwd) ? cwd : (userHome || process.cwd());
-  const shellPath = process.env.SHELL || '/bin/zsh';
-
+  
   // Claude Code não pode travar no diálogo de confiança da pasta
   ensureClaudeWorkspaceTrust(targetCwd);
 
-  const customPaths = [
-    path.join(userHome, '.local/bin'),
-    path.join(userHome, '.bun/bin'),
-    path.join(userHome, '.cargo/bin'),
-    '/opt/homebrew/bin',
-    '/opt/homebrew/sbin',
-    '/usr/local/bin',
-    '/usr/local/sbin',
-    '/usr/bin',
-    '/bin',
-    '/usr/sbin',
-    '/sbin',
-  ];
-  const envPath = `${customPaths.join(':')}:${process.env.PATH || ''}`;
+  const customPaths = getCustomPaths();
+  const envPath = getAugmentedPath();
 
   return new Promise((resolve) => {
     const { spawn } = require('node:child_process');
     const trimmed = (command || '').trim();
     const isCd = trimmed === 'cd' || trimmed.startsWith('cd ');
     // If cd, execute command and then print the resulting working directory
-    const cmdToRun = isCd ? `${trimmed} && pwd` : trimmed;
+    const cmdToRun = isCd ? (process.platform === 'win32' ? `${trimmed}; (Get-Location).Path` : `${trimmed} && pwd`) : trimmed;
 
     const env = {
       ...process.env,
@@ -2008,7 +1975,8 @@ ipcMain.handle('shell:exec', async (_event, { command, cwd }: { command: string;
     const authRegex = /Authentication required|Please visit the URL to log in|paste the authorization code|oauth2\/auth|waiting for authentication/i;
 
     // grupo próprio: no timeout o SIGKILL leva a árvore toda (`cd x && npm start` deixava o servidor vivo)
-    const child = spawn(shellPath, ['-l', '-c', cmdToRun], {
+    const shell = shellInvocation(cmdToRun);
+    const child = spawn(shell.file, shell.args, {
       cwd: targetCwd,
       env,
       detached: process.platform !== 'win32',

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Check, ExternalLink, X } from 'lucide-react';
 import GradientWaves from './GradientWaves';
 import logoUrl from '../../../icon-devflow.svg';
+import { FloatingWindowControls } from '../ui/WindowControls';
 
 export interface GithubAuthenticatedUser {
   login: string;
@@ -105,6 +106,7 @@ export const GithubLoginScreen: React.FC<GithubLoginScreenProps> = ({ accentColo
         userSelect: 'none',
       }}
     >
+      <FloatingWindowControls />
       {/* Fundo animado: GradientWaves (React Bits) */}
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
         <GradientWaves

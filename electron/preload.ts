@@ -14,6 +14,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     minimize: () => ipcRenderer.send('window:minimize'),
     maximize: () => ipcRenderer.send('window:maximize'),
     close: () => ipcRenderer.send('window:close'),
+    isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+    onMaximizedChange: (callback: (isMaximized: boolean) => void) => {
+      const handler = (_event: any, value: boolean) => callback(value);
+      ipcRenderer.on('window:maximized-change', handler);
+      return () => ipcRenderer.removeListener('window:maximized-change', handler);
+    },
     setTheme: (theme: 'dark' | 'light') => ipcRenderer.send('theme:set', theme),
     setAlwaysOnTop: (flag: boolean) => ipcRenderer.invoke('window:setAlwaysOnTop', flag),
     isAlwaysOnTop: () => ipcRenderer.invoke('window:isAlwaysOnTop'),
@@ -85,6 +91,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const handler = (_event: any, payload: any) => callback(payload);
       ipcRenderer.on('pty:context-alert', handler);
       return () => ipcRenderer.removeListener('pty:context-alert', handler);
+    },
+    onLoginRequired: (callback: (payload: { id: string; type: string; cwd: string; projectName: string }) => void) => {
+      const handler = (_event: any, payload: any) => callback(payload);
+      ipcRenderer.on('pty:login-required', handler);
+      return () => ipcRenderer.removeListener('pty:login-required', handler);
     },
     onSessionStatus: (callback: (payload: { id: string; type: string; cwd: string; isAi: boolean; isRunning: boolean; exited?: boolean; shellRespawned?: boolean }) => void) => {
       const handler = (_event: any, payload: any) => callback(payload);

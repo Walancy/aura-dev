@@ -137,6 +137,7 @@ import { MermaidDiagram } from './components/ide/chat/MermaidDiagram';
 import { ImageLightbox } from './components/ui/ImageLightbox';
 import { HeaderTabGroup } from './components/ui/HeaderTabGroup';
 import { AppUpdateButton } from './components/ui/AppUpdateButton';
+import { WindowControls } from './components/ui/WindowControls';
 import { AiChatMentionsMenu, type MentionItem } from './components/ide/chat/AiChatMentionsMenu';
 import {
   loadProjectBrain,
@@ -3453,6 +3454,28 @@ export const App: React.FC = () => {
       unsubAiCompleted?.();
     };
   }, [workspacePath, selectedAiProvider, isAiExecuting, terminalSessions, notifyProjectAi, ideAiStatus, aiHistory.length]);
+
+  // A IA pediu login: abre o terminal onde ela foi iniciada (no CLI ou na IDE) para o usuário colar o código de verificação
+  useEffect(() => {
+    return window.electronAPI?.pty?.onLoginRequired?.((p) => {
+      const session = terminalSessionsRef.current.find((s) => s.id === p.id);
+      if (session?.projectPath && session.projectPath !== workspacePathRef.current) {
+        const proj = headerProjectsList.find((h) => h.localDir === session.projectPath);
+        handleSelectWorkspace(session.projectPath, proj?.name || p.projectName);
+      }
+      if (session?.scope === 'cli' || !session) {
+        setActiveTab('cli');
+        if (session) setCliActiveSessionId(session.id);
+      } else {
+        setActiveTab('ide');
+        setActiveSessionId(session.id);
+        setIsTerminalCollapsed(false);
+      }
+      logSystemActivity('terminal', 'login_solicitado', p.projectName, { provedor: p.type, terminal: p.id });
+      setToastMessage(`${p.type} pediu login: cole o código no terminal`);
+      setTimeout(() => setToastMessage(null), 4000);
+    });
+  }, [headerProjectsList]);
 
   // Contexto da IA quase cheio: aviso fixo (não some sozinho) com Fechar / Novo contexto
   useEffect(() => {
@@ -8969,7 +8992,11 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
         projectId: targetProjectName,
         projectName: targetProjectName,
         cardTheme: 'cyan',
-        assignee: { name: 'Walancy', initials: 'WA' },
+        assignee: {
+          name: githubUser?.name || githubUser?.login || 'Usuário',
+          initials: (githubUser?.name || githubUser?.login || 'US').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase(),
+          avatarUrl: githubUser?.avatarUrl,
+        },
         createdAt: new Date().toISOString(),
       };
 
@@ -9054,7 +9081,9 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
       .catch((err: any) => push(`Evaluation Error: ${err?.message || err}`));
   };
 
-  const showTrafficLightSpacer = !isFullscreen;
+  // no Windows a janela não tem moldura nem semáforo do macOS: a header ganha minimizar/fechar à direita e o canto esquerdo fica livre
+  const isWindows = window.electronAPI?.platform === 'win32';
+  const showTrafficLightSpacer = !isFullscreen && window.electronAPI?.platform === 'darwin';
   // barra de status no CLI com estilo visual: cartões translúcidos e blocos de destaque na cor do estilo
   const cliSkinned = activeTab === 'cli' && terminalSkin !== 'none';
   const barCardBg = cliSkinned ? 'color-mix(in srgb, var(--sk) 10%, transparent)' : themeTokens.bgCard;
@@ -11268,6 +11297,12 @@ Se encontrar qualquer problema, corrija-o imediatamente e explique o ajuste real
             accentTextColor={accentTextColor}
             onNotify={(title, body) => notifCenter.add({ kind: 'info', title, body, read: false })}
           />
+          {isWindows && (
+            <>
+              <div style={{ width: 1, height: 24, background: isEffectiveDark ? '#373737' : 'rgba(0, 0, 0, 0.1)' }} />
+              <WindowControls isDark={isEffectiveDark} textColor={isEffectiveDark ? '#858585' : themeTokens.textSecondary} hoverBg={themeTokens.hoverBg} />
+            </>
+          )}
         </div>
       </div>
 

@@ -1,9 +1,18 @@
 import * as os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
+import { execFile } from 'node:child_process';
 
 export function getCustomPaths(): string[] {
-  const userHome = process.env.HOME || '';
+  const userHome = process.env.HOME || os.homedir();
+  if (process.platform === 'win32') {
+    return [
+      path.join(userHome, '.local', 'bin'),
+      path.join(userHome, '.bun', 'bin'),
+      path.join(userHome, '.cargo', 'bin'),
+      path.join(process.env.APPDATA || path.join(userHome, 'AppData', 'Roaming'), 'npm'),
+    ];
+  }
   return [
     path.join(userHome, '.local/bin'),
     path.join(userHome, '.bun/bin'),
@@ -19,10 +28,49 @@ export function getCustomPaths(): string[] {
   ];
 }
 
+const isWin = process.platform === 'win32';
+
+/** Shell usado para executar comandos de texto: cmd.exe no Windows, zsh no macOS/Linux. */
+export const SHELL_BIN = isWin ? process.env.ComSpec || 'cmd.exe' : '/bin/zsh';
+/** Descarta a entrada/saída de um comando no shell acima (`< /dev/null`). */
+export const NULL_DEVICE = isWin ? 'NUL' : '/dev/null';
+
+/** Comando que localiza um executável no PATH (`where` no Windows, `which` no resto). */
+export const whichCommand = (bin: string) => `${isWin ? 'where' : 'which'} ${bin}`;
+
+/** PATH com os diretórios de CLIs de IA (claude, agy, codex...) na frente. */
+export function getAugmentedPath(): string {
+  return `${getCustomPaths().join(path.delimiter)}${path.delimiter}${process.env.PATH || ''}`;
+}
+
+/** Executável da CLI instalado? (procura nos diretórios conhecidos e no PATH, com .exe/.cmd no Windows) */
+export function isBinaryInstalled(bin: string): boolean {
+  const resolved = resolveBinaryPath(bin);
+  return path.isAbsolute(resolved) && fs.existsSync(resolved);
+}
+
+/** Como rodar um comando de texto num shell: PowerShell no Windows, zsh -l -c no resto. */
+export function shellInvocation(command: string): { file: string; args: string[] } {
+  if (isWin) {
+    const sys = path.join(process.env.SystemRoot || 'C:\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    return { file: sys, args: ['-NoLogo', '-NoProfile', '-Command', command] };
+  }
+  return { file: process.env.SHELL || '/bin/zsh', args: ['-l', '-c', command] };
+}
+
+/** node não executa .cmd/.bat (shims do npm) sem shell: embrulha no cmd.exe. Para .exe e para macOS/Linux devolve igual. */
+export function wrapForSpawn(file: string, args: string[]): { file: string; args: string[]; windowsVerbatimArguments?: boolean } {
+  if (isWin && /\.(cmd|bat)$/i.test(file)) {
+    const q = (a: string) => `"${a.replace(/"/g, '""').replace(/[\r\n]+/g, ' ')}"`;
+    return { file: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', `"${[file, ...args].map(q).join(' ')}"`], windowsVerbatimArguments: true };
+  }
+  return { file, args };
+}
+
 export function getCleanEnv(extraEnv?: Record<string, string>): Record<string, string> {
   const userHome = process.env.HOME || '';
   const customPaths = getCustomPaths();
-  const envPath = `${customPaths.join(':')}:${process.env.PATH || ''}`;
+  const envPath = `${customPaths.join(path.delimiter)}${path.delimiter}${process.env.PATH || ''}`;
 
   const cleanEnv: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -52,10 +100,13 @@ export function resolveBinaryPath(cliCmd: string): string {
     return cliCmd;
   }
   const customPaths = getCustomPaths();
-  for (const p of customPaths) {
-    const candidate = path.join(p, cliCmd);
-    if (fs.existsSync(candidate)) {
-      return candidate;
+  const exts = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
+  for (const p of [...customPaths, ...(process.env.PATH || '').split(path.delimiter).filter(Boolean)]) {
+    for (const ext of exts) {
+      const candidate = path.join(p, cliCmd + ext);
+      if (fs.existsSync(candidate)) {
+        return candidate;
+      }
     }
   }
   return cliCmd;
@@ -125,4 +176,27 @@ export function stripTerminalControl(t: string): string {
       ''
     )
     .replace(/[\u0000-\u0008\u000b-\u000c\u000e-\u001f\u007f]/g, '');
+}
+
+const LOGIN_RECHECK_MS = 10 * 60 * 1000;
+const LOGIN_TEXT = /sign in|log ?in|authenticat/i;
+const signedInCache = new Map<string, { ok: boolean; at: number }>();
+
+/**
+ * A CLI (agy) sem login abre o fluxo de login a cada chamada em segundo plano (cotas, modelos).
+ * Sonda com `<bin> models` (não interativo) e guarda o resultado por 10 min; só falha quando a CLI pede login de forma explícita.
+ */
+export function isCliSignedIn(name: string, binPath: string): Promise<boolean> {
+  const cached = signedInCache.get(name);
+  if (cached && Date.now() - cached.at < LOGIN_RECHECK_MS) return Promise.resolve(cached.ok);
+  const launch = wrapForSpawn(binPath, ['models']);
+  return new Promise((resolve) => {
+    execFile(launch.file, launch.args, { timeout: 8000, env: { ...process.env, PATH: getAugmentedPath() }, windowsVerbatimArguments: launch.windowsVerbatimArguments }, (err, stdout, stderr) => {
+      const ok = !(err && LOGIN_TEXT.test(`${stdout}
+${stderr}
+${err.message}`));
+      signedInCache.set(name, { ok, at: Date.now() });
+      resolve(ok);
+    });
+  });
 }

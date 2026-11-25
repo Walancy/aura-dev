@@ -1,6 +1,7 @@
 import { exec } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { isCliSignedIn, NULL_DEVICE, SHELL_BIN, getAugmentedPath, resolveBinaryPath } from './env-utils';
 
 export interface AiQuotaConfig {
   dailyPercent: number;
@@ -17,43 +18,13 @@ export class QuotaService {
   private readonly CACHE_TTL_MS = 30000; // 30s cache for timely quota updates
 
   private getAgyBinPath(): string | null {
-    const userHome = process.env.HOME || '';
-    const candidatePaths = [
-      path.join(userHome, '.local/bin/agy'),
-      path.join(userHome, '.bun/bin/agy'),
-      path.join(userHome, '.cargo/bin/agy'),
-      '/opt/homebrew/bin/agy',
-      '/usr/local/bin/agy',
-      '/usr/bin/agy',
-    ];
-
-    for (const p of candidatePaths) {
-      try {
-        if (fs.existsSync(p)) return p;
-      } catch {}
-    }
-
-    return null;
+    const found = resolveBinaryPath('agy');
+    return path.isAbsolute(found) && fs.existsSync(found) ? found : null;
   }
 
   private getClaudeBinPath(): string | null {
-    const userHome = process.env.HOME || '';
-    const candidatePaths = [
-      path.join(userHome, '.local/bin/claude'),
-      path.join(userHome, '.bun/bin/claude'),
-      path.join(userHome, '.cargo/bin/claude'),
-      '/opt/homebrew/bin/claude',
-      '/usr/local/bin/claude',
-      '/usr/bin/claude',
-    ];
-
-    for (const p of candidatePaths) {
-      try {
-        if (fs.existsSync(p)) return p;
-      } catch {}
-    }
-
-    return null;
+    const found = resolveBinaryPath('claude');
+    return path.isAbsolute(found) && fs.existsSync(found) ? found : null;
   }
 
   // Parses Claude Code's own "/usage" reset phrasing, e.g. "Sep 18 at 6:30pm" or "Sep 21 at 1pm (America/Sao_Paulo)", into a Date.
@@ -259,21 +230,15 @@ export class QuotaService {
     const claudeBin = this.getClaudeBinPath();
     if (claudeBin) {
       try {
-        const customPaths = [
-          path.join(userHome, '.local/bin'),
-          path.join(userHome, '.bun/bin'),
-          '/opt/homebrew/bin',
-          '/usr/local/bin',
-        ];
         const execEnv = {
           ...process.env,
-          PATH: `${customPaths.join(':')}:${process.env.PATH || ''}`,
+          PATH: getAugmentedPath(),
         };
 
         const out = await new Promise<string>((resolve) => {
-          exec(`${claudeBin} -p "/usage" < /dev/null`, {
+          exec(`"${claudeBin}" -p "/usage" < ${NULL_DEVICE}`, {
             encoding: 'utf8',
-            shell: '/bin/zsh',
+            shell: SHELL_BIN,
             env: execEnv,
             timeout: 25000,
           }, (_err, stdout) => {
@@ -308,24 +273,18 @@ export class QuotaService {
 
     // 2. Fetch Antigravity / Gemini / Codex Live Quotas via agy CLI non-blockingly
     const agyBin = this.getAgyBinPath();
-    if (agyBin) {
+    if (agyBin && (await isCliSignedIn('agy', agyBin))) {
       this.isFetching = true;
       try {
-        const customPaths = [
-          path.join(userHome, '.local/bin'),
-          path.join(userHome, '.bun/bin'),
-          '/opt/homebrew/bin',
-          '/usr/local/bin',
-        ];
         const execEnv = {
           ...process.env,
-          PATH: `${customPaths.join(':')}:${process.env.PATH || ''}`,
+          PATH: getAugmentedPath(),
         };
 
         const out = await new Promise<string>((resolve) => {
-          exec(`${agyBin} -p "/usage" < /dev/null`, {
+          exec(`"${agyBin}" -p "/usage" < ${NULL_DEVICE}`, {
             encoding: 'utf8',
-            shell: '/bin/zsh',
+            shell: SHELL_BIN,
             env: execEnv,
             timeout: 15000,
           }, (_err, stdout) => {

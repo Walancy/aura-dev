@@ -3,6 +3,7 @@ import { RefreshCw, Trash2, Copy, Check } from 'lucide-react';
 import GradientWaves from './auth/GradientWaves';
 import logoUrl from '../../icon-devflow.svg';
 import { logSystemActivity } from '../utils/brainService';
+import { FloatingWindowControls } from './ui/WindowControls';
 
 interface RootErrorBoundaryProps {
   children: ReactNode;
@@ -169,6 +170,7 @@ export class RootErrorBoundary extends Component<
             boxSizing: 'border-box',
           }}
         >
+          <FloatingWindowControls />
           {/* Fundo animado: GradientWaves (mesmo padrão visual da tela de login) */}
           <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
             <SafeGradientWaves />
